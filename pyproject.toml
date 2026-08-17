@@ -50,6 +50,8 @@ dev = [
 
 [project.scripts]
 vr-bridge = "voice_realtime.tts_bridge.server:main"
+vr-interact = "voice_realtime.interaction.runner:main"
+vr-subtitles = "voice_realtime.subtitles.launcher:main"
 
 [build-system]
 requires = ["hatchling"]
