@@ -23,8 +23,12 @@ _BACKEND_EXTRAS: dict[str, str] = {
 }
 
 
-def resolve_wlk_command() -> str:
-    """定位 wlk 可执行文件。"""
+def resolve_wlk_command(repo: Path | None = None) -> str:
+    """定位 wlk 可执行文件：优先仓库 venv，其次系统 PATH。"""
+    if repo is not None:
+        repo_wlk = repo / ".venv" / "bin" / "wlk"
+        if repo_wlk.exists():
+            return str(repo_wlk)
     wlk = shutil.which("wlk")
     if wlk is None:
         raise RuntimeError("未找到 wlk 命令，请先安装 WhisperLiveKit")
@@ -48,9 +52,12 @@ def build_server_argv(settings: SubtitleSettings) -> list[str]:
 
 
 def install_deps(repo: Path) -> None:
-    """在 WhisperLiveKit 仓库内安装后端依赖（复用当前 venv）。"""
+    """在 WhisperLiveKit 仓库内安装后端依赖（优先仓库 venv）。"""
+    python = str(repo / ".venv" / "bin" / "python")
+    if not Path(python).exists():
+        python = sys.executable
     subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-e", "."],
+        [python, "-m", "pip", "install", "-e", "."],
         cwd=repo,
         check=True,
         capture_output=True,
@@ -65,11 +72,11 @@ def prepare_whisperlivekit(settings: SubtitleSettings) -> str:
             f"WhisperLiveKit 仓库不存在: {settings.repo_path}（请先 git clone 到该路径）"
         )
     try:
-        return resolve_wlk_command()
+        return resolve_wlk_command(settings.repo_path)
     except RuntimeError:
         logger.info("未找到 wlk，正在安装 WhisperLiveKit 依赖…")
         install_deps(settings.repo_path)
-        return resolve_wlk_command()
+        return resolve_wlk_command(settings.repo_path)
 
 
 def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Popen[str]:

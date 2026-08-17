@@ -107,18 +107,23 @@ class TestBuildServerArgv:
 
 
 class TestPrepare:
-    def test_resolve_wlk_finds_local_binary(self, tmp_path: Path) -> None:
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
+    def test_resolve_wlk_finds_repo_venv_binary(self, tmp_path: Path) -> None:
+        bin_dir = tmp_path / ".venv" / "bin"
+        bin_dir.mkdir(parents=True)
         (bin_dir / "wlk").write_text("#!/bin/sh\necho wlk\n")
         (bin_dir / "wlk").chmod(0o755)
-        with patch("shutil.which", return_value=str(bin_dir / "wlk")):
-            path = resolve_wlk_command()
+        path = resolve_wlk_command(tmp_path)
         assert path == str(bin_dir / "wlk")
 
+    def test_resolve_wlk_falls_back_to_path(self, tmp_path: Path) -> None:
+        with patch("shutil.which", return_value="/usr/local/bin/wlk"):
+            path = resolve_wlk_command(tmp_path)
+        assert path == "/usr/local/bin/wlk"
+
     def test_resolve_wlk_none_raises(self) -> None:
-        with patch("shutil.which", return_value=None), pytest.raises(
-            RuntimeError, match="未找到 wlk"
+        with (
+            patch("shutil.which", return_value=None),
+            pytest.raises(RuntimeError, match="未找到 wlk"),
         ):
             resolve_wlk_command()
 

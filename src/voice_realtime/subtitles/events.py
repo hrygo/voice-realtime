@@ -65,6 +65,34 @@ def parse_event(payload: dict[str, Any]) -> SubtitleEvent:
     return SubtitleEvent(kind="other", raw=payload)
 
 
+class SubtitleEventTracker:
+    """增量跟踪：从全量快照流中提取「新」事件。
+
+    WhisperLiveKit 周期性推送整份 FrontData（confirmed 段重复出现），
+    本类按「confirmed 段起点+文本」与「partial 当前文本」去重。
+    """
+
+    def __init__(self) -> None:
+        self._confirmed_seen: set[tuple[str, str]] = set()
+        self._last_partial = ""
+
+    def track(self, event: SubtitleEvent) -> bool:
+        """返回 True 表示该事件是新的（应对外发出）。"""
+        if event.kind == "confirmed":
+            key = (event.start, event.text)
+            if key in self._confirmed_seen:
+                return False
+            self._confirmed_seen.add(key)
+            return True
+        if event.kind == "partial":
+            text = event.text.strip()
+            if not text or text == self._last_partial:
+                return False
+            self._last_partial = text
+            return True
+        return True
+
+
 class SubtitleStream:
     """WhisperLiveKit /asr WebSocket 客户端。
 
@@ -72,8 +100,18 @@ class SubtitleStream:
     async for event in stream.events() 消费规范化事件。
     """
 
-    def __init__(self, url: str, language: str = "Chinese", token: str | None = None) -> None:
-        self._uri = f"{url}/asr?language={language}&mode=full"
+    def __init__(
+        self,
+        url: str,
+        language: str = "Chinese",
+        token: str | None = None,
+        pcm_input: bool = False,
+    ) -> None:
+        params = [f"language={language}", "mode=full"]
+        if pcm_input:
+            params.append("pcm_input=true")
+        query = "&".join(params)
+        self._uri = f"{url}/asr?{query}"
         if token:
             self._uri += f"&token={token}"
         self._ws: websockets.ClientConnection | None = None
