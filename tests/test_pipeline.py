@@ -10,7 +10,36 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.pipeline import build_pipeline
+from voice_realtime.interaction.pipeline import (
+    DEFAULT_SENSEVOICE_REPO,
+    _resolve_stt_model,
+    build_pipeline,
+)
+
+
+class TestResolveSttModel:
+    def test_local_path_passthrough(self, tmp_path) -> None:
+        model_dir = tmp_path / "sensevoice"
+        model_dir.mkdir()
+        with patch("voice_realtime.interaction.pipeline.snapshot_download") as mock_dl:
+            assert _resolve_stt_model(str(model_dir)) == str(model_dir)
+        mock_dl.assert_not_called()
+
+    def test_empty_uses_default_repo(self) -> None:
+        with patch(
+            "voice_realtime.interaction.pipeline.snapshot_download",
+            return_value="/mnt/snapshot",
+        ) as mock_dl:
+            assert _resolve_stt_model("") == "/mnt/snapshot"
+        mock_dl.assert_called_once_with(DEFAULT_SENSEVOICE_REPO)
+
+    def test_custom_repo_resolved(self) -> None:
+        with patch(
+            "voice_realtime.interaction.pipeline.snapshot_download",
+            return_value="/mnt/snapshot2",
+        ) as mock_dl:
+            assert _resolve_stt_model("some/other-stt") == "/mnt/snapshot2"
+        mock_dl.assert_called_once_with("some/other-stt")
 
 
 @pytest.fixture
@@ -38,6 +67,7 @@ def mock_services() -> list[MagicMock]:
     """Mock 重型服务类：FunASRSTTService 构造会立即下载模型（网络阻塞）。"""
     mocks = [MagicMock(), MagicMock(), MagicMock()]
     with (
+        patch("voice_realtime.interaction.pipeline.snapshot_download", return_value="/mnt/stt"),
         patch("voice_realtime.interaction.pipeline.FunASRSTTService", mocks[0]),
         patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
         patch("voice_realtime.interaction.pipeline.OpenAITTSService", mocks[2]),

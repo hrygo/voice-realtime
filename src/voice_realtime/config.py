@@ -48,6 +48,13 @@ class InteractionSettings(BaseSettings):
     llm_model: str = Field(default=DEFAULT_LLM_MODEL, description="交互 LLM 模型 ID")
     llm_temperature: float = Field(default=0.7, description="非 thinking 采样温度")
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
+    stt_model: str = Field(
+        default="",
+        description=(
+            "FunASR STT 模型：HF repo ID 或本地路径；空则自动解析 "
+            "FunAudioLLM/SenseVoiceSmall 缓存快照"
+        ),
+    )
     tts_bridge_url: str = Field(
         default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
     )

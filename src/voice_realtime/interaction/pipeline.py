@@ -2,13 +2,15 @@
 
 处理器链（顺序即数据流）：
   transport.input → VADProcessor → FunASRSTTService → LLMUserAggregator
-  → LmStudioLLMService → LLMAssistantAggregator → OpenAITTSService → transport.output
+  → LmStudioNativeLLMService → LLMAssistantAggregator → OpenAITTSService → transport.output
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from huggingface_hub import snapshot_download
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.pipeline import Pipeline
@@ -27,6 +29,19 @@ from voice_realtime.interaction.reasoning import (
 )
 
 OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生采样率
+DEFAULT_SENSEVOICE_REPO = "FunAudioLLM/SenseVoiceSmall"
+
+
+def _resolve_stt_model(model: str) -> str:
+    """把 STT 模型配置解析为 funasr 可用的本地路径。
+
+    funasr 的 hub 参数由 pipecat FunASRSTTService 硬编码为 modelscope
+    （本环境 SSRF 拦截），因此任何 repo ID 都先经 snapshot_download 落到本地。
+    已是本地路径（目录/文件存在）则原样透传。
+    """
+    if model and Path(model).exists():
+        return model
+    return snapshot_download(model or DEFAULT_SENSEVOICE_REPO)
 
 
 def build_system_prompt(persona: str | None = None) -> str:
@@ -62,7 +77,7 @@ def build_pipeline(
     stt = FunASRSTTService(
         device="cpu",
         settings=FunASRSTTSettings(
-            model="iic/SenseVoiceSmall",
+            model=_resolve_stt_model(settings.stt_model),
             language=Language.ZH,
             use_itn=True,
         ),

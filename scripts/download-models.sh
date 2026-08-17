@@ -12,9 +12,11 @@ PY
 
 echo "== 下载 SenseVoice (FunASR) =="
 uv run python - <<'PY'
-from funasr import AutoModel
-m = AutoModel(model="iic/SenseVoiceSmall")
-print("SenseVoice 就绪")
+# modelscope 在该环境被 SSRF 拦截 → 统一经 HuggingFace 快照落到本地缓存，
+# pipecat 的 FunASRSTTService 用本地路径加载（pipeline._resolve_stt_model）。
+from huggingface_hub import snapshot_download
+p = snapshot_download("FunAudioLLM/SenseVoiceSmall")
+print(f"SenseVoice 缓存: {p}")
 PY
 
 echo "== 下载 Qwen3-ASR streaming (WhisperLiveKit) =="
