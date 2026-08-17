@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import sys
 
 from voice_realtime.subtitles.events import SubtitleStream
@@ -39,10 +40,8 @@ def main() -> None:
     parser.add_argument("--url", default="ws://127.0.0.1:8001", help="字幕服务地址")
     parser.add_argument("--language", default="Chinese", help="语言")
     args = parser.parse_args()
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_run(args.url, args.language))
-    except KeyboardInterrupt:
-        pass
 
 
 if __name__ == "__main__":

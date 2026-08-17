@@ -39,7 +39,7 @@ def mock_services() -> list[MagicMock]:
     mocks = [MagicMock(), MagicMock(), MagicMock()]
     with (
         patch("voice_realtime.interaction.pipeline.FunASRSTTService", mocks[0]),
-        patch("voice_realtime.interaction.pipeline.LmStudioLLMService", mocks[1]),
+        patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
         patch("voice_realtime.interaction.pipeline.OpenAITTSService", mocks[2]),
     ):
         yield mocks

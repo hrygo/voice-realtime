@@ -1,44 +1,107 @@
-"""LmStudioLLMService（LM Studio reasoning 注入）+ 系统提示词测试。
+"""LmStudioNativeLLMService（LM Studio 原生端点 reasoning 开关）+ 系统提示词测试。
 
-验证 build_chat_completion_params 覆写点（pipecat 官方 provider 定制钩子）
-能注入 LM Studio 的 reasoning 开关。
+关键背景（QA 实测）：OpenAI 兼容端点忽略 reasoning 参数导致模型始终思考；
+本服务走原生 /api/v1/chat 端点（SSE，message.delta 逐字输出）。
+核心验证点：payload 构造（input items 转换、无 role 字段、reasoning/stream）
+与 SSE → OpenAI 兼容 chunk 的转换（空 delta 过滤）。
 """
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+from typing import Any
+
+from pipecat.processors.aggregators.llm_context import LLMContext
+
 from voice_realtime.interaction.pipeline import build_system_prompt
-from voice_realtime.interaction.reasoning import LmStudioLLMService
+from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
 
-FAKE_PARAMS = {"messages": [], "tools": None, "tool_choice": None}
+SSE_LINES = [
+    'data: {"type":"chat.start"}',
+    'data: {"type":"message.delta","content":"你"}',
+    'data: {"type":"message.delta","content":"好"}',
+    'data: {"type":"message.delta","content":""}',
+    'data: {"type":"message.complete"}',
+]
 
 
-class TestLmStudioLLMService:
-    def test_injects_reasoning_off_by_default(self) -> None:
-        svc = LmStudioLLMService(model="test-model", base_url="http://localhost:1234/v1")
-        params = svc.build_chat_completion_params(FAKE_PARAMS)  # type: ignore[arg-type]
-        assert params["extra_body"] == {"reasoning": "off"}
-        assert params["model"] == "test-model"
+class FakeSSEResponse:
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+
+    def raise_for_status(self) -> None:
+        pass
+
+    async def aiter_lines(self) -> Any:
+        for line in self._lines:
+            yield line
+
+
+def make_context() -> LLMContext:
+    return LLMContext(
+        messages=[
+            {"role": "system", "content": "你是一个中文语音助手"},
+            {"role": "user", "content": "你好"},
+        ]
+    )
+
+
+class TestLmStudioNativeLLMService:
+    def test_reasoning_off_by_default(self) -> None:
+        svc = LmStudioNativeLLMService(model="test-model", base_url="http://localhost:1234")
+        assert svc._reasoning == "off"
 
     def test_reasoning_configurable(self) -> None:
-        svc = LmStudioLLMService(
-            model="test-model",
+        svc = LmStudioNativeLLMService(
+            model="test-model", base_url="http://localhost:1234", reasoning="low"
+        )
+        assert svc._reasoning == "low"
+
+    def test_base_url_normalized_for_native_endpoint(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234/v1")
+        assert str(svc._http.base_url).rstrip("/") == "http://localhost:1234"
+
+    def test_base_url_root_kept_as_is(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        assert str(svc._http.base_url).rstrip("/") == "http://localhost:1234"
+
+    async def test_native_request_payload_and_sse_conversion(self) -> None:
+        svc = LmStudioNativeLLMService(
+            model="qwen/qwen3.6-35b-a3b",
             base_url="http://localhost:1234/v1",
-            reasoning="on",
+            temperature=0.9,
         )
-        params = svc.build_chat_completion_params(FAKE_PARAMS)  # type: ignore[arg-type]
-        assert params["extra_body"] == {"reasoning": "on"}
+        captured: dict[str, Any] = {}
 
-    def test_preserves_existing_params(self) -> None:
-        svc = LmStudioLLMService(model="test-model", base_url="http://localhost:1234/v1")
-        params = svc.build_chat_completion_params(
-            {"messages": [{"role": "user", "content": "hi"}], "tools": None, "tool_choice": None}  # type: ignore[arg-type]
-        )
-        assert params["messages"] == [{"role": "user", "content": "hi"}]
-        assert params["extra_body"] == {"reasoning": "off"}
+        @asynccontextmanager
+        async def fake_stream(
+            method: str, url: str, json: dict[str, Any] | None = None, **_: Any
+        ) -> Any:
+            captured["method"] = method
+            captured["url"] = url
+            captured["body"] = json or {}
+            yield FakeSSEResponse(SSE_LINES)
 
-    def test_base_url_passed_to_client(self) -> None:
-        svc = LmStudioLLMService(model="test-model", base_url="http://localhost:1234/v1")
-        assert str(svc._client.base_url).startswith("http://localhost:1234")  # type: ignore[attr-defined]
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        context = make_context()
+
+        chunks = [chunk async for chunk in await svc.get_chat_completions(context)]
+
+        # payload 构造验证：原生端点请求形状
+        payload = captured["body"]
+        assert captured["method"] == "POST"
+        assert captured["url"].endswith("/api/v1/chat")
+        assert payload["model"] == "qwen/qwen3.6-35b-a3b"
+        assert payload["reasoning"] == "off"
+        assert payload["temperature"] == 0.9
+        assert payload["stream"] is True
+        # input items：无 role 字段、按序为文本内容
+        assert payload["input"] == [
+            {"type": "text", "content": "你是一个中文语音助手"},
+            {"type": "text", "content": "你好"},
+        ]
+        # SSE → chunk 转换：空 delta 被过滤
+        assert [c.choices[0].delta.content for c in chunks] == ["你", "好"]
 
 
 class TestSystemPrompt:

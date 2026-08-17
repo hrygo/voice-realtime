@@ -21,7 +21,10 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
 from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.reasoning import DEFAULT_SYSTEM_PROMPT, LmStudioLLMService
+from voice_realtime.interaction.reasoning import (
+    DEFAULT_SYSTEM_PROMPT,
+    LmStudioNativeLLMService,
+)
 
 OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生采样率
 
@@ -65,7 +68,7 @@ def build_pipeline(
         ),
     )
 
-    llm = LmStudioLLMService(
+    llm = LmStudioNativeLLMService(
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         temperature=settings.llm_temperature,

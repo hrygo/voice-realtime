@@ -129,13 +129,17 @@ def create_app(
                 # WAV 需真实尺寸才能被严格解析器接受 → 缓冲后带完整头发送
                 chunks: list[bytes] = []
                 try:
-                    async for chunk in engine.stream_speech(
-                        req.input,
-                        voice=req.voice,
-                        speed=req.speed,
-                        lang="auto",
-                    ):
-                        chunks.append(chunk)
+                    chunks.extend(
+                        [
+                            chunk
+                            async for chunk in engine.stream_speech(
+                                req.input,
+                                voice=req.voice,
+                                speed=req.speed,
+                                lang="auto",
+                            )
+                        ]
+                    )
                 except Exception:
                     logger.exception("流式合成中断")
                     return

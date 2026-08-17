@@ -1,14 +1,29 @@
-"""LM Studio 适配：OpenAI 兼容 LLM + reasoning 开关注入。
+"""LM Studio 适配：原生 /api/v1/chat 端点 LLM 服务（reasoning 开关）。
 
-pipecat 的 OpenAILLMService 通过 base_url 直连 LM Studio；
-本模块在官方预留的 build_chat_completion_params 覆写点注入
-LM Studio 的 `reasoning` 参数（对话场景关、复杂推理开）。
+QA 验证结论（2026-08-17，本机实测）：
+- LM Studio 的 OpenAI 兼容端点 **忽略** `reasoning` 参数：模型始终思考
+  （`reasoning_content` 占满 token、`content` 为空、TTFT 被思考拉长）。
+- reasoning 开关只在 **原生 `/api/v1/chat`** 端点生效：
+  `reasoning:"off"` 时 `reasoning_output_tokens=0`、TTFT 0.261s（实测）。
+- 原生端点输入是**无 role 的 text items 序列**（按顺序隐式推断角色），
+  支持 `stream:true` 的 SSE（`message.delta` 事件逐字输出）；
+  不接受 `max_tokens`/`role` 字段。
+
+本服务子类化 `OpenAILLMService`（复用适配器、上下文、指标、中断机制），
+仅覆写 `get_chat_completions` 的传输层走原生端点。
 """
 
 from __future__ import annotations
 
-from typing import Any
+import json
+from collections.abc import AsyncIterator
+from types import SimpleNamespace
+from typing import Any, cast
 
+import httpx
+from openai import AsyncStream
+from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
+from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -18,9 +33,24 @@ DEFAULT_SYSTEM_PROMPT = (
     "5) 不确定时就坦诚说明。"
 )
 
+_NATIVE_CHAT_PATH = "/api/v1/chat"
 
-class LmStudioLLMService(OpenAILLMService):
-    """面向 LM Studio 的 OpenAILLMService 子类，注入 reasoning 开关。"""
+
+def _text_content(message: ChatCompletionMessageParam) -> str | None:
+    """提取文本消息内容；非文本（多模态）或空内容返回 None。"""
+    content = message.get("content")
+    if isinstance(content, str) and content:
+        return content
+    return None
+
+
+class LmStudioNativeLLMService(OpenAILLMService):
+    """调用 LM Studio 原生 /api/v1/chat 端点，注入有效的 reasoning 开关。
+
+    OpenAI 兼容端点忽略 reasoning 参数会导致模型始终思考（content 为空、
+    token 耗尽），因此必须走原生端点。实测 `reasoning:"off"` 时
+    reasoning_output_tokens=0，TTFT≈260ms，满足对话实时性预算。
+    """
 
     def __init__(
         self,
@@ -42,9 +72,57 @@ class LmStudioLLMService(OpenAILLMService):
             **kwargs,
         )
         self._reasoning = reasoning
+        self._model = model
+        self._temperature = temperature
+        # 原生端点挂在 LM Studio 根路径下；兼容配置里带 "/v1" 的写法。
+        root_url = base_url.rstrip("/")
+        if root_url.endswith("/v1"):
+            root_url = root_url[: -len("/v1")]
+        self._http = httpx.AsyncClient(base_url=root_url)
 
-    def build_chat_completion_params(self, params_from_context: Any) -> dict[str, Any]:
-        """在官方 provider 定制钩子注入 LM Studio reasoning 参数。"""
-        params = super().build_chat_completion_params(params_from_context)
-        params["extra_body"] = {"reasoning": self._reasoning}
-        return params
+    async def _native_completions(
+        self, payload: dict[str, Any]
+    ) -> AsyncIterator[ChatCompletionChunk]:
+        """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
+        async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                event = json.loads(line[len("data: ") :])
+                if event.get("type") != "message.delta":
+                    continue
+                content = event.get("content")
+                if not content:
+                    continue
+                chunk = SimpleNamespace(
+                    usage=None,
+                    model=None,
+                    choices=[
+                        SimpleNamespace(delta=SimpleNamespace(content=content, tool_calls=None))
+                    ],
+                )
+                yield cast(ChatCompletionChunk, chunk)
+
+    async def get_chat_completions(self, context: LLMContext) -> AsyncStream[ChatCompletionChunk]:
+        """覆写传输层：OpenAI 格式消息 → 原生端点 input items → SSE 流。"""
+        adapter = self.get_llm_adapter()
+        params_from_context = adapter.get_llm_invocation_params(
+            context,
+            system_instruction=None,
+            convert_developer_to_user=False,
+        )
+        messages = params_from_context["messages"]
+        input_items = [
+            {"type": "text", "content": text}
+            for text in (_text_content(m) for m in messages)
+            if text
+        ]
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "input": input_items,
+            "reasoning": self._reasoning,
+            "temperature": self._temperature,
+            "stream": True,
+        }
+        return cast(AsyncStream[ChatCompletionChunk], self._native_completions(payload))
