@@ -33,7 +33,9 @@ tts = [
 ]
 # 交互管道 (Pipecat: FunASR STT + LLM + 自定义 TTS) — 重型依赖，独立组
 interaction = [
-    "pipecat-ai[funasr,silero,openai,soundfile,websocket]>=1.0",
+    "pipecat-ai[funasr,silero,openai,soundfile,websocket,local]>=1.0",
+    "torch>=2.5",
+    "torchaudio>=2.5",
 ]
 # 开发与质量门禁
 dev = [
