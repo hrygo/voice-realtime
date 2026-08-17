@@ -117,9 +117,10 @@ class TestPrepare:
         assert path == str(bin_dir / "wlk")
 
     def test_resolve_wlk_none_raises(self) -> None:
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(RuntimeError, match="未找到 wlk"):
-                resolve_wlk_command()
+        with patch("shutil.which", return_value=None), pytest.raises(
+            RuntimeError, match="未找到 wlk"
+        ):
+            resolve_wlk_command()
 
     def test_prepare_missing_repo_raises(self, tmp_path: Path) -> None:
         settings = SubtitleSettings(repo_path=tmp_path / "nope")
