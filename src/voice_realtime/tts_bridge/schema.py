@@ -34,10 +34,7 @@ class SpeechRequest(BaseModel):
     @field_validator("input")
     @classmethod
     def _strip_blank(cls, v: str) -> str:
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("input 不能为空白")
-        return stripped
+        return v.strip()
 
 
 class ErrorBody(BaseModel):
