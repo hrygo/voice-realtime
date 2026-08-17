@@ -44,4 +44,5 @@ uv run ruff check . && uv run mypy src && uv run pytest
 
 - Apple Silicon (M5 Max) / macOS 26 / 128GB
 - LM Studio 运行于 `localhost:1234`（`qwen/qwen3.6-35b-a3b`）
-- 语音模型经 HuggingFace 下载（mlx-community Qwen3-TTS / SenseVoice）
+- 语音模型经 HuggingFace 下载（mlx-community Qwen3-TTS / FunAudioLLM SenseVoiceSmall 本地快照）
+- SenseVoice 直接经 `snapshot_download` 缓存到 `~/.cache/huggingface/hub`，避免被拦截的 modelscope 源
