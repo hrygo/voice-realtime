@@ -22,17 +22,20 @@ from voice_realtime.tts_bridge.schema import HealthResponse, SpeechRequest
 logger = logging.getLogger(__name__)
 
 
-def build_wav_header(sample_rate: int, channels: int = 1, bits: int = 16) -> bytes:
+def build_wav_header(
+    sample_rate: int, channels: int = 1, bits: int = 16, data_size: int = 0
+) -> bytes:
     """构造标准 44 字节 PCM WAV 头（RIFF/WAVE/fmt/data）。
 
-    流式输出时块大小未知，RIFF 与 data 尺寸字段置 0（播放器兼容）。
+    已知 data_size 时写入真实尺寸（严格解析器兼容）；
+    未知（流式场景）时置 0。
     """
     byte_rate = sample_rate * channels * bits // 8
     block_align = channels * bits // 8
     return struct.pack(
         "<4sI4s4sIHHIIHH4sI",
         b"RIFF",
-        0,  # RIFF chunk size（未知，置 0）
+        36 + data_size,  # RIFF chunk size
         b"WAVE",
         b"fmt ",
         16,  # fmt chunk size
@@ -43,7 +46,7 @@ def build_wav_header(sample_rate: int, channels: int = 1, bits: int = 16) -> byt
         block_align,
         bits,
         b"data",
-        0,  # data chunk size（未知，置 0）
+        data_size,
     )
 
 
@@ -123,18 +126,36 @@ def create_app(
 
         async def _stream() -> AsyncIterator[bytes]:
             if req.response_format == "wav":
-                yield build_wav_header(engine.sample_rate)
-            try:
-                async for chunk in engine.stream_speech(
-                    req.input,
-                    voice=req.voice,
-                    speed=req.speed,
-                    lang="auto",
-                ):
-                    yield chunk
-            except Exception:
-                logger.exception("流式合成中断")
-                return
+                # WAV 需真实尺寸才能被严格解析器接受 → 缓冲后带完整头发送
+                chunks: list[bytes] = []
+                try:
+                    async for chunk in engine.stream_speech(
+                        req.input,
+                        voice=req.voice,
+                        speed=req.speed,
+                        lang="auto",
+                    ):
+                        chunks.append(chunk)
+                except Exception:
+                    logger.exception("流式合成中断")
+                    return
+                data = b"".join(chunks)
+                if not data:
+                    return
+                yield build_wav_header(engine.sample_rate, data_size=len(data))
+                yield data
+            else:
+                try:
+                    async for chunk in engine.stream_speech(
+                        req.input,
+                        voice=req.voice,
+                        speed=req.speed,
+                        lang="auto",
+                    ):
+                        yield chunk
+                except Exception:
+                    logger.exception("流式合成中断")
+                    return
 
         media_type = "audio/wav" if req.response_format == "wav" else "audio/x-pcm"
         return StreamingResponse(_stream(), media_type=media_type)

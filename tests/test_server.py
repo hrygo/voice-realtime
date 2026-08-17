@@ -74,6 +74,9 @@ class TestSpeech:
         assert body[36:40] == b"data"
         pcm_start = 44
         assert (len(body) - pcm_start) % 2 == 0
+        # 缓冲模式：data 尺寸字段写入真实值（严格解析器兼容）
+        data_size = struct.unpack("<I", body[40:44])[0]
+        assert data_size == len(body) - 44
 
     @pytest.mark.asyncio
     async def test_pcm_response_is_raw_no_header(self, client: httpx.AsyncClient) -> None:
@@ -160,7 +163,7 @@ class TestWavHeader:
         byte_rate = struct.unpack("<I", header[28:32])[0]
         assert byte_rate == SAMPLE_RATE * 2
 
-    def test_header_chunk_sizes_zeroed_for_streaming(self) -> None:
-        header = build_wav_header(SAMPLE_RATE)
-        assert struct.unpack("<I", header[4:8])[0] == 0  # RIFF size (未知)
-        assert struct.unpack("<I", header[40:44])[0] == 0  # data size (未知)
+    def test_header_with_data_size_writes_real_sizes(self) -> None:
+        header = build_wav_header(SAMPLE_RATE, data_size=9600)
+        assert struct.unpack("<I", header[4:8])[0] == 36 + 9600  # RIFF size
+        assert struct.unpack("<I", header[40:44])[0] == 9600  # data size

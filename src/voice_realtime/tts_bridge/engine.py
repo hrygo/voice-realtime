@@ -56,8 +56,11 @@ class TTSEngine:
 
     def _warmup(self) -> None:
         assert self._model is not None
+        is_voice_design = self._model.config.tts_model_type == "voice_design"
+        instruct: str | None = VOICE_PROFILES.get(self._settings.voice, self._settings.voice) if is_voice_design else None
         for _ in self._model.generate(
             text="预热",
+            instruct=instruct,
             stream=True,
             streaming_interval=self._settings.chunk_ms / 1000,
         ):
