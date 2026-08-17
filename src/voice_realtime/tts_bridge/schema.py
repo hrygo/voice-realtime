@@ -1,0 +1,57 @@
+"""OpenAI 兼容 TTS 请求/响应模型（`POST /v1/audio/speech` 子集）。
+
+对齐 OpenAI Audio API 规范；本地桥只实现 WAV/PCM 两种流式输出格式
+（mp3/opus/aac/flac 需要额外编码器，非实时链路必需，故不实现）。
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+ResponseFormat = Literal["wav", "pcm"]
+Voice = str  # VoiceDesign profile 名（如 "default" / "luna" / 自定义设计提示）
+
+DEFAULT_ERROR_BODY: dict[str, str | int | None] = {
+    "message": "",
+    "type": "invalid_request_error",
+    "code": None,
+}
+
+
+class SpeechRequest(BaseModel):
+    """OpenAI 兼容语音合成请求体。"""
+
+    model: str = Field(description="模型 ID（桥忽略该值，固定使用配置的 Qwen3-TTS）")
+    input: str = Field(min_length=1, max_length=2000, description="待合成文本")
+    voice: Voice = Field(default="default", description="VoiceDesign 音色 profile")
+    response_format: ResponseFormat = Field(
+        default="wav", description="输出格式：wav(带头) / pcm(裸 16-bit LE)"
+    )
+    speed: float = Field(default=1.0, ge=0.25, le=4.0, description="语速倍率")
+
+    @field_validator("input")
+    @classmethod
+    def _strip_blank(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("input 不能为空白")
+        return stripped
+
+
+class ErrorBody(BaseModel):
+    """OpenAI 风格错误响应体。"""
+
+    error: dict[str, str | int | None] = Field(default_factory=lambda: dict(DEFAULT_ERROR_BODY))
+
+
+class HealthResponse(BaseModel):
+    """健康检查响应。"""
+
+    status: Literal["ok", "warming_up", "error"] = "ok"
+    engine: str = "mlx-audio Qwen3-TTS"
+    model: str
+    voice: str
+    sample_rate: int
+    format: str = "wav"

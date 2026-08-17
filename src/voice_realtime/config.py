@@ -1,0 +1,108 @@
+"""集中配置层：TTS 桥 / 交互管道 / 字幕服务 三个子系统的全部可调参数。
+
+使用 pydantic-settings，支持环境变量覆盖（前缀 `VR_`）与 `.env` 文件。
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
+DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
+DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
+
+
+class BridgeSettings(BaseSettings):
+    """qwen3-tts-openai 桥配置（mlx-audio Qwen3-TTS 引擎）。"""
+
+    model_config = SettingsConfigDict(env_prefix="VR_BRIDGE_", env_file=".env", extra="ignore")
+
+    host: str = Field(default="127.0.0.1", description="桥服务监听地址")
+    port: int = Field(default=8765, description="桥服务监听端口")
+    model: str = Field(default=DEFAULT_QWEN3_TTS_MODEL, description="mlx-audio Qwen3-TTS 模型 ID")
+    voice: str = Field(default="default", description="VoiceDesign 音色 profile")
+    sample_rate: int = Field(default=24000, description="输出采样率 (Hz)")
+    chunk_ms: int = Field(default=100, description="流式分块大小 (ms)")
+    warmup_on_start: bool = Field(default=True, description="启动时预热模型")
+
+    @field_validator("sample_rate")
+    @classmethod
+    def _validate_sample_rate(cls, v: int) -> int:
+        if v not in (16000, 24000, 44100, 48000):
+            raise ValueError(f"不支持的采样率: {v}")
+        return v
+
+
+class InteractionSettings(BaseSettings):
+    """Pipecat 交互管道配置（FunASR STT → LM Studio → TTS 桥）。"""
+
+    model_config = SettingsConfigDict(env_prefix="VR_INTERACTION_", env_file=".env", extra="ignore")
+
+    llm_base_url: str = Field(
+        default=DEFAULT_LM_STUDIO_URL, description="LM Studio OpenAI 兼容端点"
+    )
+    llm_model: str = Field(default=DEFAULT_LLM_MODEL, description="交互 LLM 模型 ID")
+    llm_temperature: float = Field(default=0.7, description="非 thinking 采样温度")
+    stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
+    tts_bridge_url: str = Field(
+        default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
+    )
+    tts_voice: str = Field(default="default", description="交互 TTS 音色")
+    input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
+    sample_rate: int = Field(default=16000, description="音频管线采样率")
+    silence_secs: float = Field(default=0.8, description="端点判定静音阈值 (秒)")
+    max_session_seconds: int = Field(default=600, description="单次会话上限 (秒)")
+
+
+class SubtitleSettings(BaseSettings):
+    """WhisperLiveKit 字幕服务配置。"""
+
+    model_config = SettingsConfigDict(env_prefix="VR_SUBTITLE_", env_file=".env", extra="ignore")
+
+    repo_path: Path = Field(
+        default=Path("tools/WhisperLiveKit"), description="WhisperLiveKit 克隆路径"
+    )
+    backend: str = Field(default="qwen3-streaming", description="ASR 后端 (qwen3-streaming/funasr)")
+    language: str = Field(default="Chinese", description="字幕语言")
+    host: str = Field(default="127.0.0.1", description="字幕服务监听地址")
+    port: int = Field(default=8001, description="字幕服务端口")
+    device: str = Field(default="mps", description="推理设备 (mps/cpu)")
+    model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
+    output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
+
+    @field_validator("backend")
+    @classmethod
+    def _validate_backend(cls, v: str) -> str:
+        allowed = {"qwen3-streaming", "funasr", "auto"}
+        if v not in allowed:
+            raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
+        return v
+
+
+class Settings(BaseSettings):
+    """聚合配置入口。"""
+
+    model_config = SettingsConfigDict(env_prefix="VR_", env_file=".env", extra="ignore")
+
+    bridge: BridgeSettings = Field(default_factory=BridgeSettings)
+    interaction: InteractionSettings = Field(default_factory=InteractionSettings)
+    subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
+
+    def dump_table(self) -> str:
+        """以可读表格输出当前生效配置（用于启动横幅与诊断）。"""
+        lines = ["voice-realtime 配置"]
+        for section in (self.bridge, self.interaction, self.subtitles):
+            lines.append(f"\n[{type(section).__name__}]")
+            for key, value in section.model_dump().items():
+                lines.append(f"  {key}: {value}")
+        return "\n".join(lines)
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """进程级单例配置（FastAPI 依赖注入与 CLI 共用）。"""
+    return Settings()

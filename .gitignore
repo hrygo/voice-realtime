@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 工具环境 (WhisperLiveKit 等克隆安装)
+tools/
+*.local/
+
+# 运行时产物
+*.wav
+*.srt
+*.log
+runtime/
+
+# 系统
+.DS_Store
