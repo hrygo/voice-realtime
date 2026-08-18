@@ -1,0 +1,199 @@
+"""StatusBridgeObserver：Pipecat 管道帧 → `/ws/assistant` WS 事件桥。
+
+非侵入式观测：注册为 `PipelineWorker(observers=[...])`，由 `WorkerObserver`
+异步队列分发（不阻塞管道）。捕获结构化帧并序列化为《Voice Studio UI 设计
+方案》§5 协议事件，multi-cast 到浏览器客户端。
+
+覆盖帧：
+- `InterimTranscriptionFrame` / `TranscriptionFrame` → `stt`（interim/final）
+- `LLMTextFrame` (增量) / `LLMFullResponseEndFrame` → `llm` + `turn_id`
+- `TTSTextFrame` / `TTSStartedFrame` / `TTSStoppedFrame` → `tts`
+- `TTSAudioRawFrame` → `tts`（仅计数，时间窗节流，不逐帧广播）
+- `UserStartedSpeakingFrame` / `UserStoppedSpeakingFrame` → `vad`
+- `InterruptionFrame` → `interruption`
+- 管道启停 → `system`
+
+注意：`on_push_frame` 对每个 source→destination 传输都触发，同一帧对象
+会被推送多次，必须按 `frame.id` 去重后再序列化。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import time
+from collections.abc import Awaitable, Callable
+from datetime import datetime
+from typing import Any
+
+from pipecat.frames.frames import (
+    EndFrame,
+    Frame,
+    InterimTranscriptionFrame,
+    InterruptionFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    StartFrame,
+    TranscriptionFrame,
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+    TTSTextFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+)
+from pipecat.observers.base_observer import BaseObserver, FramePushed
+
+logger = logging.getLogger(__name__)
+
+# on_push_frame 按 frame.id 去重的集合上限；超限整体清空（旧的 frame 不会再出现，安全）
+_MAX_SEEN_IDS = 10000
+
+
+class StatusBridgeObserver(BaseObserver):
+    """管道状态观测器：帧 → 协议事件 → 浏览器 WS 广播。
+
+    用法：
+        observer = StatusBridgeObserver()
+        observer.add_client(ws_send)          # 浏览器订阅
+        worker = PipelineWorker(pipeline, observers=[observer])
+    """
+
+    def __init__(self, tts_throttle_secs: float = 0.5) -> None:
+        super().__init__()
+        self._ws_clients: list[Callable[[str], Awaitable[None]]] = []
+        self._seen_ids: set[int] = set()
+        self._tts_throttle_secs = tts_throttle_secs
+        self._tts_chunks = 0
+        self._tts_last_broadcast: float = 0.0
+        self._turn_id = 0
+        self._current_sentence = ""
+
+    # ---------- 客户端管理（与 SubtitleProxy 同接口） ----------
+
+    def add_client(self, ws_send: Callable[[str], Awaitable[None]]) -> str:
+        """注册浏览器 WS 客户端，返回 client_id（用于移除）。"""
+        self._ws_clients.append(ws_send)
+        client_id = f"asst_{len(self._ws_clients)}"
+        logger.info("StatusBridgeObserver: 新浏览器订阅 (共 %d 个)", len(self._ws_clients))
+        return client_id
+
+    def remove_client(self, ws_send: Callable[[str], Awaitable[None]]) -> None:
+        """移除浏览器 WS 客户端。"""
+        if ws_send in self._ws_clients:
+            self._ws_clients.remove(ws_send)
+            logger.info("StatusBridgeObserver: 浏览器取消订阅 (剩余 %d 个)", len(self._ws_clients))
+
+    @property
+    def has_clients(self) -> bool:
+        return len(self._ws_clients) > 0
+
+    # ---------- BaseObserver 回调 ----------
+
+    async def on_pipeline_started(self) -> None:
+        """管道完全启动后广播 system 事件。"""
+        await self._emit_event({"type": "system", "state": "pipeline_started"})
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        """捕获帧传输：去重后按类型序列化为协议事件。"""
+        frame = data.frame
+        if not self._dedupe(frame):
+            return
+        try:
+            await self._handle_frame(frame)
+        except Exception:
+            # 观测不可阻塞管道：任何序列化/广播失败只记录，不外溢
+            logger.warning("StatusBridgeObserver: 处理帧异常 %s", frame.__class__.__name__,
+                           exc_info=True)
+
+    # ---------- 帧处理 ----------
+
+    async def _handle_frame(self, frame: Frame) -> None:
+        if isinstance(frame, InterimTranscriptionFrame):
+            await self._emit_event(
+                {"type": "stt", "state": "interim", "text": frame.text, "t": self._now()}
+            )
+        elif isinstance(frame, TranscriptionFrame):
+            await self._emit_event(
+                {"type": "stt", "state": "final", "text": frame.text, "t": self._now()}
+            )
+        elif isinstance(frame, LLMTextFrame):
+            await self._emit_event(
+                {
+                    "type": "llm",
+                    "state": "streaming",
+                    "text": frame.text,
+                    "turn_id": self._turn_id,
+                }
+            )
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            await self._emit_event(
+                {"type": "llm", "state": "final", "turn_id": self._turn_id}
+            )
+            self._turn_id += 1
+        elif isinstance(frame, TTSTextFrame):
+            # 记录当前句子，供 TTSStartedFrame 携带
+            self._current_sentence = frame.text
+        elif isinstance(frame, TTSStartedFrame):
+            await self._emit_event(
+                {"type": "tts", "state": "started", "sentence": self._current_sentence}
+            )
+        elif isinstance(frame, TTSStoppedFrame):
+            await self._emit_event({"type": "tts", "state": "stopped"})
+            self._tts_chunks = 0
+        elif isinstance(frame, TTSAudioRawFrame):
+            await self._handle_tts_audio()
+        elif isinstance(frame, UserStartedSpeakingFrame):
+            await self._emit_event(
+                {"type": "vad", "state": "user_speaking", "t": self._now()}
+            )
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            await self._emit_event(
+                {"type": "vad", "state": "user_silence", "t": self._now()}
+            )
+        elif isinstance(frame, InterruptionFrame):
+            await self._emit_event(
+                {"type": "interruption", "state": "detected", "t": self._now()}
+            )
+        elif isinstance(frame, EndFrame):
+            await self._emit_event({"type": "system", "state": "pipeline_stopped"})
+        elif isinstance(frame, StartFrame):
+            # StartFrame 系统帧在 on_push_frame 也能捕获；on_pipeline_started 兜底
+            await self._emit_event({"type": "system", "state": "pipeline_started"})
+
+    async def _handle_tts_audio(self) -> None:
+        """TTS 音频帧：仅计数，超节流窗口才广播一次 synthesizing。"""
+        self._tts_chunks += 1
+        now = time.monotonic()
+        if now - self._tts_last_broadcast < self._tts_throttle_secs:
+            return
+        self._tts_last_broadcast = now
+        await self._emit_event(
+            {"type": "tts", "state": "synthesizing", "chunks": self._tts_chunks}
+        )
+
+    # ---------- 内部工具 ----------
+
+    def _dedupe(self, frame: Frame) -> bool:
+        """同一帧对象经多跳传输会触发多次 on_push_frame；按 id 去重。"""
+        if frame.id in self._seen_ids:
+            return False
+        self._seen_ids.add(frame.id)
+        if len(self._seen_ids) > _MAX_SEEN_IDS:
+            self._seen_ids.clear()
+        return True
+
+    async def _emit_event(self, payload: dict[str, Any]) -> None:
+        """序列化为 JSON 并 multi-cast 给所有浏览器客户端。"""
+        if not self._ws_clients:
+            return
+        text = json.dumps(payload, ensure_ascii=False)
+        tasks = [client(text) for client in self._ws_clients]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.debug("StatusBridgeObserver: 广播 %s", text)
+
+    @staticmethod
+    def _now() -> str:
+        """事件时间戳 `HH:MM:SS.mmm`。"""
+        return datetime.now().strftime("%H:%M:%S.%f")[:-3]

@@ -1,0 +1,235 @@
+"""StatusBridgeObserver 单元测试：帧→事件映射、去重、节流、广播。"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from unittest.mock import AsyncMock
+
+from pipecat.frames.frames import (
+    EndFrame,
+    InterimTranscriptionFrame,
+    InterruptionFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    StartFrame,
+    TranscriptionFrame,
+    TTSAudioRawFrame,
+    TTSStartedFrame,
+    TTSStoppedFrame,
+    TTSTextFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
+)
+from pipecat.observers.base_observer import FramePushed
+
+from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
+
+
+def _upsert_mock_client(observer: StatusBridgeObserver) -> AsyncMock:
+    client = AsyncMock()
+    observer.add_client(client)
+    return client
+
+
+async def _push(observer: StatusBridgeObserver, frame) -> None:
+    """模拟一次 source→destination 帧传输（直接调 on_push_frame）。"""
+    data = FramePushed(  # type: ignore[arg-type]
+        source=None, destination=None, frame=frame, direction="downstream", timestamp=0
+    )
+    await observer.on_push_frame(data)
+
+
+def _text_args(**overrides: str) -> dict[str, str]:
+    """TextFrame 子类公共构造参数。"""
+    args = {"text": "你好", "user_id": "u1", "timestamp": "t1"}
+    args.update(overrides)
+    return args
+
+
+def _tts_audio() -> TTSAudioRawFrame:
+    """构造一个 TTS 输出音频帧（24k 单声道 10ms）。"""
+    return TTSAudioRawFrame(audio=b"\x00" * 320, sample_rate=24000, num_channels=1)
+
+
+class TestClientManagement:
+    async def test_add_remove_client(self) -> None:
+        observer = StatusBridgeObserver()
+        send = AsyncMock()
+        observer.add_client(send)
+        assert observer.has_clients
+        observer.remove_client(send)
+        assert not observer.has_clients
+
+
+class TestEventMapping:
+    async def test_transcription_final_event(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, TranscriptionFrame(**_text_args(), finalized=True))
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "stt"
+        assert payload["state"] == "final"
+        assert payload["text"] == "你好"
+
+    async def test_interim_transcription_event(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, InterimTranscriptionFrame(**_text_args()))
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "stt"
+        assert payload["state"] == "interim"
+
+    async def test_llm_streaming_event_with_turn_id(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, LLMTextFrame(text="增量"))
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "llm"
+        assert payload["state"] == "streaming"
+        assert payload["text"] == "增量"
+        assert payload["turn_id"] == 0
+
+    async def test_llm_end_increments_turn(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, LLMTextFrame(text="第一轮"))
+        await _push(observer, LLMFullResponseEndFrame())
+        first, second = (json.loads(c.args[0]) for c in client.call_args_list)
+        assert first["turn_id"] == 0
+        assert second["type"] == "llm"
+        assert second["state"] == "final"
+        assert second["turn_id"] == 0
+        # 第二轮开始 turn_id 递增
+        await _push(observer, LLMTextFrame(text="第二轮"))
+        third = json.loads(client.call_args_list[-1].args[0])
+        assert third["turn_id"] == 1
+
+    async def test_tts_started_carries_sentence(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, TTSTextFrame(text="这句话将被播放", aggregated_by="sentence"))
+        await _push(observer, TTSStartedFrame())
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "tts"
+        assert payload["state"] == "started"
+        assert payload["sentence"] == "这句话将被播放"
+
+    async def test_tts_stopped_resets_chunks(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, TTSStoppedFrame())
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "tts"
+        assert payload["state"] == "stopped"
+        assert observer._tts_chunks == 0  # type: ignore[attr-defined]
+
+    async def test_vad_user_speaking_frames(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, UserStartedSpeakingFrame())
+        first = json.loads(client.call_args_list[0].args[0])
+        assert first["type"] == "vad"
+        assert first["state"] == "user_speaking"
+        await _push(observer, UserStoppedSpeakingFrame())
+        second = json.loads(client.call_args_list[1].args[0])
+        assert second["state"] == "user_silence"
+
+    async def test_interruption_event(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, InterruptionFrame())
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "interruption"
+        assert payload["state"] == "detected"
+
+    async def test_pipeline_started_via_callback(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await observer.on_pipeline_started()
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "system"
+        assert payload["state"] == "pipeline_started"
+
+    async def test_endframe_stops_pipeline(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, EndFrame())
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "system"
+        assert payload["state"] == "pipeline_stopped"
+
+    async def test_startframe_emits_pipeline_started(self) -> None:
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        await _push(observer, StartFrame())
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "system"
+        assert payload["state"] == "pipeline_started"
+
+
+class TestDedup:
+    async def test_same_frame_pushed_twice_emits_once(self) -> None:
+        """同一帧经多跳传输（同 id）只序列化一次。"""
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+        frame = LLMTextFrame(text="只发一次")
+        await _push(observer, frame)
+        await _push(observer, frame)
+        assert client.call_count == 1
+
+
+class TestTtsThrottling:
+    async def test_audio_frames_throttled_in_window(self) -> None:
+        """节流窗口内多个 TTS 音频帧只广播一次 synthesizing。
+
+        chunks = 到广播时刻为止的总块数（窗口内后续帧静默，窗口外再广播）。
+        """
+        observer = StatusBridgeObserver(tts_throttle_secs=0.5)
+        client = _upsert_mock_client(observer)
+        for _ in range(5):
+            await _push(observer, _tts_audio())
+        assert client.call_count == 1
+        payload = json.loads(client.call_args.args[0])
+        assert payload["type"] == "tts"
+        assert payload["state"] == "synthesizing"
+        assert payload["chunks"] == 1
+
+    async def test_audio_broadcast_again_after_window(self) -> None:
+        """窗口过后再次收到音频帧 → 再次广播（chunks 累计）。"""
+        observer = StatusBridgeObserver(tts_throttle_secs=0.02)
+        client = _upsert_mock_client(observer)
+        await _push(observer, _tts_audio())
+        await asyncio.sleep(0.05)
+        await _push(observer, _tts_audio())
+        assert client.call_count == 2
+        last = json.loads(client.call_args_list[-1].args[0])
+        assert last["chunks"] == 2
+
+
+class TestBroadcast:
+    async def test_multicast_to_multiple_clients(self) -> None:
+        observer = StatusBridgeObserver()
+        c1 = AsyncMock()
+        c2 = AsyncMock()
+        observer.add_client(c1)
+        observer.add_client(c2)
+        await _push(observer, UserStartedSpeakingFrame())
+        assert c1.call_count == 1
+        assert c2.call_count == 1
+
+    async def test_client_exception_does_not_block_others(self) -> None:
+        """一个客户端 send 抛异常不影响其他客户端及观测循环。"""
+        observer = StatusBridgeObserver()
+        bad = AsyncMock(side_effect=RuntimeError("ws closed"))
+        good = AsyncMock()
+        observer.add_client(bad)
+        observer.add_client(good)
+        # on_push_frame 不应抛异常（广播层已隔离）
+        await _push(observer, LLMTextFrame(text="ok"))
+        assert good.call_count == 1
+
+    async def test_no_clients_no_emit(self) -> None:
+        observer = StatusBridgeObserver()
+        await _push(observer, LLMTextFrame(text="无人订阅"))
+        assert observer._seen_ids  # 帧仍被去重跟踪，但无广播
