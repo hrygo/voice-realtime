@@ -118,3 +118,18 @@
   font-size: 0.75rem;
   color: var(--text-secondary);
 }
+
+/* 助手说话时字幕面板高亮 */
+.subtitle-panel.assistant-speaking {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.subtitle-panel.assistant-speaking .subtitle-header {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-bottom-color: var(--accent);
+}
+
+.subtitle-panel.assistant-speaking .subtitle-toolbar {
+  border-top-color: var(--accent);
+}

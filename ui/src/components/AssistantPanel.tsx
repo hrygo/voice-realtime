@@ -8,6 +8,7 @@ import {
 	selectAssistantTranscript,
 	useAssistantStore,
 } from "../stores/assistantStore";
+import { useUISettingsStore } from "../stores/uiSettingsStore";
 import "./AssistantPanel.css";
 
 type Command = "clear_context" | "stop_session";
@@ -26,6 +27,9 @@ const ACTIVE_PHASES: readonly AssistantPhase[] = [
 	"speaking",
 ];
 
+/** 音色请求失败时的回退列表。 */
+const FALLBACK_VOICES: readonly string[] = ["default", "warm", "bright", "calm"];
+
 export default function AssistantPanel() {
 	const phase = useAssistantStore(selectAssistantPhase);
 	const transcript = useAssistantStore(selectAssistantTranscript);
@@ -35,6 +39,92 @@ export default function AssistantPanel() {
 	const transcriptRef = useRef<HTMLDivElement>(null);
 	const commandSocketRef = useRef<WebSocket | null>(null);
 	const [commandState, setCommandState] = useState<CommandState>("waiting");
+
+	/* ---- 人格编辑器 ---- */
+	const [personaOpen, setPersonaOpen] = useState(false);
+	const persona = useUISettingsStore((s) => s.persona);
+	const setPersona = useUISettingsStore((s) => s.setPersona);
+	const [personaDraft, setPersonaDraft] = useState(persona);
+	const [personaError, setPersonaError] = useState("");
+
+	/* ---- 音色选择 ---- */
+	const voice = useUISettingsStore((s) => s.voice);
+	const setVoice = useUISettingsStore((s) => s.setVoice);
+	const [availableVoices, setAvailableVoices] = useState<readonly string[]>(FALLBACK_VOICES);
+	const [voiceFeedback, setVoiceFeedback] = useState("");
+
+	/** 通用命令发送：接受任意 payload，发送到 /ws/assistant/cmd。 */
+	const sendCommandWith = useCallback(
+		(payload: Record<string, unknown>) => {
+			const commandSocket = commandSocketRef.current;
+			if (!commandSocket || commandSocket.readyState !== WebSocket.OPEN) {
+				console.warn("语音助手控制端接入中", payload);
+				setCommandState("waiting");
+				return;
+			}
+
+			try {
+				commandSocket.send(JSON.stringify(payload));
+				setCommandState("sent");
+			} catch (error) {
+				console.warn("语音助手控制指令发送失败", error);
+				setCommandState("waiting");
+			}
+		},
+		[],
+	);
+
+	const sendCommand = useCallback((command: Command) => {
+		sendCommandWith({ cmd: command });
+	}, [sendCommandWith]);
+
+	/** 打开人格编辑器时同步草稿。 */
+	const openPersona = useCallback(() => {
+		setPersonaDraft(persona);
+		setPersonaError("");
+		setPersonaOpen(true);
+	}, [persona]);
+
+	/** 保存人格：非空校验，发送 set_persona 命令，持久化。 */
+	const savePersona = useCallback(() => {
+		const trimmed = personaDraft.trim();
+		if (!trimmed) {
+			setPersonaError("人格提示不能为空");
+			return;
+		}
+		setPersona(trimmed);
+		sendCommandWith({ cmd: "set_persona", prompt: trimmed });
+		setPersonaOpen(false);
+	}, [personaDraft, setPersona, sendCommandWith]);
+
+	/** 取消人格编辑。 */
+	const cancelPersona = useCallback(() => {
+		setPersonaOpen(false);
+		setPersonaError("");
+	}, []);
+
+	/** 音色切换。 */
+	const handleVoiceChange = useCallback(
+		(value: string) => {
+			const previous = voice;
+			setVoice(value);
+			setVoiceFeedback("");
+			const socket = commandSocketRef.current;
+			if (!socket || socket.readyState !== WebSocket.OPEN) {
+				console.warn("语音助手控制端接入中，音色切换暂未发送");
+				return;
+			}
+			try {
+				socket.send(JSON.stringify({ cmd: "set_voice", voice: value }));
+				// 假设后端无响应，直接标记成功。
+			} catch (error) {
+				console.warn("音色切换指令发送失败", error);
+				setVoice(previous);
+				setVoiceFeedback("音色切换失败，已恢复原值");
+			}
+		},
+		[voice, setVoice],
+	);
 
 	const handleMessage = useCallback((message: MessageEvent) => {
 		if (typeof message.data !== "string") return;
@@ -68,7 +158,6 @@ export default function AssistantPanel() {
 			commandSocket.onclose = () => setCommandState("waiting");
 			commandSocket.onerror = () => setCommandState("waiting");
 		} catch (error) {
-			// 控制端尚未实现时保持可用界面，不让连接失败打断语音事件流。
 			console.warn("语音助手控制端接入中", error);
 		}
 
@@ -78,22 +167,26 @@ export default function AssistantPanel() {
 		};
 	}, []);
 
-	const sendCommand = useCallback((command: Command) => {
-		const commandSocket = commandSocketRef.current;
-		if (!commandSocket || commandSocket.readyState !== WebSocket.OPEN) {
-			console.warn("语音助手控制端接入中", command);
-			setCommandState("waiting");
-			return;
-		}
-
-		try {
-			commandSocket.send(JSON.stringify({ cmd: command }));
-			setCommandState("sent");
-		} catch (error) {
-			// 发送与关闭并发时静默降级，下一次点击会重新检测连接状态。
-			console.warn("语音助手控制指令发送失败", error);
-			setCommandState("waiting");
-		}
+	/** 获取可用音色列表。 */
+	useEffect(() => {
+		let cancelled = false;
+		fetch("/v1/voices")
+			.then((res) => {
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				return res.json() as Promise<{ voice: string; available: string[] }>;
+			})
+			.then((data) => {
+				if (cancelled) return;
+				if (data.available && data.available.length > 0) {
+					setAvailableVoices(data.available);
+				}
+			})
+			.catch(() => {
+				if (!cancelled) console.warn("音色列表获取失败，使用回退列表");
+			});
+		return () => {
+			cancelled = true;
+		};
 	}, []);
 
 	return (
@@ -163,10 +256,90 @@ export default function AssistantPanel() {
 				>
 					清空记录
 				</button>
+				<button type="button" onClick={openPersona}>
+					人格编辑
+				</button>
+				<div className="assistant-voice-select">
+					<label htmlFor="assistant-voice">音色</label>
+					<select
+						id="assistant-voice"
+						value={voice}
+						onChange={(e) => handleVoiceChange(e.target.value)}
+					>
+						{availableVoices.map((v) => (
+							<option key={v} value={v}>
+								{v}
+							</option>
+						))}
+					</select>
+					{voiceFeedback && (
+						<span className="assistant-voice-feedback">{voiceFeedback}</span>
+					)}
+				</div>
 				<span className="assistant-command-status">
 					{commandStatusLabel(commandState)}
 				</span>
 			</footer>
+
+			{/* 人格编辑器 dialog */}
+			{personaOpen && (
+				<div
+					className="persona-overlay"
+					role="button"
+					tabIndex={0}
+					onClick={cancelPersona}
+					onKeyDown={(e) => {
+						if (e.key === "Escape") cancelPersona();
+					}}
+				>
+					<dialog
+						className="persona-dialog"
+						open
+						onClick={(e) => e.stopPropagation()}
+						onKeyDown={(e) => e.stopPropagation()}
+						aria-label="人格编辑器"
+					>
+						<div className="persona-dialog-header">
+							<h3>人格编辑</h3>
+							<button
+								type="button"
+								className="persona-dialog-close"
+								onClick={cancelPersona}
+								aria-label="关闭"
+							>
+								✕
+							</button>
+						</div>
+						<div className="persona-dialog-body">
+							<textarea
+								className="persona-textarea"
+								value={personaDraft}
+								onChange={(e) => {
+									setPersonaDraft(e.target.value);
+									if (personaError) setPersonaError("");
+								}}
+								placeholder="输入系统提示词…（留空则使用默认人格）"
+								rows={10}
+								aria-label="系统提示词"
+								aria-invalid={!!personaError}
+							/>
+							{personaError && (
+								<p className="persona-error" role="alert">
+									{personaError}
+								</p>
+							)}
+						</div>
+						<div className="persona-dialog-footer">
+							<button type="button" onClick={savePersona}>
+								保存
+							</button>
+							<button type="button" onClick={cancelPersona}>
+								取消
+							</button>
+						</div>
+					</dialog>
+				</div>
+			)}
 		</section>
 	);
 }

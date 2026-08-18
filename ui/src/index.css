@@ -1,4 +1,4 @@
-/* Voice Studio 基础样式（亮色主题，暗色由 CSS 变量覆盖） */
+/* Voice Studio 基础样式（亮色主题默认，暗色由 @media / data-theme 覆盖） */
 
 :root {
   --bg: #ffffff;
@@ -15,8 +15,9 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
+/* 系统暗色模式：无 data-theme 属性时由 @media 接管（用于 system 模式和首屏渲染）。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme]) {
     --bg: #0f172a;
     --bg-secondary: #1e293b;
     --text: #f1f5f9;
@@ -28,6 +29,34 @@
     --yellow: #facc15;
     --red: #ef4444;
   }
+}
+
+/* 显式暗色主题：用户手动切换。 */
+[data-theme="dark"] {
+  --bg: #0f172a;
+  --bg-secondary: #1e293b;
+  --text: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --border: #334155;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --green: #22c55e;
+  --yellow: #facc15;
+  --red: #ef4444;
+}
+
+/* 显式亮色主题：强制亮色，即使系统偏好暗色。 */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-secondary: #f3f4f6;
+  --text: #111827;
+  --text-secondary: #6b7280;
+  --border: #e5e7eb;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --green: #16a34a;
+  --yellow: #ca8a04;
+  --red: #dc2626;
 }
 
 * {
