@@ -13,34 +13,36 @@ from pydantic import BaseModel, Field, field_validator
 ResponseFormat = Literal["wav", "pcm"]
 Voice = str  # VoiceDesign profile 名（如 "default" / "luna" / 自定义设计提示）
 
-DEFAULT_ERROR_BODY: dict[str, str | int | None] = {
-    "message": "",
-    "type": "invalid_request_error",
-    "code": None,
-}
-
 
 class SpeechRequest(BaseModel):
     """OpenAI 兼容语音合成请求体。"""
 
     model: str = Field(description="模型 ID（桥忽略该值，固定使用配置的 Qwen3-TTS）")
     input: str = Field(min_length=1, max_length=2000, description="待合成文本")
-    voice: Voice = Field(default="default", description="VoiceDesign 音色 profile")
+    voice: Voice = Field(
+        default="default",
+        description=(
+            "兼容字段：桥忽略该值，输出音色固定由服务配置 VR_BRIDGE_VOICE 决定"
+        ),
+    )
     response_format: ResponseFormat = Field(
         default="wav", description="输出格式：wav(带头) / pcm(裸 16-bit LE)"
     )
     speed: float = Field(default=1.0, ge=0.25, le=4.0, description="语速倍率")
+    lang: str = Field(default="auto", description="合成语言 (auto/chinese/english/…)")
 
     @field_validator("input")
     @classmethod
     def _strip_blank(cls, v: str) -> str:
         return v.strip()
 
-
-class ErrorBody(BaseModel):
-    """OpenAI 风格错误响应体。"""
-
-    error: dict[str, str | int | None] = Field(default_factory=lambda: dict(DEFAULT_ERROR_BODY))
+    @field_validator("lang")
+    @classmethod
+    def _strip_blank_lang(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("lang must not be blank")
+        return value
 
 
 class HealthResponse(BaseModel):

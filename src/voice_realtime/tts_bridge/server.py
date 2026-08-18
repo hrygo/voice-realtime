@@ -10,16 +10,24 @@ import logging
 import struct
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from voice_realtime.config import BridgeSettings, get_settings
+from voice_realtime.logging import setup_logging
 from voice_realtime.tts_bridge.engine import TTSEngine
 from voice_realtime.tts_bridge.schema import HealthResponse, SpeechRequest
 
 logger = logging.getLogger(__name__)
+
+
+def _openai_error(
+    message: str, error_type: str = "invalid_request_error"
+) -> dict[str, Any]:
+    return {"error": {"message": message, "type": error_type, "code": None}}
 
 
 def build_wav_header(
@@ -50,6 +58,49 @@ def build_wav_header(
     )
 
 
+async def _stream_speech_response(
+    engine: TTSEngine, req: SpeechRequest, voice: str
+) -> AsyncIterator[bytes]:
+    try:
+        audio_stream = engine.stream_speech(
+            req.input,
+            voice=voice,
+            speed=req.speed,
+            lang=req.lang,
+        )
+        if req.response_format == "wav":
+            chunks = [chunk async for chunk in audio_stream]
+            data = b"".join(chunks)
+            if data:
+                yield build_wav_header(engine.sample_rate, data_size=len(data))
+                yield data
+            return
+
+        async for chunk in audio_stream:
+            yield chunk
+    except Exception:
+        logger.exception("流式合成中断")
+        if req.response_format == "wav":
+            raise
+
+
+async def _create_speech_response(
+    engine: TTSEngine, req: SpeechRequest, voice: str
+) -> StreamingResponse:
+    media_type = "audio/wav" if req.response_format == "wav" else "audio/x-pcm"
+    stream = _stream_speech_response(engine, req, voice)
+    if req.response_format == "wav":
+        try:
+            chunks = [chunk async for chunk in stream]
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=_openai_error("speech synthesis failed", "server_error"),
+            ) from exc
+        return StreamingResponse(chunks, media_type=media_type)
+    return StreamingResponse(stream, media_type=media_type)
+
+
 def create_app(
     bridge_settings: BridgeSettings | None = None,
     engine: TTSEngine | None = None,
@@ -77,13 +128,7 @@ def create_app(
             return JSONResponse(status_code=exc.status_code, content=detail)
         return JSONResponse(
             status_code=exc.status_code,
-            content={
-                "error": {
-                    "message": str(detail),
-                    "type": "invalid_request_error",
-                    "code": None,
-                }
-            },
+            content=_openai_error(str(detail)),
         )
 
     @app.exception_handler(Exception)
@@ -91,7 +136,7 @@ def create_app(
         logger.exception("未处理异常: %s", exc)
         return JSONResponse(
             status_code=500,
-            content={"error": {"message": "internal error", "type": "server_error", "code": None}},
+            content=_openai_error("internal error", "server_error"),
         )
 
     @app.get("/health", response_model=HealthResponse)
@@ -107,62 +152,11 @@ def create_app(
     async def speech(req: SpeechRequest) -> StreamingResponse:
         if not engine.loaded:
             raise HTTPException(
-                status_code=503,
-                detail={
-                    "error": {"message": "engine not loaded", "type": "server_error", "code": None}
-                },
+                status_code=503, detail=_openai_error("engine not loaded", "server_error")
             )
         if not req.input:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": {
-                        "message": "input must not be blank",
-                        "type": "invalid_request_error",
-                        "code": None,
-                    }
-                },
-            )
-
-        async def _stream() -> AsyncIterator[bytes]:
-            if req.response_format == "wav":
-                # WAV 需真实尺寸才能被严格解析器接受 → 缓冲后带完整头发送
-                chunks: list[bytes] = []
-                try:
-                    chunks.extend(
-                        [
-                            chunk
-                            async for chunk in engine.stream_speech(
-                                req.input,
-                                voice=req.voice,
-                                speed=req.speed,
-                                lang="auto",
-                            )
-                        ]
-                    )
-                except Exception:
-                    logger.exception("流式合成中断")
-                    return
-                data = b"".join(chunks)
-                if not data:
-                    return
-                yield build_wav_header(engine.sample_rate, data_size=len(data))
-                yield data
-            else:
-                try:
-                    async for chunk in engine.stream_speech(
-                        req.input,
-                        voice=req.voice,
-                        speed=req.speed,
-                        lang="auto",
-                    ):
-                        yield chunk
-                except Exception:
-                    logger.exception("流式合成中断")
-                    return
-
-        media_type = "audio/wav" if req.response_format == "wav" else "audio/x-pcm"
-        return StreamingResponse(_stream(), media_type=media_type)
+            raise HTTPException(status_code=400, detail=_openai_error("input must not be blank"))
+        return await _create_speech_response(engine, req, bridge_settings.voice)
 
     return app
 
@@ -170,7 +164,7 @@ def create_app(
 def main() -> None:
     """`vr-bridge` 控制台入口。"""
     settings = get_settings()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    setup_logging()
     bridge_settings = settings.bridge
     app = create_app(bridge_settings)
     uvicorn.run(app, host=bridge_settings.host, port=bridge_settings.port, log_level="info")

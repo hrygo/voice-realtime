@@ -54,16 +54,19 @@ class TTSEngine:
         if self._settings.warmup_on_start:
             self._warmup()
 
-    def _warmup(self) -> None:
+    def _synthesis_args(self, voice: str) -> tuple[bool, str | None, str | None]:
         assert self._model is not None
         is_voice_design = self._model.config.tts_model_type == "voice_design"
-        instruct: str | None = (
-            VOICE_PROFILES.get(self._settings.voice, self._settings.voice)
-            if is_voice_design
-            else None
-        )
+        if is_voice_design:
+            return True, VOICE_PROFILES.get(voice, voice), None
+        return False, None, voice
+
+    def _warmup(self) -> None:
+        assert self._model is not None
+        _, instruct, speaker = self._synthesis_args(self._settings.voice)
         for _ in self._model.generate(
             text="预热",
+            voice=speaker,
             instruct=instruct,
             stream=True,
             streaming_interval=self._settings.chunk_ms / 1000,
@@ -93,9 +96,7 @@ class TTSEngine:
         """
         if self._model is None:
             raise RuntimeError("TTSEngine not loaded")
-        is_voice_design = self._model.config.tts_model_type == "voice_design"
-        instruct: str | None = VOICE_PROFILES.get(voice, voice) if is_voice_design else None
-        speaker: str | None = None if is_voice_design else voice
+        _, instruct, speaker = self._synthesis_args(voice)
         chunk_secs = self._settings.chunk_ms / 1000
         for result in self._model.generate(
             text=text,

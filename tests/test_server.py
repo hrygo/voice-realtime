@@ -7,6 +7,7 @@ WAV 头构造与 HTTP 语义。
 from __future__ import annotations
 
 import struct
+from typing import Protocol, cast
 from unittest.mock import MagicMock
 
 import httpx
@@ -18,6 +19,18 @@ from voice_realtime.tts_bridge.server import build_wav_header, create_app
 
 TEST_MODEL = "test-org/test-tts-model"
 SAMPLE_RATE = 24000
+
+
+class _AppState(Protocol):
+    engine: MagicMock
+
+
+class _App(Protocol):
+    state: _AppState
+
+
+class _ASGITransport(Protocol):
+    app: _App
 
 
 def _mock_engine(loaded: bool = True, pcm_chunks: list[bytes] | None = None) -> MagicMock:
@@ -96,13 +109,57 @@ class TestSpeech:
         assert resp.content.startswith(b"RIFF")
 
     @pytest.mark.asyncio
-    async def test_voice_and_speed_forwarded_to_engine(self, client: httpx.AsyncClient) -> None:
+    async def test_config_voice_and_request_speed_forwarded_to_engine(
+        self, client: httpx.AsyncClient
+    ) -> None:
         engine = client._transport.app.state.engine  # type: ignore[attr-defined]
         await client.post(
             "/v1/audio/speech",
             json={"model": TEST_MODEL, "input": "你好", "voice": "warm", "speed": 1.2},
         )
-        engine.stream_speech.assert_called_once_with("你好", voice="warm", speed=1.2, lang="auto")
+        # 请求里的 voice 被忽略：引擎固定收到配置音色（此处默认为 "default"）
+        engine.stream_speech.assert_called_once_with(
+            "你好", voice="default", speed=1.2, lang="auto"
+        )
+
+    @pytest.mark.asyncio
+    async def test_lang_forwarded_to_engine(self, client: httpx.AsyncClient) -> None:
+        engine = cast(_ASGITransport, cast(object, client._transport)).app.state.engine
+        await client.post(
+            "/v1/audio/speech",
+            json={"model": TEST_MODEL, "input": "hello", "lang": "english"},
+        )
+        engine.stream_speech.assert_called_once_with(
+            "hello", voice="default", speed=1.0, lang="english"
+        )
+
+    @pytest.mark.asyncio
+    async def test_blank_lang_returns_422(self, client: httpx.AsyncClient) -> None:
+        resp = await client.post(
+            "/v1/audio/speech", json={"model": TEST_MODEL, "input": "你好", "lang": " "}
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_wav_synthesis_failure_returns_5xx(self) -> None:
+        settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=False)
+        engine = _mock_engine()
+
+        async def _failing_gen(*args: object, **kwargs: object):
+            yield b"\x00\x00"
+            raise RuntimeError("synthesis failed")
+
+        engine.stream_speech = MagicMock(side_effect=_failing_gen)
+        app = create_app(settings, engine=engine)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/v1/audio/speech",
+                json={"model": TEST_MODEL, "input": "你好", "response_format": "wav"},
+            )
+        assert 500 <= resp.status_code < 600
+        assert "error" in resp.json()
 
     @pytest.mark.asyncio
     async def test_blank_input_returns_400(self, client: httpx.AsyncClient) -> None:

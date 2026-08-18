@@ -67,6 +67,16 @@ class TestLoad:
         model.generate.assert_called_once()
         assert model.generate.return_value.__next__  # 生成器被消费
 
+    def test_load_warmup_routes_custom_voice(self) -> None:
+        settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=True, voice="Chelsie")
+        engine = TTSEngine(settings)
+        model = _mock_model("custom_voice")
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+        call_kwargs = model.generate.call_args.kwargs
+        assert call_kwargs["voice"] == "Chelsie"
+        assert call_kwargs["instruct"] is None
+
     def test_load_twice_is_idempotent(self, engine: TTSEngine) -> None:
         with patch("mlx_audio.tts.utils.load", return_value=_mock_model()) as mock_load:
             engine.load()
