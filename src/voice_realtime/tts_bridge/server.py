@@ -19,7 +19,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from voice_realtime.config import BridgeSettings, get_settings
 from voice_realtime.logging import setup_logging
 from voice_realtime.tts_bridge.engine import TTSEngine
-from voice_realtime.tts_bridge.schema import HealthResponse, SpeechRequest
+from voice_realtime.tts_bridge.schema import (
+    HealthResponse,
+    SpeechRequest,
+    VoiceResponse,
+    VoiceUpdateRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -144,9 +149,25 @@ def create_app(
         return HealthResponse(
             status="ok" if engine.loaded else "warming_up",
             model=bridge_settings.model,
-            voice=bridge_settings.voice,
+            voice=engine.voice,
             sample_rate=engine.sample_rate if engine.loaded else bridge_settings.sample_rate,
         )
+
+    @app.get("/v1/voices", response_model=VoiceResponse)
+    async def get_voices() -> VoiceResponse:
+        """查询当前音色与可用 profile（供 UI 音色下拉加载）。"""
+        return VoiceResponse(voice=engine.voice, available=engine.available_voices)
+
+    @app.post("/v1/voice", response_model=VoiceResponse)
+    async def set_voice(req: VoiceUpdateRequest) -> VoiceResponse:
+        """热切换音色（VoiceDesign profile 名或自定义描述）。"""
+        if not engine.loaded:
+            raise HTTPException(
+                status_code=503, detail=_openai_error("engine not loaded", "server_error")
+            )
+        engine.set_voice(req.voice)
+        logger.info("TTS 音色切换为: %s", engine.voice)
+        return VoiceResponse(voice=engine.voice, available=engine.available_voices)
 
     @app.post("/v1/audio/speech")
     async def speech(req: SpeechRequest) -> StreamingResponse:
@@ -156,7 +177,7 @@ def create_app(
             )
         if not req.input:
             raise HTTPException(status_code=400, detail=_openai_error("input must not be blank"))
-        return await _create_speech_response(engine, req, bridge_settings.voice)
+        return await _create_speech_response(engine, req, engine.voice)
 
     return app
 

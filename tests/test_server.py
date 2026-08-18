@@ -37,6 +37,8 @@ def _mock_engine(loaded: bool = True, pcm_chunks: list[bytes] | None = None) -> 
     engine = MagicMock(spec=TTSEngine)
     engine.loaded = loaded
     engine.sample_rate = SAMPLE_RATE
+    engine.voice = "default"  # 实例属性不在 spec 内，需显式配置
+    engine.available_voices = ["default", "warm", "bright", "calm"]
     chunks = pcm_chunks or [b"\x00\x00" * 4800]
 
     async def _gen(*args: object, **kwargs: object):
@@ -224,3 +226,50 @@ class TestWavHeader:
         header = build_wav_header(SAMPLE_RATE, data_size=9600)
         assert struct.unpack("<I", header[4:8])[0] == 36 + 9600  # RIFF size
         assert struct.unpack("<I", header[40:44])[0] == 9600  # data size
+
+
+class TestVoiceControl:
+    """/v1/voices 查询 + /v1/voice 热切换。"""
+
+    @pytest.mark.asyncio
+    async def test_get_voices_lists_available(self, client: httpx.AsyncClient) -> None:
+        engine = cast(_ASGITransport, cast(object, client._transport)).app.state.engine
+        engine.voice = "default"
+        engine.available_voices = ["default", "warm", "bright", "calm"]
+        resp = await client.get("/v1/voices")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["voice"] == "default"
+        assert body["available"] == ["default", "warm", "bright", "calm"]
+
+    @pytest.mark.asyncio
+    async def test_set_voice_switches_current(self, client: httpx.AsyncClient) -> None:
+        engine = cast(_ASGITransport, cast(object, client._transport)).app.state.engine
+        engine.voice = "default"
+        engine.available_voices = ["default", "warm"]
+
+        def _switch(v: str) -> None:
+            engine.voice = v  # 模拟 TTSEngine.set_voice 的真实副作用
+
+        engine.set_voice = MagicMock(side_effect=_switch)
+
+        resp = await client.post("/v1/voice", json={"voice": "warm"})
+        assert resp.status_code == 200
+        engine.set_voice.assert_called_once_with("warm")
+        assert resp.json()["voice"] == "warm"
+
+    @pytest.mark.asyncio
+    async def test_set_voice_blank_returns_422(self, client: httpx.AsyncClient) -> None:
+        resp = await client.post("/v1/voice", json={"voice": "  "})
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_set_voice_503_when_not_loaded(self) -> None:
+        settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=False)
+        engine = _mock_engine(loaded=False)
+        app = create_app(settings, engine=engine)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post("/v1/voice", json={"voice": "warm"})
+        assert resp.status_code == 503

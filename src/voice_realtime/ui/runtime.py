@@ -18,12 +18,13 @@ import contextlib
 import logging
 from typing import Any
 
+from pipecat.frames.frames import LLMMessagesUpdateFrame
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
 from voice_realtime.audio.hub import AudioHub
 from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, Settings
-from voice_realtime.interaction.pipeline import build_pipeline
+from voice_realtime.interaction.pipeline import build_pipeline, build_system_prompt
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
@@ -46,6 +47,7 @@ class UIRuntime:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._started = False
+        self._persona: str | None = None  # 当前人格覆盖（None = 默认系统提示）
         self.observer = StatusBridgeObserver()
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self.hub = AudioHub(device_index=settings.interaction.input_device)
@@ -83,6 +85,32 @@ class UIRuntime:
     def pipelines_active(self) -> bool:
         """交互管道是否在运行（麦克风 + 外部推理均就绪）。"""
         return self._worker is not None and self._runner_task is not None
+
+    # ---------- 控制命令（ControlBridge 调用） ----------
+
+    def set_persona(self, persona: str) -> None:
+        """记录当前人格；后续 clear_context 以它构造新的 system 消息。"""
+        self._persona = persona
+
+    async def clear_context(self) -> None:
+        """清空 LLM 上下文（保留当前人格的 system 消息，重建为只有 system）。"""
+        worker = self._worker
+        if worker is None:
+            return
+        prompt = build_system_prompt(self._persona)
+        await worker.queue_frame(
+            LLMMessagesUpdateFrame(messages=[{"role": "system", "content": prompt}])
+        )
+
+    async def stop_session(self) -> None:
+        """停止本轮交互管道（等效 WorkerRunner.end；录/字幕保持运行）。"""
+        await self._stop_pipeline()
+
+    async def restart_pipeline(self) -> None:
+        """重启交互管道（停止后按当前配置重新装配；麦克风需可用）。"""
+        await self._stop_pipeline()
+        if self._started:
+            self._start_pipeline()
 
     # ---------- 内部装配 ----------
 

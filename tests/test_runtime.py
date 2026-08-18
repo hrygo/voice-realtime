@@ -176,3 +176,88 @@ class TestStop:
 
         assert hub.start.await_count == 1
         assert build.call_count == 1
+
+
+class TestControlCommands:
+    async def test_clear_context_updates_llm_context(
+        self, settings: Settings
+    ) -> None:
+        """clear_context 经 worker.queue_frame 推 LLMMessagesUpdateFrame(sys prompt)。"""
+        with ExitStack() as stack:
+            proxy_cls, hub_cls, build, worker_cls, runner_cls = _patched(stack)
+            runtime = UIRuntime(settings)
+            proxy = proxy_cls.return_value
+            hub = hub_cls.return_value
+            runner = runner_cls.return_value
+            _mock_async_components(proxy, hub, runner)
+            build.return_value = MagicMock(name="pipeline")
+            worker = worker_cls.return_value
+            worker.queue_frame = AsyncMock()
+
+            await runtime.start()
+            await asyncio.sleep(0)
+            runtime.set_persona("你是孔子")
+            await runtime.clear_context()
+
+        assert worker.queue_frame.await_count >= 1
+        frame = worker.queue_frame.await_args.args[0]
+        from pipecat.frames.frames import LLMMessagesUpdateFrame
+
+        assert isinstance(frame, LLMMessagesUpdateFrame)
+        assert len(frame.messages) == 1
+        assert frame.messages[0]["role"] == "system"
+        assert "孔子" in str(frame.messages[0]["content"])
+
+    async def test_clear_context_noop_without_worker(self, settings: Settings) -> None:
+        """管道未装配时 clear_context 静默无操作。"""
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            await runtime.clear_context()  # 不抛
+
+    async def test_stop_session_stops_pipeline_only(
+        self, settings: Settings
+    ) -> None:
+        """stop_session 停管道（runner task cancelled），保留 hub/proxy。"""
+        with ExitStack() as stack:
+            proxy_cls, hub_cls, build, _worker_cls, runner_cls = _patched(stack)
+            runtime = UIRuntime(settings)
+            proxy = proxy_cls.return_value
+            hub = hub_cls.return_value
+            runner = runner_cls.return_value
+            _mock_async_components(proxy, hub, runner)
+            build.return_value = MagicMock(name="pipeline")
+
+            await runtime.start()
+            await asyncio.sleep(0)
+            task = runtime._runner_task
+            assert task is not None
+            await runtime.stop_session()
+
+        assert task.cancelled()
+        hub.start.assert_awaited_once()
+        proxy.start.assert_awaited_once()
+        # stop_session 不关闭 hub/proxy
+        hub.stop.assert_not_awaited()
+        proxy.stop.assert_not_awaited()
+
+    async def test_restart_pipeline_rebuilds(self, settings: Settings) -> None:
+        """restart_pipeline 停止旧管道后重新装配。"""
+        with ExitStack() as stack:
+            proxy_cls, hub_cls, build, _w_cls, runner_cls = _patched(stack)
+            runtime = UIRuntime(settings)
+            proxy = proxy_cls.return_value
+            hub = hub_cls.return_value
+            runner = runner_cls.return_value
+            _mock_async_components(proxy, hub, runner)
+
+            await runtime.start()
+            await asyncio.sleep(0)
+            first_task = runtime._runner_task
+            assert first_task is not None
+
+            await runtime.restart_pipeline()
+            await asyncio.sleep(0)
+
+        assert first_task.cancelled()
+        assert build.call_count == 2

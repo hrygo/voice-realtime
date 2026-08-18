@@ -7,6 +7,7 @@ FastAPI 服务：React 静态托管 + 服务健康聚合（TTS 桥 / wlk / LM St
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 
 from voice_realtime.config import Settings, get_settings
 from voice_realtime.logging import setup_logging
+from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.runtime import UIRuntime
 
 logger = logging.getLogger(__name__)
@@ -79,7 +81,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         results = [_do_probe(name, url, timeout) for name, url in paths]
         return {"services": results}
 
-    _mount_websocket_routes(app)
+    _mount_websocket_routes(app, cfg)
     _mount_static(app, cfg.ui.static_dir)
     return app
 
@@ -94,8 +96,8 @@ def _lm_models_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/models"
 
 
-def _mount_websocket_routes(app: FastAPI) -> None:
-    """事件网关：/ws/subtitles（wlk 字幕流）+ /ws/assistant（助手状态流）。"""
+def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
+    """事件网关：/ws/subtitles + /ws/assistant + /ws/assistant/cmd（控制面）。"""
 
     @app.websocket("/ws/subtitles")
     async def ws_subtitles(websocket: WebSocket) -> None:
@@ -126,6 +128,25 @@ def _mount_websocket_routes(app: FastAPI) -> None:
                 await websocket.receive_text()
         except WebSocketDisconnect:
             runtime.observer.remove_client(ws_send)
+
+    @app.websocket("/ws/assistant/cmd")
+    async def ws_assistant_cmd(websocket: WebSocket) -> None:
+        runtime = _get_runtime(websocket.app)
+        if runtime is None:
+            await websocket.close(code=1011, reason="runtime 未就绪")
+            return
+        bridge = ControlBridge(runtime, cfg.bridge)
+        await websocket.accept()
+        try:
+            while True:
+                text = await websocket.receive_text()
+                try:
+                    payload = json.loads(text)
+                except json.JSONDecodeError:
+                    payload = {}
+                await websocket.send_json(await bridge.handle(payload))
+        except WebSocketDisconnect:
+            return
 
 
 def _mount_static(app: FastAPI, static_dir: Path) -> None:

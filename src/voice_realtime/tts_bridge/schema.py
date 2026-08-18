@@ -54,3 +54,24 @@ class HealthResponse(BaseModel):
     voice: str
     sample_rate: int
     format: str = "wav"
+
+
+class VoiceUpdateRequest(BaseModel):
+    """音色热切换请求（`POST /v1/voice`）。"""
+
+    voice: Voice = Field(min_length=1, max_length=200, description="音色 profile 名或自定义描述")
+
+    @field_validator("voice")
+    @classmethod
+    def _strip_blank(cls, v: str) -> str:
+        value = v.strip()
+        if not value:
+            raise ValueError("voice must not be blank")
+        return value
+
+
+class VoiceResponse(BaseModel):
+    """音色状态响应（`GET /v1/voices` 与 `POST /v1/voice` 共用）。"""
+
+    voice: str
+    available: list[str]

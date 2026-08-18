@@ -23,6 +23,8 @@ class _FakeRuntime:
         self.subtitle_proxy = SubtitleProxy(
             SubtitleSettings(host="127.0.0.1", port=9998)
         )
+        self.clear_context = AsyncMock()
+        self.stop_session = AsyncMock()
 
 
 @pytest.fixture()
@@ -147,5 +149,50 @@ class TestWebSocketGateways:
         client = TestClient(create_app(Settings()), raise_server_exceptions=False)
         with pytest.raises(WebSocketDisconnect), client.websocket_connect(
             "/ws/assistant"
+        ) as ws:
+            ws.receive_text()
+
+
+class TestCommandGateway:
+    """/ws/assistant/cmd 控制面：指令执行 + 响应回传。"""
+
+    def _app_with_runtime(self) -> TestClient:
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9998},
+            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        )
+        app = create_app(mock_settings)
+        app.state.runtime = _FakeRuntime()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_clear_context_command_executed(self) -> None:
+        """/ws/assistant/cmd：clear_context 委托 runtime 并回执 ok。"""
+        client = self._app_with_runtime()
+        with client.websocket_connect("/ws/assistant/cmd") as ws:
+            ws.send_json({"cmd": "clear_context"})
+            resp = ws.receive_json()
+        assert resp == {"ok": True, "cmd": "clear_context"}
+        client.app.state.runtime.clear_context.assert_awaited_once()
+
+    def test_unknown_command_returns_error(self) -> None:
+        client = self._app_with_runtime()
+        with client.websocket_connect("/ws/assistant/cmd") as ws:
+            ws.send_json({"cmd": "self_destruct"})
+            resp = ws.receive_json()
+        assert resp["ok"] is False
+        assert "未知命令" in resp["error"]
+
+    def test_invalid_json_returns_error(self) -> None:
+        client = self._app_with_runtime()
+        with client.websocket_connect("/ws/assistant/cmd") as ws:
+            ws.send_text("not json")
+            resp = ws.receive_json()
+        assert resp["ok"] is False
+
+    def test_cmd_closed_when_runtime_unavailable(self) -> None:
+        client = TestClient(create_app(Settings()), raise_server_exceptions=False)
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            "/ws/assistant/cmd"
         ) as ws:
             ws.receive_text()
