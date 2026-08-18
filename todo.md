@@ -11,16 +11,18 @@
 
 ## 未完成任务（按顺序）
 
-### M3：助理状态桥 + 管道音频注入（①③已启动过研究）
-- [ ] **M3-1** `audio/audio_injector.py`：`AudioInjector(FrameProcessor)` 管道首节点，从 AudioHub 队列取块推 `InputAudioRawFrame`
+### M3：助理状态桥 + 管道音频注入
+- [x] **M3-1** `audio/audio_injector.py`：`AudioInjector(FrameProcessor)` 管道首节点，从 AudioHub 队列取块推 `InputAudioRawFrame`
   - `pipeline.py` 改造：`LocalAudioTransportParams(audio_in_enabled=False)`（输入停用）+ 在 `transport.input()` 前/替换首节点挂 AudioInjector
   - **既有调优必须保留**：VAD 参数、`silence_secs`(0.45)、`EchoSuppressionProcessor`、ttfs——AGENTS.md CRITICAL 约束
   - 注意：不要加载 `pipecat.transports.base_input` 的实验特性，遵循 06a 官方组装模式
-- [ ] **M3-2** `ui/assistant_bridge.py`：`StatusBridgeObserver(BaseObserver)` 捕获 `TranscriptionFrame/LLMTextFrame/TTSAudioFrame/UserStartedSpeakingFrame/BotStartedSpeakingFrame/InterruptionFrame`，序列化为 WS 事件（见方案 §5 协议），节流（TTSAudioFrame 仅计数）；`PipelineWorker(pipeline, observers=[...])`
+- [x] **M3-2** `ui/assistant_bridge.py`：`StatusBridgeObserver(BaseObserver)` 捕获 `TranscriptionFrame/LLMTextFrame/TTSAudioFrame/UserStartedSpeakingFrame/BotStartedSpeakingFrame/InterruptionFrame`，序列化为 WS 事件（见方案 §5 协议），节流（TTSAudioFrame 仅计数）；`PipelineWorker(pipeline, observers=[...])`
   - 参考 pipecat 官方 `examples/observability/observability-observer.py` 注册方式
-- [ ] **M3-3** server.py 接入：`/ws/subtitles` 骨架换成真实 SubtitleProxy 事件流；`/ws/assistant` 换成 observer 广播；生命周期管理（AsyncExitStack）
-- [ ] **M3-4** React：`AssistantPanel.tsx`（StateLights 三态 👂/🧠/🗣 + 波形 canvas rAF + TranscriptView 气泡 + Controls 基础三键）
-- [ ] **M3 验证点（关键）**：`LLMMessagesUpdateFrame` 对自定义 `LmStudioNativeLLMService` 的兼容性（M4 清空上下文依赖）；失败则退回"清空=重启会话"
+- [x] **M3-3** server.py 接入：`/ws/subtitles` 骨架换成真实 SubtitleProxy 事件流；`/ws/assistant` 换成 observer 广播；生命周期管理（AsyncExitStack）
+  - 实现落点：`ui/runtime.py`（UIRuntime 装配门面）+ server.py lifespan + WS 路由
+- [x] **M3-4** React：`AssistantPanel.tsx`（StateLights 三态 👂/🧠/🗣 + 波形 canvas rAF + TranscriptView 气泡 + Controls 基础三键）
+  - 落点：`stores/assistantStore.ts`（纯 reducer）+ `components/AssistantPanel.tsx/.css` + App.tsx 集成
+- [x] **M3 验证点（关键）**：`LLMMessagesUpdateFrame` 兼容性——**代码级验证通过**：`LLMContextAggregator.process_frame`（llm_response_universal.py:802）处理该帧 → `set_messages` → `push_context_frame`；`LmStudioNativeLLMService` 仅覆写传输层，上下文更新自动生效（M4 清空上下文可行）；运行级留 M5 实测
 
 ### M4：控制扩展集
 - [ ] `ui/control.py` ControlBridge：`clear_context`(queue_frame LLMMessagesUpdateFrame)、`stop_session`(WorkerRunner.end)、`restart`(spawn vr-interact)、`set_persona`、`set_voice`
