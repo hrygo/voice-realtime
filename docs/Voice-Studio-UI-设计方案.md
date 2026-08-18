@@ -138,7 +138,7 @@ App.tsx
 | **M2 字幕** | `AudioHub`(采集+扇出) + `SubtitleProxy`(推流+收事件) + 字幕组件 + SRT 导出 | 3h |
 | **M3 助手** | `AudioInjector` 入管道 + `StatusBridgeObserver` + 对话气泡/状态灯/波形 + 基础控制 | 4h |
 | **M4 控制扩展** | 人格编辑器 + TTS 桥 `/v1/voice` + 音色下拉 + 主题 + 联动(助手说话→字幕高亮) | 3h |
-| **M5 实测** | 双模块同时运行、断连恢复、打断、长时间会话 | 2h |
+| **M5 实测** | 双模块同时运行、断连恢复、打断、长时间会话 | 2h | ✅ 2026-08-18 冒烟通过：5 服务全绿（LM Studio :1234 / TTS 桥 :8765 / wlk :8001 / vr-ui :8100 / vr-interact），/health /api/services /ws/assistant/cmd /v1/voices /v1/audio/speech 全通 |
 
 ## 9. 新增 / 改动模块
 
