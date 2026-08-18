@@ -13,14 +13,9 @@ import sys
 from pathlib import Path
 
 from voice_realtime.config import SubtitleSettings
+from voice_realtime.logging import setup_logging
 
 logger = logging.getLogger(__name__)
-
-_BACKEND_EXTRAS: dict[str, str] = {
-    "qwen3-streaming": "qwen3-streaming",
-    "funasr": "funasr",
-    "auto": "",
-}
 
 
 def resolve_wlk_command(repo: Path | None = None) -> str:
@@ -35,10 +30,10 @@ def resolve_wlk_command(repo: Path | None = None) -> str:
     return wlk
 
 
-def build_server_argv(settings: SubtitleSettings) -> list[str]:
+def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> list[str]:
     """构造 wlk serve 命令行参数。"""
     return [
-        "wlk",
+        executable,
         "serve",
         "--host",
         settings.host,
@@ -81,8 +76,9 @@ def prepare_whisperlivekit(settings: SubtitleSettings) -> str:
 
 def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Popen[str]:
     """启动字幕服务子进程，stdout/stderr 落盘到 log_dir。"""
+    executable = resolve_wlk_command(settings.repo_path)
     log_dir.mkdir(parents=True, exist_ok=True)
-    argv = build_server_argv(settings)
+    argv = build_server_argv(settings, executable=executable)
     logger.info("启动字幕服务: %s", " ".join(argv))
     stdout = (log_dir / "subtitles.out.log").open("w")
     stderr = (log_dir / "subtitles.err.log").open("w")
@@ -102,7 +98,7 @@ def main() -> None:
 
     from voice_realtime.config import get_settings
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    setup_logging()
     settings = get_settings().subtitles
     log_dir = Path("runtime") / "subtitles"
     prepare_whisperlivekit(settings)

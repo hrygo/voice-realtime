@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from voice_realtime.config import SubtitleSettings
-from voice_realtime.subtitles.events import parse_event
+from voice_realtime.subtitles.events import SubtitleStream, parse_event
 from voice_realtime.subtitles.launcher import (
     build_server_argv,
     prepare_whisperlivekit,
@@ -96,6 +96,11 @@ class TestBuildServerArgv:
         assert "--host" in argv and "127.0.0.1" in argv
         assert "--port" in argv and "8001" in argv
 
+    def test_custom_executable_is_used(self) -> None:
+        settings = SubtitleSettings()
+        argv = build_server_argv(settings, executable="/repo/.venv/bin/wlk")
+        assert argv[0] == "/repo/.venv/bin/wlk"
+
     def test_funasr_backend_uses_model_dir(self) -> None:
         settings = SubtitleSettings(backend="funasr")
         argv = build_server_argv(settings)
@@ -104,6 +109,11 @@ class TestBuildServerArgv:
     def test_default_repo_path_resolves(self) -> None:
         settings = SubtitleSettings()
         assert settings.repo_path.name == "WhisperLiveKit"
+
+    def test_subtitle_stream_exposes_uri(self) -> None:
+        stream = SubtitleStream("ws://127.0.0.1:8001", language="Chinese")
+        assert "/asr?language=Chinese" in stream.uri
+        assert "mode=full" in stream.uri
 
 
 class TestPrepare:

@@ -18,7 +18,7 @@ from voice_realtime.subtitles.events import SubtitleStream
 async def _run(url: str, language: str) -> None:
     stream = SubtitleStream(url, language=language)
     await stream.connect()
-    print(f"已连接 {stream._uri}", file=sys.stderr)
+    print(f"已连接 {stream.uri}", file=sys.stderr)
     try:
         async for event in stream.events():
             if event.kind == "partial":

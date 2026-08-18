@@ -6,6 +6,7 @@ partial = buffer_transcription；confirmed = lines 中已定稿段（带时间�
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -13,8 +14,6 @@ from typing import Any, Literal
 import websockets
 
 EventKind = Literal["config", "partial", "confirmed", "error", "ready_to_stop", "other"]
-
-DEFAULT_WAV_HEADER = b"RIFF"  # 客户端可先发送 WAV 头声明格式（WhisperLiveKit 支持）
 
 
 @dataclass
@@ -72,8 +71,12 @@ class SubtitleEventTracker:
     本类按「confirmed 段起点+文本」与「partial 当前文本」去重。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_seen: int = 1024) -> None:
+        if max_seen < 1:
+            raise ValueError("max_seen 必须大于 0")
+        self._max_seen: int = max_seen
         self._confirmed_seen: set[tuple[str, str]] = set()
+        self._confirmed_order: deque[tuple[str, str]] = deque()
         self._last_partial = ""
 
     def track(self, event: SubtitleEvent) -> bool:
@@ -82,7 +85,11 @@ class SubtitleEventTracker:
             key = (event.start, event.text)
             if key in self._confirmed_seen:
                 return False
+            if len(self._confirmed_seen) >= self._max_seen:
+                oldest = self._confirmed_order.popleft()
+                self._confirmed_seen.remove(oldest)
             self._confirmed_seen.add(key)
+            self._confirmed_order.append(key)
             return True
         if event.kind == "partial":
             text = event.text.strip()
@@ -115,6 +122,11 @@ class SubtitleStream:
         if token:
             self._uri += f"&token={token}"
         self._ws: websockets.ClientConnection | None = None
+
+    @property
+    def uri(self) -> str:
+        """返回当前字幕 WebSocket 地址。"""
+        return self._uri
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._uri)

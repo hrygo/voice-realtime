@@ -58,3 +58,28 @@ class TestSubtitleEventTracker:
     def test_empty_partial_not_emitted(self) -> None:
         tracker = SubtitleEventTracker()
         assert tracker.track(SubtitleEvent(kind="partial", text="")) is False
+
+    def test_old_confirmed_segment_evicted_after_max_seen(self) -> None:
+        tracker = SubtitleEventTracker(max_seen=2)
+        events = [
+            SubtitleEvent(kind="confirmed", text=f"段落{i}", start=str(i))
+            for i in range(3)
+        ]
+
+        for event in events:
+            assert tracker.track(event) is True
+
+        assert tracker.track(events[0]) is True
+        assert tracker.track(events[2]) is False
+
+    def test_small_max_seen_is_applied(self) -> None:
+        tracker = SubtitleEventTracker(max_seen=2)
+        first = SubtitleEvent(kind="confirmed", text="首段", start="0")
+        second = SubtitleEvent(kind="confirmed", text="次段", start="1")
+        third = SubtitleEvent(kind="confirmed", text="末段", start="2")
+
+        assert tracker.track(first) is True
+        assert tracker.track(second) is True
+        assert tracker.track(third) is True
+        assert tracker.track(first) is True
+        assert tracker.track(second) is True
