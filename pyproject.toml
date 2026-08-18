@@ -31,11 +31,12 @@ tts = [
     "mlx-audio[tts]>=0.4.8",
     "misaki[zh]>=0.9.4",
 ]
-# 交互管道 (Pipecat: FunASR STT + LLM + 自定义 TTS) — 重型依赖，独立组
+# 交互管道 (Pipecat: FunASR STT + LLM + 自定义 TTS + AudioHub 采集) — 重型依赖，独立组
 interaction = [
     "pipecat-ai[funasr,silero,openai,soundfile,websocket,local]>=1.0",
     "torch>=2.5",
     "torchaudio>=2.5",
+    "pyaudio>=0.2.14",
 ]
 # 开发与质量门禁
 dev = [
@@ -53,6 +54,7 @@ vr-bridge = "voice_realtime.tts_bridge.server:main"
 vr-interact = "voice_realtime.interaction.runner:main"
 vr-subtitles = "voice_realtime.subtitles.launcher:main"
 vr-subtitle-events = "voice_realtime.subtitles.consumer:main"
+vr-ui = "voice_realtime.ui.server:main"
 
 [build-system]
 requires = ["hatchling"]

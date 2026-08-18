@@ -4,6 +4,7 @@
 Python **3.12 严格锁定**（`misaki[zh]` 要求 <3.13）；uv + PEP 621 + hatchling。
 
 方案文档：`docs/实时语音交互与字幕-方案与最佳实践.md`（2026-08-17 定稿，含 §7 实测验收回填）。
+架构图与端到端流程图：`docs/架构图与流程图.md`（2026-08-18；图 1 高阶架构 / 图 2 模块架构 / 图 3 交互链路时序，①–⑧ / 图 4 字幕链路时序，①–⑤；均附编号图注，Mermaid 渲染）。
 
 ## 架构与数据流
 
@@ -16,14 +17,14 @@ Pipecat ── FunASR(SenseVoice) ──► LM Studio 3.6-35B-A3B ──► [自
    └─ WebSocket / localhost 单机
 ```
 
-处理器链（`interaction/pipeline.py`）：`transport.input → VADProcessor(Silero) → FunASRSTTService → LLMUserAggregator → LmStudioNativeLLMService → LLMAssistantAggregator → OpenAITTSService(桥) → transport.output`。
+处理器链（`interaction/pipeline.py`）：`transport.input → EchoSuppressionProcessor → FunASRSTTService → LLMUserAggregator(内含 SileroVADAnalyzer，非独立节点) → LmStudioNativeLLMService → OpenAITTSService(桥) → transport.output → LLMAssistantAggregator(管道末尾，仅回写上下文)`。
 
 ## 模块地图
 
 | 模块 | 职责 | 关键文件 |
 |---|---|---|
 | `voice_realtime.tts_bridge` | **唯一自研核心**：mlx-audio Qwen3-TTS → OpenAI 兼容 `POST /v1/audio/speech` 流式（wav/pcm） | `server.py`(FastAPI) `engine.py`(TTSEngine) `schema.py`(SpeechRequest) |
-| `voice_realtime.interaction` | Pipecat 交互管道组装 + LM 服务 | `pipeline.py`(build_pipeline) `reasoning.py`(LmStudioNativeLLMService) `runner.py` |
+| `voice_realtime.interaction` | Pipecat 交互管道组装 + LM 服务 + 回声抑制 | `pipeline.py`(build_pipeline、EchoSuppressionProcessor) `reasoning.py`(LmStudioNativeLLMService) `runner.py` `nltk_data.py`(punkt_tab) |
 | `voice_realtime.subtitles` | WhisperLiveKit 启动、WS 字幕事件桥、事件去重 | `launcher.py` `consumer.py` `events.py` |
 | `voice_realtime.config` | 集中配置（pydantic-settings） | `config.py`（`InteractionSettings.stt_model` 等） |
 
@@ -38,12 +39,13 @@ Pipecat ── FunASR(SenseVoice) ──► LM Studio 3.6-35B-A3B ──► [自
 3. **HTTP 测试**：`httpx.AsyncClient.stream()` 的请求体关键字参数是 **`json=`**（不是 `body=`）；测试 mock 必须同名，否则测试端 `KeyError: 'model'`。
 4. **TTS 桥 422 排查**：`SpeechRequest.model` 是必填字段；422 先查 payload 字段完整性（`HealthResponse` 无此约束）。
 5. **ruff 刻意忽略** `RUF001/002/003`（中文全角标点是项目风格）；`tests/*` per-file-ignore `S101/ANN001/ANN201`；mypy strict **仅 src/**（`exclude = ["tests/"]`）。
+6. **回声抑制勿删**：单机同麦同箱必须保留 `EchoSuppressionProcessor`（`pipeline.py`，窗口 `interrupt_echo_suppression_ms` 默认 500ms）——它在 TTS 播报起始窗口内丢弃输入帧，防止扬声器回声被 VAD 误判为"用户说话"而自打断；删除会回归"机器人一开口就打断自己"。端点参数联动：`silence_secs`(0.45) 须略小于 STT `ttfs_p99_latency`(0.5)，保留转写等待窗口。
 
 ## 质量门禁（提交前必须全绿）
 
 ```bash
-uv run pytest tests/            # 61 passed（asyncio_mode=auto，timeout=120，coverage fail_under=80）
-uv run mypy src/                # strict；当前 14 files clean（tests 排除）
+uv run pytest tests/            # 90 passed（asyncio_mode=auto，timeout=120，coverage fail_under=80）
+uv run mypy src/                # strict；当前 16 files clean（tests 排除）
 uv run ruff check src/ tests/   # clean（line-length=100，select 含 PTH/RET/PERF/SIM/ASYNC）
 ```
 
@@ -53,9 +55,10 @@ uv run ruff check src/ tests/   # clean（line-length=100，select 含 PTH/RET/P
 uv sync --all-extras            # 或 --extra tts / --extra interaction / --extra dev
 uv run vr-bridge                # TTS 桥（默认 8765，也可 scripts/run-bridge.sh）
 uv run vr-interact              # 交互管道（scripts/run-interact.sh）
-uv run vr-subtitles             # 字幕 lmk（scripts/run-subtitles.sh；wlk 8001）
-uv run vr-subtitle-events       # 字幕事件消费者
+uv run vr-subtitles             # 字幕服务：启动 WhisperLiveKit（scripts/run-subtitles.sh；wlk 8001）
+uv run vr-subtitle-events       # 字幕事件消费者（--url ws://127.0.0.1:8001，--language Chinese）
 scripts/download-models.sh      # SenseVoice 经 HF snapshot_download 落本地（modelscope 被拦截）
+scripts/install-nltk-data.sh    # 幂等安装 NLTK punkt_tab（pipecat TTS 断句依赖；ensure_punkt_tab 自动安装失败时手动执行）
 ```
 
 依赖组：`tts` = mlx-audio[tts]+misaki[zh]（重型，单独组）；`interaction` = pipecat-ai[funasr,silero,openai,soundfile,websocket,local]+torch/torchaudio（重型）；`dev` = pytest 系列 + ruff + mypy。新增依赖前确认锁 3.12。
@@ -66,6 +69,7 @@ scripts/download-models.sh      # SenseVoice 经 HF snapshot_download 落本地�
 - **LM Studio** `localhost:1234`，模型 `qwen/qwen3.6-35b-a3b`
 - TTS 桥 8765：mlx-audio Qwen3-TTS（24 kHz WAV/PCM），VoiceDesign 音色 profile
 - SenseVoice 缓存快照：`~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…`
+- NLTK punkt_tab：`~/nltk_data/tokenizers/punkt_tab`（pipecat 1.7 TTS 断句必需；`vr-interact` 启动时 `ensure_punkt_tab` 自动下载，失败则手动 `scripts/install-nltk-data.sh`）
 - 实测要点（文档 §7.1，QA 参考）：SenseVoice RTF≈0.17；推理关闭时 TTFT≈0.24–0.26s / ~97–113 tok/s
 
 ## 提交规范

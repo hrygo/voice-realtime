@@ -12,15 +12,34 @@ dist/
 .coverage
 htmlcov/
 
-# 工具环境 (WhisperLiveKit 等克隆安装)
+# 环境配置与密钥
+.env
+.env.*
+!.env.example
+
+# 前端 (Vite / TypeScript) — 源码入库, 依赖与构建产物忽略
+ui/node_modules/
+ui/dist/
+
+# 工具环境 (vendor 子仓库: WhisperLiveKit / mlx-audio, 独立 git clone 不入库)
 tools/
 *.local/
 
-# 运行时产物
+# 运行时产物 (音频 / 字幕 / 日志 / SRT)
 *.wav
 *.srt
 *.log
 runtime/
 
+# 会话与内部状态 (opencode 会话连续性缓存, 非业务文件)
+.omo/run-continuation/
+
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+
 # 系统
 .DS_Store
+._*
+Thumbs.db
