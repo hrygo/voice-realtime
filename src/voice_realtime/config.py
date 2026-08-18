@@ -14,6 +14,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
+TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
+ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
 class BridgeSettings(BaseSettings):
@@ -25,7 +27,7 @@ class BridgeSettings(BaseSettings):
     port: int = Field(default=8765, description="桥服务监听端口")
     model: str = Field(default=DEFAULT_QWEN3_TTS_MODEL, description="mlx-audio Qwen3-TTS 模型 ID")
     voice: str = Field(default="default", description="VoiceDesign 音色 profile")
-    sample_rate: int = Field(default=24000, description="输出采样率 (Hz)")
+    sample_rate: int = Field(default=TTS_OUTPUT_SAMPLE_RATE, description="输出采样率 (Hz)")
     chunk_ms: int = Field(default=100, description="流式分块大小 (ms)")
     warmup_on_start: bool = Field(default=True, description="启动时预热模型")
 
@@ -61,8 +63,38 @@ class InteractionSettings(BaseSettings):
     tts_voice: str = Field(default="default", description="交互 TTS 音色")
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     sample_rate: int = Field(default=16000, description="音频管线采样率")
-    silence_secs: float = Field(default=0.8, description="端点判定静音阈值 (秒)")
+    silence_secs: float = Field(
+        default=0.45,
+        ge=0.1,
+        le=3.0,
+        description="端点判定静音阈值 (秒)；需小于 STT ttfs_p99 以保留转写等待窗口",
+    )
+    interrupt_echo_suppression_ms: int = Field(
+        default=500,
+        ge=0,
+        le=3000,
+        description="TTS 播报起始窗口内丢弃麦克风音频 (ms) 以抑制扬声器回声自打断；0=关闭",
+    )
     max_session_seconds: int = Field(default=600, description="单次会话上限 (秒)")
+
+    @field_validator("stt_language")
+    @classmethod
+    def _validate_stt_language(cls, v: str) -> str:
+        normalized = v.lower()
+        if normalized not in ALLOWED_STT_LANGUAGES:
+            raise ValueError(f"不支持的 STT 语言: {v} (可选 {sorted(ALLOWED_STT_LANGUAGES)})")
+        return normalized
+
+
+class UISettings(BaseSettings):
+    """Voice Studio Web 控制台配置（React 前端 + 事件网关）。"""
+
+    model_config = SettingsConfigDict(env_prefix="VR_UI_", env_file=".env", extra="ignore")
+
+    host: str = Field(default="127.0.0.1", description="UI 服务监听地址")
+    port: int = Field(default=8100, description="UI 服务监听端口")
+    static_dir: Path = Field(default=Path("ui/dist"), description="React 构建产物目录（静态托管）")
+    api_timeout: float = Field(default=3.0, description="服务探活超时 (秒)")
 
 
 class SubtitleSettings(BaseSettings):
@@ -98,6 +130,7 @@ class Settings(BaseSettings):
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)
     interaction: InteractionSettings = Field(default_factory=InteractionSettings)
     subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
+    ui: UISettings = Field(default_factory=UISettings)
 
     def dump_table(self) -> str:
         """以可读表格输出当前生效配置（用于启动横幅与诊断）。"""

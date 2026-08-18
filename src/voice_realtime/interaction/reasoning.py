@@ -102,7 +102,8 @@ class LmStudioNativeLLMService(OpenAILLMService):
                         SimpleNamespace(delta=SimpleNamespace(content=content, tool_calls=None))
                     ],
                 )
-                yield cast(ChatCompletionChunk, chunk)
+                # SimpleNamespace 与 ChatCompletionChunk 无类型重叠，先经 Any 中转
+                yield cast(ChatCompletionChunk, cast(Any, chunk))
 
     async def get_chat_completions(self, context: LLMContext) -> AsyncStream[ChatCompletionChunk]:
         """覆写传输层：OpenAI 格式消息 → 原生端点 input items → SSE 流。"""
