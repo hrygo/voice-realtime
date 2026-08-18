@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
-from voice_realtime.config import Settings
+from voice_realtime.config import Settings, SubtitleSettings
+from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.server import create_app
+from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+
+
+class _FakeRuntime:
+    """轻量 runtime：真实 observer/proxy（本测试不触发 lifespan）。"""
+
+    def __init__(self) -> None:
+        self.observer = StatusBridgeObserver()
+        self.subtitle_proxy = SubtitleProxy(
+            SubtitleSettings(host="127.0.0.1", port=9998)
+        )
 
 
 @pytest.fixture()
@@ -59,7 +72,11 @@ class TestServices:
 
         with TestClient(app) as client, patch(
             "voice_realtime.ui.server.httpx.get", return_value=mock_resp
-        ):
+        ), patch(
+            "voice_realtime.ui.server.UIRuntime"
+        ) as fake_cls:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
             resp = client.get("/api/services")
             assert resp.status_code == 200
             for svc in resp.json()["services"]:
@@ -88,7 +105,47 @@ class TestStaticMount:
             ui={"static_dir": dist},
         )
         app = create_app(mock_settings)
-        with TestClient(app) as client:
+        with TestClient(app) as client, patch(
+            "voice_realtime.ui.server.UIRuntime"
+        ) as fake_cls:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
             resp = client.get("/")
             assert resp.status_code == 200
             assert "Voice Studio" in resp.text
+
+
+class TestWebSocketGateways:
+    """WS 事件网关：连接注册到 observer/proxy，断开移除；未就绪时关闭。"""
+
+    def _app_with_runtime(self) -> TestClient:
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9998},
+            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        )
+        app = create_app(mock_settings)
+        app.state.runtime = _FakeRuntime()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_assistant_connection_registers_and_unregisters(self) -> None:
+        """/ws/assistant：连接加入 observer 广播，断开移除。"""
+        client = self._app_with_runtime()
+        with client.websocket_connect("/ws/assistant"):
+            assert client.app.state.runtime.observer.has_clients
+        assert not client.app.state.runtime.observer.has_clients
+
+    def test_subtitles_connection_registers_and_unregisters(self) -> None:
+        """/ws/subtitles：连接加入 proxy 广播，断开移除。"""
+        client = self._app_with_runtime()
+        with client.websocket_connect("/ws/subtitles"):
+            assert client.app.state.runtime.subtitle_proxy.has_clients
+        assert not client.app.state.runtime.subtitle_proxy.has_clients
+
+    def test_ws_closed_when_runtime_unavailable(self) -> None:
+        """runtime 未装配（测试直连/lifespan 未跑）时拒绝连接。"""
+        client = TestClient(create_app(Settings()), raise_server_exceptions=False)
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            "/ws/assistant"
+        ) as ws:
+            ws.receive_text()

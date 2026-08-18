@@ -1,12 +1,15 @@
 """Voice Studio Web 控制台（`vr-ui` CLI 入口）。
 
 FastAPI 服务：React 静态托管 + 服务健康聚合（TTS 桥 / wlk / LM Studio）
-+ WebSocket 事件网关骨架（/ws/subtitles、/ws/assistant 由 M2/M3 填充）。
++ WebSocket 事件网关（/ws/subtitles 字幕流、/ws/assistant 助手状态流）。
+组件生命周期由 `UIRuntime` 经 FastAPI lifespan 管理。
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from voice_realtime.config import Settings, get_settings
 from voice_realtime.logging import setup_logging
+from voice_realtime.ui.runtime import UIRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,17 @@ def _do_probe(name: str, url: str, timeout: float) -> dict[str, Any]:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """构造 Voice Studio 应用。settings 可注入（测试）。"""
     cfg = settings or get_settings()
-    app = FastAPI(title="Voice Studio", version="0.1.0")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        """lifespan：装配 UIRuntime 并随服务启停。"""
+        runtime = UIRuntime(cfg)
+        await runtime.start()
+        app.state.runtime = runtime
+        yield
+        await runtime.stop()
+
+    app = FastAPI(title="Voice Studio", version="0.1.0", lifespan=lifespan)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -65,9 +79,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         results = [_do_probe(name, url, timeout) for name, url in paths]
         return {"services": results}
 
-    _mount_websocket_skeletons(app)
+    _mount_websocket_routes(app)
     _mount_static(app, cfg.ui.static_dir)
     return app
+
+
+def _get_runtime(app: FastAPI) -> UIRuntime | None:
+    """取 lifespan 装配的 runtime；未装配（测试直连）返回 None。"""
+    return getattr(app.state, "runtime", None)
 
 
 def _lm_models_url(base_url: str) -> str:
@@ -75,26 +94,38 @@ def _lm_models_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/models"
 
 
-def _mount_websocket_skeletons(app: FastAPI) -> None:
-    """M2/M3 填充的事件网关占位：先接受连接并回显 connect 事件。"""
+def _mount_websocket_routes(app: FastAPI) -> None:
+    """事件网关：/ws/subtitles（wlk 字幕流）+ /ws/assistant（助手状态流）。"""
 
     @app.websocket("/ws/subtitles")
     async def ws_subtitles(websocket: WebSocket) -> None:
+        runtime = _get_runtime(websocket.app)
+        if runtime is None:
+            await websocket.close(code=1011, reason="runtime 未就绪")
+            return
         await websocket.accept()
+        ws_send = websocket.send_text
+        runtime.subtitle_proxy.add_client(ws_send)
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            return
+            runtime.subtitle_proxy.remove_client(ws_send)
 
     @app.websocket("/ws/assistant")
     async def ws_assistant(websocket: WebSocket) -> None:
+        runtime = _get_runtime(websocket.app)
+        if runtime is None:
+            await websocket.close(code=1011, reason="runtime 未就绪")
+            return
         await websocket.accept()
+        ws_send = websocket.send_text
+        runtime.observer.add_client(ws_send)
         try:
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
-            return
+            runtime.observer.remove_client(ws_send)
 
 
 def _mount_static(app: FastAPI, static_dir: Path) -> None:
