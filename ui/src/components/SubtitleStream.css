@@ -1,0 +1,120 @@
+.subtitle-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.subtitle-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.subtitle-header h2 {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.subtitle-status {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.subtitle-status.ok {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.subtitle-status.off {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+
+.subtitle-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.subtitle-empty {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-align: center;
+  margin-top: 24px;
+}
+
+.subtitle-line {
+  display: flex;
+  gap: 8px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+
+.subtitle-speaker {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.subtitle-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.subtitle-translation {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-left: 20px;
+}
+
+.subtitle-partial {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  font-style: italic;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+}
+
+.subtitle-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.subtitle-toolbar button {
+  font-size: 0.78rem;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.subtitle-toolbar button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.subtitle-toolbar button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.subtitle-count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
