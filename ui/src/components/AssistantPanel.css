@@ -1,0 +1,214 @@
+.assistant-panel {
+  height: 100%;
+}
+
+.assistant-header {
+  align-items: flex-start;
+}
+
+.assistant-connection {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.assistant-phase-label {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+}
+
+.assistant-phase-label.phase-listening {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.assistant-phase-label.phase-thinking {
+  color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+}
+
+.assistant-phase-label.phase-speaking {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.assistant-status {
+  display: flex;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.assistant-light {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.assistant-light-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.assistant-light.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.assistant-light.active .assistant-light-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.assistant-light.active:nth-child(1) .assistant-light-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 14%, transparent);
+}
+
+.assistant-light.active:nth-child(2) .assistant-light-dot {
+  background: var(--yellow);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--yellow) 14%, transparent);
+}
+
+.assistant-waveform {
+  height: 72px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 56%, transparent);
+}
+
+.assistant-waveform-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.assistant-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.assistant-empty {
+  margin: auto 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.assistant-bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 86%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.assistant-bubble.user {
+  align-self: flex-end;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+
+.assistant-bubble.assistant {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.assistant-bubble.streaming {
+  opacity: 0.68;
+}
+
+.assistant-bubble.streaming span:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 1em;
+  margin-left: 4px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  animation: assistant-caret 900ms step-end infinite;
+}
+
+.assistant-bubble-role {
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.assistant-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.assistant-controls button {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--bg-secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.assistant-controls button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.assistant-controls button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.assistant-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.assistant-command-status {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+@keyframes assistant-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-light-dot,
+  .assistant-bubble.streaming span:last-child::after {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .assistant-command-status {
+    width: 100%;
+    margin-left: 0;
+  }
+}
