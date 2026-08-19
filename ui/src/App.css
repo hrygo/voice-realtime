@@ -2,6 +2,7 @@
   flex: 1;
   display: grid;
   grid-template-columns: 3fr 2fr;
+  grid-template-rows: minmax(0, 1fr);
   gap: 16px;
   padding: 16px 20px;
   min-height: 0;
