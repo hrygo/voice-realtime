@@ -75,6 +75,30 @@ class InteractionSettings(BaseSettings):
         le=3000,
         description="TTS 播报起始窗口内丢弃麦克风音频 (ms) 以抑制扬声器回声自打断；0=关闭",
     )
+    echo_barge_in_gain: float = Field(
+        default=2.5,
+        ge=1.2,
+        le=8.0,
+        description="插话能量门限：输入 RMS 超过回声基线 × 增益即判定为真人插话",
+    )
+    echo_barge_in_frames: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="插话判定所需连续超阈帧数（~32ms/帧 @16k/512B）",
+    )
+    echo_text_window_secs: float = Field(
+        default=10.0,
+        ge=0.5,
+        le=120.0,
+        description="自回声判定：保留机器人最近播报文本的秒数窗口",
+    )
+    echo_text_similarity: float = Field(
+        default=0.7,
+        ge=0.3,
+        le=0.99,
+        description="自回声文本相似度阈值（difflib ratio / 最长公共子串覆盖率）",
+    )
     max_session_seconds: int = Field(default=600, description="单次会话上限 (秒)")
 
     @field_validator("stt_language")

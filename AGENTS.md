@@ -39,7 +39,10 @@ Pipecat ── FunASR(SenseVoice) ──► LM Studio 3.6-35B-A3B ──► [自
 3. **HTTP 测试**：`httpx.AsyncClient.stream()` 的请求体关键字参数是 **`json=`**（不是 `body=`）；测试 mock 必须同名，否则测试端 `KeyError: 'model'`。
 4. **TTS 桥 422 排查**：`SpeechRequest.model` 是必填字段；422 先查 payload 字段完整性（`HealthResponse` 无此约束）。
 5. **ruff 刻意忽略** `RUF001/002/003`（中文全角标点是项目风格）；`tests/*` per-file-ignore `S101/ANN001/ANN201`；mypy strict **仅 src/**（`exclude = ["tests/"]`）。
-6. **回声抑制勿删**：单机同麦同箱必须保留 `EchoSuppressionProcessor`（`pipeline.py`，窗口 `interrupt_echo_suppression_ms` 默认 500ms）——它在 TTS 播报起始窗口内丢弃输入帧，防止扬声器回声被 VAD 误判为"用户说话"而自打断；删除会回归"机器人一开口就打断自己"。端点参数联动：`silence_secs`(0.45) 须略小于 STT `ttfs_p99_latency`(0.5)，保留转写等待窗口。
+6. **回声死循环两道防线勿删**：单机同麦同箱必须保留（`pipeline.py`）。
+   - L1 `EchoSuppressionProcessor`：TTS 播报**全程**丢弃输入帧，仅当输入 RMS 超过回声基线（滑动中位数）× `echo_barge_in_gain`(默认 2.5) 连续 `echo_barge_in_frames`(默认 3) 帧（真人插话能量明显更高）才放行；删除会回归"机器人一开口就打断自己 / 长播报尾部回声自触发"。
+   - L2 `BotTextRecorder` + `SelfEchoFilter`（共享 `EchoTextBuffer`）：用户转写与近端（`echo_text_window_secs` 默认 10s）机器人播报文本相似度 ≥ `echo_text_similarity`(0.7) 或为其子串 → 吞帧不进 LLM 上下文，机器人永不响应自己的话，内容层死循环必断。
+   - 端点参数联动：`silence_secs`(0.45) 须略小于 STT `ttfs_p99_latency`(0.5)，保留转写等待窗口。
 
 ## 质量门禁（提交前必须全绿）
 
