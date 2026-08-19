@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from voice_realtime.config import Settings, get_settings
@@ -80,6 +80,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ]
         results = [_do_probe(name, url, timeout) for name, url in paths]
         return {"services": results}
+
+    @app.get("/v1/voices")
+    def voices() -> dict[str, Any]:
+        """代理 TTS 桥音色列表（GET /v1/voices），供前端音色下拉。"""
+        url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/voices")
+        try:
+            resp = httpx.get(url, timeout=cfg.ui.api_timeout)
+            resp.raise_for_status()
+            return dict(resp.json())
+        except httpx.HTTPError as exc:
+            logger.warning("Voice Studio: 桥 /v1/voices 请求失败: %s", exc)
+            raise HTTPException(status_code=502, detail="TTS 桥音色列表不可用") from exc
 
     _mount_websocket_routes(app, cfg)
     _mount_static(app, cfg.ui.static_dir)

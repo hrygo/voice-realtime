@@ -156,7 +156,8 @@ class AudioHub:
             return None
         index = self._device_index
         if index is None:
-            index = pa.get_default_input_device_info()
+            default = pa.get_default_input_device_info()
+            index = default["index"]
         try:
             return {
                 "name": pa.get_device_info_by_index(index).get("name"),

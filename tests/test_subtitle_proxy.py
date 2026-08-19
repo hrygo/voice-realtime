@@ -151,6 +151,30 @@ class TestBroadcast:
         assert client.call_count == 2  # evt1 + evt3
 
 
+class TestStreamConnection:
+    async def test_start_uses_ws_scheme(self, settings: SubtitleSettings) -> None:
+        """回归：wlk WS 连接必须用 ws:// scheme（http:// 会被 websockets 拒绝，
+        此前导致 SubtitleStream.connect 抛 InvalidURI、字幕链路全断）。"""
+        proxy = SubtitleProxy(settings)
+        with patch("voice_realtime.ui.subtitle_proxy.SubtitleStream") as mock_stream:
+            mock_stream.return_value.connect = AsyncMock()
+            mock_stream.return_value.close = AsyncMock()
+
+            async def no_events() -> AsyncIterator[SubtitleEvent]:
+                await asyncio.Event().wait()
+
+            mock_stream.return_value.events = no_events
+            await proxy.start()
+            try:
+                mock_stream.assert_called_once()
+                url = mock_stream.call_args.kwargs["url"]
+                assert url == f"ws://{settings.host}:{settings.port}"
+                mock_stream.return_value.connect.assert_awaited_once()
+            finally:
+                await proxy.stop()
+            mock_stream.return_value.close.assert_awaited_once()
+
+
 class TestAudioPush:
     async def test_push_audio_queued_when_no_client(self, settings: SubtitleSettings) -> None:
         """无浏览器订阅时音频入队但不推送（_paused=True 生效）。"""

@@ -17,7 +17,10 @@ def mock_pyaudio() -> MagicMock:
     mock_stream.read.return_value = b"\x00" * 512
     mock_pa = MagicMock()
     mock_pa.PyAudio.return_value.open.return_value = mock_stream
-    mock_pa.PyAudio.return_value.get_default_input_device_info.return_value = 0
+    mock_pa.PyAudio.return_value.get_default_input_device_info.return_value = {
+        "index": 0,
+        "name": "mock-mic",
+    }
     mock_pa.PyAudio.return_value.get_device_info_by_index.return_value = {
         "name": "mock-mic",
         "maxInputChannels": 1,
@@ -122,3 +125,24 @@ class TestLifecycle:
         # 循环在 OSError 下持续重试（reads > 1），未被异常杀死
         assert state["reads"] > 1
         assert sink.call_count == 0
+
+
+class TestDefaultDevice:
+    async def test_default_device_info_dict_does_not_crash(self, mock_pyaudio: MagicMock) -> None:
+        """回归：真实 pyaudio 默认设备信息是 dict（含 index 键），不得当整数传给
+        get_device_info_by_index（此前 TypeError 导致 AudioHub.start 崩溃、页面无声）。"""
+        hub = AudioHub(chunk_size=512, throttle_secs=0.005)  # device_index=None → 默认设备路径
+        sink = AsyncMock()
+        hub.add_sink("a", sink)
+
+        await hub.start()
+        assert hub._qaudio is not None
+        info = hub._get_device_info()
+        assert info is not None
+        assert info["name"] == "mock-mic"
+        await asyncio.sleep(0.05)
+        await hub.stop()
+
+        assert sink.call_count >= 1
+        mock_pyaudio.PyAudio.return_value.get_default_input_device_info.assert_called()
+        mock_pyaudio.PyAudio.return_value.get_device_info_by_index.assert_called_with(0)

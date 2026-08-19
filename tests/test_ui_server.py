@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -83,6 +84,48 @@ class TestServices:
             assert resp.status_code == 200
             for svc in resp.json()["services"]:
                 assert svc["status"] == "ok"
+
+
+class TestVoices:
+    def test_voices_proxies_from_bridge(self) -> None:
+        """/v1/voices 代理 TTS 桥；桥返回音色列表时原样透传。"""
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        )
+        app = create_app(mock_settings)
+
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"voice": "default", "available": ["default", "warm"]}
+
+        with TestClient(app) as client, patch(
+            "voice_realtime.ui.server.httpx.get", return_value=mock_resp
+        ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            resp = client.get("/v1/voices")
+            assert resp.status_code == 200
+            assert resp.json()["available"] == ["default", "warm"]
+
+    def test_voices_bridge_down_returns_502(self) -> None:
+        """桥不可达时返回 502，不抛未处理异常。"""
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        )
+        app = create_app(mock_settings)
+
+        with TestClient(app) as client, patch(
+            "voice_realtime.ui.server.httpx.get",
+            side_effect=httpx.ConnectError("refused"),
+        ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            resp = client.get("/v1/voices")
+            assert resp.status_code == 502
 
 
 class TestStaticMount:

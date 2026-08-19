@@ -80,7 +80,7 @@ class SubtitleProxy:
         if self._running:
             return
         self._stream = SubtitleStream(
-            url=f"http://{self._settings.host}:{self._settings.port}",
+            url=f"ws://{self._settings.host}:{self._settings.port}",
             language=self._settings.language,
         )
         await self._stream.connect()
