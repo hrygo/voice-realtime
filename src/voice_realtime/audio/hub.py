@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -29,7 +31,7 @@ CHUNK_SIZE = 512  # 每帧字节数（~16ms @ 16kHz/16bit）
 
 
 class AudioHub:
-    """系统麦克风采集 + 扇出服务。
+    """系统麦克风采集 + 扇出服务（专用后台线程采集，0 阻塞事件循环）。
 
     用法：
         hub = AudioHub(device_index=None)
@@ -55,8 +57,10 @@ class AudioHub:
         self._throttle_secs = throttle_secs
         self._sinks: dict[str, Callable[[bytes], Awaitable[None]]] = {}
         self._running = False
-        self._task: asyncio.Task[None] | None = None
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._qaudio: pyaudio.PyAudio | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     def add_sink(
         self,
@@ -75,9 +79,10 @@ class AudioHub:
         logger.info("AudioHub: 移除 sink %r (剩余 %d 个)", name, len(self._sinks))
 
     async def start(self) -> None:
-        """启动采集循环。"""
+        """启动后台采集线程。"""
         if self._running:
             return
+        self._loop = asyncio.get_running_loop()
         self._qaudio = pyaudio.PyAudio()
         device_info = self._get_device_info()
         logger.info(
@@ -86,56 +91,86 @@ class AudioHub:
             device_info.get("max_input_channels", "?") if device_info else "?",
             self._sample_rate,
         )
-        self._task = asyncio.create_task(self._capture_loop())
         self._running = True
+        self._thread = threading.Thread(
+            target=self._worker_capture_loop,
+            name="audio-hub-capture",
+            daemon=True,
+        )
+        self._thread.start()
 
     async def stop(self) -> None:
         """停止采集并释放资源。"""
+        if not self._running:
+            return
         self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        thread = self._thread
+        if thread is not None:
+            await asyncio.to_thread(thread.join, timeout=1.0)
+            self._thread = None
         if self._qaudio is not None:
             self._qaudio.terminate()
             self._qaudio = None
+        self._loop = None
+        for task in list(self._background_tasks):
+            task.cancel()
+        self._background_tasks.clear()
         logger.info("AudioHub: 已停止")
 
-    async def _capture_loop(self) -> None:
-        """PyAudio 回调驱动采集循环。"""
+    def _worker_capture_loop(self) -> None:
+        """后台专用线程中的 PyAudio 阻塞采集循环。"""
         qaudio = self._qaudio
-        assert qaudio is not None, "AudioHub 未初始化"
-        stream = qaudio.open(
-            format=pyaudio.paInt16,
-            channels=CHANNELS,
-            rate=self._sample_rate,
-            input=True,
-            input_device_index=self._device_index,
-            frames_per_buffer=self._chunk_size,
-            start=True,
-        )
+        if qaudio is None:
+            return
+        try:
+            stream = qaudio.open(
+                format=pyaudio.paInt16,
+                channels=CHANNELS,
+                rate=self._sample_rate,
+                input=True,
+                input_device_index=self._device_index,
+                frames_per_buffer=self._chunk_size,
+                start=True,
+            )
+        except Exception:
+            logger.exception("AudioHub: 打开音频流失败")
+            return
+
         chunk_ms = self._chunk_size / self._sample_rate * 1000 * 8
         logger.info("AudioHub: 采集流已打开，chunk=%d bytes (~%.0fms)", self._chunk_size, chunk_ms)
         try:
             while self._running:
                 if self._throttle_secs:
-                    await asyncio.sleep(self._throttle_secs)
+                    time.sleep(self._throttle_secs)
                 if not self._sinks:
-                    # 无消费端时空转：节流已让出事件循环，避免忙轮询高 CPU
+                    time.sleep(0.01)
                     continue
                 try:
                     data = stream.read(self._chunk_size, exception_on_overflow=False)
                 except OSError:
-                    await asyncio.sleep(0.1)
+                    time.sleep(0.05)
                     continue
-                # 扇出到所有 sink（并发不阻塞采集）
-                tasks = [self._dispatch(name, sink, data) for name, sink in self._sinks.items()]
-                await asyncio.gather(*tasks, return_exceptions=True)
+
+                if not data or not self._running:
+                    continue
+
+                loop = self._loop
+                if loop is not None and loop.is_running():
+                    loop.call_soon_threadsafe(self._on_chunk_received, data)
         finally:
-            stream.stop_stream()
-            stream.close()
+            with contextlib.suppress(Exception):
+                stream.stop_stream()
+                stream.close()
             logger.info("AudioHub: 采集流已关闭")
+
+    def _on_chunk_received(self, data: bytes) -> None:
+        """主事件循环回调：并发扇出音频数据到所有 sink。"""
+        if not self._running or not self._sinks:
+            return
+        for name, sink in list(self._sinks.items()):
+            task = asyncio.create_task(self._dispatch(name, sink, data))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     async def _dispatch(
         self,

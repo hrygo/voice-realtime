@@ -104,7 +104,13 @@ class LmStudioNativeLLMService(OpenAILLMService):
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue
-                event = json.loads(line[len("data: ") :])
+                raw_data = line[len("data: ") :].strip()
+                if raw_data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(raw_data)
+                except (json.JSONDecodeError, TypeError):
+                    continue
                 if event.get("type") != "message.delta":
                     continue
                 content = event.get("content")

@@ -156,3 +156,36 @@ class TestPrepare:
             prepare_whisperlivekit(settings)
         install.assert_called_once_with(repo)
         assert resolve.call_count == 2
+
+
+class TestLaunch:
+    def test_launch_subtitles(self, tmp_path: Path) -> None:
+        from voice_realtime.subtitles.launcher import launch_subtitles
+
+        settings = SubtitleSettings(repo_path=tmp_path)
+        log_dir = tmp_path / "logs"
+        with (
+            patch(
+                "voice_realtime.subtitles.launcher.resolve_wlk_command",
+                return_value="/fake/wlk",
+            ),
+            patch("subprocess.Popen") as mock_popen,
+        ):
+            proc = launch_subtitles(settings, log_dir)
+            assert proc is not None
+            assert mock_popen.called
+            assert (log_dir / "subtitles.out.log").exists()
+            assert (log_dir / "subtitles.err.log").exists()
+
+
+class TestConfigDump:
+    def test_dump_table_contains_all_sections(self) -> None:
+        from voice_realtime.config import Settings
+
+        cfg = Settings()
+        table = cfg.dump_table()
+        assert "BridgeSettings" in table
+        assert "InteractionSettings" in table
+        assert "SubtitleSettings" in table
+        assert "UISettings" in table
+

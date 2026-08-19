@@ -7,6 +7,7 @@ FastAPI 服务：React 静态托管 + 服务健康聚合（TTS 桥 / wlk / LM St
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -30,10 +31,10 @@ def _probe_url(host: str, port: int, path: str = "/health") -> str:
     return f"http://{host}:{port}{path}"
 
 
-def _do_probe(name: str, url: str, timeout: float) -> dict[str, Any]:
-    """同步探活：返回服务状态。"""
+async def _do_probe_async(client: httpx.AsyncClient, name: str, url: str) -> dict[str, Any]:
+    """并发异步探活单个服务。"""
     try:
-        resp = httpx.get(url, timeout=timeout)
+        resp = await client.get(url)
         return {
             "name": name,
             "status": "ok" if resp.status_code < 400 else "error",
@@ -41,10 +42,10 @@ def _do_probe(name: str, url: str, timeout: float) -> dict[str, Any]:
         }
     except httpx.ConnectError:
         return {"name": name, "status": "unreachable", "url": url}
-    except httpx.ReadTimeout:
+    except (httpx.ReadTimeout, httpx.TimeoutException):
         return {"name": name, "status": "timeout", "url": url}
-    except httpx.TimeoutException:
-        return {"name": name, "status": "timeout", "url": url}
+    except Exception:
+        return {"name": name, "status": "error", "url": url}
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -68,8 +69,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/services")
     async def services() -> dict[str, list[dict[str, Any]]]:
-        """三服务健康灯聚合（探活失败不抛错，返回每项 status）。"""
-        timeout = cfg.ui.api_timeout
+        """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
+        timeout = min(cfg.ui.api_timeout, 1.0)
         wlk = cfg.subtitles
         bridge = cfg.bridge
         lm = cfg.interaction
@@ -78,17 +79,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ("tts", _probe_url(bridge.host, bridge.port)),
             ("lm", _lm_models_url(lm.llm_base_url)),
         ]
-        results = [_do_probe(name, url, timeout) for name, url in paths]
-        return {"services": results}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            tasks = [_do_probe_async(client, name, url) for name, url in paths]
+            results = await asyncio.gather(*tasks)
+        return {"services": list(results)}
 
     @app.get("/v1/voices")
-    def voices() -> dict[str, Any]:
+    async def voices() -> dict[str, Any]:
         """代理 TTS 桥音色列表（GET /v1/voices），供前端音色下拉。"""
         url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/voices")
         try:
-            resp = httpx.get(url, timeout=cfg.ui.api_timeout)
-            resp.raise_for_status()
-            return dict(resp.json())
+            async with httpx.AsyncClient(timeout=cfg.ui.api_timeout) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return dict(resp.json())
         except httpx.HTTPError as exc:
             logger.warning("Voice Studio: 桥 /v1/voices 请求失败: %s", exc)
             raise HTTPException(status_code=502, detail="TTS 桥音色列表不可用") from exc

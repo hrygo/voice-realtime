@@ -9,6 +9,8 @@ export interface AssistantBubble {
   readonly text: string;
   readonly turnId?: number;
   readonly final: boolean;
+  readonly timestamp?: string;
+  readonly interrupted?: boolean;
 }
 
 type AssistantActivity = {
@@ -17,10 +19,21 @@ type AssistantActivity = {
   readonly speaking: boolean;
 };
 
+export interface TurnMetrics {
+  readonly turnId: number;
+  readonly sttMs: number;
+  readonly llmTtftMs: number;
+  readonly ttsTtfbMs: number;
+  readonly e2eMs: number;
+}
+
 export interface AssistantSnapshot {
   readonly phase: AssistantPhase;
   readonly activity: AssistantActivity;
   readonly transcript: readonly AssistantBubble[];
+  readonly lastInterruptionTime: number | null;
+  readonly interruptionCount: number;
+  readonly latestMetrics: TurnMetrics | null;
 }
 
 export type AssistantEvent =
@@ -29,7 +42,15 @@ export type AssistantEvent =
   | { readonly type: "llm"; readonly state: "streaming" | "final"; readonly text: string; readonly turnId: number }
   | { readonly type: "tts"; readonly state: "synthesizing" | "started" | "stopped" }
   | { readonly type: "interruption"; readonly state: "detected" }
-  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "user_stopped" };
+  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "user_stopped" }
+  | {
+      readonly type: "metrics";
+      readonly turnId: number;
+      readonly sttMs: number;
+      readonly llmTtftMs: number;
+      readonly ttsTtfbMs: number;
+      readonly e2eMs: number;
+    };
 
 interface AssistantStore extends AssistantSnapshot {
   readonly connected: boolean;
@@ -44,15 +65,34 @@ const INITIAL_SNAPSHOT: AssistantSnapshot = {
   phase: "idle",
   activity: IDLE_ACTIVITY,
   transcript: [],
+  lastInterruptionTime: null,
+  interruptionCount: 0,
+  latestMetrics: null,
 };
+
+function formatTimeNow(): string {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+}
 
 /** WebSocket 边界解析：协议外的帧由调用方静默忽略。 */
 export function parseAssistantEvent(value: unknown): AssistantEvent | null {
-  if (!isRecord(value) || typeof value.type !== "string" || typeof value.state !== "string") {
+  if (!isRecord(value) || typeof value.type !== "string") {
     return null;
   }
 
   switch (value.type) {
+    case "metrics":
+      return typeof value.turn_id === "number"
+        ? {
+            type: "metrics",
+            turnId: value.turn_id,
+            sttMs: typeof value.stt_ms === "number" ? value.stt_ms : 0,
+            llmTtftMs: typeof value.llm_ttft_ms === "number" ? value.llm_ttft_ms : 0,
+            ttsTtfbMs: typeof value.tts_ttfb_ms === "number" ? value.tts_ttfb_ms : 0,
+            e2eMs: typeof value.e2e_ms === "number" ? value.e2e_ms : 0,
+          }
+        : null;
     case "vad":
       return value.state === "user_speaking" || value.state === "user_silence"
         ? { type: "vad", state: value.state }
@@ -87,6 +127,17 @@ export function parseAssistantEvent(value: unknown): AssistantEvent | null {
 /** 事件归约器保持纯粹，便于在无 React 环境下复用和测试。 */
 export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: AssistantEvent): AssistantSnapshot {
   switch (event.type) {
+    case "metrics":
+      return {
+        ...snapshot,
+        latestMetrics: {
+          turnId: event.turnId,
+          sttMs: event.sttMs,
+          llmTtftMs: event.llmTtftMs,
+          ttsTtfbMs: event.ttsTtfbMs,
+          e2eMs: event.e2eMs,
+        },
+      };
     case "vad":
       return event.state === "user_speaking"
         ? withActivity(snapshot, { ...snapshot.activity, listening: true })
@@ -106,15 +157,28 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
         return withActivity(snapshot, IDLE_ACTIVITY);
       }
       return withActivity(snapshot, { listening: false, thinking: false, speaking: true });
-    case "interruption":
-      return withActivity(
-        { ...snapshot, transcript: snapshot.transcript.filter((bubble) => bubble.role === "user" || bubble.final) },
-        { listening: true, thinking: false, speaking: false },
-      );
+    case "interruption": {
+      // 标记最后一个未落定的助手气泡为被打断
+      const markedTranscript = snapshot.transcript.map((b, idx) => {
+        if (idx === snapshot.transcript.length - 1 && b.role === "assistant" && !b.final) {
+          return { ...b, final: true, interrupted: true };
+        }
+        return b;
+      });
+      return {
+        ...withActivity(
+          { ...snapshot, transcript: markedTranscript },
+          { listening: true, thinking: false, speaking: false },
+        ),
+        lastInterruptionTime: Date.now(),
+        interruptionCount: snapshot.interruptionCount + 1,
+      };
+    }
     case "system":
       return event.state === "pipeline_started" ? snapshot : INITIAL_SNAPSHOT;
   }
 }
+
 
 export const useAssistantStore = create<AssistantStore>((set) => ({
   ...INITIAL_SNAPSHOT,
@@ -128,6 +192,8 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
 export const selectAssistantPhase = (state: AssistantStore): AssistantPhase => state.phase;
 export const selectAssistantTranscript = (state: AssistantStore): readonly AssistantBubble[] => state.transcript;
 export const selectAssistantConnected = (state: AssistantStore): boolean => state.connected;
+export const selectLastInterruptionTime = (state: AssistantStore): number | null => state.lastInterruptionTime;
+export const selectAssistantLatestMetrics = (state: AssistantStore): TurnMetrics | null => state.latestMetrics;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -151,17 +217,19 @@ function updateUserTranscript(
   if (!event.text.trim()) return transcript;
 
   const draftIndex = lastIndexOf(transcript, (bubble) => bubble.role === "user" && !bubble.final);
+  const time = formatTimeNow();
+
   if (event.state === "interim") {
     return draftIndex >= 0
       ? replaceBubble(transcript, draftIndex, { ...transcript[draftIndex], text: event.text })
-      : limitTranscript([...transcript, { role: "user", text: event.text, final: false }]);
+      : limitTranscript([...transcript, { role: "user", text: event.text, final: false, timestamp: time }]);
   }
 
   const duplicate = transcript.some((bubble) => bubble.role === "user" && bubble.final && bubble.text === event.text);
   if (duplicate) return draftIndex >= 0 ? transcript.filter((_, index) => index !== draftIndex) : transcript;
   return draftIndex >= 0
     ? replaceBubble(transcript, draftIndex, { ...transcript[draftIndex], text: event.text, final: true })
-    : limitTranscript([...transcript, { role: "user", text: event.text, final: true }]);
+    : limitTranscript([...transcript, { role: "user", text: event.text, final: true, timestamp: time }]);
 }
 
 function updateAssistantTranscript(
@@ -172,17 +240,19 @@ function updateAssistantTranscript(
     transcript,
     (bubble) => bubble.role === "assistant" && bubble.turnId === event.turnId && !bubble.final,
   );
+  const time = formatTimeNow();
+
   if (event.state === "streaming") {
     return draftIndex >= 0
       ? replaceBubble(transcript, draftIndex, { ...transcript[draftIndex], text: `${transcript[draftIndex].text}${event.text}` })
-      : limitTranscript([...transcript, { role: "assistant", text: event.text, turnId: event.turnId, final: false }]);
+      : limitTranscript([...transcript, { role: "assistant", text: event.text, turnId: event.turnId, final: false, timestamp: time }]);
   }
   if (draftIndex >= 0) {
     const text = event.text || transcript[draftIndex].text;
     return replaceBubble(transcript, draftIndex, { ...transcript[draftIndex], text, final: true });
   }
   return event.text
-    ? limitTranscript([...transcript, { role: "assistant", text: event.text, turnId: event.turnId, final: true }])
+    ? limitTranscript([...transcript, { role: "assistant", text: event.text, turnId: event.turnId, final: true, timestamp: time }])
     : transcript;
 }
 

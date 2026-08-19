@@ -233,3 +233,30 @@ class TestBroadcast:
         observer = StatusBridgeObserver()
         await _push(observer, LLMTextFrame(text="无人订阅"))
         assert observer._seen_ids  # 帧仍被去重跟踪，但无广播
+
+
+class TestMetrics:
+    async def test_turn_metrics_emitted_on_tts_started(self) -> None:
+        """测试在一轮语音会话完成后，TTSStartedFrame 触发 metrics 耗时指标广播。"""
+        observer = StatusBridgeObserver()
+        client = _upsert_mock_client(observer)
+
+        # 模拟一轮完整交互时序
+        await _push(observer, UserStartedSpeakingFrame())
+        await _push(observer, UserStoppedSpeakingFrame())
+        await _push(observer, TranscriptionFrame(**_text_args(), finalized=True))
+        await _push(observer, LLMTextFrame(text="你好！"))
+        await _push(observer, TTSTextFrame(text="你好！", aggregated_by="sentence"))
+        await _push(observer, TTSStartedFrame())
+
+        # 检查是否发出 type=metrics 事件
+        payloads = [json.loads(c.args[0]) for c in client.call_args_list]
+        metrics_events = [p for p in payloads if p.get("type") == "metrics"]
+        assert len(metrics_events) == 1
+        m = metrics_events[0]
+        assert "turn_id" in m
+        assert "stt_ms" in m
+        assert "llm_ttft_ms" in m
+        assert "tts_ttfb_ms" in m
+        assert "e2e_ms" in m
+

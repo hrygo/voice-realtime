@@ -21,8 +21,10 @@ interface SubtitleState {
   lines: SubtitleLine[];
   partial: string;
   connected: boolean;
+  starredIndices: Set<number>;
   applySnapshot: (snap: Partial<SubtitleSnapshot>) => void;
   setConnected: (v: boolean) => void;
+  toggleStar: (index: number) => void;
   clear: () => void;
 }
 
@@ -30,13 +32,24 @@ export const useSubtitleStore = create<SubtitleState>((set) => ({
   lines: [],
   partial: "",
   connected: false,
+  starredIndices: new Set<number>(),
   applySnapshot: (snap) =>
     set((s) => ({
       lines: snap.lines ?? s.lines,
       partial: snap.buffer_transcription ?? s.partial,
     })),
   setConnected: (v) => set({ connected: v }),
-  clear: () => set({ lines: [], partial: "" }),
+  toggleStar: (index) =>
+    set((s) => {
+      const next = new Set(s.starredIndices);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return { starredIndices: next };
+    }),
+  clear: () => set({ lines: [], partial: "", starredIndices: new Set<number>() }),
 }));
 
 /** 说话人配色：对齐 wlk 官方 UI（按 speaker 取色，超过 8 轮换）。 */
@@ -66,6 +79,71 @@ export function toSRT(lines: SubtitleLine[]): string {
       return `${i + 1}\n${start} --> ${end}\n${text}\n`;
     })
     .join("\n");
+}
+
+/** 生成结构化 Markdown 会议纪要与对话转写。 */
+export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): string {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const timeStr = now.toLocaleTimeString("zh-CN", { hour12: false });
+
+  const uniqueSpeakers = Array.from(new Set(lines.map((l) => l.speaker))).sort(
+    (a, b) => a - b,
+  );
+  const totalDuration =
+    lines.length > 0
+      ? `${lines[0]?.start ?? "00:00:00"} ~ ${lines.at(-1)?.end ?? lines.at(-1)?.start ?? "00:00:00"}`
+      : "00:00:00";
+
+  let md = `# Voice Studio 会议与语音对话纪要\n\n`;
+  md += `> 自动生成于：${dateStr} ${timeStr} | 引擎：WhisperLiveKit (Qwen3-ASR) / Apple Silicon\n\n`;
+
+  md += `## 📋 会议概要\n\n`;
+  md += `- **记录时间**：${dateStr} ${timeStr}\n`;
+  md += `- **有效时间段**：\`${totalDuration}\`\n`;
+  md += `- **发言人数**：${uniqueSpeakers.length} 位 (${uniqueSpeakers.map((s) => `说话人 ${s}`).join(", ")})\n`;
+  md += `- **总转写条目**：${lines.length} 条\n`;
+  md += `- **重点星标标记**：${starred.size} 条\n\n`;
+
+  // 重点星标部分
+  if (starred.size > 0) {
+    md += `## ⭐ 重点发言与结论速览\n\n`;
+    lines.forEach((line, idx) => {
+      if (starred.has(idx)) {
+        md += `- **[${line.start}] 说话人 ${line.speaker}**：${line.text}\n`;
+        if (line.translation) {
+          md += `  > 译文：${line.translation}\n`;
+        }
+      }
+    });
+    md += `\n---\n\n`;
+  }
+
+  // 完整时序转写
+  md += `## 📝 完整对话时序记录\n\n`;
+  let currentSpeaker: number | null = null;
+
+  lines.forEach((line, idx) => {
+    const isStarred = starred.has(idx);
+    const starTag = isStarred ? " ⭐" : "";
+
+    if (line.speaker !== currentSpeaker) {
+      currentSpeaker = line.speaker;
+      md += `\n### 👤 说话人 ${line.speaker} (\`${line.start}\`)\n\n`;
+    }
+
+    md += `- \`[${line.start} - ${line.end || line.start}]\` ${line.text}${starTag}\n`;
+    if (line.translation && line.translation.trim()) {
+      md += `  > 译文：${line.translation}\n`;
+    }
+  });
+
+  md += `\n\n---\n*由 Voice Studio 本地离线工作台导出*\n`;
+  return md;
 }
 
 /** "0:00:03" / "0:00:03,500" → SRT "00:00:03,000"。 */

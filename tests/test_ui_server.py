@@ -62,7 +62,7 @@ class TestServices:
             assert svc["name"] in names
 
     def test_services_one_ok(self) -> None:
-        """模拟 httpx.get 返回 200 时返回 status=ok。"""
+        """模拟 httpx.AsyncClient.get 返回 200 时返回 status=ok。"""
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9999},
@@ -74,7 +74,9 @@ class TestServices:
         mock_resp.status_code = 200
 
         with TestClient(app) as client, patch(
-            "voice_realtime.ui.server.httpx.get", return_value=mock_resp
+            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
         ), patch(
             "voice_realtime.ui.server.UIRuntime"
         ) as fake_cls:
@@ -101,7 +103,9 @@ class TestVoices:
         mock_resp.json.return_value = {"voice": "default", "available": ["default", "warm"]}
 
         with TestClient(app) as client, patch(
-            "voice_realtime.ui.server.httpx.get", return_value=mock_resp
+            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
         ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
@@ -119,13 +123,15 @@ class TestVoices:
         app = create_app(mock_settings)
 
         with TestClient(app) as client, patch(
-            "voice_realtime.ui.server.httpx.get",
+            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            new_callable=AsyncMock,
             side_effect=httpx.ConnectError("refused"),
         ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
             resp = client.get("/v1/voices")
             assert resp.status_code == 502
+
 
 
 class TestStaticMount:

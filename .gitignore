@@ -24,6 +24,7 @@ ui/dist/
 # 工具环境 (vendor 子仓库: WhisperLiveKit / mlx-audio, 独立 git clone 不入库)
 tools/
 *.local/
+.omo
 
 # 运行时产物 (音频 / 字幕 / 日志 / SRT)
 *.wav

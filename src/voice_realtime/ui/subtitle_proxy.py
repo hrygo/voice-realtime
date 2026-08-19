@@ -1,10 +1,10 @@
-"""SubtitleProxy：单 wlk 连接 + 音频推送 + 事件 multi-cast 到浏览器。
+"""SubtitleProxy：单 wlk 连接 + 全双工音频推送 + 事件 multi-cast 到浏览器。
 
 职责：
 - 建立 WhisperLiveKit /asr WS 连接
-- 从 AudioHub 接收音频块 → send_audio() 推给 wlk
-- 接收 wlk 转写事件 → multi-cast 到 /ws/subtitles 浏览器连接
-- 无浏览器订阅时暂停推送音频（按需采集）
+- 独立发送协程从 AudioHub 队列取音频块 → send_audio() 流式推给 wlk（无损推流）
+- 独立接收协程消费 wlk 转写事件 → multi-cast 到 /ws/subtitles 浏览器连接
+- 无浏览器订阅时自动暂停推流（按需采集），有订阅时恢复
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SubtitleProxy:
-    """wlk 字幕连接代理 + 事件广播。
+    """wlk 字幕连接代理 + 全双工事件广播。
 
     用法：
         proxy = SubtitleProxy(settings)
@@ -39,9 +39,10 @@ class SubtitleProxy:
         self._ws_clients: list[Callable[[str], Awaitable[None]]] = []
         self._tracker = SubtitleEventTracker()
         self._running = False
-        self._task: asyncio.Task[None] | None = None
+        self._send_task: asyncio.Task[None] | None = None
+        self._recv_task: asyncio.Task[None] | None = None
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=512)
-        self._paused = False  # 无浏览器订阅时暂停推音频
+        self._paused = False
 
     def add_audio_sink(
         self,
@@ -73,10 +74,10 @@ class SubtitleProxy:
 
     @property
     def is_paused(self) -> bool:
-        return self._paused
+        return not self.has_clients
 
     async def start(self) -> None:
-        """启动代理循环。"""
+        """启动代理：建立连接并启动全双工发送与接收任务。"""
         if self._running:
             return
         self._stream = SubtitleStream(
@@ -85,50 +86,59 @@ class SubtitleProxy:
         )
         await self._stream.connect()
         logger.info("SubtitleProxy: 已连接 wlk %s", self._stream.uri)
-        self._task = asyncio.create_task(self._process_loop())
         self._running = True
+        self._send_task = asyncio.create_task(self._audio_send_loop())
+        self._recv_task = asyncio.create_task(self._event_recv_loop())
 
     async def stop(self) -> None:
-        """停止代理并释放连接。"""
+        """停止代理并释放连接与所有任务。"""
         self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        for task in (self._send_task, self._recv_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._send_task = None
+        self._recv_task = None
         if self._stream is not None:
             await self._stream.close()
             self._stream = None
         logger.info("SubtitleProxy: 已停止")
 
     async def _process_loop(self) -> None:
-        """主循环：推音频 + 收事件 + 广播。"""
+        """兼容性包装：同时运行事件接收循环。"""
+        await self._event_recv_loop()
+
+    async def _audio_send_loop(self) -> None:
+        """独立音频上行协程：从缓冲区无损连续推送音频到 wlk。"""
+        while self._running:
+            try:
+                chunk = await self._audio_buffer.get()
+            except asyncio.CancelledError:
+                break
+            if self._stream is not None and self.has_clients:
+                try:
+                    await self._stream.send_audio(chunk)
+                except Exception:
+                    logger.debug("SubtitleProxy: 发送音频块异常", exc_info=True)
+
+    async def _event_recv_loop(self) -> None:
+        """独立事件下行协程：持续监听 wlk 转写事件并去重广播。"""
         stream = self._stream
         if stream is None:
             return
         try:
             async for event in stream.events():
-                # 广播事件给所有浏览器客户端
                 await self._broadcast_event(event)
-                # 按需推音频：有浏览器订阅时才推
-                should_push = self.has_clients
-                if should_push != self._paused:
-                    self._paused = not should_push
-                    action = "暂停" if self._paused else "恢复"
-                    logger.info("SubtitleProxy: %s音频推送（无浏览器订阅）", action)
-                # 从缓冲区取音频块推送（音频是独立队列，事件循环控制推送时机）
-                if should_push and not self._audio_buffer.empty():
-                    await self._push_audio_batch()
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("SubtitleProxy: 处理循环异常")
+            logger.exception("SubtitleProxy: 接收事件循环异常")
 
     async def _broadcast_event(self, event: SubtitleEvent) -> None:
         """将规范化事件广播给所有浏览器 WS 客户端。"""
         if not self._ws_clients:
             return
-        # 去重：只有新事件才广播
         if not self._tracker.track(event):
             return
         payload = event.raw
@@ -144,19 +154,16 @@ class SubtitleProxy:
             logger.debug("SubtitleProxy: 音频队列满，丢弃帧")
 
     async def _push_audio_batch(self) -> None:
-        """批量推送缓冲区中的音频块。"""
-        batch = []
+        """无损批量推送缓冲区中的所有音频块（全量排出，绝不丢帧）。"""
+        if self._stream is None or not self.has_clients:
+            return
         while not self._audio_buffer.empty():
             try:
-                batch.append(self._audio_buffer.get_nowait())
+                data = self._audio_buffer.get_nowait()
+                await self._stream.send_audio(data)
             except asyncio.QueueEmpty:
                 break
-        if not batch or self._stream is None:
-            return
-        # 逐个推送（避免大帧阻塞）
-        for data in batch[:1]:  # 每次只推一帧，保持实时性
-            try:
-                await self._stream.send_audio(data)
             except Exception:
-                logger.exception("SubtitleProxy: 推送音频失败")
+                logger.exception("SubtitleProxy: 批量推送音频失败")
                 break
+

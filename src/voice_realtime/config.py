@@ -99,6 +99,12 @@ class InteractionSettings(BaseSettings):
         le=0.99,
         description="自回声文本相似度阈值（difflib ratio / 最长公共子串覆盖率）",
     )
+    echo_tail_hangover_secs: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=3.0,
+        description="TTS 播报结束后继续抑制麦克风输入的秒数（吸收声学混响与声卡缓冲尾延）",
+    )
     max_session_seconds: int = Field(default=600, description="单次会话上限 (秒)")
 
     @field_validator("stt_language")
@@ -135,6 +141,10 @@ class SubtitleSettings(BaseSettings):
     port: int = Field(default=8001, description="字幕服务端口")
     device: str = Field(default="mps", description="推理设备 (mps/cpu)")
     model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
+    model_dir: Path = Field(
+        default=Path("runtime/qwen3-asr-0.6b"),
+        description="ASR 本地模型目录（离线环境必填，避免启动时拉取模型）",
+    )
     output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
 
     @field_validator("backend")
@@ -159,7 +169,7 @@ class Settings(BaseSettings):
     def dump_table(self) -> str:
         """以可读表格输出当前生效配置（用于启动横幅与诊断）。"""
         lines = ["voice-realtime 配置"]
-        for section in (self.bridge, self.interaction, self.subtitles):
+        for section in (self.bridge, self.interaction, self.subtitles, self.ui):
             lines.append(f"\n[{type(section).__name__}]")
             for key, value in section.model_dump().items():
                 lines.append(f"  {key}: {value}")

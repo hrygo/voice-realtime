@@ -1,135 +1,532 @@
+/* ==========================================================================
+   SubtitleStream Component Styles (Deep UX Optimized)
+   ========================================================================== */
+
 .subtitle-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  overflow: hidden;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .subtitle-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
+  gap: 10px;
 }
 
-.subtitle-header h2 {
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.subtitle-status {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 999px;
-}
-
-.subtitle-status.ok {
-  color: var(--green);
-  background: color-mix(in srgb, var(--green) 12%, transparent);
-}
-
-.subtitle-status.off {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-}
-
-.subtitle-stream {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px 14px;
+.subtitle-header-left {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.subtitle-header-left h2 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  display: flex;
+  align-items: center;
   gap: 6px;
 }
 
-.subtitle-empty {
-  color: var(--text-secondary);
-  font-size: 0.8rem;
-  text-align: center;
-  margin-top: 24px;
-}
-
-.subtitle-line {
-  display: flex;
-  gap: 8px;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  flex-wrap: wrap;
-}
-
-.subtitle-speaker {
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.subtitle-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.subtitle-translation {
-  flex-basis: 100%;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  margin-left: 20px;
-}
-
-.subtitle-partial {
-  font-size: 0.88rem;
-  color: var(--text-secondary);
-  font-style: italic;
-  border-left: 2px solid var(--border);
-  padding-left: 8px;
-}
-
-.subtitle-toolbar {
+.subtitle-header-right {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--border);
 }
 
-.subtitle-toolbar button {
-  font-size: 0.78rem;
-  padding: 4px 10px;
+.subtitle-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
-  border-radius: 6px;
   background: var(--bg-secondary);
-  color: var(--text);
-  cursor: pointer;
-}
-
-.subtitle-toolbar button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.subtitle-toolbar button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.subtitle-count {
-  margin-left: auto;
-  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
-/* 助手说话时字幕面板高亮 */
-.subtitle-panel.assistant-speaking {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+.subtitle-status-pill.connected {
+  color: var(--color-green);
+  border-color: color-mix(in srgb, var(--color-green) 30%, transparent);
 }
 
-.subtitle-panel.assistant-speaking .subtitle-header {
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-bottom-color: var(--accent);
+.subtitle-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
 }
 
-.subtitle-panel.assistant-speaking .subtitle-toolbar {
-  border-top-color: var(--accent);
+.subtitle-status-pill.connected .subtitle-status-dot {
+  background: var(--color-green);
+  box-shadow: 0 0 6px var(--color-green-glow);
+}
+
+/* Subtitle Control Toolbar */
+.subtitle-tools-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border-dim);
+  background: rgba(0, 0, 0, 0.08);
+  flex-wrap: wrap;
+}
+
+.subtitle-search-wrap {
+  flex: 1;
+  min-width: 130px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.subtitle-search-input {
+  width: 100%;
+  padding: 5px 24px 5px 26px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.subtitle-search-input:focus {
+  border-color: var(--color-accent);
+}
+
+.subtitle-search-icon {
+  position: absolute;
+  left: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.subtitle-search-clear {
+  position: absolute;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.subtitle-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subtitle-speaker-select {
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  outline: none;
+}
+
+.font-size-toggle-btn {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.font-size-toggle-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.presentation-mode-btn {
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.presentation-mode-btn:hover {
+  border-color: var(--color-cyan);
+  color: var(--color-cyan);
+  background: var(--bg-tertiary);
+}
+
+/* Subtitle Stream Content Area */
+.subtitle-stream-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Font scale modes */
+.subtitle-stream-body.font-medium .subtitle-line-text {
+  font-size: 0.98rem;
+}
+.subtitle-stream-body.font-large .subtitle-line-text {
+  font-size: 1.15rem;
+  line-height: 1.6;
+}
+
+.subtitle-empty-wrap {
+  margin: auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  padding: 24px;
+}
+
+.subtitle-empty-icon {
+  font-size: 2rem;
+  opacity: 0.8;
+}
+
+.subtitle-empty-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.subtitle-empty-desc {
+  font-size: 0.76rem;
+  max-width: 240px;
+  line-height: 1.4;
+}
+
+/* Individual Subtitle Row Card */
+.subtitle-row-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-dim);
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.subtitle-row-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}
+
+.subtitle-row-card.is-starred {
+  border-color: color-mix(in srgb, var(--color-yellow) 40%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 6%, var(--bg-card));
+}
+
+.subtitle-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+}
+
+.subtitle-speaker-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.subtitle-header-right-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subtitle-time-badge {
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 0.68rem;
+}
+
+.subtitle-star-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+
+.subtitle-star-btn:hover {
+  color: var(--color-yellow);
+  transform: scale(1.2);
+}
+
+.subtitle-star-btn.starred {
+  color: var(--color-yellow);
+}
+
+.subtitle-line-text {
+  font-size: 0.88rem;
+  line-height: 1.48;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.subtitle-translation-text {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  border-left: 2px solid var(--color-accent);
+  padding-left: 8px;
+  margin-top: 2px;
+}
+
+/* Partial Transcription Row */
+.subtitle-partial-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-cyan) 8%, var(--bg-card));
+  border: 1px dashed color-mix(in srgb, var(--color-cyan) 35%, transparent);
+  animation: partial-pulse 2s infinite ease-in-out;
+}
+
+.partial-pulse-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-cyan);
+  box-shadow: 0 0 8px var(--color-cyan-glow);
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.subtitle-partial-text {
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--color-cyan);
+  font-style: italic;
+}
+
+/* Search Highlight Mark */
+mark.subtitle-highlight {
+  background: rgba(245, 158, 11, 0.35);
+  color: #ffffff;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Subtitle Bottom Action Toolbar */
+.subtitle-bottom-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.08);
+  flex-wrap: wrap;
+}
+
+.subtitle-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.subtitle-meta-stats {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Assistant Speaking Co-Activity Highlighting */
+.subtitle-panel.assistant-active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 20px var(--color-accent-glow), var(--shadow-card);
+}
+
+.subtitle-panel.assistant-active .subtitle-header {
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+}
+
+/* ==========================================================================
+   Presentation / Optical Mirror Teleprompter Mode
+   ========================================================================== */
+
+.presentation-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  background: #05070c;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 36px;
+  overflow: hidden;
+  animation: modal-fade-in 0.25s ease forwards;
+}
+
+.presentation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 16px;
+}
+
+.presentation-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.presentation-title-wrap h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: -0.02em;
+}
+
+.presentation-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.presentation-font-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.presentation-font-slider {
+  width: 100px;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+.presentation-mirror-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.presentation-mirror-btn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.presentation-close-btn {
+  padding: 6px 16px;
+  border-radius: var(--radius-pill);
+  background: #1e293b;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-size: 0.84rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.presentation-close-btn:hover {
+  background: #334155;
+  transform: translateY(-1px);
+}
+
+.presentation-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  transition: transform 0.2s ease;
+}
+
+.presentation-body.mirror-mode {
+  transform: scaleX(-1);
+}
+
+.presentation-line {
+  line-height: 1.5;
+  color: #f8fafc;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+
+.presentation-speaker-tag {
+  font-size: 0.65em;
+  font-weight: 700;
+  margin-right: 12px;
+}
+
+.presentation-partial {
+  line-height: 1.5;
+  color: var(--color-cyan);
+  font-style: italic;
+  opacity: 0.9;
+}
+
+@keyframes partial-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.75;
+  }
+}
+
+@media (max-width: 768px) {
+  .presentation-overlay {
+    padding: 14px 16px;
+  }
+  .presentation-font-slider-wrap {
+    display: none;
+  }
 }

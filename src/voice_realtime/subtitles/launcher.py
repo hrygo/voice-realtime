@@ -32,7 +32,7 @@ def resolve_wlk_command(repo: Path | None = None) -> str:
 
 def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> list[str]:
     """构造 wlk serve 命令行参数。"""
-    return [
+    argv = [
         executable,
         "serve",
         "--host",
@@ -44,6 +44,9 @@ def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> li
         "--language",
         settings.language,
     ]
+    if settings.model_dir and settings.model_dir.exists():
+        argv += ["--model_dir", str(settings.model_dir)]
+    return argv
 
 
 def install_deps(repo: Path) -> None:
@@ -80,8 +83,8 @@ def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Po
     log_dir.mkdir(parents=True, exist_ok=True)
     argv = build_server_argv(settings, executable=executable)
     logger.info("启动字幕服务: %s", " ".join(argv))
-    stdout = (log_dir / "subtitles.out.log").open("w")
-    stderr = (log_dir / "subtitles.err.log").open("w")
+    stdout = (log_dir / "subtitles.out.log").open("w", encoding="utf-8")
+    stderr = (log_dir / "subtitles.err.log").open("w", encoding="utf-8")
     return subprocess.Popen(
         argv,
         stdout=stdout,

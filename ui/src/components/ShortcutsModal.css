@@ -1,0 +1,141 @@
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  animation: modal-fade-in 0.2s ease-out forwards;
+}
+
+.modal-content.shortcuts-modal {
+  width: min(480px, 92vw);
+  background: var(--bg-card, #111827);
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-dim, rgba(255, 255, 255, 0.08));
+}
+
+.modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-title-icon {
+  font-size: 1.1rem;
+}
+
+.modal-header h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary, #f8fafc);
+  margin: 0;
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #94a3b8);
+  font-size: 1rem;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modal-close-btn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+  color: var(--text-primary, #f8fafc);
+}
+
+.shortcuts-list {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.86rem;
+  padding: 4px 0;
+}
+
+.shortcut-desc {
+  color: var(--text-secondary, #cbd5e1);
+}
+
+.shortcut-key,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-accent-light, #a5b4fc);
+  background: var(--bg-tertiary, #1e293b);
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.12));
+  border-bottom-width: 2px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border-dim, rgba(255, 255, 255, 0.08));
+  background: var(--bg-secondary, #0b0f19);
+}
+
+.shortcut-tip {
+  font-size: 0.76rem;
+  color: var(--text-muted, #64748b);
+}
+
+.btn-primary {
+  padding: 6px 16px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--color-accent, #6366f1);
+  color: #ffffff;
+  border: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: var(--color-accent-hover, #4f46e5);
+}
+
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

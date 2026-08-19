@@ -1,122 +1,129 @@
+/* ==========================================================================
+   Voice Studio App Layout & Master Component Styles
+   ========================================================================== */
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
 .app-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 3fr 2fr;
-  grid-template-rows: minmax(0, 1fr);
-  gap: 16px;
-  padding: 16px 20px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 20px 20px 20px;
   min-height: 0;
+  overflow: hidden;
 }
 
+.panel-wrapper {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Glassmorphism Panel Base */
 .panel {
   display: flex;
   flex-direction: column;
+  height: 100%;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-card);
   overflow: hidden;
   min-height: 0;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.panel:hover {
+  border-color: var(--border-light);
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 12px 18px;
   border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .panel-header h2 {
-  font-size: 0.9rem;
+  font-size: 0.92rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .panel-hint {
-  font-size: 0.7rem;
-  color: var(--text-secondary);
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
-.panel-body {
+/* Mobile Tab Navigation (Only visible on narrow screens) */
+.mobile-tabs {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px 0;
+}
+
+.mobile-tab-btn {
   flex: 1;
-  min-height: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 500;
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.placeholder-text {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-}
-
-.status-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
-}
-
-.status-title {
-  font-size: 1rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-
-.status-lights {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.service-light {
-  display: flex;
-  align-items: center;
   gap: 6px;
-  font-size: 0.8rem;
-  color: var(--text-secondary);
+  transition: all 0.2s ease;
 }
 
-.light-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  transition: background-color 0.3s ease;
+.mobile-tab-btn.active {
+  background: var(--color-accent);
+  color: #ffffff;
+  border-color: var(--color-accent);
+  font-weight: 600;
+  box-shadow: 0 2px 8px var(--color-accent-glow);
 }
 
-.light-label {
-  text-transform: capitalize;
-}
+/* Responsive Breakpoints */
+@media (max-width: 960px) {
+  .mobile-tabs {
+    display: flex;
+  }
 
-.loading-text {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-}
+  .app-main {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 14px 14px 14px;
+    gap: 12px;
+  }
 
-.status-actions {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-}
+  .app-main .panel-wrapper {
+    display: none;
+    height: 100%;
+  }
 
-.theme-toggle {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-secondary);
-  font-size: 1rem;
-  line-height: 1;
-  cursor: pointer;
-  transition: border-color 0.15s ease;
-}
-
-.theme-toggle:hover {
-  border-color: var(--accent);
-}
-
-.theme-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  .app-main .panel-wrapper.tab-active {
+    display: flex;
+  }
 }

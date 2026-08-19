@@ -1,77 +1,152 @@
-/* Voice Studio 基础样式（亮色主题默认，暗色由 @media / data-theme 覆盖） */
+/* ==========================================================================
+   Voice Studio Master Design System
+   Modern Glassmorphism & High-Contrast Typography
+   ========================================================================== */
 
 :root {
-  --bg: #ffffff;
-  --bg-secondary: #f3f4f6;
-  --text: #111827;
-  --text-secondary: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --green: #16a34a;
-  --yellow: #ca8a04;
-  --red: #dc2626;
-  --radius: 8px;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-}
+  /* Default Dark Tokens (Deep Obsidian / Slate Glass) */
+  --bg-base: #090d16;
+  --bg-secondary: #0f172a;
+  --bg-card: rgba(20, 29, 47, 0.78);
+  --bg-card-solid: #131d31;
+  --bg-tertiary: #1e293b;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
 
-/* 系统暗色模式：无 data-theme 属性时由 @media 接管（用于 system 模式和首屏渲染）。 */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme]) {
-    --bg: #0f172a;
-    --bg-secondary: #1e293b;
-    --text: #f1f5f9;
-    --text-secondary: #94a3b8;
-    --border: #334155;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
-    --green: #22c55e;
-    --yellow: #facc15;
-    --red: #ef4444;
-  }
-}
-
-/* 显式暗色主题：用户手动切换。 */
-[data-theme="dark"] {
-  --bg: #0f172a;
-  --bg-secondary: #1e293b;
-  --text: #f1f5f9;
+  --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
-  --border: #334155;
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --green: #22c55e;
-  --yellow: #facc15;
-  --red: #ef4444;
+  --text-muted: #64748b;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.15);
+  --border-dim: rgba(255, 255, 255, 0.04);
+  --border-focus: #6366f1;
+
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-light: #a5b4fc;
+  --color-accent-glow: rgba(99, 102, 241, 0.25);
+
+  --color-cyan: #06b6d4;
+  --color-cyan-glow: rgba(6, 182, 212, 0.25);
+  --color-green: #10b981;
+  --color-green-glow: rgba(16, 185, 129, 0.25);
+  --color-yellow: #f59e0b;
+  --color-yellow-glow: rgba(245, 158, 11, 0.25);
+  --color-red: #ef4444;
+  --color-red-glow: rgba(239, 68, 68, 0.25);
+  --color-purple: #a855f7;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-pill: 9999px;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.25), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+  --shadow-card: 0 12px 32px -4px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-glow: 0 0 28px rgba(99, 102, 241, 0.2);
+
+  /* Compatibility Aliases */
+  --bg: var(--bg-base);
+  --text: var(--text-primary);
+  --accent: var(--color-accent);
+  --accent-hover: var(--color-accent-hover);
+  --green: var(--color-green);
+  --yellow: var(--color-yellow);
+  --red: var(--color-red);
+  --radius: var(--radius-md);
 }
 
-/* 显式亮色主题：强制亮色，即使系统偏好暗色。 */
+/* Explicit Light Theme */
 [data-theme="light"] {
-  --bg: #ffffff;
-  --bg-secondary: #f3f4f6;
-  --text: #111827;
-  --text-secondary: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --green: #16a34a;
-  --yellow: #ca8a04;
-  --red: #dc2626;
+  --bg-base: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --bg-card: rgba(255, 255, 255, 0.94);
+  --bg-card-solid: #ffffff;
+  --bg-tertiary: #e2e8f0;
+  --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active: rgba(0, 0, 0, 0.08);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --border: rgba(0, 0, 0, 0.08);
+  --border-light: rgba(0, 0, 0, 0.16);
+  --border-dim: rgba(0, 0, 0, 0.04);
+  --border-focus: #4f46e5;
+
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-light: #6366f1;
+  --color-accent-glow: rgba(79, 70, 229, 0.18);
+
+  --color-cyan: #0284c7;
+  --color-cyan-glow: rgba(2, 132, 199, 0.18);
+  --color-green: #059669;
+  --color-green-glow: rgba(5, 150, 105, 0.18);
+  --color-yellow: #d97706;
+  --color-yellow-glow: rgba(217, 119, 6, 0.18);
+  --color-red: #dc2626;
+  --color-red-glow: rgba(220, 38, 38, 0.18);
+  --color-purple: #9333ea;
+
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
+  --shadow-card: 0 8px 24px -2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --shadow-glow: 0 0 24px rgba(79, 70, 229, 0.12);
 }
 
-* {
+/* Explicit Dark Theme */
+[data-theme="dark"] {
+  --bg-base: #090d16;
+  --bg-secondary: #0f172a;
+  --bg-card: rgba(20, 29, 47, 0.78);
+  --bg-card-solid: #131d31;
+  --bg-tertiary: #1e293b;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-light: rgba(255, 255, 255, 0.15);
+  --border-dim: rgba(255, 255, 255, 0.04);
+  --border-focus: #6366f1;
+
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-light: #a5b4fc;
+  --color-accent-glow: rgba(99, 102, 241, 0.25);
+}
+
+/* Reset & Global */
+*,
+*::before,
+*::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
+html {
+  color-scheme: dark light;
+}
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  user-select: text;
 }
 
 #root {
@@ -79,5 +154,37 @@ body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow: clip;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.07) 0%, transparent 60%),
+              radial-gradient(circle at 100% 100%, rgba(6, 182, 212, 0.05) 0%, transparent 45%),
+              var(--bg-base);
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.38);
+}
+
+::selection {
+  background: var(--color-accent-glow);
+  color: var(--text-primary);
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
 }

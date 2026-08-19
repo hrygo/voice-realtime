@@ -16,6 +16,7 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     Frame,
     InputAudioRawFrame,
+    LLMFullResponseEndFrame,
     LLMTextFrame,
     TranscriptionFrame,
 )
@@ -28,6 +29,7 @@ from voice_realtime.interaction.pipeline import (
     BotTextRecorder,
     EchoSuppressionProcessor,
     EchoTextBuffer,
+    HangoverUserMuteStrategy,
     SelfEchoFilter,
     _resolve_stt_model,
     _to_pipecat_language,
@@ -142,7 +144,7 @@ class TestBuildPipeline:
         tts_mock.assert_called_once()
         assert tts_mock.call_args.kwargs["base_url"] == "http://127.0.0.1:8765/v1"
         # voice 在白名单内占位；桥固定用配置音色（VR_BRIDGE_VOICE），忽略该值
-        assert tts_mock.call_args.kwargs["voice"] == "alloy"
+        tts_mock.Settings.assert_called_with(voice="alloy")
         assert tts_mock.call_args.kwargs["sample_rate"] == TTS_OUTPUT_SAMPLE_RATE
 
     def test_stt_language_is_chinese(
@@ -385,8 +387,10 @@ class TestEchoSuppressionProcessor:
         assert [type(f).__name__ for f in emitted] == ["InputAudioRawFrame"]
         assert processor._dropped == 0  # type: ignore[attr-defined]
 
-    def test_bot_stopped_lifts_suppression(self) -> None:
-        processor = self._make_processor()
+    def test_bot_stopped_lifts_suppression_after_hangover(self) -> None:
+        # tail_hangover_secs=0.0 时立即解除抑制
+        processor = EchoSuppressionProcessor(tail_hangover_secs=0.0)
+        processor._FrameProcessor__started = True  # type: ignore[attr-defined]
         asyncio.run(
             _run_seq(
                 processor,
@@ -401,9 +405,45 @@ class TestEchoSuppressionProcessor:
         assert [type(f).__name__ for f in emitted] == ["InputAudioRawFrame"]
         assert not processor._suppressing  # type: ignore[attr-defined]
 
+    def test_tail_hangover_suppresses_residual_echo(self) -> None:
+        # tail_hangover_secs=0.5 时，BotStoppedSpeaking 后的音频帧在窗口内仍被丢弃
+        processor = EchoSuppressionProcessor(tail_hangover_secs=0.5)
+        processor._FrameProcessor__started = True  # type: ignore[attr-defined]
+        asyncio.run(
+            _run_seq(
+                processor,
+                [
+                    BotStartedSpeakingFrame(),
+                    BotStoppedSpeakingFrame(),
+                    self._audio(1000),
+                ],
+            )
+        )
+        assert processor._dropped == 1  # type: ignore[attr-defined]
+        # 模拟时间流逝超过 hangover
+        processor._hangover_until = time.monotonic() - 0.1  # type: ignore[attr-defined]
+        emitted = asyncio.run(_run_seq(processor, [self._audio(1000)]))
+        assert [type(f).__name__ for f in emitted] == ["InputAudioRawFrame"]
+
+    def test_barge_in_auto_relocks_when_volume_drops(self) -> None:
+        """插话放行后，若音量平稳回落到基线以下连续 20 帧且 Bot 仍在播报，自动重锁抑制。"""
+        processor = self._make_processor(gain=2.5, frames=3)
+        asyncio.run(
+            _run_seq(
+                processor,
+                [BotStartedSpeakingFrame()]
+                + [self._audio(1000)] * 4  # warmup
+                + [self._audio(4000)] * 3,  # 触发插话
+            )
+        )
+        assert not processor._suppressing  # type: ignore[attr-defined]
+        assert processor._bot_speaking  # type: ignore[attr-defined]
+
+        # 连续 20 帧平稳低音量
+        asyncio.run(_run_seq(processor, [self._audio(1000)] * 20))
+        assert processor._suppressing  # type: ignore[attr-defined]
+
     def test_opens_on_upstream_direction_too(self) -> None:
-        # 运行期观察到 BotStarted UPSTREAM 未达 input->echo（pipecat 1.7 层间行为）；
-        # 逻辑上需保证任一方向到达都能正确开抑制
         processor = self._make_processor()
         asyncio.run(
             _run_seq(
@@ -420,24 +460,59 @@ class TestEchoTextBuffer:
     def test_recent_entries_match_and_expire(self) -> None:
         buffer = EchoTextBuffer(window_secs=1.0)
         buffer.add("今天天气很好我们出去散步", now=100.0)
-        assert buffer.matches("今天天气很好我们出去散步", 0.7, 4, now=100.5)
-        assert not buffer.matches("今天天气很好我们出去散步", 0.7, 4, now=102.0)  # 过期
+        assert buffer.matches("今天天气很好我们出去散步", 0.7, 2, now=100.5)
+        assert not buffer.matches("今天天气很好我们出去散步", 0.7, 2, now=102.0)  # 过期
 
-    def test_short_text_never_matches(self) -> None:
+    def test_short_text_substring_matches_bot_text(self) -> None:
         buffer = EchoTextBuffer(window_secs=10.0)
-        buffer.add("好的没问题", now=0.0)
-        assert not buffer.matches("好的", 0.7, 4, now=1.0)
+        buffer.add("今天天气很好我们出去散步吧", now=0.0)
+        # 短词如果是机器人的子串，判定为回声
+        assert buffer.matches("散步吧", 0.7, 2, now=1.0)
+        assert buffer.matches("好的", 0.7, 2, now=1.0) is False
+
+    def test_fuzzy_homophone_phrase_matches(self) -> None:
+        """同音错字容错：STT 转写短语有 1 个同音字误差时，依然判定为自回声。"""
+        buffer = EchoTextBuffer(window_secs=10.0)
+        buffer.add("好的，请问还有什么可以帮您的吗？", now=0.0)
+        # 帮您的嘛 (4字错1字)
+        assert buffer.matches("帮您的嘛", 0.7, 2, now=1.0)
+        # 明天下 与原句完全无关
+        assert not buffer.matches("明天下", 0.7, 2, now=1.0)
+
+    def test_punctuation_and_space_normalization(self) -> None:
+        buffer = EchoTextBuffer(window_secs=10.0)
+        buffer.add("你好，今天天气真不错！我们一起去公园？", now=0.0)
+        # STT 识别结果可能无标点或空格
+        assert buffer.matches("你好今天天气真不错我们一起去公园", 0.7, 2, now=1.0)
+        assert buffer.matches("今天天气真不错", 0.7, 2, now=1.0)
 
     def test_distinct_text_does_not_match(self) -> None:
         buffer = EchoTextBuffer(window_secs=10.0)
         buffer.add("介绍一下你自己吧", now=0.0)
-        assert not buffer.matches("帮我订一张明天去北京的机票", 0.7, 4, now=1.0)
+        assert not buffer.matches("帮我订一张明天去北京的机票", 0.7, 2, now=1.0)
 
     def test_fragment_of_bot_text_matches_by_containment(self) -> None:
         """用户转写是机器人文本的子串（STT 只捕获回声尾部）→ 判定自回声。"""
         buffer = EchoTextBuffer(window_secs=10.0)
         buffer.add("今天我们一起去公园散步吧然后回家吃饭", now=0.0)
-        assert buffer.matches("一起去公园散步", 0.7, 4, now=1.0)
+        assert buffer.matches("一起去公园散步", 0.7, 2, now=1.0)
+
+
+class TestHangoverUserMuteStrategy:
+    def test_mutes_during_speech_and_hangover(self) -> None:
+        strategy = HangoverUserMuteStrategy(tail_hangover_secs=0.5)
+        # 初始未静音
+        assert not asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
+
+        # Bot 开始发声 -> 静音
+        assert asyncio.run(strategy.process_frame(BotStartedSpeakingFrame()))
+
+        # Bot 停止发声 -> 依然在 hangover 窗口内静音
+        assert asyncio.run(strategy.process_frame(BotStoppedSpeakingFrame()))
+
+        # 模拟时间超过 hangover
+        strategy._hangover_until = time.monotonic() - 0.1
+        assert not asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
 
 
 class TestSelfEchoFilter:
@@ -484,13 +559,26 @@ class TestSelfEchoFilter:
 
 
 class TestBotTextRecorder:
-    def test_records_llm_text_and_passes_through(self) -> None:
+    def test_aggregates_streaming_tokens_and_flushes_on_punctuation(self) -> None:
         buffer = EchoTextBuffer()
         recorder = BotTextRecorder(buffer)
         recorder._FrameProcessor__started = True  # type: ignore[attr-defined]
-        emitted = asyncio.run(_run_seq(recorder, [LLMTextFrame("今天天气很好")]))
-        assert [type(f).__name__ for f in emitted] == ["LLMTextFrame"]
-        assert buffer.matches("今天天气很好", 0.99, 4, now=time.monotonic())
+        tokens = [LLMTextFrame("今天"), LLMTextFrame("天气"), LLMTextFrame("很好。")]
+        emitted = asyncio.run(_run_seq(recorder, tokens))
+        assert len(emitted) == 3
+        assert buffer.matches("今天天气很好", 0.99, 2, now=time.monotonic())
+
+    def test_flushes_on_response_end(self) -> None:
+        buffer = EchoTextBuffer()
+        recorder = BotTextRecorder(buffer)
+        recorder._FrameProcessor__started = True  # type: ignore[attr-defined]
+        asyncio.run(
+            _run_seq(
+                recorder,
+                [LLMTextFrame("好的"), LLMTextFrame("没问题"), LLMFullResponseEndFrame()],
+            )
+        )
+        assert buffer.matches("好的没问题", 0.99, 2, now=time.monotonic())
 
     def test_passes_control_frames_without_recording(self) -> None:
         buffer = EchoTextBuffer()

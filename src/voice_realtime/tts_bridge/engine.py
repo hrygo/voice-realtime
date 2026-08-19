@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -33,7 +35,7 @@ class TTSEngine:
     音色状态：
     - 构造时取 `settings.voice` 为当前音色；
     - `set_voice()` 运行时热切换（/v1/voice 端点）；
-    - `stream_speech()` 默认使用当前音色。
+    - `stream_speech()` 默认使用当前音色，生成过程脱离主事件循环后台执行。
     """
 
     def __init__(self, settings: BridgeSettings) -> None:
@@ -109,7 +111,7 @@ class TTSEngine:
         speed: float = 1.0,
         lang: str = "auto",
     ) -> AsyncIterator[bytes]:
-        """流式合成，逐块产出 int16 PCM 字节。
+        """流式合成，逐块产出 int16 PCM 字节（后台线程隔离执行，0 阻塞事件循环）。
 
         Args:
             text: 待合成文本。
@@ -122,16 +124,42 @@ class TTSEngine:
             raise RuntimeError("TTSEngine not loaded")
         _, instruct, speaker = self._synthesis_args(voice or self._voice)
         chunk_secs = self._settings.chunk_ms / 1000
-        for result in self._model.generate(
-            text=text,
-            voice=speaker,
-            instruct=instruct,
-            speed=speed,
-            lang_code=lang,
-            stream=True,
-            streaming_interval=chunk_secs,
-        ):
-            yield self._to_pcm(result)
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+
+        def _worker() -> None:
+            try:
+                assert self._model is not None
+                for result in self._model.generate(
+                    text=text,
+                    voice=speaker,
+                    instruct=instruct,
+                    speed=speed,
+                    lang_code=lang,
+                    stream=True,
+                    streaming_interval=chunk_secs,
+                ):
+                    pcm = self._to_pcm(result)
+                    loop.call_soon_threadsafe(queue.put_nowait, pcm)
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+
+        worker_thread = threading.Thread(
+            target=_worker,
+            name="tts-engine-generate",
+            daemon=True,
+        )
+        worker_thread.start()
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
 
     def _to_pcm(self, result: Any) -> bytes:
         """将 GenerationResult.audio (float32 mono) 转为 int16 PCM。"""
@@ -139,3 +167,4 @@ class TTSEngine:
         samples = np.asarray(audio, dtype=np.float32)
         pcm = np.clip(samples * 32767.0, -32768.0, 32767.0).astype(np.int16)
         return pcm.tobytes()
+

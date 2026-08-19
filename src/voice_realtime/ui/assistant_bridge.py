@@ -69,6 +69,12 @@ class StatusBridgeObserver(BaseObserver):
         self._tts_last_broadcast: float = 0.0
         self._turn_id = 0
         self._current_sentence = ""
+        # Turn-level 耗时度量时间戳
+        self._t_speaking_start: float = 0.0
+        self._t_silence: float = 0.0
+        self._t_stt_final: float = 0.0
+        self._t_llm_first: float = 0.0
+        self._t_tts_started: float = 0.0
 
     # ---------- 客户端管理（与 SubtitleProxy 同接口） ----------
 
@@ -110,15 +116,19 @@ class StatusBridgeObserver(BaseObserver):
     # ---------- 帧处理 ----------
 
     async def _handle_frame(self, frame: Frame) -> None:
+        now_ts = time.monotonic()
         if isinstance(frame, InterimTranscriptionFrame):
             await self._emit_event(
                 {"type": "stt", "state": "interim", "text": frame.text, "t": self._now()}
             )
         elif isinstance(frame, TranscriptionFrame):
+            self._t_stt_final = now_ts
             await self._emit_event(
                 {"type": "stt", "state": "final", "text": frame.text, "t": self._now()}
             )
         elif isinstance(frame, LLMTextFrame):
+            if self._t_llm_first == 0.0:
+                self._t_llm_first = now_ts
             await self._emit_event(
                 {
                     "type": "llm",
@@ -132,23 +142,28 @@ class StatusBridgeObserver(BaseObserver):
                 {"type": "llm", "state": "final", "turn_id": self._turn_id}
             )
             self._turn_id += 1
+            self._t_llm_first = 0.0
         elif isinstance(frame, TTSTextFrame):
             # 记录当前句子，供 TTSStartedFrame 携带
             self._current_sentence = frame.text
         elif isinstance(frame, TTSStartedFrame):
+            self._t_tts_started = now_ts
             await self._emit_event(
                 {"type": "tts", "state": "started", "sentence": self._current_sentence}
             )
+            await self._emit_turn_metrics()
         elif isinstance(frame, TTSStoppedFrame):
             await self._emit_event({"type": "tts", "state": "stopped"})
             self._tts_chunks = 0
         elif isinstance(frame, TTSAudioRawFrame):
             await self._handle_tts_audio()
         elif isinstance(frame, UserStartedSpeakingFrame):
+            self._t_speaking_start = now_ts
             await self._emit_event(
                 {"type": "vad", "state": "user_speaking", "t": self._now()}
             )
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            self._t_silence = now_ts
             await self._emit_event(
                 {"type": "vad", "state": "user_silence", "t": self._now()}
             )
@@ -161,6 +176,37 @@ class StatusBridgeObserver(BaseObserver):
         elif isinstance(frame, StartFrame):
             # StartFrame 系统帧在 on_push_frame 也能捕获；on_pipeline_started 兜底
             await self._emit_event({"type": "system", "state": "pipeline_started"})
+
+    async def _emit_turn_metrics(self) -> None:
+        """在一轮对话 TTS 开始时下发端到端耗时瀑布。"""
+        if self._t_silence <= 0.0 or self._t_tts_started <= 0.0:
+            return
+        stt_ms = (
+            max(0.0, round((self._t_stt_final - self._t_silence) * 1000, 1))
+            if self._t_stt_final > 0
+            else 0.0
+        )
+        llm_ttft_ms = (
+            max(0.0, round((self._t_llm_first - self._t_stt_final) * 1000, 1))
+            if (self._t_llm_first > 0 and self._t_stt_final > 0)
+            else 0.0
+        )
+        tts_ttfb_ms = (
+            max(0.0, round((self._t_tts_started - self._t_llm_first) * 1000, 1))
+            if self._t_llm_first > 0
+            else 0.0
+        )
+        e2e_ms = max(0.0, round((self._t_tts_started - self._t_silence) * 1000, 1))
+        await self._emit_event(
+            {
+                "type": "metrics",
+                "turn_id": self._turn_id,
+                "stt_ms": stt_ms,
+                "llm_ttft_ms": llm_ttft_ms,
+                "tts_ttfb_ms": tts_ttfb_ms,
+                "e2e_ms": e2e_ms,
+            }
+        )
 
     async def _handle_tts_audio(self) -> None:
         """TTS 音频帧：仅计数，超节流窗口才广播一次 synthesizing。"""

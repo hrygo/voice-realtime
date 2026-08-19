@@ -1,142 +1,259 @@
 import { useState, useEffect, useCallback } from "react";
 import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
-import "../App.css";
+import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
+import { showToast } from "./Toast";
+import "./StatusBar.css";
 
 type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
 
 interface ServiceInfo {
-	name: string;
-	status: ServiceStatus;
-	url: string;
+  name: string;
+  status: ServiceStatus;
+  url: string;
 }
 
 interface ServicesResponse {
-	services: ServiceInfo[];
+  services: ServiceInfo[];
 }
 
-const STATUS_LABELS: Record<ServiceStatus, string> = {
-	ok: "运行中",
-	unreachable: "不可达",
-	timeout: "超时",
-	error: "异常",
-	checking: "检测中",
+const SERVICE_DISPLAY_NAMES: Record<string, string> = {
+  wlk: "WhisperLiveKit (:8001)",
+  tts: "TTS 桥 (:8765)",
+  lm: "LM Studio (:1234)",
 };
 
-const STATUS_COLORS: Record<ServiceStatus, string> = {
-	ok: "var(--green)",
-	unreachable: "var(--red)",
-	timeout: "var(--yellow)",
-	error: "var(--red)",
-	checking: "var(--text-secondary)",
+const STATUS_LABELS: Record<ServiceStatus, string> = {
+  ok: "运行正常",
+  unreachable: "服务未启动",
+  timeout: "连接超时",
+  error: "服务异常",
+  checking: "检测中",
 };
 
 const THEME_LABELS: Record<Theme, string> = {
-	light: "☀️",
-	dark: "🌙",
-	system: "💻",
+  light: "☀️",
+  dark: "🌙",
+  system: "💻",
 };
 
 const THEME_TITLES: Record<Theme, string> = {
-	light: "亮色主题",
-	dark: "暗色主题",
-	system: "跟随系统",
+  light: "当前：亮色主题 (点击切换)",
+  dark: "当前：暗色主题 (点击切换)",
+  system: "当前：跟随系统 (点击切换)",
 };
 
-const THEME_CYCLE: readonly Theme[] = ["light", "dark", "system"];
+const THEME_CYCLE: readonly Theme[] = ["dark", "light", "system"];
 
-function ServiceLight({ name, status }: { name: string; status: ServiceStatus }) {
-	const color = STATUS_COLORS[status];
-	return (
-		<div className="service-light">
-			<span
-				className="light-dot"
-				style={{ backgroundColor: color }}
-				title={STATUS_LABELS[status]}
-			/>
-			<span className="light-label">{name}</span>
-		</div>
-	);
+interface StatusBarProps {
+  onOpenShortcuts?: () => void;
 }
 
-/** 主题切换按钮：点击循环 light → dark → system。 */
+function ServiceLight({
+  service,
+  onRefresh,
+}: {
+  service: ServiceInfo;
+  onRefresh: () => void;
+}) {
+  const displayName = SERVICE_DISPLAY_NAMES[service.name] || service.name;
+  const statusText = STATUS_LABELS[service.status] || service.status;
+
+  return (
+    <button
+      type="button"
+      className="service-light-pill"
+      onClick={onRefresh}
+      title={`${displayName} - ${statusText}\n地址: ${service.url}\n(点击重新探活)`}
+    >
+      <span className={`light-dot dot-${service.status}`} aria-hidden="true" />
+      <span className="light-label">{displayName}</span>
+    </button>
+  );
+}
+
 function ThemeToggle() {
-	const theme = useUISettingsStore((s) => s.theme);
-	const setTheme = useUISettingsStore((s) => s.setTheme);
+  const theme = useUISettingsStore((s) => s.theme);
+  const setTheme = useUISettingsStore((s) => s.setTheme);
 
-	const cycle = useCallback(() => {
-		const current = THEME_CYCLE.indexOf(theme);
-		const next = THEME_CYCLE[(current + 1) % THEME_CYCLE.length];
-		if (next) setTheme(next);
-	}, [theme, setTheme]);
+  const cycle = useCallback(() => {
+    const current = THEME_CYCLE.indexOf(theme);
+    const next = THEME_CYCLE[(current + 1) % THEME_CYCLE.length];
+    if (next) setTheme(next);
+  }, [theme, setTheme]);
 
-	return (
-		<button
-			type="button"
-			className="theme-toggle"
-			onClick={cycle}
-			aria-label={THEME_TITLES[theme]}
-			title={THEME_TITLES[theme]}
-		>
-			{THEME_LABELS[theme]}
-		</button>
-	);
+  return (
+    <button
+      type="button"
+      className="status-icon-btn"
+      onClick={cycle}
+      aria-label={THEME_TITLES[theme]}
+      title={THEME_TITLES[theme]}
+    >
+      {THEME_LABELS[theme]}
+    </button>
+  );
 }
 
-export default function StatusBar() {
-	const [services, setServices] = useState<ServiceInfo[]>([]);
-	const [loading, setLoading] = useState(true);
+export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
+  const [services, setServices] = useState<ServiceInfo[]>([
+    { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
+    { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
+    { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
+  ]);
+  const [sessionSeconds, setSessionSeconds] = useState(0);
 
-	/** 应用主题到 documentElement，监听系统偏好变化。 */
-	useEffect(() => {
-		const store = useUISettingsStore.getState();
-		applyTheme(store.theme);
+  const micMuted = useUISettingsStore((s) => s.micMuted);
+  const toggleMicMuted = useUISettingsStore((s) => s.toggleMicMuted);
+  const phase = useAssistantStore(selectAssistantPhase);
 
-		const media = window.matchMedia("(prefers-color-scheme: dark)");
-		const onChange = () => {
-			const current = useUISettingsStore.getState();
-			if (current.theme === "system") applyTheme("system");
-		};
-		media.addEventListener("change", onChange);
-		return () => media.removeEventListener("change", onChange);
-	}, []);
+  /** Session Timer */
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSessionSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-	const fetchServices = useCallback(async () => {
-		try {
-			const resp = await fetch("/api/services");
-			const data: ServicesResponse = await resp.json();
-			setServices(data.services);
-		} catch {
-			// 探活失败不阻塞 UI
-		} finally {
-			setLoading(false);
-		}
-	}, []);
+  const formatTimer = (totalSeconds: number) => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) {
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
 
-	useEffect(() => {
-		fetchServices();
-		const interval = setInterval(fetchServices, 10_000);
-		return () => clearInterval(interval);
-	}, [fetchServices]);
+  /** Theme listener */
+  useEffect(() => {
+    const store = useUISettingsStore.getState();
+    applyTheme(store.theme);
 
-	if (loading && services.length === 0) {
-		return (
-			<header className="status-bar">
-				<span className="loading-text">加载中…</span>
-			</header>
-		);
-	}
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      const current = useUISettingsStore.getState();
+      if (current.theme === "system") applyTheme("system");
+    };
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
 
-	return (
-		<header className="status-bar">
-			<h1 className="status-title">Voice Studio</h1>
-			<div className="status-lights">
-				{services.map((s) => (
-					<ServiceLight key={s.name} name={s.name} status={s.status} />
-				))}
-			</div>
-			<div className="status-actions">
-				<ThemeToggle />
-			</div>
-		</header>
-	);
+  const fetchServices = useCallback(async (isManual = false) => {
+    try {
+      const resp = await fetch("/api/services");
+      if (!resp.ok) return;
+      const data: ServicesResponse = await resp.json();
+      if (Array.isArray(data.services) && data.services.length > 0) {
+        setServices(data.services);
+        if (isManual) showToast("服务健康状态已刷新", "info");
+      }
+    } catch {
+      if (isManual) showToast("服务探活请求失败", "warning");
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchServices();
+    const interval = setInterval(fetchServices, 8000);
+    return () => clearInterval(interval);
+  }, [fetchServices]);
+
+  // Global 'M' shortcut for Mute
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const isInput =
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      if (!isInput && e.key.toLowerCase() === "m" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        toggleMicMuted();
+        showToast(
+          !micMuted ? "已开启麦克风静音 (M)" : "已解除麦克风静音 (M)",
+          !micMuted ? "warning" : "success",
+        );
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [micMuted, toggleMicMuted]);
+
+  return (
+    <header className="status-bar">
+      <div className="status-left">
+        <div className="status-brand">
+          <span className="status-logo-icon">🎙️</span>
+          <h1 className="status-title">Voice Studio</h1>
+        </div>
+        <span className="status-badge-chip">Apple Silicon / MLX</span>
+
+        {/* 麦克风电平 & 静音控件 */}
+        <button
+          type="button"
+          className={`mic-vu-widget ${micMuted ? "muted" : ""}`}
+          onClick={() => {
+            toggleMicMuted();
+            showToast(
+              !micMuted ? "已开启麦克风静音" : "已恢复麦克风录音",
+              !micMuted ? "warning" : "success",
+            );
+          }}
+          title={micMuted ? "麦克风已静音 (按 M 恢复)" : "麦克风采集中 (按 M 静音)"}
+        >
+          <span>{micMuted ? "🔇" : "🎙️"}</span>
+          <div className="vu-bars" aria-hidden="true">
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "9px" : "4px",
+              }}
+            />
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "10px" : "6px",
+              }}
+            />
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "7px" : "3px",
+              }}
+            />
+          </div>
+          <span>{micMuted ? "已静音" : "16kHz"}</span>
+        </button>
+      </div>
+
+      <div className="status-lights" aria-label="服务状态监控">
+        {services.map((s) => (
+          <ServiceLight
+            key={s.name}
+            service={s}
+            onRefresh={() => fetchServices(true)}
+          />
+        ))}
+      </div>
+
+      <div className="status-right">
+        <div className="session-timer" title="当前会话在线运行时长">
+          <span>⏱️</span>
+          <span>{formatTimer(sessionSeconds)}</span>
+        </div>
+
+        {onOpenShortcuts && (
+          <button
+            type="button"
+            className="status-icon-btn"
+            onClick={onOpenShortcuts}
+            title="快捷键速查 (按 ?)"
+            aria-label="快捷键速查"
+          >
+            ⌨️
+          </button>
+        )}
+
+        <ThemeToggle />
+      </div>
+    </header>
+  );
 }

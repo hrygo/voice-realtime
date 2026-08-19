@@ -21,6 +21,7 @@ import asyncio
 import audioop  # type: ignore[import-not-found]
 import difflib
 import logging
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -35,6 +36,7 @@ from pipecat.frames.frames import (
     BotStoppedSpeakingFrame,
     Frame,
     InputAudioRawFrame,
+    LLMFullResponseEndFrame,
     TextFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
@@ -48,6 +50,7 @@ from pipecat.services.funasr.stt import FunASRSTTService, FunASRSTTSettings
 from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_mute import BaseUserMuteStrategy
 
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
@@ -96,7 +99,15 @@ def build_system_prompt(persona: str | None = None) -> str:
 
 
 _ECHO_BASELINE_WARMUP_FRAMES = 4  # 抑制开启后用于建立回声基线的帧数（~40ms @16k/512B）
-_ECHO_MIN_MATCH_CHARS = 4  # 自回声文本判定的最短用户文本长度（防短词误杀）
+_ECHO_MIN_MATCH_CHARS = 2  # 自回声文本判定的最短用户文本长度（防短词误杀，去标点后）
+_PUNCTUATION_RE = re.compile(
+    r"[\s\.,\?!;:，。？！；：、“”‘’\"\'\(\)\[\]（）—\-_…]+", re.UNICODE
+)
+
+
+def _normalize_text(text: str) -> str:
+    """去标点、空格、转小写，用于自回声模糊与子串比对。"""
+    return _PUNCTUATION_RE.sub("", text).strip().lower()
 
 
 def _rms16(audio: bytes) -> float:
@@ -107,7 +118,7 @@ def _rms16(audio: bytes) -> float:
 class EchoTextBuffer:
     """机器人最近播报文本的环形缓冲（带时间戳），供自回声文本判定。"""
 
-    def __init__(self, window_secs: float = 10.0, max_items: int = 8) -> None:
+    def __init__(self, window_secs: float = 10.0, max_items: int = 16) -> None:
         self._window_secs = window_secs
         self._max_items = max_items
         self._items: deque[tuple[float, str]] = deque()
@@ -126,30 +137,114 @@ class EchoTextBuffer:
 
     def matches(self, text: str, min_ratio: float, min_chars: int, now: float) -> bool:
         """用户文本是否为自回声：与近期机器人文本相似或基本是其子串。"""
-        text = text.strip()
-        if len(text) < min_chars:
+        norm_input = _normalize_text(text)
+        if len(norm_input) < min_chars:
             return False
-        for bot_text in self._recent(now):
-            matcher = difflib.SequenceMatcher(None, text, bot_text)
-            ratio = matcher.ratio()
-            longest = matcher.find_longest_match(0, len(text), 0, len(bot_text))
-            containment = longest.size / len(text) if longest.size else 0.0
-            if ratio >= min_ratio or containment >= min_ratio:
+
+        recent_texts = self._recent(now)
+        if not recent_texts:
+            return False
+
+        # O(1) 字符集预筛快速剪枝
+        input_chars = set(norm_input)
+        combined_bot = "".join(_normalize_text(t) for t in recent_texts)
+        if not combined_bot:
+            return False
+
+        overlap = len(input_chars.intersection(combined_bot))
+        if (overlap / len(input_chars) < 0.35) and (norm_input not in combined_bot):
+            return False
+
+        # 1. 单句比对：完全子串包含、整句相似度、滑动窗口模糊匹配
+        input_len = len(norm_input)
+        for bot_text in recent_texts:
+            norm_bot = _normalize_text(bot_text)
+            if not norm_bot:
+                continue
+            # 精确子串包含（STT 转写是机器人的子串，或机器人转写是 STT 的子串）
+            if norm_input in norm_bot or norm_bot in norm_input:
                 return True
-        return False
+            # 整句相似度
+            matcher = difflib.SequenceMatcher(None, norm_input, norm_bot)
+            if matcher.ratio() >= min_ratio:
+                return True
+            longest = matcher.find_longest_match(0, input_len, 0, len(norm_bot))
+            if longest.size and (longest.size / input_len >= min_ratio):
+                return True
+            # 短语滑动窗口模糊匹配（容忍 STT 1~2 个同音字误差，如 3~5 字短尾音）
+            if 2 <= input_len <= 8 and len(norm_bot) >= input_len:
+                for i in range(len(norm_bot) - input_len + 1):
+                    sub = norm_bot[i : i + input_len]
+                    sub_ratio = difflib.SequenceMatcher(None, norm_input, sub).ratio()
+                    if sub_ratio >= max(0.65, min_ratio - 0.1):
+                        return True
+
+        # 2. 联合文本比对（跨分句/跨分段拼接转写）
+        if norm_input in combined_bot:
+            return True
+        matcher_all = difflib.SequenceMatcher(None, norm_input, combined_bot)
+        if matcher_all.ratio() >= min_ratio:
+            return True
+        longest_all = matcher_all.find_longest_match(0, input_len, 0, len(combined_bot))
+        return bool(longest_all.size and (longest_all.size / input_len >= min_ratio))
+
+
+class HangoverUserMuteStrategy(BaseUserMuteStrategy):
+    """带尾部挂起窗口的用户静音策略，防止声学混响与未决转写触发 LLM。"""
+
+    def __init__(self, tail_hangover_secs: float = 0.4) -> None:
+        super().__init__()  # type: ignore[no-untyped-call]
+        self._tail_hangover_secs = tail_hangover_secs
+        self._bot_speaking = False
+        self._hangover_until: float = 0.0
+
+    async def process_frame(self, frame: Frame) -> bool:
+        await super().process_frame(frame)
+        now = time.monotonic()
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+            self._hangover_until = 0.0
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+            self._hangover_until = now + self._tail_hangover_secs
+
+        return self._bot_speaking or (now < self._hangover_until)
 
 
 class BotTextRecorder(FrameProcessor):
-    """记录 LLM 输出的机器人文本到共享缓冲（透传帧流，不改管道语义）。"""
+    """记录 LLM 输出的机器人文本到共享缓冲（聚合流式 token 为完整语句）。"""
 
     def __init__(self, buffer: EchoTextBuffer) -> None:
         super().__init__(name="bot-text-recorder")
         self._buffer = buffer
+        self._current_tokens: list[str] = []
+
+    def _flush_current(self) -> None:
+        if self._current_tokens:
+            full_text = "".join(self._current_tokens).strip()
+            if full_text:
+                self._buffer.add(full_text, time.monotonic())
+            self._current_tokens.clear()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, TextFrame) and frame.text:
-            self._buffer.add(frame.text, time.monotonic())
+            self._current_tokens.append(frame.text)
+            # 遇到标点/换行即刻同步当前累积语句（支持句子级实时拦截）
+            if any(p in frame.text for p in ("。", "！", "？", "；", "\n", ".", "!", "?", ";")):
+                full_text = "".join(self._current_tokens).strip()
+                if full_text:
+                    self._buffer.add(full_text, time.monotonic())
+        elif isinstance(
+            frame,
+            (
+                LLMFullResponseEndFrame,
+                BotStoppedSpeakingFrame,
+                BotStartedSpeakingFrame,
+            ),
+        ):
+            self._flush_current()
+
         await self.push_frame(frame, direction)
 
 
@@ -188,69 +283,116 @@ class SelfEchoFilter(FrameProcessor):
 
 
 class EchoSuppressionProcessor(FrameProcessor):
-    """L1 音频域防线：TTS 播报全程丢弃输入音频，能量门控真人插话。
+    """L1 音频域防线：TTS 播报全程及尾部挂起期丢弃输入音频，双 EMA + 能量门控真人插话。
 
-    单机同麦同箱场景下麦克风会重拾扬声器声音；旧实现只在播报起始窗口
-    （500ms）内抑制，长播报的尾部回声仍会被 VAD 误判为"用户说话"并
-    自打断。本实现把抑制窗口覆盖整个播报期（BotStarted → BotStopped），
-    并保留 barge-in：输入 RMS 持续超过回声基线 × gain（真人插话能量
-    明显高于回声稳态电平）连续 barge_in_frames 帧 → 放行，交由 VAD
-    驱动正常的用户插话打断。
+    单机同麦同箱场景下麦克风会重拾扬声器声音；本实现把抑制窗口覆盖整个播报期
+    （BotStarted → BotStopped），并在播报结束后增加尾部挂起窗口（tail_hangover_secs），
+    彻底吸收声卡缓冲延迟与房间声学混响尾音。同时具备能量门控插话与自动重锁机制。
     """
 
-    def __init__(self, barge_in_gain: float = 2.5, barge_in_frames: int = 3) -> None:
+    def __init__(
+        self,
+        barge_in_gain: float = 2.5,
+        barge_in_frames: int = 3,
+        tail_hangover_secs: float = 0.4,
+    ) -> None:
         super().__init__(name="echo-suppress")
         self._barge_in_gain = barge_in_gain
         self._barge_in_frames = barge_in_frames
+        self._tail_hangover_secs = tail_hangover_secs
+        self._bot_speaking = False
         self._suppressing = False
-        self._echo_rms: deque[float] = deque()
+        self._hangover_until: float = 0.0
+        self._echo_rms: deque[float] = deque(maxlen=50)
+        self._fast_ema: float = 0.0
+        self._slow_ema: float = 0.0
         self._hot_streak = 0
+        self._quiet_streak = 0
         self._dropped = 0
         self._warned_format = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
+        now = time.monotonic()
         if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
             self._suppressing = True
+            self._hangover_until = 0.0
             self._echo_rms.clear()
+            self._fast_ema = 0.0
+            self._slow_ema = 0.0
             self._hot_streak = 0
+            self._quiet_streak = 0
             logger.info(
-                "echo-suppress: bot started，全播报期抑制（插话门槛 基线×%.1f × %d 帧）",
+                "echo-suppress: bot started，全播报期抑制"
+                "（插话门槛 基线×%.1f × %d 帧，尾部挂起 %.2fs）",
                 self._barge_in_gain,
                 self._barge_in_frames,
+                self._tail_hangover_secs,
             )
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
             self._suppressing = False
             self._echo_rms.clear()
             self._hot_streak = 0
-            logger.info("echo-suppress: bot stopped")
-        elif isinstance(frame, InputAudioRawFrame) and self._suppressing:
+            self._quiet_streak = 0
+            self._hangover_until = now + self._tail_hangover_secs
+            logger.info(
+                "echo-suppress: bot stopped，进入尾部混响挂起抑制 (%.2fs)",
+                self._tail_hangover_secs,
+            )
+        elif isinstance(frame, InputAudioRawFrame):
+            in_suppression = self._suppressing or (now < self._hangover_until)
             try:
                 rms = _rms16(frame.audio)
             except (TypeError, ValueError, OverflowError):
-                # 非预期音频格式：fail-open 放行，避免抑制器崩溃拖垮管道
                 if not self._warned_format:
                     self._warned_format = True
                     logger.warning("echo-suppress: 无法计算 RMS（非 16bit PCM？），放行")
                 self._suppressing = False
+                self._hangover_until = 0.0
             else:
-                if self._barge_in(rms):
-                    self._suppressing = False
-                    logger.info("echo-suppress: 检测到真人插话（能量门控），恢复输入")
-                    # 放行本帧（不 return，落到下方 push_frame），VAD 即刻可见插话起始
-                else:
-                    self._dropped += 1
-                    if self._dropped % 100 == 0:
-                        logger.debug("echo-suppress: 已丢弃 %d 帧回声音频", self._dropped)
-                    return
+                if in_suppression:
+                    if self._suppressing and self._barge_in(rms):
+                        self._suppressing = False
+                        self._hangover_until = 0.0
+                        self._quiet_streak = 0
+                        logger.info("echo-suppress: 检测到真人插话（能量门控），恢复输入")
+                    else:
+                        self._dropped += 1
+                        if self._dropped % 100 == 0:
+                            logger.debug("echo-suppress: 已丢弃 %d 帧回声音频", self._dropped)
+                        return
+                elif self._bot_speaking:
+                    if self._echo_rms and rms <= median(self._echo_rms) * 1.3:
+                        self._quiet_streak += 1
+                        if self._quiet_streak >= 20:
+                            self._suppressing = True
+                            self._hot_streak = 0
+                            self._quiet_streak = 0
+                            logger.debug("echo-suppress: 音量回落平稳，自动重锁回声抑制")
+                            self._dropped += 1
+                            return
+                    else:
+                        self._quiet_streak = 0
+
         await self.push_frame(frame, direction)
 
     def _barge_in(self, rms: float) -> bool:
-        """能量门控：输入 RMS 持续超过回声基线 × 增益则判定真人插话。"""
+        """能量门控：双 EMA 与中位数基线追踪，连续超过基线 × 增益判定真人插话。"""
         self._echo_rms.append(rms)
+        if self._fast_ema == 0.0:
+            self._fast_ema = rms
+            self._slow_ema = rms
+        else:
+            self._fast_ema = 0.3 * rms + 0.7 * self._fast_ema
+            self._slow_ema = 0.05 * rms + 0.95 * self._slow_ema
+
         if len(self._echo_rms) <= _ECHO_BASELINE_WARMUP_FRAMES:
             return False  # 基线未建立，保守丢弃
-        if rms > median(self._echo_rms) * self._barge_in_gain:
+
+        baseline = median(self._echo_rms)
+        if rms > baseline * self._barge_in_gain:
             self._hot_streak += 1
             return self._hot_streak >= self._barge_in_frames
         self._hot_streak = 0
@@ -303,14 +445,14 @@ def build_pipeline(
     tts = OpenAITTSService(
         api_key="local",
         base_url=settings.tts_bridge_url,
-        voice="alloy",
         sample_rate=TTS_OUTPUT_SAMPLE_RATE,
+        settings=OpenAITTSService.Settings(voice="alloy"),
     )
 
     context = context or LLMContext(
         messages=[{"role": "system", "content": build_system_prompt(persona)}]
     )
-    # 1.7 组装：VAD 分析集成进 LLMUserAggregatorParams（官方 getting-started/06a 模式），
+    # 1.7 组装：VAD 分析与 HangoverUserMuteStrategy 集成进 LLMUserAggregatorParams，
     # LLM 之后直连 TTS（TTS 直接消费 LLMTextFrame 流），assistant 聚合器在管道末尾回写上下文。
     pair = LLMContextAggregatorPair(
         context,
@@ -318,13 +460,19 @@ def build_pipeline(
             vad_analyzer=SileroVADAnalyzer(
                 sample_rate=settings.sample_rate,
                 params=VADParams(stop_secs=settings.silence_secs),
-            )
+            ),
+            user_mute_strategies=[
+                HangoverUserMuteStrategy(
+                    tail_hangover_secs=settings.echo_tail_hangover_secs
+                )
+            ],
         ),
     )
     echo_buffer = EchoTextBuffer(window_secs=settings.echo_text_window_secs)
     echo_suppressor = EchoSuppressionProcessor(
         barge_in_gain=settings.echo_barge_in_gain,
         barge_in_frames=settings.echo_barge_in_frames,
+        tail_hangover_secs=settings.echo_tail_hangover_secs,
     )
     self_echo_filter = SelfEchoFilter(
         echo_buffer, min_ratio=settings.echo_text_similarity

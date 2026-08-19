@@ -103,6 +103,25 @@ class TestLmStudioNativeLLMService:
         # SSE → chunk 转换：空 delta 被过滤
         assert [c.choices[0].delta.content for c in chunks] == ["你", "好"]
 
+    async def test_sse_handles_done_and_malformed_lines(self) -> None:
+        """验证 SSE 遇到 [DONE] 正常退出、遇到非 JSON 或空行不崩溃。"""
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        lines = [
+            ": ping",
+            "data: not json",
+            'data: {"type":"message.delta","content":"测试"}',
+            "data: [DONE]",
+            'data: {"type":"message.delta","content":"不会被消费"}',
+        ]
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(lines)
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        chunks = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        assert [c.choices[0].delta.content for c in chunks] == ["测试"]
+
 
 class TestSystemPrompt:
     def test_prompt_enforces_chinese_short_voice_response(self) -> None:
