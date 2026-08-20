@@ -44,3 +44,16 @@ def test_removed_configuration_knobs_are_not_model_fields() -> None:
 
 def test_subtitle_downloads_are_disabled_by_default() -> None:
     assert SubtitleSettings().allow_model_downloads is False
+    assert InteractionSettings().allow_model_downloads is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("llm_base_url", "https://example.com/v1"),
+        ("tts_bridge_url", "http://192.168.1.20:8765/v1"),
+    ],
+)
+def test_interaction_rejects_non_loopback_service_urls(field: str, value: str) -> None:
+    with pytest.raises(ValidationError):
+        InteractionSettings(**{field: value})

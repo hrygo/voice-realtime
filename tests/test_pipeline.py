@@ -54,7 +54,7 @@ class TestResolveSttModel:
             return_value="/mnt/snapshot",
         ) as mock_dl:
             assert _resolve_stt_model("") == "/mnt/snapshot"
-        mock_dl.assert_called_once_with(DEFAULT_SENSEVOICE_REPO)
+        mock_dl.assert_called_once_with(DEFAULT_SENSEVOICE_REPO, local_files_only=True)
 
     def test_custom_repo_resolved(self) -> None:
         with patch(
@@ -62,7 +62,15 @@ class TestResolveSttModel:
             return_value="/mnt/snapshot2",
         ) as mock_dl:
             assert _resolve_stt_model("some/other-stt") == "/mnt/snapshot2"
-        mock_dl.assert_called_once_with("some/other-stt")
+        mock_dl.assert_called_once_with("some/other-stt", local_files_only=True)
+
+    def test_explicit_download_mode_allows_network_fallback(self) -> None:
+        with patch(
+            "voice_realtime.interaction.pipeline.snapshot_download",
+            return_value="/mnt/snapshot",
+        ) as mock_dl:
+            assert _resolve_stt_model("repo/model", allow_downloads=True) == "/mnt/snapshot"
+        mock_dl.assert_called_once_with("repo/model", local_files_only=False)
 
 
 @pytest.fixture
@@ -145,8 +153,10 @@ class TestBuildPipeline:
         tts_mock = mock_services[2]
         tts_mock.assert_called_once()
         assert tts_mock.call_args.kwargs["base_url"] == "http://127.0.0.1:8765/v1"
-        # voice 在白名单内占位；桥固定用配置音色（VR_BRIDGE_VOICE），忽略该值
-        tts_mock.Settings.assert_called_with(voice="alloy")
+        # 内部哨兵要求桥使用当前权威音色，避免 OpenAI 的 alloy 占位覆盖热切换。
+        from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE
+
+        tts_mock.Settings.assert_called_with(voice=TTS_ENGINE_DEFAULT_VOICE)
         assert tts_mock.call_args.kwargs["sample_rate"] == TTS_OUTPUT_SAMPLE_RATE
 
     def test_stt_language_is_chinese(
@@ -324,7 +334,10 @@ class TestEchoSuppressionProcessor:
         gain: float = 2.5, frames: int = 3, allow_barge_in: bool = True
     ) -> EchoSuppressionProcessor:
         processor = EchoSuppressionProcessor(
-            barge_in_gain=gain, barge_in_frames=frames, allow_barge_in=allow_barge_in
+            barge_in_gain=gain,
+            barge_in_frames=frames,
+            allow_barge_in=allow_barge_in,
+            enable_direct_mode=True,
         )
         processor._FrameProcessor__started = True  # type: ignore[attr-defined]
         processor._task_manager = MagicMock()  # type: ignore[attr-defined]
@@ -419,6 +432,26 @@ class TestEchoSuppressionProcessor:
             )
         )
         assert processor._barge_in_active  # type: ignore[attr-defined]
+
+    def test_new_tts_generation_resets_energy_baseline_without_control_frame(self) -> None:
+        state = EchoState()
+        processor = EchoSuppressionProcessor(
+            echo_state=state,
+            allow_barge_in=True,
+            enable_direct_mode=True,
+        )
+        processor._FrameProcessor__started = True  # type: ignore[attr-defined]
+        state.on_tts_started()
+        state.on_bot_speaking_started()
+        asyncio.run(_run_seq(processor, [self._audio(1000)] * 8))
+        state.on_tts_stopped()
+        state.on_bot_speaking_stopped()
+        previous_generation = state.generation
+        state.on_tts_started()
+        asyncio.run(_run_seq(processor, [self._audio(4000)]))
+        assert state.generation > previous_generation
+        assert len(processor._echo_rms) == 1  # type: ignore[attr-defined]
+        assert processor._hot_streak == 0  # type: ignore[attr-defined]
 
     def test_echo_state_reset(self) -> None:
         """EchoState.reset 清空所有状态标志与时间戳。"""

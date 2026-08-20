@@ -39,8 +39,8 @@ class TestSinkManagement:
     async def test_remove_sink_idempotent(self) -> None:
         hub = AudioHub()
         hub.add_sink("a", AsyncMock())
-        hub.remove_sink("a")
-        hub.remove_sink("a")  # 第二次调用不应报错
+        await hub.remove_sink("a")
+        await hub.remove_sink("a")  # 第二次调用不应报错
 
     async def test_sinks_isolated(self) -> None:
         hub = AudioHub()

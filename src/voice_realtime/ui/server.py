@@ -233,8 +233,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; "
-            "base-uri 'self'"
+            "img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* "
+            "ws://localhost:* http://127.0.0.1:* http://localhost:*; "
+            "object-src 'none'; base-uri 'self'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"

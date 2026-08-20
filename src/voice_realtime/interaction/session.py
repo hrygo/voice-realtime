@@ -25,7 +25,7 @@ from voice_realtime.interaction.pipeline import (
     build_pipeline,
     build_system_prompt,
 )
-from voice_realtime.ui.protocol import DuplexMode
+from voice_realtime.interaction.types import DuplexMode
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ class InteractionSession:
         worker_factory: Callable[..., PipelineWorker] | None = None,
         runner_factory: Callable[[], WorkerRunner] | None = None,
         stop_timeout_secs: float = 3.0,
+        handle_signals: bool = False,
     ) -> None:
         self._settings = settings
         self._audio_queue = audio_queue
@@ -60,7 +61,9 @@ class InteractionSession:
         self._ownership = ownership or InteractionOwnership()
         self._pipeline_factory = pipeline_factory
         self._worker_factory = worker_factory or PipelineWorker
-        self._runner_factory = runner_factory or WorkerRunner
+        self._runner_factory = runner_factory or (
+            lambda: WorkerRunner(handle_sigint=handle_signals)
+        )
         self._stop_timeout_secs = stop_timeout_secs
         self._lock = asyncio.Lock()
         self._state = InteractionSessionState.STOPPED
@@ -79,7 +82,11 @@ class InteractionSession:
 
     @property
     def active(self) -> bool:
-        return self._state is InteractionSessionState.RUNNING and self._runner_task is not None
+        return (
+            self._state is InteractionSessionState.RUNNING
+            and self._runner_task is not None
+            and not self._runner_task.done()
+        )
 
     @property
     def worker(self) -> PipelineWorker | None:
@@ -157,7 +164,7 @@ class InteractionSession:
             self._apply_duplex_mode()
             self._worker = self._worker_factory(
                 pipeline,
-                observers=self._observers,
+                observers=list(self._observers),
                 params=PipelineParams(
                     audio_in_sample_rate=self._settings.sample_rate,
                     audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
@@ -174,6 +181,13 @@ class InteractionSession:
             self._started_at = datetime.now(UTC).isoformat()
             self._state = InteractionSessionState.RUNNING
         except BaseException:
+            if self._runner is not None:
+                with contextlib.suppress(Exception):
+                    await self._runner.end(reason="会话启动失败")
+            if self._runner_task is not None:
+                self._runner_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self._runner_task
             self._state = InteractionSessionState.ERROR
             self._clear_runtime_references()
             self._ownership.close()
@@ -188,8 +202,16 @@ class InteractionSession:
             logger.exception("InteractionSession: 管道运行异常")
             self._state = InteractionSessionState.ERROR
         finally:
-            if self._state is InteractionSessionState.RUNNING:
-                self._state = InteractionSessionState.STOPPED
+            if self._state in {
+                InteractionSessionState.RUNNING,
+                InteractionSessionState.ERROR,
+            }:
+                if self._state is InteractionSessionState.RUNNING:
+                    self._state = InteractionSessionState.STOPPED
+                timeout_task = self._timeout_task
+                if timeout_task is not None:
+                    timeout_task.cancel()
+                    self._timeout_task = None
                 self._started_at = None
                 self._ownership.close()
 
@@ -237,7 +259,11 @@ class InteractionSession:
         if self._duplex_mode is DuplexMode.HEADPHONE_DUPLEX:
             suppressor.set_mode(allow_barge_in=True, barge_in_gain=1.15, barge_in_frames=2)
         else:
-            suppressor.set_mode(allow_barge_in=False)
+            suppressor.set_mode(
+                allow_barge_in=False,
+                barge_in_gain=self._settings.echo_barge_in_gain,
+                barge_in_frames=self._settings.echo_barge_in_frames,
+            )
 
     def _drain_audio_queue(self) -> None:
         queue = self._audio_queue

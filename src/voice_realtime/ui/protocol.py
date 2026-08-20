@@ -8,19 +8,14 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 
+from voice_realtime.interaction.types import DuplexMode as DuplexMode
+
 RequestId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 PersonaText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
 ]
-
-
-class DuplexMode(StrEnum):
-    """单机音频交互模式。"""
-
-    SPEAKER_FOCUS = "speaker_focus"
-    HEADPHONE_DUPLEX = "headphone_duplex"
 
 
 class CommandBase(BaseModel):

@@ -18,7 +18,7 @@ LLMUserAggregatorParams(vad_analyzer=...) 集成在聚合器内（不再用独�
 from __future__ import annotations
 
 import asyncio
-import audioop  # type: ignore[import-not-found]
+import audioop
 import difflib
 import logging
 import re
@@ -63,7 +63,11 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 
 from voice_realtime.audio.audio_injector import AudioInjector
-from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
+from voice_realtime.config import (
+    TTS_ENGINE_DEFAULT_VOICE,
+    TTS_OUTPUT_SAMPLE_RATE,
+    InteractionSettings,
+)
 from voice_realtime.interaction.reasoning import (
     DEFAULT_SYSTEM_PROMPT,
     LmStudioNativeLLMService,
@@ -89,7 +93,7 @@ def _to_pipecat_language(lang_code: str) -> Language:
     return Language.ZH
 
 
-def _resolve_stt_model(model: str) -> str:
+def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
     """把 STT 模型配置解析为 funasr 可用的本地路径。
 
     funasr 的 hub 参数由 pipecat FunASRSTTService 硬编码为 modelscope
@@ -98,7 +102,10 @@ def _resolve_stt_model(model: str) -> str:
     """
     if model and Path(model).exists():
         return model
-    return snapshot_download(model or DEFAULT_SENSEVOICE_REPO)
+    return snapshot_download(
+        model or DEFAULT_SENSEVOICE_REPO,
+        local_files_only=not allow_downloads,
+    )
 
 
 def build_system_prompt(persona: str | None = None) -> str:
@@ -141,15 +148,22 @@ class EchoState:
         self.last_speaking_stop_time = 0.0
         self._tts_active = False
         self._speaker_active = False
+        self.generation = 0
 
     def on_tts_started(self) -> None:
+        was_active = self._tts_active or self._speaker_active
         self._tts_active = True
         self.bot_speaking = True
+        if not was_active:
+            self.generation += 1
         logger.info("echo-state: 机器人开始生成/播报，激活物理闭麦与回声抑制")
 
     def on_bot_speaking_started(self) -> None:
+        was_active = self._tts_active or self._speaker_active
         self._speaker_active = True
         self.bot_speaking = True
+        if not was_active:
+            self.generation += 1
         logger.info("echo-state: 扬声器开始发声，保持物理闭麦")
 
     def on_tts_stopped(self) -> None:
@@ -168,6 +182,7 @@ class EchoState:
 
     def reset(self) -> None:
         """重置状态（会话停止或强行打断时调用）。"""
+        self.generation += 1
         self.bot_speaking = False
         self.last_speaking_stop_time = 0.0
         self._tts_active = False
@@ -410,13 +425,15 @@ class EchoSuppressionProcessor(FrameProcessor):
         tail_hangover_secs: float = 0.4,
         echo_state: EchoState | None = None,
         allow_barge_in: bool = False,
+        enable_direct_mode: bool = False,
     ) -> None:
-        super().__init__(name="echo-suppress")
+        super().__init__(name="echo-suppress", enable_direct_mode=enable_direct_mode)
         self._barge_in_gain = barge_in_gain
         self._barge_in_frames = barge_in_frames
         self._tail_hangover_secs = tail_hangover_secs
         self._echo_state = echo_state or EchoState()
         self._allow_barge_in = allow_barge_in
+        self._barge_in_active = False
         self._echo_rms: deque[float] = deque(maxlen=50)
         self._peak_envelope: float = 0.0
         self._fast_ema: float = 0.0
@@ -425,6 +442,7 @@ class EchoSuppressionProcessor(FrameProcessor):
         self._quiet_streak = 0
         self._dropped = 0
         self._warned_format = False
+        self._seen_echo_generation = self._echo_state.generation
 
     def set_mode(
         self,
@@ -437,8 +455,7 @@ class EchoSuppressionProcessor(FrameProcessor):
         self._barge_in_gain = barge_in_gain
         self._barge_in_frames = barge_in_frames
         self._barge_in_active = False
-        self._hot_streak = 0
-        self._quiet_streak = 0
+        self._reset_energy_detector()
         logger.info(
             "echo-suppress: 交互模式已更新 (allow_barge_in=%s, gain=%.2f, frames=%d)",
             allow_barge_in,
@@ -468,34 +485,24 @@ class EchoSuppressionProcessor(FrameProcessor):
         self, frame: Frame, direction: FrameDirection = FrameDirection.DOWNSTREAM
     ) -> None:
         now = time.monotonic()
+        if self._seen_echo_generation != self._echo_state.generation:
+            self._seen_echo_generation = self._echo_state.generation
+            self._reset_energy_detector()
         if isinstance(frame, TTSStartedFrame):
             self._barge_in_active = False
-            self._echo_rms.clear()
-            self._peak_envelope = 0.0
-            self._fast_ema = 0.0
-            self._slow_ema = 0.0
-            self._hot_streak = 0
-            self._quiet_streak = 0
+            self._reset_energy_detector()
             logger.info(
                 "echo-suppress: TTS 启动，物理闭麦激活 (尾部挂起 %.2fs)",
                 self._tail_hangover_secs,
             )
         elif isinstance(frame, BotStartedSpeakingFrame):
             self._barge_in_active = False
-            self._echo_rms.clear()
-            self._peak_envelope = 0.0
-            self._fast_ema = 0.0
-            self._slow_ema = 0.0
-            self._hot_streak = 0
-            self._quiet_streak = 0
+            self._reset_energy_detector()
         elif isinstance(frame, TTSStoppedFrame):
             pass
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._barge_in_active = False
-            self._echo_rms.clear()
-            self._peak_envelope = 0.0
-            self._hot_streak = 0
-            self._quiet_streak = 0
+            self._reset_energy_detector()
             logger.info(
                 "echo-suppress: bot 播报完毕，进入尾部混响挂起 (%.2fs)",
                 self._tail_hangover_secs,
@@ -553,6 +560,14 @@ class EchoSuppressionProcessor(FrameProcessor):
 
         await super().process_frame(frame, direction)
         await self.push_frame(frame, direction)
+
+    def _reset_energy_detector(self) -> None:
+        self._echo_rms.clear()
+        self._peak_envelope = 0.0
+        self._fast_ema = 0.0
+        self._slow_ema = 0.0
+        self._hot_streak = 0
+        self._quiet_streak = 0
 
     def _barge_in(self, rms: float) -> bool:
         """自适应峰值包络门控：快升慢降追踪扬声器声学包络，真人声音明显高出包络才判插话。"""
@@ -621,7 +636,10 @@ def build_pipeline(
     stt = FunASRSTTService(
         device="cpu",
         settings=FunASRSTTSettings(
-            model=_resolve_stt_model(settings.stt_model),
+            model=_resolve_stt_model(
+                settings.stt_model,
+                allow_downloads=settings.allow_model_downloads,
+            ),
             language=_to_pipecat_language(settings.stt_language),
             use_itn=True,
         ),
@@ -639,7 +657,7 @@ def build_pipeline(
         api_key="local",
         base_url=settings.tts_bridge_url,
         sample_rate=TTS_OUTPUT_SAMPLE_RATE,
-        settings=OpenAITTSService.Settings(voice="alloy"),
+        settings=OpenAITTSService.Settings(voice=TTS_ENGINE_DEFAULT_VOICE),
     )
 
     context = context or LLMContext(

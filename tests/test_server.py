@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from voice_realtime.config import BridgeSettings
+from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE, BridgeSettings
 from voice_realtime.tts_bridge.engine import TTSEngine
 from voice_realtime.tts_bridge.server import build_wav_header, create_app
 
@@ -135,6 +135,25 @@ class TestSpeech:
         )
         engine.stream_speech.assert_called_once_with(
             "你好", voice="calm", speed=1.0, lang="auto"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pipecat_default_sentinel_uses_hot_switched_engine_voice(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        engine = cast(_ASGITransport, cast(object, client._transport)).app.state.engine
+        engine.voice = "warm"
+        await client.post(
+            "/v1/audio/speech",
+            json={
+                "model": TEST_MODEL,
+                "input": "你好",
+                "voice": TTS_ENGINE_DEFAULT_VOICE,
+                "response_format": "pcm",
+            },
+        )
+        engine.stream_speech.assert_called_once_with(
+            "你好", voice="warm", speed=1.0, lang="auto"
         )
 
     @pytest.mark.asyncio

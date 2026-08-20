@@ -288,16 +288,21 @@ class StatusBridgeObserver(BaseObserver):
         send: Callable[[str], Awaitable[None]],
         queue: asyncio.Queue[str],
     ) -> None:
-        while True:
-            text = await queue.get()
-            try:
-                await send(text)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.debug("StatusBridgeObserver: 浏览器发送失败", exc_info=True)
-            finally:
-                queue.task_done()
+        try:
+            while True:
+                text = await queue.get()
+                try:
+                    await send(text)
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("StatusBridgeObserver: 浏览器发送失败", exc_info=True)
+        finally:
+            state = self._ws_clients.get(send)
+            if state is not None and state.task is asyncio.current_task():
+                self._ws_clients.pop(send, None)
 
     @staticmethod
     def _now() -> str:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from pydantic import ValidationError
@@ -13,8 +13,10 @@ from voice_realtime.ui.protocol import (
     ClearContextCommand,
     CommandResponse,
     ControlCommand,
+    DuplexMode,
     ErrorCode,
     RestartCommand,
+    RuntimeStateSnapshot,
     SetBargeInModeCommand,
     SetDuplexModeCommand,
     SetMicMutedCommand,
@@ -40,10 +42,21 @@ _COMMAND_NAMES = frozenset(
 )
 
 
+class ControlRuntime(Protocol):
+    async def clear_context(self) -> None: ...
+    async def stop_session(self) -> None: ...
+    async def restart_pipeline(self) -> None: ...
+    async def set_mic_muted(self, muted: bool) -> None: ...
+    def set_persona(self, persona: str) -> None: ...
+    def set_voice(self, voice: str) -> None: ...
+    def set_duplex_mode(self, mode: DuplexMode) -> None: ...
+    def snapshot(self) -> RuntimeStateSnapshot: ...
+
+
 class ControlBridge:
     """解析并执行一条命令，始终返回完整的服务端权威状态。"""
 
-    def __init__(self, runtime: Any, bridge: BridgeSettings) -> None:
+    def __init__(self, runtime: ControlRuntime, bridge: BridgeSettings) -> None:
         self._runtime = runtime
         self._bridge = bridge
 

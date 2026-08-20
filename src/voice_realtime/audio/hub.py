@@ -99,11 +99,14 @@ class AudioHub:
             state.task = asyncio.create_task(self._sink_worker(name, state))
         logger.info("AudioHub: 注册 sink %r (共 %d 个)", name, len(self._sinks))
 
-    def remove_sink(self, name: str) -> None:
-        """移除消费端。"""
+    async def remove_sink(self, name: str) -> None:
+        """移除消费端并等待其唯一 worker 退出。"""
         state = self._sinks.pop(name, None)
         if state is not None and state.task is not None:
             state.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await state.task
+            self._drain_queue(state.queue)
         logger.info("AudioHub: 移除 sink %r (剩余 %d 个)", name, len(self._sinks))
 
     async def start(self) -> None:

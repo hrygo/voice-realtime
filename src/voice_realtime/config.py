@@ -8,6 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,7 @@ DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
+TTS_ENGINE_DEFAULT_VOICE = "__engine_default__"  # Pipecat 请求沿用桥当前音色的内部哨兵
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
@@ -23,14 +25,22 @@ def _validate_loopback_host(value: str) -> str:
     """只允许本机回环监听，避免未配置鉴权的服务暴露到局域网。"""
     host = value.strip().removeprefix("[").removesuffix("]")
     if host.lower() == "localhost":
-        return value
+        return host
     try:
         address = ip_address(host)
     except ValueError as exc:
         raise ValueError(f"监听地址必须是回环地址: {value}") from exc
     if not address.is_loopback:
         raise ValueError(f"监听地址必须是回环地址: {value}")
-    return value
+    return host
+
+
+def _validate_loopback_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ValueError(f"本地服务 URL 无效: {value}")
+    _validate_loopback_host(parsed.hostname)
+    return value.rstrip("/")
 
 
 class BridgeSettings(BaseSettings):
@@ -73,6 +83,10 @@ class InteractionSettings(BaseSettings):
             "FunASR STT 模型：HF repo ID 或本地路径；空则自动解析 "
             "FunAudioLLM/SenseVoiceSmall 缓存快照"
         ),
+    )
+    allow_model_downloads: bool = Field(
+        default=False,
+        description="是否允许交互 STT 在缓存缺失时联网下载；默认严格离线",
     )
     tts_bridge_url: str = Field(
         default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
@@ -135,6 +149,10 @@ class InteractionSettings(BaseSettings):
         if v != 16000:
             raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
         return v
+
+    _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(
+        _validate_loopback_url
+    )
 
 
 class UISettings(BaseSettings):

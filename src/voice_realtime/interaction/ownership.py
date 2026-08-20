@@ -6,6 +6,10 @@ import fcntl
 from pathlib import Path
 from typing import TextIO
 
+DEFAULT_OWNERSHIP_PATH = (
+    Path.home() / "Library" / "Caches" / "voice-realtime" / "interaction.lock"
+)
+
 
 class InteractionOwnershipError(RuntimeError):
     """已有另一个进程拥有麦克风交互管道。"""
@@ -14,7 +18,7 @@ class InteractionOwnershipError(RuntimeError):
 class InteractionOwnership:
     """通过非阻塞文件锁保证 `vr-ui` 与 `vr-interact` 互斥。"""
 
-    def __init__(self, lock_path: Path = Path("runtime/interaction.lock")) -> None:
+    def __init__(self, lock_path: Path = DEFAULT_OWNERSHIP_PATH) -> None:
         self._lock_path = lock_path
         self._file: TextIO | None = None
 

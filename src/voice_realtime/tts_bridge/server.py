@@ -16,7 +16,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from voice_realtime.config import BridgeSettings, get_settings
+from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE, BridgeSettings, get_settings
 from voice_realtime.logging import setup_logging
 from voice_realtime.tts_bridge.engine import TTSEngine
 from voice_realtime.tts_bridge.schema import (
@@ -194,7 +194,12 @@ def create_app(
             )
         if not req.input:
             raise HTTPException(status_code=400, detail=_openai_error("input must not be blank"))
-        return await _create_speech_response(engine, req, req.voice or engine.voice)
+        voice = (
+            engine.voice
+            if req.voice in {None, TTS_ENGINE_DEFAULT_VOICE}
+            else req.voice
+        )
+        return await _create_speech_response(engine, req, voice)
 
     return app
 

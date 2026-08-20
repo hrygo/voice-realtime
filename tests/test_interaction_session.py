@@ -98,10 +98,16 @@ async def test_restart_preserves_persona_and_duplex(tmp_path: Path) -> None:
     )
     session.set_persona("你是孔子")
     session.set_duplex_mode(DuplexMode.HEADPHONE_DUPLEX)
+    observer = MagicMock(name="observer")
+    session._observers = [observer]  # type: ignore[attr-defined]
     await session.start()
+    first_observers = session._worker_factory.call_args.kwargs["observers"]  # type: ignore[attr-defined]
+    first_observers.append(MagicMock(name="framework-added-observer"))
     await session.restart()
     assert session.persona == "你是孔子"
     assert session.duplex_mode is DuplexMode.HEADPHONE_DUPLEX
     assert pipeline_factory.call_count == 2
     assert pipeline_factory.call_args.kwargs["persona"] == "你是孔子"
+    second_observers = session._worker_factory.call_args.kwargs["observers"]  # type: ignore[attr-defined]
+    assert second_observers == [observer]
     await session.stop()

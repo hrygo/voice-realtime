@@ -229,6 +229,8 @@ class TestBroadcast:
         await _push(observer, LLMTextFrame(text="ok"))
         await asyncio.sleep(0)
         assert good.call_count == 1
+        assert bad not in observer._ws_clients  # type: ignore[attr-defined]
+        assert good in observer._ws_clients  # type: ignore[attr-defined]
 
     async def test_no_clients_no_emit(self) -> None:
         observer = StatusBridgeObserver()
