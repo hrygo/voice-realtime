@@ -14,7 +14,7 @@ from voice_realtime.audio.hub import AudioHub
 def mock_pyaudio() -> MagicMock:
     """替换 pyaudio 模块：PyAudio() 实例的 open() 返回恒定 bytes 流。"""
     mock_stream = MagicMock()
-    mock_stream.read.return_value = b"\x00" * 512
+    mock_stream.read.return_value = b"\x00" * 1024
     mock_pa = MagicMock()
     mock_pa.PyAudio.return_value.open.return_value = mock_stream
     mock_pa.PyAudio.return_value.get_default_input_device_info.return_value = {
@@ -65,8 +65,8 @@ class TestFanout:
 
         assert sink_a.call_count >= 1
         assert sink_b.call_count >= 1
-        assert sink_a.call_args.args[0] == b"\x00" * 512
-        assert sink_b.call_args.args[0] == b"\x00" * 512
+        assert sink_a.call_args.args[0] == b"\x00" * 1024
+        assert sink_b.call_args.args[0] == b"\x00" * 1024
 
     async def test_no_sinks_still_runs(self, mock_pyaudio: MagicMock) -> None:
         """无 sink 也不抛错（扇出空转）。"""
@@ -89,6 +89,15 @@ class TestFanout:
 
 
 class TestLifecycle:
+    async def test_start_propagates_stream_open_failure(self) -> None:
+        mock_pa = MagicMock()
+        mock_pa.PyAudio.return_value.open.side_effect = OSError("permission denied")
+        with patch("voice_realtime.audio.hub.pyaudio", mock_pa):
+            hub = AudioHub()
+            with pytest.raises(OSError, match="permission denied"):
+                await hub.start()
+        mock_pa.PyAudio.return_value.terminate.assert_called_once()
+
     async def test_start_twice_noop(self, mock_pyaudio: MagicMock) -> None:
         hub = AudioHub()
         await hub.start()
@@ -146,3 +155,36 @@ class TestDefaultDevice:
         assert sink.call_count >= 1
         mock_pyaudio.PyAudio.return_value.get_default_input_device_info.assert_called()
         mock_pyaudio.PyAudio.return_value.get_device_info_by_index.assert_called_with(0)
+
+
+class TestMuteAndBackpressure:
+    async def test_muted_hub_drops_audio_and_drains_sink_queues(self) -> None:
+        hub = AudioHub(queue_size=2)
+        sink = AsyncMock()
+        hub.add_sink("a", sink)
+        hub._running = True
+        hub._on_chunk_received(b"first")
+        hub.set_muted(True)
+        hub._on_chunk_received(b"second")
+        await asyncio.sleep(0)
+        assert hub.muted is True
+        assert sink.await_count == 0
+
+    async def test_slow_sink_queue_is_bounded_and_drops_oldest(self) -> None:
+        hub = AudioHub(queue_size=2)
+        gate = asyncio.Event()
+
+        async def slow_sink(_data: bytes) -> None:
+            await gate.wait()
+
+        hub.add_sink("slow", slow_sink)
+        hub._loop = asyncio.get_running_loop()
+        hub._running = True
+        hub._start_sink_workers()
+        for index in range(10):
+            hub._on_chunk_received(bytes([index]))
+        sink_state = hub._sinks["slow"]
+        assert sink_state.queue.qsize() <= 2
+        assert sink_state.dropped > 0
+        gate.set()
+        await hub.stop()

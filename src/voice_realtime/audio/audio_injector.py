@@ -73,6 +73,17 @@ class AudioInjector(FrameProcessor):
             self._pump_task = None
             logger.info("AudioInjector: 泵送任务已停止")
 
+    def drain(self) -> int:
+        """丢弃尚未注入的旧音频，返回清理的块数。"""
+        count = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+                count += 1
+            except asyncio.QueueEmpty:
+                return count
+
     async def _pump(self) -> None:
         while True:
             try:

@@ -66,6 +66,14 @@ class TestLifecycle:
 
 
 class TestPump:
+    def test_drain_discards_stale_audio(self) -> None:
+        queue: asyncio.Queue[bytes] = asyncio.Queue()
+        queue.put_nowait(b"old-1")
+        queue.put_nowait(b"old-2")
+        injector = _make_injector(queue)
+        assert injector.drain() == 2
+        assert queue.empty()
+
     async def test_pump_pushes_input_audio_frame(self) -> None:
         """队列中的音频块被构造成 InputAudioRawFrame 推入下游。"""
         queue: asyncio.Queue[bytes] = asyncio.Queue()
