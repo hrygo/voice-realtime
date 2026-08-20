@@ -49,6 +49,14 @@ class TestSubtitleEventTracker:
         tracker.track(SubtitleEvent(kind="partial", text="你好世"))
         assert tracker.track(SubtitleEvent(kind="partial", text="你好世界")) is True
 
+    def test_new_confirmation_resets_partial_tracking(self) -> None:
+        tracker = SubtitleEventTracker()
+        assert tracker.track(SubtitleEvent(kind="partial", text="下一句")) is True
+        assert tracker.track(
+            SubtitleEvent(kind="confirmed", text="上一句", start="0", end="1", speaker=1)
+        ) is True
+        assert tracker.track(SubtitleEvent(kind="partial", text="下一句")) is True
+
     def test_error_always_emitted(self) -> None:
         tracker = SubtitleEventTracker()
         ev = SubtitleEvent(kind="error", text="boom")

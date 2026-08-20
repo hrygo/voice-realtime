@@ -12,15 +12,18 @@ import asyncio
 import contextlib
 import sys
 
-from voice_realtime.subtitles.events import SubtitleStream
+from voice_realtime.subtitles.events import SubtitleEventTracker, SubtitleStream
 
 
 async def _run(url: str, language: str) -> None:
     stream = SubtitleStream(url, language=language)
     await stream.connect()
+    tracker = SubtitleEventTracker()
     print(f"已连接 {stream.uri}", file=sys.stderr)
     try:
         async for event in stream.events():
+            if not tracker.track(event):
+                continue
             if event.kind == "partial":
                 print(f"\r[partial] {event.text}", end="", flush=True)
             elif event.kind == "confirmed":

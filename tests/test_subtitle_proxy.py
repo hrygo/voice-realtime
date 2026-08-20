@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.subtitles.events import SubtitleEvent
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
 
 CONF = {"host": "127.0.0.1", "port": 8001, "language": "Chinese"}
 
@@ -63,8 +64,14 @@ class FakeStream:
 
 
 @pytest.fixture()
-def settings() -> SubtitleSettings:
-    return SubtitleSettings(**CONF)
+def settings(tmp_path: Path) -> SubtitleSettings:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    return SubtitleSettings(
+        **CONF,
+        model_dir=model_dir,
+        output_dir=tmp_path / "subtitles",
+    )
 
 
 class TestClientManagement:
@@ -150,18 +157,85 @@ class TestBroadcast:
         await proxy._broadcast_event(evt3)
         assert client.call_count == 2  # evt1 + evt3
 
+    async def test_existing_confirmed_line_does_not_hide_new_partial(
+        self, settings: SubtitleSettings
+    ) -> None:
+        proxy = SubtitleProxy(settings)
+        client = AsyncMock()
+        proxy.add_client(client)
+        first = _snapshot("已确认")
+        first["buffer_transcription"] = "新内容"
+        second = _snapshot("已确认")
+        second["buffer_transcription"] = "新内容继续"
+
+        await proxy._broadcast_payload(first)
+        await proxy._broadcast_payload(second)
+        await asyncio.sleep(0)
+
+        assert client.await_count == 2
+
+    async def test_slow_or_failed_client_does_not_block_others(
+        self, settings: SubtitleSettings
+    ) -> None:
+        proxy = SubtitleProxy(settings)
+        blocked = asyncio.Event()
+
+        async def slow(_text: str) -> None:
+            await blocked.wait()
+
+        fast = AsyncMock()
+        proxy.add_client(slow)
+        proxy.add_client(fast)
+
+        await asyncio.wait_for(proxy._broadcast_payload(_snapshot("你好")), timeout=0.1)
+        await asyncio.sleep(0)
+
+        fast.assert_awaited_once()
+        blocked.set()
+        await proxy.stop()
+
+    async def test_failed_client_is_removed(self, settings: SubtitleSettings) -> None:
+        proxy = SubtitleProxy(settings)
+
+        async def failed(_text: str) -> None:
+            raise ConnectionError("browser gone")
+
+        proxy.add_client(failed)
+        await proxy._broadcast_payload(_snapshot("你好"))
+        await asyncio.sleep(0)
+
+        assert not proxy.has_clients
+
+    async def test_slow_client_queue_is_bounded(self, settings: SubtitleSettings) -> None:
+        proxy = SubtitleProxy(settings)
+        blocked = asyncio.Event()
+
+        async def slow(_text: str) -> None:
+            await blocked.wait()
+
+        proxy.add_client(slow)
+        for index in range(20):
+            await proxy._broadcast_payload(_snapshot(f"第 {index} 句", start=str(index)))
+
+        channel = proxy._clients[slow]
+        assert channel.queue.qsize() <= proxy._CLIENT_QUEUE_SIZE
+        blocked.set()
+        await proxy.stop()
+
 
 class TestStreamConnection:
     async def test_start_uses_ws_scheme(self, settings: SubtitleSettings) -> None:
         """回归：wlk WS 连接必须用 ws:// scheme（http:// 会被 websockets 拒绝，
         此前导致 SubtitleStream.connect 抛 InvalidURI、字幕链路全断）。"""
-        proxy = SubtitleProxy(settings)
         with patch("voice_realtime.ui.subtitle_proxy.SubtitleStream") as mock_stream:
+            proxy = SubtitleProxy(settings)
             mock_stream.return_value.connect = AsyncMock()
             mock_stream.return_value.close = AsyncMock()
 
             async def no_events() -> AsyncIterator[SubtitleEvent]:
                 await asyncio.Event().wait()
+                if False:  # pragma: no cover - 仅用于把该挂起协程声明为 async generator
+                    yield SubtitleEvent(kind="other")
 
             mock_stream.return_value.events = no_events
             await proxy.start()
@@ -174,23 +248,117 @@ class TestStreamConnection:
                 await proxy.stop()
             mock_stream.return_value.close.assert_awaited_once()
 
+    async def test_disconnect_reconnects_without_replacing_browser_clients(
+        self, settings: SubtitleSettings
+    ) -> None:
+        attempts = 0
+
+        class ReconnectingStream(FakeStream):
+            async def connect(self) -> None:
+                nonlocal attempts
+                attempts += 1
+                if attempts == 1:
+                    raise ConnectionRefusedError("wlk down")
+
+        streams: list[ReconnectingStream] = []
+
+        def factory(**_kwargs: object) -> ReconnectingStream:
+            stream = ReconnectingStream([])
+            streams.append(stream)
+            return stream
+
+        proxy = SubtitleProxy(settings, stream_factory=factory, backoff_delays=(0.01,))
+        client = AsyncMock()
+        proxy.add_client(client)
+
+        await proxy.start()
+        for _ in range(20):
+            if attempts >= 2 and proxy.state == "connected":
+                break
+            await asyncio.sleep(0.01)
+
+        assert attempts >= 2
+        assert proxy.state == "connected"
+        assert proxy.has_clients
+        await proxy.stop()
+        assert proxy.state == "stopped"
+
+    async def test_stop_cancels_backoff_immediately(self, settings: SubtitleSettings) -> None:
+        class OfflineStream(FakeStream):
+            async def connect(self) -> None:
+                raise ConnectionRefusedError("wlk down")
+
+        proxy = SubtitleProxy(
+            settings,
+            stream_factory=lambda **_kwargs: OfflineStream([]),
+            backoff_delays=(30.0,),
+        )
+        await proxy.start()
+        for _ in range(20):
+            if proxy.state == "backoff":
+                break
+            await asyncio.sleep(0)
+
+        await asyncio.wait_for(proxy.stop(), timeout=0.1)
+
+        assert proxy.state == "stopped"
+
 
 class TestAudioPush:
-    async def test_push_audio_queued_when_no_client(self, settings: SubtitleSettings) -> None:
-        """无浏览器订阅时音频入队但不推送（_paused=True 生效）。"""
+    async def test_push_audio_discarded_when_no_client(self, settings: SubtitleSettings) -> None:
+        """无浏览器订阅时丢弃音频，恢复订阅后不发送历史帧。"""
         fake = FakeStream([])
         proxy = SubtitleProxy(settings)
         proxy._stream = fake  # type: ignore[assignment]
         await proxy.push_audio(b"\x00" * 512)
-        assert proxy._audio_buffer.qsize() == 1
+        assert proxy._audio_buffer.qsize() == 0
 
     async def test_send_audio_when_client_present(self, settings: SubtitleSettings) -> None:
         """有浏览器订阅时，音频经 _push_audio_batch 送到 wlk。"""
         fake = FakeStream([])
         proxy = SubtitleProxy(settings)
         proxy._stream = fake  # type: ignore[assignment]
+        proxy._running = True
+        proxy._state = SubtitleProxyState.CONNECTED
         proxy.add_client(AsyncMock())
 
         await proxy.push_audio(b"\x01" * 512)
         await proxy._push_audio_batch()
         assert fake.sent == [b"\x01" * 512]
+
+    async def test_audio_during_backoff_is_discarded(self, settings: SubtitleSettings) -> None:
+        proxy = SubtitleProxy(settings)
+        proxy._running = True
+        proxy._state = SubtitleProxyState.BACKOFF
+        proxy.add_client(AsyncMock())
+
+        await proxy.push_audio(b"old")
+
+        assert proxy._audio_buffer.empty()
+
+
+class TestSrtPersistence:
+    async def test_confirmed_snapshot_is_atomically_persisted_and_archived(
+        self, tmp_path: Path
+    ) -> None:
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        settings = SubtitleSettings(
+            **CONF,
+            model_dir=model_dir,
+            output_dir=tmp_path / "subtitles",
+        )
+        proxy = SubtitleProxy(settings)
+
+        await proxy._broadcast_payload(_snapshot("你好"))
+
+        current = settings.output_dir / "current.srt"
+        assert current.exists()
+        assert not (settings.output_dir / "current.srt.tmp").exists()
+        assert "00:00:01,000 --> 00:00:02,000" in current.read_text()
+
+        await proxy.stop()
+
+        archives = list(settings.output_dir.glob("session-*.srt"))
+        assert len(archives) == 1
+        assert archives[0].read_text() == current.read_text()

@@ -43,9 +43,17 @@ def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> li
         settings.backend,
         "--language",
         settings.language,
+        "--pcm-input",
     ]
     if settings.model_dir and settings.model_dir.exists():
         argv += ["--model_dir", str(settings.model_dir)]
+    elif settings.allow_model_downloads:
+        argv += ["--model", settings.model_size]
+    else:
+        raise FileNotFoundError(
+            f"字幕本地模型目录不存在: {settings.model_dir}；"
+            "请准备本地模型，或显式设置 allow_model_downloads=True"
+        )
     return argv
 
 
@@ -83,15 +91,19 @@ def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Po
     log_dir.mkdir(parents=True, exist_ok=True)
     argv = build_server_argv(settings, executable=executable)
     logger.info("启动字幕服务: %s", " ".join(argv))
-    stdout = (log_dir / "subtitles.out.log").open("w", encoding="utf-8")
-    stderr = (log_dir / "subtitles.err.log").open("w", encoding="utf-8")
-    return subprocess.Popen(
-        argv,
-        stdout=stdout,
-        stderr=stderr,
-        text=True,
-        start_new_session=True,
-    )
+    stdout_path = log_dir / "subtitles.out.log"
+    stderr_path = log_dir / "subtitles.err.log"
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
+        return subprocess.Popen(
+            argv,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            start_new_session=True,
+        )
 
 
 def main() -> None:
@@ -103,7 +115,7 @@ def main() -> None:
 
     setup_logging()
     settings = get_settings().subtitles
-    log_dir = Path("runtime") / "subtitles"
+    log_dir = settings.output_dir
     prepare_whisperlivekit(settings)
     proc = launch_subtitles(settings, log_dir)
 

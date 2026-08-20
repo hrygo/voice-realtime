@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from voice_realtime.config import SubtitleSettings
-from voice_realtime.subtitles.events import SubtitleStream, parse_event
+from voice_realtime.subtitles.events import SubtitleStream, parse_event, parse_events
 from voice_realtime.subtitles.launcher import (
     build_server_argv,
     prepare_whisperlivekit,
@@ -78,15 +78,45 @@ class TestParseEvent:
         event = parse_event(FIXTURE_PARTIAL)
         assert event.raw == FIXTURE_PARTIAL
 
+    def test_snapshot_emits_every_confirmed_line_and_current_partial(self) -> None:
+        payload = {
+            "lines": [
+                {"speaker": 1, "text": "第一句", "start": "00:00:00.000", "end": "00:00:01.000"},
+                {"speaker": 2, "text": "第二句", "start": "00:00:01.000", "end": "00:00:02.000"},
+            ],
+            "buffer_transcription": "正在说第三句",
+        }
+
+        events = parse_events(payload)
+
+        assert [event.kind for event in events] == ["confirmed", "confirmed", "partial"]
+        assert [event.text for event in events] == ["第一句", "第二句", "正在说第三句"]
+
+    def test_partial_wins_single_event_compatibility_after_confirmed_history(self) -> None:
+        payload = {
+            "lines": [
+                {"speaker": 1, "text": "已确认", "start": "00:00:00.000", "end": "00:00:01.000"}
+            ],
+            "buffer_transcription": "新的临时内容",
+        }
+
+        event = parse_event(payload)
+
+        assert event.kind == "partial"
+        assert event.text == "新的临时内容"
+
 
 class TestBuildServerArgv:
     def test_builds_wlk_serve_command(self) -> None:
+        model_dir = Path("/tmp/WhisperLiveKit-model")
         settings = SubtitleSettings(
             repo_path=Path("/tmp/WhisperLiveKit"),
             backend="qwen3-streaming",
             language="Chinese",
             host="127.0.0.1",
             port=8001,
+            model_dir=model_dir,
+            allow_model_downloads=True,
         )
         argv = build_server_argv(settings)
         assert argv[0] == "wlk"
@@ -95,16 +125,44 @@ class TestBuildServerArgv:
         assert "--language" in argv and "Chinese" in argv
         assert "--host" in argv and "127.0.0.1" in argv
         assert "--port" in argv and "8001" in argv
+        assert "--pcm-input" in argv
 
     def test_custom_executable_is_used(self) -> None:
-        settings = SubtitleSettings()
+        settings = SubtitleSettings(allow_model_downloads=True)
         argv = build_server_argv(settings, executable="/repo/.venv/bin/wlk")
         assert argv[0] == "/repo/.venv/bin/wlk"
 
     def test_funasr_backend_uses_model_dir(self) -> None:
-        settings = SubtitleSettings(backend="funasr")
+        settings = SubtitleSettings(backend="funasr", allow_model_downloads=True)
         argv = build_server_argv(settings)
         assert "--backend" in argv and "funasr" in argv
+
+    def test_existing_local_model_directory_is_used(self, tmp_path: Path) -> None:
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        settings = SubtitleSettings(model_dir=model_dir)
+
+        argv = build_server_argv(settings)
+
+        assert argv[argv.index("--model_dir") + 1] == str(model_dir)
+        assert "--model" not in argv
+
+    def test_missing_local_model_fails_fast_offline(self, tmp_path: Path) -> None:
+        settings = SubtitleSettings(model_dir=tmp_path / "missing")
+
+        with pytest.raises(FileNotFoundError, match="allow_model_downloads"):
+            build_server_argv(settings)
+
+    def test_missing_local_model_uses_explicit_download_fallback(self, tmp_path: Path) -> None:
+        settings = SubtitleSettings(
+            model_dir=tmp_path / "missing",
+            model_size="Qwen3-ASR-1.7B",
+            allow_model_downloads=True,
+        )
+
+        argv = build_server_argv(settings)
+
+        assert argv[argv.index("--model") + 1] == "Qwen3-ASR-1.7B"
 
     def test_default_repo_path_resolves(self) -> None:
         settings = SubtitleSettings()
@@ -162,7 +220,9 @@ class TestLaunch:
     def test_launch_subtitles(self, tmp_path: Path) -> None:
         from voice_realtime.subtitles.launcher import launch_subtitles
 
-        settings = SubtitleSettings(repo_path=tmp_path)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        settings = SubtitleSettings(repo_path=tmp_path, model_dir=model_dir)
         log_dir = tmp_path / "logs"
         with (
             patch(
@@ -188,4 +248,3 @@ class TestConfigDump:
         assert "InteractionSettings" in table
         assert "SubtitleSettings" in table
         assert "UISettings" in table
-

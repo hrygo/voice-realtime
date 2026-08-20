@@ -30,38 +30,61 @@ class SubtitleEvent:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
-def parse_event(payload: dict[str, Any]) -> SubtitleEvent:
-    """将 WhisperLiveKit 消息归一化为 SubtitleEvent。"""
+def parse_events(payload: dict[str, Any]) -> list[SubtitleEvent]:
+    """将一个 WhisperLiveKit 全量快照展开为全部新增候选事件。
+
+    ``lines`` 是服务端累计 confirmed 历史，而 ``buffer_transcription`` 是当前
+    partial。两者可以同时存在，因此不能用 confirmed 的存在与否决定是否忽略 partial。
+    去重由消费方的 :class:`SubtitleEventTracker` 完成。
+    """
     msg_type = payload.get("type")
     if msg_type == "config":
-        return SubtitleEvent(kind="config", raw=payload)
+        return [SubtitleEvent(kind="config", raw=payload)]
     if msg_type == "error":
-        return SubtitleEvent(kind="error", text=payload.get("error") or "", raw=payload)
+        return [SubtitleEvent(kind="error", text=str(payload.get("error") or ""), raw=payload)]
     if msg_type == "ready_to_stop":
-        return SubtitleEvent(kind="ready_to_stop", raw=payload)
+        return [SubtitleEvent(kind="ready_to_stop", raw=payload)]
 
-    if "buffer_transcription" in payload:
-        partial = (payload.get("buffer_transcription") or "").strip()
-        lines = payload.get("lines") or []
+    events: list[SubtitleEvent] = []
+    if "buffer_transcription" in payload or "lines" in payload:
+        partial = str(payload.get("buffer_transcription") or "").strip()
+        raw_lines = payload.get("lines") or []
+        lines = raw_lines if isinstance(raw_lines, list) else []
         confirmed = [
-            line for line in lines if (line.get("text") or "").strip() and line.get("speaker") != -2
+            line
+            for line in lines
+            if isinstance(line, dict)
+            and str(line.get("text") or "").strip()
+            and line.get("speaker") != -2
         ]
-        if confirmed:
-            last = confirmed[-1]
-            return SubtitleEvent(
+        events.extend(
+            SubtitleEvent(
                 kind="confirmed",
-                text=last.get("text", ""),
-                start=last.get("start", ""),
-                end=last.get("end", ""),
-                speaker=last.get("speaker"),
-                translation=last.get("translation"),
-                detected_language=last.get("detected_language"),
+                text=str(line.get("text") or ""),
+                start=str(line.get("start") or ""),
+                end=str(line.get("end") or ""),
+                speaker=line.get("speaker") if isinstance(line.get("speaker"), int) else None,
+                translation=(
+                    str(line["translation"]) if line.get("translation") is not None else None
+                ),
+                detected_language=(
+                    str(line["detected_language"])
+                    if line.get("detected_language") is not None
+                    else None
+                ),
                 raw=payload,
             )
+            for line in confirmed
+        )
         if partial:
-            return SubtitleEvent(kind="partial", text=partial, raw=payload)
+            events.append(SubtitleEvent(kind="partial", text=partial, raw=payload))
 
-    return SubtitleEvent(kind="other", raw=payload)
+    return events or [SubtitleEvent(kind="other", raw=payload)]
+
+
+def parse_event(payload: dict[str, Any]) -> SubtitleEvent:
+    """兼容旧的单事件接口；存在 partial 时优先返回当前 partial。"""
+    return parse_events(payload)[-1]
 
 
 class SubtitleEventTracker:
@@ -75,14 +98,14 @@ class SubtitleEventTracker:
         if max_seen < 1:
             raise ValueError("max_seen 必须大于 0")
         self._max_seen: int = max_seen
-        self._confirmed_seen: set[tuple[str, str]] = set()
-        self._confirmed_order: deque[tuple[str, str]] = deque()
+        self._confirmed_seen: set[tuple[str, str, int | None, str]] = set()
+        self._confirmed_order: deque[tuple[str, str, int | None, str]] = deque()
         self._last_partial = ""
 
     def track(self, event: SubtitleEvent) -> bool:
         """返回 True 表示该事件是新的（应对外发出）。"""
         if event.kind == "confirmed":
-            key = (event.start, event.text)
+            key = (event.start, event.end, event.speaker, event.text)
             if key in self._confirmed_seen:
                 return False
             if len(self._confirmed_seen) >= self._max_seen:
@@ -90,6 +113,8 @@ class SubtitleEventTracker:
                 self._confirmed_seen.remove(oldest)
             self._confirmed_seen.add(key)
             self._confirmed_order.append(key)
+            # 一旦产生新的 confirmed，下一段 partial 即使文本碰巧相同也应重新发出。
+            self._last_partial = ""
             return True
         if event.kind == "partial":
             text = event.text.strip()
@@ -112,11 +137,8 @@ class SubtitleStream:
         url: str,
         language: str = "Chinese",
         token: str | None = None,
-        pcm_input: bool = False,
     ) -> None:
         params = [f"language={language}", "mode=full"]
-        if pcm_input:
-            params.append("pcm_input=true")
         query = "&".join(params)
         self._uri = f"{url}/asr?{query}"
         if token:
@@ -143,7 +165,8 @@ class SubtitleStream:
             if isinstance(raw, bytes):
                 continue
             payload = json_loads(raw)
-            yield parse_event(payload)
+            for event in parse_events(payload):
+                yield event
 
     async def close(self) -> None:
         if self._ws is not None:
