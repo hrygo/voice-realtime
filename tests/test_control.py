@@ -8,6 +8,12 @@ import pytest
 
 from voice_realtime.config import BridgeSettings
 from voice_realtime.ui.control import ControlBridge
+from voice_realtime.ui.protocol import (
+    DuplexMode,
+    SetDuplexModeCommand,
+    SetPersonaCommand,
+    parse_command,
+)
 
 
 @pytest.fixture()
@@ -112,3 +118,24 @@ class TestSetVoice:
             resp = await bridge.handle({"cmd": "set_voice", "voice": "warm"})
         assert resp["ok"] is False
         assert "bridge down" in resp["error"]
+
+
+class TestProtocol:
+    def test_parse_command_rejects_extra_fields(self) -> None:
+        with pytest.raises(ValueError):
+            parse_command({"request_id": "1", "cmd": "clear_context", "extra": True})
+
+    def test_parse_command_requires_request_id(self) -> None:
+        with pytest.raises(ValueError):
+            parse_command({"cmd": "clear_context"})
+
+    def test_persona_length_is_bounded(self) -> None:
+        with pytest.raises(ValueError):
+            SetPersonaCommand(request_id="1", cmd="set_persona", prompt="x" * 4001)
+
+    def test_duplex_mode_is_typed(self) -> None:
+        command = parse_command(
+            {"request_id": "1", "cmd": "set_duplex_mode", "mode": "headphone_duplex"}
+        )
+        assert isinstance(command, SetDuplexModeCommand)
+        assert command.mode is DuplexMode.HEADPHONE_DUPLEX

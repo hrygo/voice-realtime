@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from ipaddress import ip_address
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -16,6 +17,20 @@ DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
+
+
+def _validate_loopback_host(value: str) -> str:
+    """只允许本机回环监听，避免未配置鉴权的服务暴露到局域网。"""
+    host = value.strip().removeprefix("[").removesuffix("]")
+    if host.lower() == "localhost":
+        return value
+    try:
+        address = ip_address(host)
+    except ValueError as exc:
+        raise ValueError(f"监听地址必须是回环地址: {value}") from exc
+    if not address.is_loopback:
+        raise ValueError(f"监听地址必须是回环地址: {value}")
+    return value
 
 
 class BridgeSettings(BaseSettings):
@@ -34,9 +49,11 @@ class BridgeSettings(BaseSettings):
     @field_validator("sample_rate")
     @classmethod
     def _validate_sample_rate(cls, v: int) -> int:
-        if v not in (16000, 24000, 44100, 48000):
-            raise ValueError(f"不支持的采样率: {v}")
+        if v != TTS_OUTPUT_SAMPLE_RATE:
+            raise ValueError(f"TTS 原生输出仅支持 {TTS_OUTPUT_SAMPLE_RATE}Hz: {v}")
         return v
+
+    _validate_host = field_validator("host")(_validate_loopback_host)
 
 
 class InteractionSettings(BaseSettings):
@@ -60,7 +77,6 @@ class InteractionSettings(BaseSettings):
     tts_bridge_url: str = Field(
         default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
     )
-    tts_voice: str = Field(default="default", description="交互 TTS 音色")
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     sample_rate: int = Field(default=16000, description="音频管线采样率")
     silence_secs: float = Field(
@@ -68,12 +84,6 @@ class InteractionSettings(BaseSettings):
         ge=0.1,
         le=3.0,
         description="端点判定静音阈值 (秒)；需小于 STT ttfs_p99 以保留转写等待窗口",
-    )
-    interrupt_echo_suppression_ms: int = Field(
-        default=500,
-        ge=0,
-        le=3000,
-        description="TTS 播报起始窗口内丢弃麦克风音频 (ms) 以抑制扬声器回声自打断；0=关闭",
     )
     echo_barge_in_gain: float = Field(
         default=2.5,
@@ -99,6 +109,10 @@ class InteractionSettings(BaseSettings):
         le=0.99,
         description="自回声文本相似度阈值（difflib ratio / 最长公共子串覆盖率）",
     )
+    echo_allow_barge_in: bool = Field(
+        default=False,
+        description="是否允许真人插话打断（False=输出期物理闭麦，彻底防自打断与回声；True=能量门控插话）",
+    )
     echo_tail_hangover_secs: float = Field(
         default=0.4,
         ge=0.0,
@@ -115,6 +129,13 @@ class InteractionSettings(BaseSettings):
             raise ValueError(f"不支持的 STT 语言: {v} (可选 {sorted(ALLOWED_STT_LANGUAGES)})")
         return normalized
 
+    @field_validator("sample_rate")
+    @classmethod
+    def _validate_sample_rate(cls, v: int) -> int:
+        if v != 16000:
+            raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
+        return v
+
 
 class UISettings(BaseSettings):
     """Voice Studio Web 控制台配置（React 前端 + 事件网关）。"""
@@ -125,6 +146,8 @@ class UISettings(BaseSettings):
     port: int = Field(default=8100, description="UI 服务监听端口")
     static_dir: Path = Field(default=Path("ui/dist"), description="React 构建产物目录（静态托管）")
     api_timeout: float = Field(default=3.0, description="服务探活超时 (秒)")
+
+    _validate_host = field_validator("host")(_validate_loopback_host)
 
 
 class SubtitleSettings(BaseSettings):
@@ -139,13 +162,16 @@ class SubtitleSettings(BaseSettings):
     language: str = Field(default="Chinese", description="字幕语言")
     host: str = Field(default="127.0.0.1", description="字幕服务监听地址")
     port: int = Field(default=8001, description="字幕服务端口")
-    device: str = Field(default="mps", description="推理设备 (mps/cpu)")
     model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
     model_dir: Path = Field(
         default=Path("runtime/qwen3-asr-0.6b"),
         description="ASR 本地模型目录（离线环境必填，避免启动时拉取模型）",
     )
     output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
+    allow_model_downloads: bool = Field(
+        default=False,
+        description="是否允许 WhisperLiveKit 启动时联网下载模型；默认严格离线",
+    )
 
     @field_validator("backend")
     @classmethod
@@ -154,6 +180,8 @@ class SubtitleSettings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
         return v
+
+    _validate_host = field_validator("host")(_validate_loopback_host)
 
 
 class Settings(BaseSettings):
