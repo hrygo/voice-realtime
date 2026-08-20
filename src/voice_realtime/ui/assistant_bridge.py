@@ -24,10 +24,13 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     EndFrame,
     Frame,
     InterimTranscriptionFrame,
@@ -51,6 +54,14 @@ logger = logging.getLogger(__name__)
 _MAX_SEEN_IDS = 10000
 
 
+@dataclass(slots=True)
+class _ClientState:
+    send: Callable[[str], Awaitable[None]]
+    queue: asyncio.Queue[str]
+    task: asyncio.Task[None]
+    dropped: int = 0
+
+
 class StatusBridgeObserver(BaseObserver):
     """管道状态观测器：帧 → 协议事件 → 浏览器 WS 广播。
 
@@ -60,9 +71,11 @@ class StatusBridgeObserver(BaseObserver):
         worker = PipelineWorker(pipeline, observers=[observer])
     """
 
-    def __init__(self, tts_throttle_secs: float = 0.5) -> None:
+    def __init__(self, tts_throttle_secs: float = 0.5, client_queue_size: int = 32) -> None:
         super().__init__()
-        self._ws_clients: list[Callable[[str], Awaitable[None]]] = []
+        self._ws_clients: dict[Callable[[str], Awaitable[None]], _ClientState] = {}
+        self._client_queue_size = max(1, client_queue_size)
+        self._client_counter = 0
         self._seen_ids: set[int] = set()
         self._tts_throttle_secs = tts_throttle_secs
         self._tts_chunks = 0
@@ -70,30 +83,36 @@ class StatusBridgeObserver(BaseObserver):
         self._turn_id = 0
         self._current_sentence = ""
         # Turn-level 耗时度量时间戳
-        self._t_speaking_start: float = 0.0
-        self._t_silence: float = 0.0
-        self._t_stt_final: float = 0.0
-        self._t_llm_first: float = 0.0
-        self._t_tts_started: float = 0.0
+        self._t_speaking_start: float | None = None
+        self._t_silence: float | None = None
+        self._t_stt_final: float | None = None
+        self._t_llm_first: float | None = None
+        self._t_tts_first: float | None = None
+        self._tts_active = False
+        self._metrics_turn_id = 0
 
     # ---------- 客户端管理（与 SubtitleProxy 同接口） ----------
 
     def add_client(self, ws_send: Callable[[str], Awaitable[None]]) -> str:
         """注册浏览器 WS 客户端，返回 client_id（用于移除）。"""
-        self._ws_clients.append(ws_send)
-        client_id = f"asst_{len(self._ws_clients)}"
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._client_queue_size)
+        task = asyncio.create_task(self._client_sender(ws_send, queue))
+        self._ws_clients[ws_send] = _ClientState(send=ws_send, queue=queue, task=task)
+        self._client_counter += 1
+        client_id = f"asst_{self._client_counter}"
         logger.info("StatusBridgeObserver: 新浏览器订阅 (共 %d 个)", len(self._ws_clients))
         return client_id
 
     def remove_client(self, ws_send: Callable[[str], Awaitable[None]]) -> None:
         """移除浏览器 WS 客户端。"""
-        if ws_send in self._ws_clients:
-            self._ws_clients.remove(ws_send)
+        state = self._ws_clients.pop(ws_send, None)
+        if state is not None:
+            state.task.cancel()
             logger.info("StatusBridgeObserver: 浏览器取消订阅 (剩余 %d 个)", len(self._ws_clients))
 
     @property
     def has_clients(self) -> bool:
-        return len(self._ws_clients) > 0
+        return bool(self._ws_clients)
 
     # ---------- BaseObserver 回调 ----------
 
@@ -127,7 +146,7 @@ class StatusBridgeObserver(BaseObserver):
                 {"type": "stt", "state": "final", "text": frame.text, "t": self._now()}
             )
         elif isinstance(frame, LLMTextFrame):
-            if self._t_llm_first == 0.0:
+            if self._t_llm_first is None:
                 self._t_llm_first = now_ts
             await self._emit_event(
                 {
@@ -139,26 +158,36 @@ class StatusBridgeObserver(BaseObserver):
             )
         elif isinstance(frame, LLMFullResponseEndFrame):
             await self._emit_event(
-                {"type": "llm", "state": "final", "turn_id": self._turn_id}
+                {"type": "llm", "state": "final", "turn_id": self._turn_id, "text": ""}
             )
             self._turn_id += 1
-            self._t_llm_first = 0.0
         elif isinstance(frame, TTSTextFrame):
             # 记录当前句子，供 TTSStartedFrame 携带
             self._current_sentence = frame.text
-        elif isinstance(frame, TTSStartedFrame):
-            self._t_tts_started = now_ts
-            await self._emit_event(
-                {"type": "tts", "state": "started", "sentence": self._current_sentence}
-            )
-            await self._emit_turn_metrics()
+        elif isinstance(frame, (TTSStartedFrame, BotStartedSpeakingFrame)):
+            if not self._tts_active:
+                self._tts_active = True
+                await self._emit_event(
+                    {"type": "tts", "state": "started", "sentence": self._current_sentence}
+                )
         elif isinstance(frame, TTSStoppedFrame):
+            self._tts_active = False
             await self._emit_event({"type": "tts", "state": "stopped"})
             self._tts_chunks = 0
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            if self._tts_active:
+                self._tts_active = False
+                await self._emit_event({"type": "tts", "state": "stopped"})
+            self._tts_chunks = 0
         elif isinstance(frame, TTSAudioRawFrame):
+            if self._t_tts_first is None:
+                self._t_tts_first = now_ts
+                await self._emit_turn_metrics()
             await self._handle_tts_audio()
         elif isinstance(frame, UserStartedSpeakingFrame):
+            self._reset_turn_metrics()
             self._t_speaking_start = now_ts
+            self._metrics_turn_id = self._turn_id
             await self._emit_event(
                 {"type": "vad", "state": "user_speaking", "t": self._now()}
             )
@@ -179,34 +208,41 @@ class StatusBridgeObserver(BaseObserver):
 
     async def _emit_turn_metrics(self) -> None:
         """在一轮对话 TTS 开始时下发端到端耗时瀑布。"""
-        if self._t_silence <= 0.0 or self._t_tts_started <= 0.0:
+        if self._t_silence is None or self._t_tts_first is None:
             return
         stt_ms = (
             max(0.0, round((self._t_stt_final - self._t_silence) * 1000, 1))
-            if self._t_stt_final > 0
-            else 0.0
+            if self._t_stt_final is not None
+            else None
         )
         llm_ttft_ms = (
             max(0.0, round((self._t_llm_first - self._t_stt_final) * 1000, 1))
-            if (self._t_llm_first > 0 and self._t_stt_final > 0)
-            else 0.0
+            if self._t_llm_first is not None and self._t_stt_final is not None
+            else None
         )
         tts_ttfb_ms = (
-            max(0.0, round((self._t_tts_started - self._t_llm_first) * 1000, 1))
-            if self._t_llm_first > 0
-            else 0.0
+            max(0.0, round((self._t_tts_first - self._t_llm_first) * 1000, 1))
+            if self._t_llm_first is not None
+            else None
         )
-        e2e_ms = max(0.0, round((self._t_tts_started - self._t_silence) * 1000, 1))
+        e2e_ms = max(0.0, round((self._t_tts_first - self._t_silence) * 1000, 1))
         await self._emit_event(
             {
                 "type": "metrics",
-                "turn_id": self._turn_id,
+                "turn_id": self._metrics_turn_id,
                 "stt_ms": stt_ms,
                 "llm_ttft_ms": llm_ttft_ms,
                 "tts_ttfb_ms": tts_ttfb_ms,
                 "e2e_ms": e2e_ms,
             }
         )
+
+    def _reset_turn_metrics(self) -> None:
+        self._t_speaking_start = None
+        self._t_silence = None
+        self._t_stt_final = None
+        self._t_llm_first = None
+        self._t_tts_first = None
 
     async def _handle_tts_audio(self) -> None:
         """TTS 音频帧：仅计数，超节流窗口才广播一次 synthesizing。"""
@@ -235,9 +271,33 @@ class StatusBridgeObserver(BaseObserver):
         if not self._ws_clients:
             return
         text = json.dumps(payload, ensure_ascii=False)
-        tasks = [client(text) for client in self._ws_clients]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        for state in list(self._ws_clients.values()):
+            if state.queue.full():
+                try:
+                    state.queue.get_nowait()
+                    state.queue.task_done()
+                except asyncio.QueueEmpty:
+                    pass
+                state.dropped += 1
+            state.queue.put_nowait(text)
+        await asyncio.sleep(0)
         logger.debug("StatusBridgeObserver: 广播 %s", text)
+
+    async def _client_sender(
+        self,
+        send: Callable[[str], Awaitable[None]],
+        queue: asyncio.Queue[str],
+    ) -> None:
+        while True:
+            text = await queue.get()
+            try:
+                await send(text)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("StatusBridgeObserver: 浏览器发送失败", exc_info=True)
+            finally:
+                queue.task_done()
 
     @staticmethod
     def _now() -> str:

@@ -227,6 +227,7 @@ class TestBroadcast:
         observer.add_client(good)
         # on_push_frame 不应抛异常（广播层已隔离）
         await _push(observer, LLMTextFrame(text="ok"))
+        await asyncio.sleep(0)
         assert good.call_count == 1
 
     async def test_no_clients_no_emit(self) -> None:
@@ -234,10 +235,25 @@ class TestBroadcast:
         await _push(observer, LLMTextFrame(text="无人订阅"))
         assert observer._seen_ids  # 帧仍被去重跟踪，但无广播
 
+    async def test_slow_client_queue_remains_bounded(self) -> None:
+        observer = StatusBridgeObserver(client_queue_size=2)
+        gate = asyncio.Event()
+
+        async def slow(_text: str) -> None:
+            await gate.wait()
+
+        observer.add_client(slow)
+        for index in range(10):
+            await observer._emit_event({"type": "test", "index": index})
+        state = observer._ws_clients[slow]  # type: ignore[index]
+        assert state.queue.qsize() <= 2
+        assert state.dropped > 0
+        gate.set()
+        observer.remove_client(slow)
+
 
 class TestMetrics:
-    async def test_turn_metrics_emitted_on_tts_started(self) -> None:
-        """测试在一轮语音会话完成后，TTSStartedFrame 触发 metrics 耗时指标广播。"""
+    async def test_turn_metrics_emitted_on_first_tts_audio(self) -> None:
         observer = StatusBridgeObserver()
         client = _upsert_mock_client(observer)
 
@@ -248,6 +264,9 @@ class TestMetrics:
         await _push(observer, LLMTextFrame(text="你好！"))
         await _push(observer, TTSTextFrame(text="你好！", aggregated_by="sentence"))
         await _push(observer, TTSStartedFrame())
+        payloads = [json.loads(c.args[0]) for c in client.call_args_list]
+        assert not [p for p in payloads if p.get("type") == "metrics"]
+        await _push(observer, _tts_audio())
 
         # 检查是否发出 type=metrics 事件
         payloads = [json.loads(c.args[0]) for c in client.call_args_list]
@@ -260,3 +279,25 @@ class TestMetrics:
         assert "tts_ttfb_ms" in m
         assert "e2e_ms" in m
 
+    async def test_missing_metric_stages_are_null_and_turn_resets(self) -> None:
+        observer = StatusBridgeObserver(tts_throttle_secs=0.0)
+        client = _upsert_mock_client(observer)
+        await _push(observer, UserStartedSpeakingFrame())
+        await _push(observer, UserStoppedSpeakingFrame())
+        await _push(observer, _tts_audio())
+        metrics = next(
+            json.loads(call.args[0])
+            for call in client.call_args_list
+            if json.loads(call.args[0]).get("type") == "metrics"
+        )
+        assert metrics["stt_ms"] is None
+        assert metrics["llm_ttft_ms"] is None
+        assert metrics["tts_ttfb_ms"] is None
+
+        observer._t_stt_final = 1.0  # type: ignore[attr-defined]
+        observer._t_llm_first = 2.0  # type: ignore[attr-defined]
+        observer._t_tts_first = 3.0  # type: ignore[attr-defined]
+        await _push(observer, UserStartedSpeakingFrame())
+        assert observer._t_stt_final is None  # type: ignore[attr-defined]
+        assert observer._t_llm_first is None  # type: ignore[attr-defined]
+        assert observer._t_tts_first is None  # type: ignore[attr-defined]
