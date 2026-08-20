@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
+from collections.abc import AsyncIterator
 from unittest.mock import MagicMock, patch
 
 import mlx.core as mx
@@ -154,6 +158,91 @@ class TestStreamSpeech:
         with pytest.raises(RuntimeError, match="not loaded"):
             await anext(engine.stream_speech("你好"))
 
+    @pytest.mark.asyncio
+    async def test_model_generation_is_serialized(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        first_started = threading.Event()
+        release_first = threading.Event()
+        calls = 0
+        calls_lock = threading.Lock()
+
+        def _generate(**_: object):
+            nonlocal calls
+            with calls_lock:
+                calls += 1
+                call_number = calls
+            if call_number == 1:
+                first_started.set()
+                assert release_first.wait(timeout=2)
+            yield _mock_generation_result(samples=16)
+
+        model.generate.side_effect = _generate
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        first = asyncio.create_task(_collect(engine.stream_speech("第一条")))
+        assert await asyncio.to_thread(first_started.wait, 1)
+        second = asyncio.create_task(_collect(engine.stream_speech("第二条")))
+        await asyncio.sleep(0.05)
+
+        assert calls == 1
+        release_first.set()
+        await asyncio.gather(first, second)
+        assert calls == 2
+
+    @pytest.mark.asyncio
+    async def test_closing_stream_stops_producer(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        producer_stopped = threading.Event()
+        produced = 0
+
+        def _generate(**_: object):
+            nonlocal produced
+            try:
+                while True:
+                    produced += 1
+                    yield _mock_generation_result(samples=16)
+                    time.sleep(0.005)
+            finally:
+                producer_stopped.set()
+
+        model.generate.side_effect = _generate
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        stream = engine.stream_speech("会被取消")
+        assert await anext(stream)
+        await asyncio.sleep(0.1)
+        assert produced <= 10  # 1 块已消费 + 8 块队列 + 1 块等待入队
+        await stream.aclose()
+
+        assert await asyncio.to_thread(producer_stopped.wait, 1)
+
+    @pytest.mark.asyncio
+    async def test_generation_error_reaches_consumer(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+
+        def _generate(**_: object):
+            raise RuntimeError("model failed")
+            yield  # pragma: no cover - 保持生成器形状
+
+        model.generate.side_effect = _generate
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        with pytest.raises(RuntimeError, match="model failed"):
+            await anext(engine.stream_speech("失败"))
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_native_model_sample_rate(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        model.generate.return_value = iter([_mock_generation_result(sample_rate=16000)])
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        with pytest.raises(RuntimeError, match="unexpected sample rate"):
+            await anext(engine.stream_speech("错误采样率"))
+
 
 class TestClose:
     def test_close_resets_state(self, engine: TTSEngine) -> None:
@@ -166,3 +255,7 @@ class TestClose:
         with patch("mlx_audio.tts.utils.load", return_value=_mock_model()):
             engine.load()
         assert engine.sample_rate == 24000
+
+
+async def _collect(stream: AsyncIterator[bytes]) -> list[bytes]:
+    return [chunk async for chunk in stream]

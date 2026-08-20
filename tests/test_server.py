@@ -119,9 +119,22 @@ class TestSpeech:
             "/v1/audio/speech",
             json={"model": TEST_MODEL, "input": "你好", "voice": "warm", "speed": 1.2},
         )
-        # 请求里的 voice 被忽略：引擎固定收到配置音色（此处默认为 "default"）
         engine.stream_speech.assert_called_once_with(
-            "你好", voice="default", speed=1.2, lang="auto"
+            "你好", voice="warm", speed=1.2, lang="auto"
+        )
+
+    @pytest.mark.asyncio
+    async def test_omitted_request_voice_uses_engine_default(
+        self, client: httpx.AsyncClient
+    ) -> None:
+        engine = cast(_ASGITransport, cast(object, client._transport)).app.state.engine
+        engine.voice = "calm"
+        await client.post(
+            "/v1/audio/speech",
+            json={"model": TEST_MODEL, "input": "你好", "response_format": "pcm"},
+        )
+        engine.stream_speech.assert_called_once_with(
+            "你好", voice="calm", speed=1.0, lang="auto"
         )
 
     @pytest.mark.asyncio
@@ -139,6 +152,14 @@ class TestSpeech:
     async def test_blank_lang_returns_422(self, client: httpx.AsyncClient) -> None:
         resp = await client.post(
             "/v1/audio/speech", json={"model": TEST_MODEL, "input": "你好", "lang": " "}
+        )
+        assert resp.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_blank_request_voice_returns_422(self, client: httpx.AsyncClient) -> None:
+        resp = await client.post(
+            "/v1/audio/speech",
+            json={"model": TEST_MODEL, "input": "你好", "voice": "  "},
         )
         assert resp.status_code == 422
 
@@ -162,6 +183,50 @@ class TestSpeech:
             )
         assert 500 <= resp.status_code < 600
         assert "error" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_pcm_failure_before_first_chunk_returns_5xx(self) -> None:
+        settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=False)
+        engine = _mock_engine()
+
+        async def _failing_gen(*args: object, **kwargs: object):
+            raise RuntimeError("synthesis failed")
+            yield  # pragma: no cover - 保持异步生成器形状
+
+        engine.stream_speech = MagicMock(side_effect=_failing_gen)
+        app = create_app(settings, engine=engine)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/v1/audio/speech",
+                json={"model": TEST_MODEL, "input": "你好", "response_format": "pcm"},
+            )
+        assert 500 <= resp.status_code < 600
+        assert "error" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_pcm_failure_after_first_chunk_ends_stream_without_fake_silence(
+        self,
+    ) -> None:
+        settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=False)
+        engine = _mock_engine()
+
+        async def _failing_gen(*args: object, **kwargs: object):
+            yield b"\x01\x00"
+            raise RuntimeError("synthesis failed")
+
+        engine.stream_speech = MagicMock(side_effect=_failing_gen)
+        app = create_app(settings, engine=engine)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/v1/audio/speech",
+                json={"model": TEST_MODEL, "input": "你好", "response_format": "pcm"},
+            )
+        assert resp.status_code == 200
+        assert resp.content == b"\x01\x00"
 
     @pytest.mark.asyncio
     async def test_blank_input_returns_400(self, client: httpx.AsyncClient) -> None:

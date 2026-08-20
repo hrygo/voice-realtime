@@ -10,8 +10,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import pytest
+from pipecat.frames.frames import EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.services.openai.llm import OpenAILLMService
 
 from voice_realtime.interaction.pipeline import build_system_prompt
 from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
@@ -64,6 +68,13 @@ class TestLmStudioNativeLLMService:
     def test_base_url_root_kept_as_is(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         assert str(svc._http.base_url).rstrip("/") == "http://localhost:1234"
+
+    def test_native_client_has_explicit_local_timeouts(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        assert svc._http.timeout.connect == 5
+        assert svc._http.timeout.read is None
+        assert svc._http.timeout.write == 10
+        assert svc._http.timeout.pool == 5
 
     async def test_native_request_payload_and_sse_conversion(self) -> None:
         svc = LmStudioNativeLLMService(
@@ -121,6 +132,53 @@ class TestLmStudioNativeLLMService:
         svc._http.stream = fake_stream  # type: ignore[method-assign]
         chunks = [chunk async for chunk in await svc.get_chat_completions(make_context())]
         assert [c.choices[0].delta.content for c in chunks] == ["测试"]
+
+    async def test_sse_error_event_raises(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(['data: {"type":"error","error":"overloaded"}'])
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="reported an error"):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+    async def test_non_string_delta_content_raises(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(['data: {"type":"message.delta","content":42}'])
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(TypeError, match="content must be a string"):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+    async def test_empty_sse_response_raises(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(['data: {"type":"message.complete"}'])
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match="no message content"):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+    async def test_close_releases_native_client(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.aclose = AsyncMock()
+        await svc.close()
+        svc._http.aclose.assert_awaited_once()
+
+    async def test_stop_closes_native_client(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc.close = AsyncMock()
+        with patch.object(OpenAILLMService, "stop", new=AsyncMock()) as parent_stop:
+            await svc.stop(EndFrame())
+        parent_stop.assert_awaited_once()
+        svc.close.assert_awaited_once()
 
 
 class TestSystemPrompt:

@@ -23,6 +23,7 @@ from typing import Any, cast
 import httpx
 from openai import AsyncStream
 from openai.types.chat import ChatCompletionChunk, ChatCompletionMessageParam
+from pipecat.frames.frames import CancelFrame, EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
@@ -93,12 +94,17 @@ class LmStudioNativeLLMService(OpenAILLMService):
         root_url = base_url.rstrip("/")
         if root_url.endswith("/v1"):
             root_url = root_url[: -len("/v1")]
-        self._http = httpx.AsyncClient(base_url=root_url)
+        self._http = httpx.AsyncClient(
+            base_url=root_url,
+            timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
+        )
+        self._native_client_closed = False
 
     async def _native_completions(
         self, payload: dict[str, Any]
     ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
+        saw_content = False
         async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -111,11 +117,21 @@ class LmStudioNativeLLMService(OpenAILLMService):
                     event = json.loads(raw_data)
                 except (json.JSONDecodeError, TypeError):
                     continue
-                if event.get("type") != "message.delta":
+                if not isinstance(event, dict):
+                    raise TypeError("LM Studio SSE event must be an object")
+                event_type = event.get("type")
+                if event_type == "error" or (
+                    isinstance(event_type, str) and event_type.endswith(".error")
+                ):
+                    raise RuntimeError("LM Studio stream reported an error")
+                if event_type != "message.delta":
                     continue
                 content = event.get("content")
+                if not isinstance(content, str):
+                    raise TypeError("LM Studio delta content must be a string")
                 if not content:
                     continue
+                saw_content = True
                 chunk = SimpleNamespace(
                     usage=None,
                     model=None,
@@ -125,6 +141,36 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 )
                 # SimpleNamespace 与 ChatCompletionChunk 无类型重叠，先经 Any 中转
                 yield cast(ChatCompletionChunk, cast(Any, chunk))
+        if not saw_content:
+            raise RuntimeError("LM Studio returned no message content")
+
+    async def close(self) -> None:
+        """关闭原生 HTTP 客户端；允许 stop/cleanup 重复调用。"""
+        if self._native_client_closed:
+            return
+        await self._http.aclose()
+        self._native_client_closed = True
+
+    async def stop(self, frame: EndFrame) -> None:
+        """停止处理器并释放原生 HTTP 连接池。"""
+        try:
+            await super().stop(frame)
+        finally:
+            await self.close()
+
+    async def cancel(self, frame: CancelFrame) -> None:
+        """取消处理器并释放原生 HTTP 连接池。"""
+        try:
+            await super().cancel(frame)
+        finally:
+            await self.close()
+
+    async def cleanup(self) -> None:
+        """在管道清理兜底中释放原生 HTTP 连接池。"""
+        try:
+            await super().cleanup()  # type: ignore[no-untyped-call]
+        finally:
+            await self.close()
 
     async def get_chat_completions(self, context: LLMContext) -> AsyncStream[ChatCompletionChunk]:
         """覆写传输层：OpenAI 格式消息 → 原生端点 input items → SSE 流。"""

@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any
 
 import numpy as np
@@ -27,6 +28,9 @@ VOICE_PROFILES: dict[str, str] = {
     "bright": "明亮活泼的中文女声，音调偏高，语气轻快，适合播报与讲解。",
     "calm": "沉稳平静的中文男声，语速平稳，语气专业，适合资讯播报。",
 }
+
+_STREAM_QUEUE_SIZE = 8
+_QUEUE_PUT_POLL_SECS = 0.05
 
 
 class TTSEngine:
@@ -42,6 +46,7 @@ class TTSEngine:
         self._settings = settings
         self._model: Any | None = None
         self._voice = settings.voice
+        self._generation_lock = asyncio.Lock()
 
     @property
     def loaded(self) -> bool:
@@ -110,7 +115,7 @@ class TTSEngine:
         voice: str | None = None,
         speed: float = 1.0,
         lang: str = "auto",
-    ) -> AsyncIterator[bytes]:
+    ) -> AsyncGenerator[bytes, None]:
         """流式合成，逐块产出 int16 PCM 字节（后台线程隔离执行，0 阻塞事件循环）。
 
         Args:
@@ -120,51 +125,88 @@ class TTSEngine:
             speed: 语速倍率。
             lang: 语言代码（auto/chinese/english…）。
         """
-        if self._model is None:
-            raise RuntimeError("TTSEngine not loaded")
-        _, instruct, speaker = self._synthesis_args(voice or self._voice)
-        chunk_secs = self._settings.chunk_ms / 1000
+        async with self._generation_lock:
+            if self._model is None:
+                raise RuntimeError("TTSEngine not loaded")
+            _, instruct, speaker = self._synthesis_args(voice or self._voice)
+            chunk_secs = self._settings.chunk_ms / 1000
 
-        loop = asyncio.get_running_loop()
-        queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue()
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue[bytes | Exception | None] = asyncio.Queue(
+                maxsize=_STREAM_QUEUE_SIZE
+            )
+            stop_requested = threading.Event()
 
-        def _worker() -> None:
+            def _publish(item: bytes | Exception | None) -> bool:
+                """从模型线程向有界异步队列提交，取消时及时解除背压等待。"""
+                if stop_requested.is_set():
+                    return False
+                try:
+                    pending = asyncio.run_coroutine_threadsafe(queue.put(item), loop)
+                except RuntimeError:
+                    stop_requested.set()
+                    return False
+                while not stop_requested.is_set():
+                    try:
+                        pending.result(timeout=_QUEUE_PUT_POLL_SECS)
+                    except FutureTimeoutError:
+                        continue
+                    except Exception:
+                        stop_requested.set()
+                        return False
+                    return True
+                pending.cancel()
+                return False
+
+            def _worker() -> None:
+                try:
+                    assert self._model is not None
+                    for result in self._model.generate(
+                        text=text,
+                        voice=speaker,
+                        instruct=instruct,
+                        speed=speed,
+                        lang_code=lang,
+                        stream=True,
+                        streaming_interval=chunk_secs,
+                    ):
+                        if stop_requested.is_set():
+                            break
+                        if not _publish(self._to_pcm(result)):
+                            break
+                except Exception as exc:
+                    _publish(exc)
+                finally:
+                    _publish(None)
+
+            worker_thread = threading.Thread(
+                target=_worker,
+                name="tts-engine-generate",
+                daemon=True,
+            )
+            worker_thread.start()
+
             try:
-                assert self._model is not None
-                for result in self._model.generate(
-                    text=text,
-                    voice=speaker,
-                    instruct=instruct,
-                    speed=speed,
-                    lang_code=lang,
-                    stream=True,
-                    streaming_interval=chunk_secs,
-                ):
-                    pcm = self._to_pcm(result)
-                    loop.call_soon_threadsafe(queue.put_nowait, pcm)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-            except Exception as exc:
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
-
-        worker_thread = threading.Thread(
-            target=_worker,
-            name="tts-engine-generate",
-            daemon=True,
-        )
-        worker_thread.start()
-
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    if isinstance(item, Exception):
+                        raise item
+                    yield item
+            finally:
+                stop_requested.set()
+                await asyncio.to_thread(worker_thread.join)
 
     def _to_pcm(self, result: Any) -> bytes:
         """将 GenerationResult.audio (float32 mono) 转为 int16 PCM。"""
+        result_sample_rate = int(result.sample_rate)
+        if result_sample_rate != self._settings.sample_rate:
+            raise RuntimeError(
+                "TTS model returned unexpected sample rate: "
+                f"{result_sample_rate}, expected {self._settings.sample_rate}"
+            )
         audio: Any = result.audio
         samples = np.asarray(audio, dtype=np.float32)
         pcm = np.clip(samples * 32767.0, -32768.0, 32767.0).astype(np.int16)
         return pcm.tobytes()
-

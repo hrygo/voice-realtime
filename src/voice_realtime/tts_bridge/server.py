@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import logging
 import struct
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from voice_realtime.config import BridgeSettings, get_settings
 from voice_realtime.logging import setup_logging
@@ -63,47 +63,64 @@ def build_wav_header(
     )
 
 
-async def _stream_speech_response(
-    engine: TTSEngine, req: SpeechRequest, voice: str
+async def _continue_pcm_stream(
+    first_chunk: bytes, audio_stream: AsyncGenerator[bytes, None]
 ) -> AsyncIterator[bytes]:
+    """首块已成功后继续真流式发送；后续错误只能记录并终止响应。"""
     try:
-        audio_stream = engine.stream_speech(
-            req.input,
-            voice=voice,
-            speed=req.speed,
-            lang=req.lang,
-        )
-        if req.response_format == "wav":
-            chunks = [chunk async for chunk in audio_stream]
-            data = b"".join(chunks)
-            if data:
-                yield build_wav_header(engine.sample_rate, data_size=len(data))
-                yield data
-            return
-
+        yield first_chunk
         async for chunk in audio_stream:
             yield chunk
     except Exception:
-        logger.exception("流式合成中断")
-        if req.response_format == "wav":
-            raise
+        logger.exception(
+            "PCM 流式合成在响应开始后中断",
+            extra={"response_format": "pcm", "stream_phase": "after_first_chunk"},
+        )
+    finally:
+        await audio_stream.aclose()
 
 
 async def _create_speech_response(
     engine: TTSEngine, req: SpeechRequest, voice: str
-) -> StreamingResponse:
+) -> Response:
     media_type = "audio/wav" if req.response_format == "wav" else "audio/x-pcm"
-    stream = _stream_speech_response(engine, req, voice)
+    audio_stream = engine.stream_speech(
+        req.input,
+        voice=voice,
+        speed=req.speed,
+        lang=req.lang,
+    )
     if req.response_format == "wav":
         try:
-            chunks = [chunk async for chunk in stream]
+            pcm = bytearray()
+            async for chunk in audio_stream:
+                pcm.extend(chunk)
         except Exception as exc:
             raise HTTPException(
                 status_code=500,
                 detail=_openai_error("speech synthesis failed", "server_error"),
             ) from exc
-        return StreamingResponse(chunks, media_type=media_type)
-    return StreamingResponse(stream, media_type=media_type)
+        finally:
+            await audio_stream.aclose()
+        body = build_wav_header(engine.sample_rate, data_size=len(pcm)) + bytes(pcm)
+        return Response(content=body, media_type=media_type)
+
+    try:
+        first_chunk = await anext(audio_stream)
+    except StopAsyncIteration as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_openai_error("speech synthesis produced no audio", "server_error"),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=_openai_error("speech synthesis failed", "server_error"),
+        ) from exc
+    return StreamingResponse(
+        _continue_pcm_stream(first_chunk, audio_stream),
+        media_type=media_type,
+    )
 
 
 def create_app(
@@ -170,14 +187,14 @@ def create_app(
         return VoiceResponse(voice=engine.voice, available=engine.available_voices)
 
     @app.post("/v1/audio/speech")
-    async def speech(req: SpeechRequest) -> StreamingResponse:
+    async def speech(req: SpeechRequest) -> Response:
         if not engine.loaded:
             raise HTTPException(
                 status_code=503, detail=_openai_error("engine not loaded", "server_error")
             )
         if not req.input:
             raise HTTPException(status_code=400, detail=_openai_error("input must not be blank"))
-        return await _create_speech_response(engine, req, engine.voice)
+        return await _create_speech_response(engine, req, req.voice or engine.voice)
 
     return app
 

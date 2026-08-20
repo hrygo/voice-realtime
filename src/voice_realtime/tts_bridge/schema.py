@@ -19,11 +19,11 @@ class SpeechRequest(BaseModel):
 
     model: str = Field(description="模型 ID（桥忽略该值，固定使用配置的 Qwen3-TTS）")
     input: str = Field(min_length=1, max_length=2000, description="待合成文本")
-    voice: Voice = Field(
-        default="default",
-        description=(
-            "兼容字段：桥忽略该值，输出音色固定由服务配置 VR_BRIDGE_VOICE 决定"
-        ),
+    voice: Voice | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="本次请求使用的音色；省略时使用引擎当前默认音色",
     )
     response_format: ResponseFormat = Field(
         default="wav", description="输出格式：wav(带头) / pcm(裸 16-bit LE)"
@@ -35,6 +35,16 @@ class SpeechRequest(BaseModel):
     @classmethod
     def _strip_blank(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("voice")
+    @classmethod
+    def _strip_blank_voice(cls, v: Voice | None) -> Voice | None:
+        if v is None:
+            return None
+        value = v.strip()
+        if not value:
+            raise ValueError("voice must not be blank")
+        return value
 
     @field_validator("lang")
     @classmethod
