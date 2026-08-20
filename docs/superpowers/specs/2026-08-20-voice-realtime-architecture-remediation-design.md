@@ -78,7 +78,7 @@ def state(self) -> InteractionSessionState
 
 - `interaction/session.py`：`InteractionSession`、状态枚举与会话生命周期；
 - `interaction/ownership.py`：基于 `fcntl.flock` 的 macOS 本机所有权锁，锁文件为
-  `runtime/interaction.lock`；
+  `~/Library/Caches/voice-realtime/interaction.lock`，不受当前工作目录影响；
 - `ui/runtime.py`：组合 AudioHub、InteractionSession 与 SubtitleProxy，不复制会话逻辑；
 - `ui/protocol.py`：控制命令、响应与状态快照的严格 Pydantic 模型。
 

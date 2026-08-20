@@ -11,7 +11,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
@@ -80,7 +80,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 "tests/*" = ["S101", "ANN001", "ANN201"]
 
 [tool.mypy]
-python_version = "3.13"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -95,7 +95,7 @@ exclude = ["tests/"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers --cov=src --cov-report=term-missing"
 timeout = 120
 
 [tool.coverage.run]

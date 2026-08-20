@@ -1,5 +1,8 @@
 # Voice Realtime Architecture Remediation Implementation Plan
 
+**Status:** 已完成（2026-08-21）。逐项证据见
+`docs/superpowers/specs/2026-08-21-voice-realtime-architecture-remediation-verification.md`。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. In this workspace those skills are unavailable, so the root agent must reproduce their TDD, file-ownership, review, and verification gates with the collaboration subagents.
 
 **Goal:** 修复架构审计发现的全部运行拓扑、字幕、交互算法、资源生命周期、控制、安全、配置、测试和文档缺陷。
