@@ -8,20 +8,23 @@ FastAPI 服务：React 静态托管 + 服务健康聚合（TTS 桥 / wlk / LM St
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
 from voice_realtime.logging import setup_logging
 from voice_realtime.ui.control import ControlBridge
+from voice_realtime.ui.protocol import RuntimeStateEvent
 from voice_realtime.ui.runtime import UIRuntime
 
 logger = logging.getLogger(__name__)
@@ -31,15 +34,33 @@ def _probe_url(host: str, port: int, path: str = "/health") -> str:
     return f"http://{host}:{port}{path}"
 
 
-async def _do_probe_async(client: httpx.AsyncClient, name: str, url: str) -> dict[str, Any]:
+async def _do_probe_async(
+    client: httpx.AsyncClient,
+    name: str,
+    url: str,
+    expected_model: str | None = None,
+) -> dict[str, Any]:
     """并发异步探活单个服务。"""
     try:
         resp = await client.get(url)
-        return {
+        result: dict[str, Any] = {
             "name": name,
             "status": "ok" if resp.status_code < 400 else "error",
             "url": url,
         }
+        if expected_model is not None and resp.status_code < 400:
+            model_ids: set[str] = set()
+            with contextlib.suppress(ValueError, TypeError):
+                body = resp.json()
+                if isinstance(body, dict) and isinstance(body.get("data"), list):
+                    model_ids = {
+                        item["id"]
+                        for item in body["data"]
+                        if isinstance(item, dict) and isinstance(item.get("id"), str)
+                    }
+            result["target_model"] = expected_model
+            result["model_present"] = expected_model in model_ids
+        return result
     except httpx.ConnectError:
         return {"name": name, "status": "unreachable", "url": url}
     except (httpx.ReadTimeout, httpx.TimeoutException):
@@ -62,6 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await runtime.stop()
 
     app = FastAPI(title="Voice Studio", version="0.1.0", lifespan=lifespan)
+    app.add_middleware(SecurityHeadersMiddleware)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -75,14 +97,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bridge = cfg.bridge
         lm = cfg.interaction
         paths = [
-            ("wlk", _probe_url(wlk.host, wlk.port)),
-            ("tts", _probe_url(bridge.host, bridge.port)),
-            ("lm", _lm_models_url(lm.llm_base_url)),
+            ("wlk", _probe_url(wlk.host, wlk.port), None),
+            ("tts", _probe_url(bridge.host, bridge.port), None),
+            ("lm", _lm_models_url(lm.llm_base_url), lm.llm_model),
         ]
         async with httpx.AsyncClient(timeout=timeout) as client:
-            tasks = [_do_probe_async(client, name, url) for name, url in paths]
+            tasks = [
+                _do_probe_async(client, name, url, expected_model)
+                for name, url, expected_model in paths
+            ]
             results = await asyncio.gather(*tasks)
         return {"services": list(results)}
+
+    @app.get("/api/runtime")
+    async def runtime_state() -> dict[str, Any]:
+        runtime = _get_runtime(app)
+        if runtime is None:
+            raise HTTPException(status_code=503, detail="runtime 未就绪")
+        return runtime.snapshot().model_dump(mode="json")
 
     @app.get("/v1/voices")
     async def voices() -> dict[str, Any]:
@@ -117,6 +149,8 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
 
     @app.websocket("/ws/subtitles")
     async def ws_subtitles(websocket: WebSocket) -> None:
+        if not await _allow_websocket(websocket, cfg):
+            return
         runtime = _get_runtime(websocket.app)
         if runtime is None:
             await websocket.close(code=1011, reason="runtime 未就绪")
@@ -132,6 +166,8 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
 
     @app.websocket("/ws/assistant")
     async def ws_assistant(websocket: WebSocket) -> None:
+        if not await _allow_websocket(websocket, cfg):
+            return
         runtime = _get_runtime(websocket.app)
         if runtime is None:
             await websocket.close(code=1011, reason="runtime 未就绪")
@@ -147,12 +183,16 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
 
     @app.websocket("/ws/assistant/cmd")
     async def ws_assistant_cmd(websocket: WebSocket) -> None:
+        if not await _allow_websocket(websocket, cfg):
+            return
         runtime = _get_runtime(websocket.app)
         if runtime is None:
             await websocket.close(code=1011, reason="runtime 未就绪")
             return
         bridge = ControlBridge(runtime, cfg.bridge)
         await websocket.accept()
+        event = RuntimeStateEvent(state=runtime.snapshot())
+        await websocket.send_json(event.model_dump(mode="json"))
         try:
             while True:
                 text = await websocket.receive_text()
@@ -163,6 +203,43 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
                 await websocket.send_json(await bridge.handle(payload))
         except WebSocketDisconnect:
             return
+
+
+async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
+    """拒绝来自非本机页面的浏览器 WebSocket；无 Origin 的本地 CLI 保持可用。"""
+    origin = websocket.headers.get("origin")
+    if origin is None:
+        return True
+    allowed = {
+        f"http://127.0.0.1:{cfg.ui.port}",
+        f"http://localhost:{cfg.ui.port}",
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    }
+    if origin in allowed:
+        return True
+    await websocket.close(code=1008, reason="Origin 不受信任")
+    return False
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """为本地控制台统一添加最小浏览器安全边界。"""
+
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; "
+            "base-uri 'self'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
 
 
 def _mount_static(app: FastAPI, static_dir: Path) -> None:

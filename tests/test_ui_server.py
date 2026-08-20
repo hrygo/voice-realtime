@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from voice_realtime.config import Settings, SubtitleSettings
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
+from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
 from voice_realtime.ui.server import create_app
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
@@ -26,6 +27,22 @@ class _FakeRuntime:
         )
         self.clear_context = AsyncMock()
         self.stop_session = AsyncMock()
+        self.restart_pipeline = AsyncMock()
+        self.set_mic_muted = AsyncMock()
+        self.set_persona = Mock()
+        self.set_duplex_mode = Mock()
+        self.set_voice = Mock()
+
+    def snapshot(self) -> RuntimeStateSnapshot:
+        return RuntimeStateSnapshot(
+            pipeline="running",
+            subtitle="connected",
+            mic_muted=False,
+            persona=None,
+            voice="default",
+            duplex_mode=DuplexMode.SPEAKER_FOCUS,
+            session_started_at="2026-08-21T00:00:00+00:00",
+        )
 
 
 @pytest.fixture()
@@ -46,6 +63,20 @@ class TestHealth:
         resp = app.get("/health")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+    def test_security_headers(self, app: TestClient) -> None:
+        resp = app.get("/health")
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        assert resp.headers["x-frame-options"] == "DENY"
+        assert "connect-src" in resp.headers["content-security-policy"]
+
+    def test_runtime_snapshot(self) -> None:
+        app = create_app(Settings())
+        app.state.runtime = _FakeRuntime()
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/api/runtime")
+        assert resp.status_code == 200
+        assert resp.json()["pipeline"] == "running"
 
 
 class TestServices:
@@ -73,19 +104,20 @@ class TestServices:
         mock_resp = Mock()
         mock_resp.status_code = 200
 
-        with TestClient(app) as client, patch(
+        with patch(
+            "voice_realtime.ui.server.UIRuntime"
+        ) as fake_cls, patch(
             "voice_realtime.ui.server.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
-        ), patch(
-            "voice_realtime.ui.server.UIRuntime"
-        ) as fake_cls:
+        ):
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
-            resp = client.get("/api/services")
-            assert resp.status_code == 200
-            for svc in resp.json()["services"]:
-                assert svc["status"] == "ok"
+            with TestClient(app) as client:
+                resp = client.get("/api/services")
+                assert resp.status_code == 200
+                for svc in resp.json()["services"]:
+                    assert svc["status"] == "ok"
 
 
 class TestVoices:
@@ -102,16 +134,17 @@ class TestVoices:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"voice": "default", "available": ["default", "warm"]}
 
-        with TestClient(app) as client, patch(
+        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
             "voice_realtime.ui.server.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
-        ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+        ):
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
-            resp = client.get("/v1/voices")
-            assert resp.status_code == 200
-            assert resp.json()["available"] == ["default", "warm"]
+            with TestClient(app) as client:
+                resp = client.get("/v1/voices")
+                assert resp.status_code == 200
+                assert resp.json()["available"] == ["default", "warm"]
 
     def test_voices_bridge_down_returns_502(self) -> None:
         """桥不可达时返回 502，不抛未处理异常。"""
@@ -122,15 +155,16 @@ class TestVoices:
         )
         app = create_app(mock_settings)
 
-        with TestClient(app) as client, patch(
+        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
             "voice_realtime.ui.server.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             side_effect=httpx.ConnectError("refused"),
-        ), patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+        ):
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
-            resp = client.get("/v1/voices")
-            assert resp.status_code == 502
+            with TestClient(app) as client:
+                resp = client.get("/v1/voices")
+                assert resp.status_code == 502
 
 
 
@@ -156,14 +190,13 @@ class TestStaticMount:
             ui={"static_dir": dist},
         )
         app = create_app(mock_settings)
-        with TestClient(app) as client, patch(
-            "voice_realtime.ui.server.UIRuntime"
-        ) as fake_cls:
+        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
-            resp = client.get("/")
-            assert resp.status_code == 200
-            assert "Voice Studio" in resp.text
+            with TestClient(app) as client:
+                resp = client.get("/")
+                assert resp.status_code == 200
+                assert "Voice Studio" in resp.text
 
 
 class TestWebSocketGateways:
@@ -201,6 +234,20 @@ class TestWebSocketGateways:
         ) as ws:
             ws.receive_text()
 
+    def test_malicious_origin_is_rejected(self) -> None:
+        client = self._app_with_runtime()
+        with pytest.raises(WebSocketDisconnect), client.websocket_connect(
+            "/ws/assistant", headers={"origin": "https://evil.example"}
+        ) as ws:
+            ws.receive_text()
+
+    def test_vite_origin_is_allowed(self) -> None:
+        client = self._app_with_runtime()
+        with client.websocket_connect(
+            "/ws/assistant", headers={"origin": "http://localhost:5173"}
+        ):
+            assert client.app.state.runtime.observer.has_clients
+
 
 class TestCommandGateway:
     """/ws/assistant/cmd 控制面：指令执行 + 响应回传。"""
@@ -219,25 +266,32 @@ class TestCommandGateway:
         """/ws/assistant/cmd：clear_context 委托 runtime 并回执 ok。"""
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant/cmd") as ws:
-            ws.send_json({"cmd": "clear_context"})
+            handshake = ws.receive_json()
+            assert handshake["event"] == "state"
+            ws.send_json({"request_id": "1", "cmd": "clear_context"})
             resp = ws.receive_json()
-        assert resp == {"ok": True, "cmd": "clear_context"}
+        assert resp["ok"] is True
+        assert resp["request_id"] == "1"
+        assert resp["state"]["pipeline"] == "running"
         client.app.state.runtime.clear_context.assert_awaited_once()
 
     def test_unknown_command_returns_error(self) -> None:
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant/cmd") as ws:
-            ws.send_json({"cmd": "self_destruct"})
+            ws.receive_json()
+            ws.send_json({"request_id": "1", "cmd": "self_destruct"})
             resp = ws.receive_json()
         assert resp["ok"] is False
-        assert "未知命令" in resp["error"]
+        assert resp["error_code"] == "invalid_command"
 
     def test_invalid_json_returns_error(self) -> None:
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant/cmd") as ws:
+            ws.receive_json()
             ws.send_text("not json")
             resp = ws.receive_json()
         assert resp["ok"] is False
+        assert resp["error_code"] == "invalid_payload"
 
     def test_cmd_closed_when_runtime_unavailable(self) -> None:
         client = TestClient(create_app(Settings()), raise_server_exceptions=False)

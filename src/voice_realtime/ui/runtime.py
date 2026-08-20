@@ -95,6 +95,9 @@ class UIRuntime:
     def set_duplex_mode(self, mode: DuplexMode | str) -> None:
         self.session.set_duplex_mode(mode)
 
+    def set_voice(self, voice: str) -> None:
+        self._settings.bridge.voice = voice
+
     async def set_mic_muted(self, muted: bool) -> None:
         self.hub.set_muted(muted)
         if muted:
