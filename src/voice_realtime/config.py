@@ -17,7 +17,9 @@ DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
-TTS_ENGINE_DEFAULT_VOICE = "__engine_default__"  # Pipecat 请求沿用桥当前音色的内部哨兵
+# Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
+# 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
+TTS_ENGINE_DEFAULT_VOICE = "alloy"
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
@@ -133,7 +135,11 @@ class InteractionSettings(BaseSettings):
         le=3.0,
         description="TTS 播报结束后继续抑制麦克风输入的秒数（吸收声学混响与声卡缓冲尾延）",
     )
-    max_session_seconds: int = Field(default=600, description="单次会话上限 (秒)")
+    max_session_seconds: int = Field(
+        default=0,
+        ge=0,
+        description="单次会话上限 (秒)；0 表示随 UI 服务持续运行",
+    )
 
     @field_validator("stt_language")
     @classmethod

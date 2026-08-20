@@ -57,7 +57,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.funasr.stt import FunASRSTTService, FunASRSTTSettings
-from pipecat.services.openai.tts import OpenAITTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
@@ -72,6 +71,7 @@ from voice_realtime.interaction.reasoning import (
     DEFAULT_SYSTEM_PROMPT,
     LmStudioNativeLLMService,
 )
+from voice_realtime.interaction.tts import LocalBridgeTTSService
 
 DEFAULT_SENSEVOICE_REPO = "FunAudioLLM/SenseVoiceSmall"
 _PIPECAT_LANGUAGES = {
@@ -653,11 +653,11 @@ def build_pipeline(
         reasoning="off",
     )
 
-    tts = OpenAITTSService(
+    tts = LocalBridgeTTSService(
         api_key="local",
         base_url=settings.tts_bridge_url,
         sample_rate=TTS_OUTPUT_SAMPLE_RATE,
-        settings=OpenAITTSService.Settings(voice=TTS_ENGINE_DEFAULT_VOICE),
+        settings=LocalBridgeTTSService.Settings(voice=TTS_ENGINE_DEFAULT_VOICE),
     )
 
     context = context or LLMContext(

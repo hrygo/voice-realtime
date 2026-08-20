@@ -107,6 +107,17 @@ class TestStreamSpeech:
         assert call_kwargs["lang_code"] == "chinese"
         assert call_kwargs["stream"] is True
         assert call_kwargs["streaming_interval"] == settings.chunk_ms / 1000
+        assert call_kwargs["max_tokens"] == 96
+
+    @pytest.mark.asyncio
+    async def test_generation_token_budget_scales_and_is_capped(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        await anext(engine.stream_speech("中" * 1000))
+
+        assert model.generate.call_args.kwargs["max_tokens"] == 1200
 
     @pytest.mark.asyncio
     async def test_custom_voice_model_uses_speaker_name(self, engine: TTSEngine) -> None:

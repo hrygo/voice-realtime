@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
 from voice_realtime.logging import setup_logging
+from voice_realtime.network import local_async_client
 from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import RuntimeStateEvent
 from voice_realtime.ui.runtime import UIRuntime
@@ -101,7 +102,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ("tts", _probe_url(bridge.host, bridge.port), None),
             ("lm", _lm_models_url(lm.llm_base_url), lm.llm_model),
         ]
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with local_async_client(timeout=timeout) as client:
             tasks = [
                 _do_probe_async(client, name, url, expected_model)
                 for name, url, expected_model in paths
@@ -121,7 +122,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """代理 TTS 桥音色列表（GET /v1/voices），供前端音色下拉。"""
         url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/voices")
         try:
-            async with httpx.AsyncClient(timeout=cfg.ui.api_timeout) as client:
+            async with local_async_client(timeout=cfg.ui.api_timeout) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 return dict(resp.json())

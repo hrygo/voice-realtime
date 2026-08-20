@@ -27,6 +27,8 @@ from pipecat.frames.frames import CancelFrame, EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
+from voice_realtime.network import local_async_client
+
 DEFAULT_SYSTEM_PROMPT = (
     "# 角色\n"
     "你是一个中文语音助手，通过语音与用户自然对话，像面对面聊天一样口语化，"
@@ -94,7 +96,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
         root_url = base_url.rstrip("/")
         if root_url.endswith("/v1"):
             root_url = root_url[: -len("/v1")]
-        self._http = httpx.AsyncClient(
+        self._http = local_async_client(
             base_url=root_url,
             timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
         )

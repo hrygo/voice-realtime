@@ -196,7 +196,7 @@ class StatusBridgeObserver(BaseObserver):
             await self._emit_event(
                 {"type": "vad", "state": "user_silence", "t": self._now()}
             )
-        elif isinstance(frame, InterruptionFrame):
+        elif isinstance(frame, InterruptionFrame) and self._tts_active:
             await self._emit_event(
                 {"type": "interruption", "state": "detected", "t": self._now()}
             )

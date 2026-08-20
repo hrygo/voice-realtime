@@ -159,11 +159,18 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
           ? { listening: false, thinking: true, speaking: false }
           : { listening: true, thinking: false, speaking: false },
       );
-    case "llm":
-      return withActivity(
-        { ...snapshot, transcript: updateAssistantTranscript(snapshot.transcript, event) },
-        { listening: false, thinking: true, speaking: false },
-      );
+    case "llm": {
+      const updated = {
+        ...snapshot,
+        transcript: updateAssistantTranscript(snapshot.transcript, event),
+      };
+      if (event.state === "final") {
+        return withActivity(updated, snapshot.activity.speaking
+          ? { listening: false, thinking: false, speaking: true }
+          : IDLE_ACTIVITY);
+      }
+      return withActivity(updated, { listening: false, thinking: true, speaking: false });
+    }
     case "tts":
       if (event.state === "stopped") {
         const settledTranscript = snapshot.transcript.map((b) =>
@@ -233,6 +240,19 @@ export const selectAssistantTranscript = (state: AssistantStore): readonly Assis
 export const selectAssistantConnected = (state: AssistantStore): boolean => state.connected;
 export const selectLastInterruptionTime = (state: AssistantStore): number | null => state.lastInterruptionTime;
 export const selectAssistantLatestMetrics = (state: AssistantStore): TurnMetrics | null => state.latestMetrics;
+
+/** 字幕面板只消费 Agent 文本；用户语音继续以 WhisperLiveKit 为权威来源。 */
+export function selectAgentReplies(
+  transcript: readonly AssistantBubble[],
+  query = "",
+): readonly AssistantBubble[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  return transcript.filter((bubble) =>
+    bubble.role === "assistant"
+    && Boolean(bubble.text.trim())
+    && (!normalizedQuery || bubble.text.toLowerCase().includes(normalizedQuery)),
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

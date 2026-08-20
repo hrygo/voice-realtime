@@ -135,9 +135,13 @@ class TestEventMapping:
         second = json.loads(client.call_args_list[1].args[0])
         assert second["state"] == "user_silence"
 
-    async def test_interruption_event(self) -> None:
+    async def test_interruption_event_only_during_active_playback(self) -> None:
         observer = StatusBridgeObserver()
         client = _upsert_mock_client(observer)
+        await _push(observer, InterruptionFrame())
+        assert client.call_count == 0
+
+        await _push(observer, TTSStartedFrame())
         await _push(observer, InterruptionFrame())
         payload = json.loads(client.call_args.args[0])
         assert payload["type"] == "interruption"

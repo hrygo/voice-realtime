@@ -35,6 +35,32 @@ const PHASE_CONFIG: Record<
 
 const FALLBACK_VOICES: readonly string[] = ["default", "warm", "bright", "calm"];
 
+export const DUPLEX_MODE_PRESENTATION: Record<
+  DuplexMode,
+  {
+    readonly icon: string;
+    readonly label: string;
+    readonly summary: string;
+    readonly detail: string;
+    readonly interruptionEnabled: boolean;
+  }
+> = {
+  speaker_focus: {
+    icon: "🔊",
+    label: "外放保护",
+    summary: "Agent 播报时不可打断",
+    detail: "播报期间暂停麦克风输入，防止扬声器回声触发新一轮对话。",
+    interruptionEnabled: false,
+  },
+  headphone_duplex: {
+    icon: "🎧",
+    label: "耳机双工",
+    summary: "Agent 播报时可以插话",
+    detail: "播报期间保持麦克风监听，检测到真人声音后立即打断 Agent。仅限佩戴耳机。",
+    interruptionEnabled: true,
+  },
+};
+
 function formatMetric(value: number | null): string {
   return value === null ? "—" : `${value}ms`;
 }
@@ -53,6 +79,7 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
 
   /* ---- 交互模式 (外放专注 vs 耳机双工打断) ---- */
   const duplexMode = useUISettingsStore((s) => s.duplexMode);
+  const duplexPresentation = DUPLEX_MODE_PRESENTATION[duplexMode];
 
   /* ---- 人格与人设管理 ---- */
   const [personaOpen, setPersonaOpen] = useState(false);
@@ -73,11 +100,14 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
 
   // 打断插话动效监听
   useEffect(() => {
-    if (!lastInterruptionTime) return;
+    if (!lastInterruptionTime || !duplexPresentation.interruptionEnabled) {
+      setInterruptionActive(false);
+      return;
+    }
     setInterruptionActive(true);
     const timer = setTimeout(() => setInterruptionActive(false), 3500);
     return () => clearTimeout(timer);
-  }, [lastInterruptionTime]);
+  }, [duplexPresentation.interruptionEnabled, lastInterruptionTime]);
 
   /** 发送通用命令 */
   const sendCommandWith = useCallback(
@@ -298,7 +328,7 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
             title="外放专注模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
           >
             <span className="duplex-mode-icon">🔊</span>
-            <span className="duplex-mode-label">外放专注</span>
+            <span className="duplex-mode-label">外放 · 不可打断</span>
           </button>
           <button
             type="button"
@@ -308,7 +338,7 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
             title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
           >
             <span className="duplex-mode-icon">🎧</span>
-            <span className="duplex-mode-label">耳机打断</span>
+            <span className="duplex-mode-label">耳机 · 可插话</span>
             <span className="duplex-caution-badge">仅限耳机</span>
           </button>
         </div>
@@ -321,6 +351,18 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
           <span>{currentPhaseConfig.label}</span>
         </div>
       </header>
+
+      <div
+        className={`duplex-mode-explainer mode-${duplexMode}`}
+        role="status"
+        aria-live="polite"
+      >
+        <span className="duplex-mode-current">
+          {duplexPresentation.icon} 当前：{duplexPresentation.label}
+        </span>
+        <strong>{duplexPresentation.summary}</strong>
+        <span>{duplexPresentation.detail}</span>
+      </div>
 
       {/* 状态步骤指示栏 + 打断插话指示 */}
       <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
@@ -350,7 +392,7 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
           </div>
         )}
 
-        {interruptionActive && (
+        {interruptionActive && duplexPresentation.interruptionEnabled && (
           <div className="interruption-alert-chip" role="alert">
             <span>⚡ 已响应插话打断 (耳机)</span>
           </div>
@@ -410,7 +452,8 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
               <span className="empty-state-icon">🎙️</span>
               <p className="empty-state-title">等待语音输入...</p>
               <p className="empty-state-desc">
-                直接对着麦克风说话，AI 助手将实时转写、推理并语音应答。支持随时插话打断。
+                直接对着麦克风说话，AI 助手将实时转写、推理并语音应答。
+                {duplexPresentation.summary}。
               </p>
             </div>
           )}

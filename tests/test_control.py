@@ -121,7 +121,7 @@ class TestSetVoice:
     ) -> None:
         client = self._http_client_mock()
         client.post.return_value.raise_for_status = MagicMock()
-        with patch("voice_realtime.ui.control.httpx.AsyncClient", return_value=client) as cls:
+        with patch("voice_realtime.ui.control.local_async_client", return_value=client) as cls:
             resp = await bridge.handle(
                 {"request_id": "1", "cmd": "set_voice", "voice": "warm"}
             )
@@ -144,7 +144,7 @@ class TestSetVoice:
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = RuntimeError("bridge down")
         client.post.return_value = mock_resp
-        with patch("voice_realtime.ui.control.httpx.AsyncClient", return_value=client):
+        with patch("voice_realtime.ui.control.local_async_client", return_value=client):
             resp = await bridge.handle(
                 {"request_id": "1", "cmd": "set_voice", "voice": "warm"}
             )

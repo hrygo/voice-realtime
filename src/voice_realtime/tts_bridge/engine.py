@@ -31,6 +31,15 @@ VOICE_PROFILES: dict[str, str] = {
 
 _STREAM_QUEUE_SIZE = 8
 _QUEUE_PUT_POLL_SECS = 0.05
+_MIN_GENERATION_TOKENS = 96
+_MAX_GENERATION_TOKENS = 1200
+_TOKENS_PER_TEXT_CHAR = 8
+
+
+def _generation_token_budget(text: str) -> int:
+    """为音频 token 设置与文本长度匹配的硬上限，避免异常采样长期占住单引擎。"""
+    estimated = 32 + len(text.strip()) * _TOKENS_PER_TEXT_CHAR
+    return max(_MIN_GENERATION_TOKENS, min(_MAX_GENERATION_TOKENS, estimated))
 
 
 class TTSEngine:
@@ -99,6 +108,7 @@ class TTSEngine:
             text="预热",
             voice=speaker,
             instruct=instruct,
+            max_tokens=_MIN_GENERATION_TOKENS,
             stream=True,
             streaming_interval=self._settings.chunk_ms / 1000,
         ):
@@ -167,6 +177,7 @@ class TTSEngine:
                         instruct=instruct,
                         speed=speed,
                         lang_code=lang,
+                        max_tokens=_generation_token_budget(text),
                         stream=True,
                         streaming_interval=chunk_secs,
                     ):

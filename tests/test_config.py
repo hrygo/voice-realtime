@@ -13,6 +13,10 @@ from voice_realtime.config import (
 )
 
 
+def test_interaction_session_has_no_default_runtime_expiry() -> None:
+    assert InteractionSettings().max_session_seconds == 0
+
+
 @pytest.mark.parametrize("sample_rate", [8000, 24000, 44100, 48000])
 def test_interaction_rejects_non_16k_sample_rate(sample_rate: int) -> None:
     with pytest.raises(ValidationError):

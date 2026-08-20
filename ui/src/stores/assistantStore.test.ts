@@ -4,6 +4,7 @@ import {
   createAssistantSnapshot,
   parseAssistantEvent,
   reduceAssistantEvent,
+  selectAgentReplies,
 } from "./assistantStore";
 
 describe("reduceAssistantEvent", () => {
@@ -39,6 +40,23 @@ describe("reduceAssistantEvent", () => {
     expect(next.phase).toBe("thinking");
   });
 
+  it("does not return to thinking when the LLM final marker arrives after playback", () => {
+    const speaking = reduceAssistantEvent(createAssistantSnapshot(), {
+      type: "tts",
+      state: "started",
+    });
+    const idle = reduceAssistantEvent(speaking, { type: "tts", state: "stopped" });
+
+    const finalized = reduceAssistantEvent(idle, {
+      type: "llm",
+      state: "final",
+      text: "",
+      turnId: 0,
+    });
+
+    expect(finalized.phase).toBe("idle");
+  });
+
   it("maps stopped and error system states deterministically", () => {
     const speaking = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "tts",
@@ -56,5 +74,16 @@ describe("reduceAssistantEvent", () => {
   it("keeps unavailable latency metrics as null instead of fake zeroes", () => {
     expect(parseAssistantEvent({ type: "metrics", turn_id: 7, stt_ms: null }))
       .toMatchObject({ turnId: 7, sttMs: null, llmTtftMs: null });
+  });
+
+  it("exposes streaming and final agent replies for the subtitle panel", () => {
+    const transcript = [
+      { role: "user" as const, text: "你好", final: true },
+      { role: "assistant" as const, text: "你好呀", final: false, turnId: 3, timestamp: "01:02:03" },
+      { role: "assistant" as const, text: "今天想聊什么？", final: true, turnId: 4 },
+    ];
+
+    expect(selectAgentReplies(transcript, "")).toEqual([transcript[1], transcript[2]]);
+    expect(selectAgentReplies(transcript, "今天")).toEqual([transcript[2]]);
   });
 });

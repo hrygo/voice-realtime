@@ -343,6 +343,43 @@
   font-style: italic;
 }
 
+.agent-reply-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-dim);
+  color: var(--color-accent-light);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.agent-reply-card {
+  background: color-mix(in srgb, var(--color-accent) 9%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-accent) 32%, transparent);
+}
+
+.agent-reply-card.streaming {
+  border-style: dashed;
+}
+
+.agent-speaker-badge {
+  color: var(--color-accent-light);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.agent-streaming-indicator {
+  width: fit-content;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  color: var(--color-accent-light);
+  font-size: 0.64rem;
+  animation: partial-pulse 1.5s infinite ease-in-out;
+}
+
 /* Search Highlight Mark */
 mark.subtitle-highlight {
   background: rgba(245, 158, 11, 0.35);

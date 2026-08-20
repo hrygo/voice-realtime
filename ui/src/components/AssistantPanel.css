@@ -118,6 +118,45 @@
   letter-spacing: 0.02em;
 }
 
+.duplex-mode-explainer {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--border-dim);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.duplex-mode-explainer strong {
+  font-size: 0.76rem;
+  color: var(--text-primary);
+}
+
+.duplex-mode-explainer.mode-speaker_focus {
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--bg-card));
+}
+
+.duplex-mode-explainer.mode-headphone_duplex {
+  background: color-mix(in srgb, var(--color-yellow) 9%, var(--bg-card));
+}
+
+.duplex-mode-current {
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-light);
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+@media (max-width: 980px) {
+  .duplex-mode-explainer {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+}
+
 /* Phase Pill Badge */
 .assistant-phase-badge {
   display: inline-flex;

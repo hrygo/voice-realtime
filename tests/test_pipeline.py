@@ -100,7 +100,7 @@ def mock_services() -> list[MagicMock]:
         patch("voice_realtime.interaction.pipeline.snapshot_download", return_value="/mnt/stt"),
         patch("voice_realtime.interaction.pipeline.FunASRSTTService", mocks[0]),
         patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
-        patch("voice_realtime.interaction.pipeline.OpenAITTSService", mocks[2]),
+        patch("voice_realtime.interaction.pipeline.LocalBridgeTTSService", mocks[2]),
     ):
         yield mocks
 
@@ -154,9 +154,12 @@ class TestBuildPipeline:
         tts_mock.assert_called_once()
         assert tts_mock.call_args.kwargs["base_url"] == "http://127.0.0.1:8765/v1"
         # 内部哨兵要求桥使用当前权威音色，避免 OpenAI 的 alloy 占位覆盖热切换。
+        from pipecat.services.openai.tts import VALID_VOICES
+
         from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE
 
         tts_mock.Settings.assert_called_with(voice=TTS_ENGINE_DEFAULT_VOICE)
+        assert TTS_ENGINE_DEFAULT_VOICE in VALID_VOICES
         assert tts_mock.call_args.kwargs["sample_rate"] == TTS_OUTPUT_SAMPLE_RATE
 
     def test_stt_language_is_chinese(

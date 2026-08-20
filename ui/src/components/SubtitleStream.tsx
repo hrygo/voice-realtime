@@ -7,7 +7,12 @@ import {
   useSubtitleStore,
   type SubtitleLine,
 } from "../stores/subtitleStore";
-import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
+import {
+  selectAgentReplies,
+  selectAssistantPhase,
+  selectAssistantTranscript,
+  useAssistantStore,
+} from "../stores/assistantStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { showToast } from "./Toast";
 import "./SubtitleStream.css";
@@ -27,6 +32,7 @@ function downloadBlob(content: string, filename: string, mime: string) {
 export default function SubtitleStream() {
   const { lines, partial, connected, starredIndices, toggleStar } = useSubtitleStore();
   const assistantPhase = useAssistantStore(selectAssistantPhase);
+  const assistantTranscript = useAssistantStore(selectAssistantTranscript);
   const teleprompterSettings = useUISettingsStore((s) => s.teleprompterSettings);
   const setTeleprompterSettings = useUISettingsStore((s) => s.setTeleprompterSettings);
 
@@ -84,7 +90,7 @@ export default function SubtitleStream() {
       if (presEl) presEl.scrollTop = presEl.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [lines, partial]);
+  }, [assistantTranscript, lines, partial]);
 
   // Available unique speakers
   const availableSpeakers = useMemo(() => {
@@ -112,6 +118,11 @@ export default function SubtitleStream() {
         );
       });
   }, [lines, speakerFilter, searchQuery, starredIndices]);
+
+  const agentReplies = useMemo(
+    () => selectAgentReplies(assistantTranscript, searchQuery),
+    [assistantTranscript, searchQuery],
+  );
 
   /* ---- 导出操作 ---- */
   const handleExportMarkdown = useCallback(() => {
@@ -308,7 +319,29 @@ export default function SubtitleStream() {
           </div>
         )}
 
-        {!lines.length && !partial && (
+        {agentReplies.length > 0 && (
+          <div className="agent-reply-section-label">
+            <span>🤖</span> Agent 实时回复
+          </div>
+        )}
+
+        {agentReplies.map((reply, index) => (
+          <div
+            className={`subtitle-row-card agent-reply-card ${reply.final ? "final" : "streaming"}`}
+            key={`${reply.turnId ?? index}-${index}`}
+          >
+            <div className="subtitle-row-header">
+              <span className="subtitle-speaker-badge agent-speaker-badge">🤖 Agent</span>
+              <span className="subtitle-time-badge">
+                {reply.timestamp ?? (reply.turnId === undefined ? "实时" : `轮次 #${reply.turnId}`)}
+              </span>
+            </div>
+            <p className="subtitle-line-text">{reply.text}</p>
+            {!reply.final && <span className="agent-streaming-indicator">正在生成</span>}
+          </div>
+        ))}
+
+        {!lines.length && !partial && !agentReplies.length && (
           <div className="subtitle-empty-wrap">
             <span className="subtitle-empty-icon">🎙️</span>
             <p className="subtitle-empty-title">等待语音字幕...</p>
@@ -379,7 +412,8 @@ export default function SubtitleStream() {
         </div>
 
         <div className="subtitle-meta-stats">
-          <span>{lines.length} 行</span>
+          <span>{lines.length} 条人声</span>
+          <span>· {agentReplies.length} 条 Agent 回复</span>
           {starredIndices.size > 0 && <span>(⭐ {starredIndices.size})</span>}
         </div>
       </footer>

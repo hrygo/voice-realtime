@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Protocol
 
-import httpx
 from pydantic import ValidationError
 
 from voice_realtime.config import BridgeSettings
+from voice_realtime.network import local_async_client
 from voice_realtime.ui.protocol import (
     ClearContextCommand,
     CommandResponse,
@@ -113,7 +113,7 @@ class ControlBridge:
 
     async def _set_voice(self, voice: str) -> None:
         url = f"http://{self._bridge.host}:{self._bridge.port}/v1/voice"
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with local_async_client(timeout=5.0) as client:
             response = await client.post(url, json={"voice": voice})
             response.raise_for_status()
 
