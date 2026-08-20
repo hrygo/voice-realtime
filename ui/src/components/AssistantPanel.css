@@ -58,6 +58,66 @@
   box-shadow: 0 0 6px var(--color-green-glow);
 }
 
+/* Duplex Mode Segmented Selector */
+.duplex-mode-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  padding: 2px;
+  border-radius: var(--radius-pill);
+}
+
+.duplex-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.duplex-mode-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.duplex-mode-btn.active.speaker {
+  color: var(--color-accent-light);
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.duplex-mode-btn.active.headphone {
+  color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 16%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-yellow) 40%, transparent);
+  font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.duplex-caution-badge {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--color-yellow) 25%, transparent);
+  color: var(--color-yellow);
+  border: 1px solid color-mix(in srgb, var(--color-yellow) 45%, transparent);
+  letter-spacing: 0.02em;
+}
+
 /* Phase Pill Badge */
 .assistant-phase-badge {
   display: inline-flex;
@@ -158,6 +218,7 @@
   font-size: 0.68rem;
   color: var(--text-secondary);
   font-family: ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .metrics-detail-hint {

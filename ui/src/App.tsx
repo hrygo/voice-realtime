@@ -4,11 +4,13 @@ import StatusBar from "./components/StatusBar";
 import SubtitleStream from "./components/SubtitleStream";
 import ShortcutsModal from "./components/ShortcutsModal";
 import { ToastContainer } from "./components/Toast";
+import { useCommandSocket } from "./hooks/useCommandSocket";
 import "./App.css";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"assistant" | "subtitles">("assistant");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const commandSocket = useCommandSocket();
 
   // Global Keyboard Shortcuts
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -29,7 +31,10 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <StatusBar onOpenShortcuts={() => setShortcutsOpen(true)} />
+      <StatusBar
+        commandSocket={commandSocket}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+      />
 
       <nav className="mobile-tabs" aria-label="移动端视图切换">
         <button
@@ -50,7 +55,7 @@ export default function App() {
 
       <main className="app-main">
         <div className={`panel-wrapper ${activeTab === "assistant" ? "tab-active" : ""}`}>
-          <AssistantPanel />
+          <AssistantPanel commandSocket={commandSocket} />
         </div>
         <div className={`panel-wrapper ${activeTab === "subtitles" ? "tab-active" : ""}`}>
           <SubtitleStream />

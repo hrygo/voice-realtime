@@ -49,6 +49,9 @@
   --shadow-card: 0 12px 32px -4px rgba(0, 0, 0, 0.38), 0 0 0 1px rgba(255, 255, 255, 0.06);
   --shadow-glow: 0 0 28px rgba(99, 102, 241, 0.2);
 
+  /* Typography */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
   /* Compatibility Aliases */
   --bg: var(--bg-base);
   --text: var(--text-primary);

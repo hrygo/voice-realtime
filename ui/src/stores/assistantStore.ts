@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 /** 助手管道当前可见的活动相位。 */
-export type AssistantPhase = "idle" | "listening" | "thinking" | "speaking";
+export type AssistantPhase = "idle" | "listening" | "thinking" | "speaking" | "degraded" | "stopped";
 
 /** 对话气泡：未落定的助手气泡由组件展示为流式状态。 */
 export interface AssistantBubble {
@@ -21,10 +21,10 @@ type AssistantActivity = {
 
 export interface TurnMetrics {
   readonly turnId: number;
-  readonly sttMs: number;
-  readonly llmTtftMs: number;
-  readonly ttsTtfbMs: number;
-  readonly e2eMs: number;
+  readonly sttMs: number | null;
+  readonly llmTtftMs: number | null;
+  readonly ttsTtfbMs: number | null;
+  readonly e2eMs: number | null;
 }
 
 export interface AssistantSnapshot {
@@ -42,20 +42,21 @@ export type AssistantEvent =
   | { readonly type: "llm"; readonly state: "streaming" | "final"; readonly text: string; readonly turnId: number }
   | { readonly type: "tts"; readonly state: "synthesizing" | "started" | "stopped" }
   | { readonly type: "interruption"; readonly state: "detected" }
-  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "user_stopped" }
+  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "pipeline_error" | "degraded" | "user_stopped" }
   | {
       readonly type: "metrics";
       readonly turnId: number;
-      readonly sttMs: number;
-      readonly llmTtftMs: number;
-      readonly ttsTtfbMs: number;
-      readonly e2eMs: number;
+      readonly sttMs: number | null;
+      readonly llmTtftMs: number | null;
+      readonly ttsTtfbMs: number | null;
+      readonly e2eMs: number | null;
     };
 
 interface AssistantStore extends AssistantSnapshot {
   readonly connected: boolean;
   applyEvent: (event: AssistantEvent) => void;
   setConnected: (connected: boolean) => void;
+  syncPipelineState: (state: string) => void;
   clearTranscript: () => void;
 }
 
@@ -69,6 +70,10 @@ const INITIAL_SNAPSHOT: AssistantSnapshot = {
   interruptionCount: 0,
   latestMetrics: null,
 };
+
+export function createAssistantSnapshot(): AssistantSnapshot {
+  return { ...INITIAL_SNAPSHOT, activity: { ...IDLE_ACTIVITY }, transcript: [] };
+}
 
 function formatTimeNow(): string {
   const now = new Date();
@@ -87,10 +92,10 @@ export function parseAssistantEvent(value: unknown): AssistantEvent | null {
         ? {
             type: "metrics",
             turnId: value.turn_id,
-            sttMs: typeof value.stt_ms === "number" ? value.stt_ms : 0,
-            llmTtftMs: typeof value.llm_ttft_ms === "number" ? value.llm_ttft_ms : 0,
-            ttsTtfbMs: typeof value.tts_ttfb_ms === "number" ? value.tts_ttfb_ms : 0,
-            e2eMs: typeof value.e2e_ms === "number" ? value.e2e_ms : 0,
+            sttMs: metricValue(value.stt_ms),
+            llmTtftMs: metricValue(value.llm_ttft_ms),
+            ttsTtfbMs: metricValue(value.tts_ttfb_ms),
+            e2eMs: metricValue(value.e2e_ms),
           }
         : null;
     case "vad":
@@ -102,11 +107,14 @@ export function parseAssistantEvent(value: unknown): AssistantEvent | null {
         ? { type: "stt", state: value.state, text: value.text }
         : null;
     case "llm":
-      return (value.state === "streaming" || value.state === "final")
-        && typeof value.text === "string"
-        && typeof value.turn_id === "number"
-        ? { type: "llm", state: value.state, text: value.text, turnId: value.turn_id }
-        : null;
+      if (
+        (value.state === "streaming" || value.state === "final") &&
+        typeof value.turn_id === "number"
+      ) {
+        const text = typeof value.text === "string" ? value.text : "";
+        return { type: "llm", state: value.state, text, turnId: value.turn_id };
+      }
+      return null;
     case "tts":
       return value.state === "synthesizing" || value.state === "started" || value.state === "stopped"
         ? { type: "tts", state: value.state }
@@ -116,6 +124,8 @@ export function parseAssistantEvent(value: unknown): AssistantEvent | null {
     case "system":
       return value.state === "pipeline_started"
         || value.state === "pipeline_stopped"
+        || value.state === "pipeline_error"
+        || value.state === "degraded"
         || value.state === "user_stopped"
         ? { type: "system", state: value.state }
         : null;
@@ -140,27 +150,35 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       };
     case "vad":
       return event.state === "user_speaking"
-        ? withActivity(snapshot, { ...snapshot.activity, listening: true })
-        : snapshot;
+        ? withActivity(snapshot, { listening: true, thinking: false, speaking: false })
+        : withActivity(snapshot, { listening: false, thinking: true, speaking: false });
     case "stt":
       return withActivity(
         { ...snapshot, transcript: updateUserTranscript(snapshot.transcript, event) },
-        { ...snapshot.activity, listening: true },
+        event.state === "final"
+          ? { listening: false, thinking: true, speaking: false }
+          : { listening: true, thinking: false, speaking: false },
       );
     case "llm":
       return withActivity(
         { ...snapshot, transcript: updateAssistantTranscript(snapshot.transcript, event) },
-        { ...snapshot.activity, listening: false, thinking: event.state === "streaming" },
+        { listening: false, thinking: true, speaking: false },
       );
     case "tts":
       if (event.state === "stopped") {
-        return withActivity(snapshot, IDLE_ACTIVITY);
+        const settledTranscript = snapshot.transcript.map((b) =>
+          b.role === "assistant" && !b.final ? { ...b, final: true } : b
+        );
+        return withActivity({ ...snapshot, transcript: settledTranscript }, IDLE_ACTIVITY);
       }
-      return withActivity(snapshot, { listening: false, thinking: false, speaking: true });
+      if (event.state === "started" || snapshot.phase === "speaking") {
+        return withActivity(snapshot, { listening: false, thinking: false, speaking: true });
+      }
+      return withActivity(snapshot, { listening: false, thinking: true, speaking: false });
     case "interruption": {
-      // 标记最后一个未落定的助手气泡为被打断
+      // 标记当前最后一个助手气泡为被打断状态
       const markedTranscript = snapshot.transcript.map((b, idx) => {
-        if (idx === snapshot.transcript.length - 1 && b.role === "assistant" && !b.final) {
+        if (idx === snapshot.transcript.length - 1 && b.role === "assistant") {
           return { ...b, final: true, interrupted: true };
         }
         return b;
@@ -175,7 +193,14 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       };
     }
     case "system":
-      return event.state === "pipeline_started" ? snapshot : INITIAL_SNAPSHOT;
+      if (event.state === "pipeline_started") {
+        return { ...snapshot, phase: "idle", activity: IDLE_ACTIVITY };
+      }
+      return {
+        ...snapshot,
+        phase: event.state === "pipeline_error" || event.state === "degraded" ? "degraded" : "stopped",
+        activity: IDLE_ACTIVITY,
+      };
   }
 }
 
@@ -185,6 +210,20 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
   connected: false,
   applyEvent: (event) => set((state) => reduceAssistantEvent(state, event)),
   setConnected: (connected) => set({ connected }),
+  syncPipelineState: (pipelineState) => set((state) => {
+    if (pipelineState === "running") {
+      return state.phase === "stopped" || state.phase === "degraded"
+        ? { phase: "idle", activity: IDLE_ACTIVITY }
+        : {};
+    }
+    if (pipelineState === "error" || pipelineState === "ownership_conflict") {
+      return { phase: "degraded", activity: IDLE_ACTIVITY };
+    }
+    if (pipelineState === "stopped" || pipelineState === "stopping") {
+      return { phase: "stopped", activity: IDLE_ACTIVITY };
+    }
+    return {};
+  }),
   clearTranscript: () => set((state) => ({ ...state, transcript: [] })),
 }));
 
@@ -197,6 +236,10 @@ export const selectAssistantLatestMetrics = (state: AssistantStore): TurnMetrics
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function metricValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function withActivity(snapshot: AssistantSnapshot, activity: AssistantActivity): AssistantSnapshot {

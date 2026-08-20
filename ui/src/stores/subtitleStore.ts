@@ -28,16 +28,28 @@ interface SubtitleState {
   clear: () => void;
 }
 
+interface SubtitleReducerState {
+  readonly lines: SubtitleLine[];
+  readonly partial: string;
+}
+
+export function reduceSubtitleSnapshot(
+  state: SubtitleReducerState,
+  snap: Partial<SubtitleSnapshot>,
+): SubtitleReducerState {
+  return {
+    lines: snap.lines ?? state.lines,
+    partial: snap.buffer_transcription ?? state.partial,
+  };
+}
+
 export const useSubtitleStore = create<SubtitleState>((set) => ({
   lines: [],
   partial: "",
   connected: false,
   starredIndices: new Set<number>(),
   applySnapshot: (snap) =>
-    set((s) => ({
-      lines: snap.lines ?? s.lines,
-      partial: snap.buffer_transcription ?? s.partial,
-    })),
+    set((state) => reduceSubtitleSnapshot(state, snap)),
   setConnected: (v) => set({ connected: v }),
   toggleStar: (index) =>
     set((s) => {
@@ -149,9 +161,11 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
 /** "0:00:03" / "0:00:03,500" → SRT "00:00:03,000"。 */
 function srtTime(raw: string | undefined): string {
   if (!raw) return "";
-  const [h, m, s] = raw.replace(/,/g, ".").split(".")[0].split(":").map(Number);
-  const millis = Math.round((Number(raw.split(".")[1] || "0") / 1) * 1000) || 0;
-  if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return "";
+  const normalized = raw.trim().replace(",", ".");
+  const [clock = "", fraction = ""] = normalized.split(".", 2);
+  const [h, m, s] = clock.split(":").map(Number);
+  const millis = Number(fraction.padEnd(3, "0").slice(0, 3));
+  if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s) || Number.isNaN(millis)) return "";
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(
     s,
   ).padStart(2, "0")},${String(millis).padStart(3, "0")}`;

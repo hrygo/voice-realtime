@@ -38,6 +38,25 @@ export default function SubtitleStream() {
   const [speakerFilter, setSpeakerFilter] = useState<string>("all");
   const [fontSizeMode, setFontSizeMode] = useState<FontSizeMode>("normal");
   const [presentationMode, setPresentationMode] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  }, []);
 
   const handleMessage = useCallback((evt: MessageEvent) => {
     try {
@@ -54,13 +73,17 @@ export default function SubtitleStream() {
     useSubtitleStore.getState().setConnected(state === "open");
   }, [state]);
 
-  // Auto-scroll
+  // Auto-scroll (rAF batching to avoid layout thrashing during rapid streaming)
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (document.hidden) return;
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
 
-    const presEl = presentationScrollRef.current;
-    if (presEl) presEl.scrollTop = presEl.scrollHeight;
+      const presEl = presentationScrollRef.current;
+      if (presEl) presEl.scrollTop = presEl.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [lines, partial]);
 
   // Available unique speakers
@@ -171,11 +194,16 @@ export default function SubtitleStream() {
       } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
         e.preventDefault();
         setPresentationMode((prev) => !prev);
+      } else if (e.key === "Escape" && presentationMode) {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+        setPresentationMode(false);
       }
     };
     window.addEventListener("keydown", handleShortcuts);
     return () => window.removeEventListener("keydown", handleShortcuts);
-  }, [handleExportSRT, handleExportMarkdown]);
+  }, [handleExportSRT, handleExportMarkdown, presentationMode]);
 
   return (
     <section
@@ -362,46 +390,87 @@ export default function SubtitleStream() {
           className="presentation-overlay"
           role="dialog"
           aria-modal="true"
-          onClick={() => setPresentationMode(false)}
+          onClick={() => {
+            if (document.fullscreenElement) {
+              document.exitFullscreen().catch(() => {});
+            }
+            setPresentationMode(false);
+          }}
         >
           <div className="presentation-header" onClick={(e) => e.stopPropagation()}>
             <div className="presentation-title-wrap">
-              <span style={{ fontSize: "1.6rem" }}>🎙️</span>
-              <h2>Voice Studio 舞台提词与字幕大屏</h2>
+              <div className="presentation-logo-icon">🎙️</div>
+              <div className="presentation-title-text">
+                <h2>Voice Studio 舞台提词与大屏</h2>
+                <span className="presentation-subtitle-status">
+                  {connected ? "● WhisperLiveKit 实时转写" : "○ 等待 ASR 连接"}
+                </span>
+              </div>
             </div>
 
             <div className="presentation-ctrls">
               <div className="presentation-font-slider-wrap">
-                <span>字号</span>
+                <span className="presentation-ctrl-label">字号</span>
                 <input
                   type="range"
                   className="presentation-font-slider"
                   min="1.4"
-                  max="3.6"
+                  max="3.8"
                   step="0.2"
                   value={teleprompterSettings.fontSize}
                   onChange={(e) =>
                     setTeleprompterSettings({ fontSize: parseFloat(e.target.value) })
                   }
+                  title="调节提词字号大小"
                 />
-                <span>{teleprompterSettings.fontSize}rem</span>
+                <span className="presentation-font-val">
+                  {Number(teleprompterSettings.fontSize).toFixed(1)}rem
+                </span>
               </div>
 
               <button
                 type="button"
-                className={`presentation-mirror-btn ${teleprompterSettings.mirror ? "active" : ""}`}
+                className="presentation-tool-btn"
+                onClick={() =>
+                  setTeleprompterSettings({
+                    textAlign: teleprompterSettings.textAlign === "center" ? "left" : "center",
+                  })
+                }
+                title="切换居中 / 靠左排版对齐"
+              >
+                <span>{teleprompterSettings.textAlign === "center" ? "≡ 居中" : "⫷ 居左"}</span>
+              </button>
+
+              <button
+                type="button"
+                className={`presentation-tool-btn ${teleprompterSettings.mirror ? "active" : ""}`}
                 onClick={() =>
                   setTeleprompterSettings({ mirror: !teleprompterSettings.mirror })
                 }
-                title="开启/关闭水平镜像翻转 (支持物理提词分光镜)"
+                title="开启/关闭水平镜像翻转 (支持物理分光镜提词)"
               >
-                🪞 {teleprompterSettings.mirror ? "镜像已开启" : "光学镜像"}
+                <span>🪞 {teleprompterSettings.mirror ? "镜像开启" : "光学镜像"}</span>
+              </button>
+
+              <button
+                type="button"
+                className={`presentation-tool-btn ${isFullscreen ? "active" : ""}`}
+                onClick={toggleFullscreen}
+                title="开启 / 退出全屏投屏"
+              >
+                <span>{isFullscreen ? "🖵 还原" : "⛶ 全屏"}</span>
               </button>
 
               <button
                 type="button"
                 className="presentation-close-btn"
-                onClick={() => setPresentationMode(false)}
+                onClick={() => {
+                  if (document.fullscreenElement) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                  setPresentationMode(false);
+                }}
+                title="退出大字提词模式 (Esc)"
               >
                 退出 (Esc)
               </button>
@@ -409,27 +478,47 @@ export default function SubtitleStream() {
           </div>
 
           <div
-            className={`presentation-body ${teleprompterSettings.mirror ? "mirror-mode" : ""}`}
+            className={`presentation-body ${teleprompterSettings.mirror ? "mirror-mode" : ""} align-${teleprompterSettings.textAlign || "left"}`}
             ref={presentationScrollRef}
             style={{ fontSize: `${teleprompterSettings.fontSize}rem` }}
             onClick={(e) => e.stopPropagation()}
           >
-            {lines.map((line, idx) => (
-              <div className="presentation-line" key={idx}>
-                <span
-                  className="presentation-speaker-tag"
-                  style={{ color: speakerColor(line.speaker) }}
-                >
-                  {line.speaker >= 0 ? `👤 说话人 ${line.speaker}` : ""}
-                </span>
-                <span>{line.text}</span>
-              </div>
-            ))}
-            {partial && (
-              <div className="presentation-partial">
-                <span>… {partial}</span>
-              </div>
-            )}
+            <div className="presentation-container">
+              {!lines.length && !partial && (
+                <div className="presentation-empty">
+                  <span className="presentation-empty-icon">🎙️</span>
+                  <h3>舞台提词与字幕大屏已就绪</h3>
+                  <p>WhisperLiveKit 正在实时监听中，发言将实时以大字投屏呈现</p>
+                </div>
+              )}
+
+              {lines.map((line, idx) => {
+                const isLatest = idx === lines.length - 1 && !partial;
+                return (
+                  <div
+                    className={`presentation-line ${isLatest ? "latest-line" : ""}`}
+                    key={idx}
+                  >
+                    {line.speaker >= 0 && (
+                      <span
+                        className="presentation-speaker-tag"
+                        style={{ color: speakerColor(line.speaker) }}
+                      >
+                        👤 说话人 {line.speaker}
+                      </span>
+                    )}
+                    <span className="presentation-line-text">{line.text}</span>
+                  </div>
+                );
+              })}
+
+              {partial && (
+                <div className="presentation-partial">
+                  <span className="presentation-partial-indicator" />
+                  <span className="presentation-partial-text">{partial}</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

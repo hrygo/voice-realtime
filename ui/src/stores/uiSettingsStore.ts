@@ -1,4 +1,7 @@
 import { create } from "zustand";
+import type { DuplexMode, RuntimeStateSnapshot } from "../protocol";
+
+export type { DuplexMode } from "../protocol";
 
 /** 主题类型：亮色、暗色、跟随系统。 */
 export type Theme = "light" | "dark" | "system";
@@ -46,12 +49,21 @@ export const BUILTIN_PERSONAS: readonly PersonaTemplate[] = [
 export interface TeleprompterSettings {
   mirror: boolean;
   fontSize: number; // in rem e.g. 2.2
+  textAlign?: "left" | "center";
 }
 
 /** 读取 localStorage 值，隐私模式抛错时返回默认值。 */
 function readStorage<T>(key: string, fallback: T): T {
   try {
-    const raw = localStorage.getItem(key);
+    if (
+      typeof window === "undefined"
+      || typeof document === "undefined"
+      || document.location.protocol === "about:"
+      || (typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom"))
+    ) {
+      return fallback;
+    }
+    const raw = document.defaultView?.localStorage.getItem(key) ?? null;
     if (raw === null) return fallback;
     return JSON.parse(raw) as T;
   } catch {
@@ -62,7 +74,15 @@ function readStorage<T>(key: string, fallback: T): T {
 /** 写入 localStorage，隐私模式抛错时静默忽略。 */
 function writeStorage(key: string, value: unknown): void {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    if (
+      typeof window === "undefined"
+      || typeof document === "undefined"
+      || document.location.protocol === "about:"
+      || (typeof navigator !== "undefined" && navigator.userAgent.includes("jsdom"))
+    ) {
+      return;
+    }
+    document.defaultView?.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // 静默降级
   }
@@ -98,15 +118,17 @@ interface UISettingsState {
   theme: Theme;
   persona: string;
   voice: string;
+  duplexMode: DuplexMode;
   customPersonas: PersonaTemplate[];
   micMuted: boolean;
+  pipelineStatus: string;
+  subtitleStatus: string;
+  sessionStartedAt: string | null;
+  serverSynchronized: boolean;
   teleprompterSettings: TeleprompterSettings;
 
   setTheme: (theme: Theme) => void;
-  setPersona: (persona: string) => void;
-  setVoice: (voice: string) => void;
-  setMicMuted: (muted: boolean) => void;
-  toggleMicMuted: () => void;
+  applyRuntimeState: (state: RuntimeStateSnapshot) => void;
   setTeleprompterSettings: (settings: Partial<TeleprompterSettings>) => void;
   addCustomPersona: (name: string, prompt: string) => void;
   updateCustomPersona: (id: string, name: string, prompt: string) => void;
@@ -120,11 +142,17 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
     BUILTIN_PERSONAS[0]?.prompt || "",
   ),
   voice: readStorage<string>("voice-studio:voice", "default"),
+  duplexMode: readStorage<DuplexMode>("voice-studio:duplex-mode", "speaker_focus"),
   customPersonas: readStorage<PersonaTemplate[]>("voice-studio:custom-personas", []),
   micMuted: readStorage<boolean>("voice-studio:mic-muted", false),
+  pipelineStatus: "unknown",
+  subtitleStatus: "unknown",
+  sessionStartedAt: null,
+  serverSynchronized: false,
   teleprompterSettings: readStorage<TeleprompterSettings>("voice-studio:teleprompter", {
     mirror: false,
     fontSize: 2.2,
+    textAlign: "left",
   }),
 
   setTheme: (theme) => {
@@ -132,22 +160,22 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
     writeStorage("voice-studio:theme", theme);
     applyTheme(theme);
   },
-  setPersona: (persona) => {
-    set({ persona });
+  applyRuntimeState: (state) => {
+    const persona = state.persona ?? BUILTIN_PERSONAS[0]?.prompt ?? "";
+    set({
+      persona,
+      voice: state.voice,
+      duplexMode: state.duplex_mode,
+      micMuted: state.mic_muted,
+      pipelineStatus: state.pipeline,
+      subtitleStatus: state.subtitle,
+      sessionStartedAt: state.session_started_at,
+      serverSynchronized: true,
+    });
     writeStorage("voice-studio:persona", persona);
-  },
-  setVoice: (voice) => {
-    set({ voice });
-    writeStorage("voice-studio:voice", voice);
-  },
-  setMicMuted: (micMuted) => {
-    set({ micMuted });
-    writeStorage("voice-studio:mic-muted", micMuted);
-  },
-  toggleMicMuted: () => {
-    const next = !get().micMuted;
-    set({ micMuted: next });
-    writeStorage("voice-studio:mic-muted", next);
+    writeStorage("voice-studio:voice", state.voice);
+    writeStorage("voice-studio:duplex-mode", state.duplex_mode);
+    writeStorage("voice-studio:mic-muted", state.mic_muted);
   },
   setTeleprompterSettings: (partial) => {
     const next = { ...get().teleprompterSettings, ...partial };

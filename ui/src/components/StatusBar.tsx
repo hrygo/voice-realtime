@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
 import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
 import { showToast } from "./Toast";
+import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import "./StatusBar.css";
 
 type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
@@ -44,7 +45,14 @@ const THEME_TITLES: Record<Theme, string> = {
 
 const THEME_CYCLE: readonly Theme[] = ["dark", "light", "system"];
 
+export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now()): number {
+  if (!startedAt) return 0;
+  const started = Date.parse(startedAt);
+  return Number.isFinite(started) ? Math.max(0, Math.floor((nowMs - started) / 1000)) : 0;
+}
+
 interface StatusBarProps {
+  commandSocket: CommandSocketApi;
   onOpenShortcuts?: () => void;
 }
 
@@ -94,7 +102,7 @@ function ThemeToggle() {
   );
 }
 
-export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
+export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarProps) {
   const [services, setServices] = useState<ServiceInfo[]>([
     { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
@@ -103,16 +111,38 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
   const [sessionSeconds, setSessionSeconds] = useState(0);
 
   const micMuted = useUISettingsStore((s) => s.micMuted);
-  const toggleMicMuted = useUISettingsStore((s) => s.toggleMicMuted);
+  const pipelineStatus = useUISettingsStore((s) => s.pipelineStatus);
+  const subtitleStatus = useUISettingsStore((s) => s.subtitleStatus);
+  const sessionStartedAt = useUISettingsStore((s) => s.sessionStartedAt);
   const phase = useAssistantStore(selectAssistantPhase);
 
   /** Session Timer */
   useEffect(() => {
+    const update = () => {
+      setSessionSeconds(sessionElapsedSeconds(sessionStartedAt));
+    };
+    update();
     const timer = setInterval(() => {
-      setSessionSeconds((prev) => prev + 1);
+      update();
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [sessionStartedAt]);
+
+  const setMicMuted = useCallback(async (muted: boolean, shortcut = false) => {
+    if (!commandSocket.ready) {
+      showToast("控制端连接中，麦克风状态未改变", "warning");
+      return;
+    }
+    try {
+      await commandSocket.sendCommand({ cmd: "set_mic_muted", muted });
+      showToast(
+        muted ? `已开启麦克风静音${shortcut ? " (M)" : ""}` : `已解除麦克风静音${shortcut ? " (M)" : ""}`,
+        muted ? "warning" : "success",
+      );
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "麦克风控制失败", "error");
+    }
+  }, [commandSocket]);
 
   const formatTimer = (totalSeconds: number) => {
     const h = Math.floor(totalSeconds / 3600);
@@ -139,6 +169,7 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
   }, []);
 
   const fetchServices = useCallback(async (isManual = false) => {
+    if (!isManual && typeof document !== "undefined" && document.hidden) return;
     try {
       const resp = await fetch("/api/services");
       if (!resp.ok) return;
@@ -154,8 +185,23 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
 
   useEffect(() => {
     fetchServices();
-    const interval = setInterval(fetchServices, 8000);
-    return () => clearInterval(interval);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchServices();
+      }
+    }, 8000);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchServices();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [fetchServices]);
 
   // Global 'M' shortcut for Mute
@@ -166,16 +212,12 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
       if (!isInput && e.key.toLowerCase() === "m" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
-        toggleMicMuted();
-        showToast(
-          !micMuted ? "已开启麦克风静音 (M)" : "已解除麦克风静音 (M)",
-          !micMuted ? "warning" : "success",
-        );
+        void setMicMuted(!micMuted, true);
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [micMuted, toggleMicMuted]);
+  }, [micMuted, setMicMuted]);
 
   return (
     <header className="status-bar">
@@ -191,12 +233,9 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
           type="button"
           className={`mic-vu-widget ${micMuted ? "muted" : ""}`}
           onClick={() => {
-            toggleMicMuted();
-            showToast(
-              !micMuted ? "已开启麦克风静音" : "已恢复麦克风录音",
-              !micMuted ? "warning" : "success",
-            );
+            void setMicMuted(!micMuted);
           }}
+          disabled={!commandSocket.ready}
           title={micMuted ? "麦克风已静音 (按 M 恢复)" : "麦克风采集中 (按 M 静音)"}
         >
           <span>{micMuted ? "🔇" : "🎙️"}</span>
@@ -225,6 +264,18 @@ export default function StatusBar({ onOpenShortcuts }: StatusBarProps) {
       </div>
 
       <div className="status-lights" aria-label="服务状态监控">
+        <span className="service-light-pill" title={`控制 WebSocket: ${commandSocket.state}`}>
+          <span className={`light-dot dot-${commandSocket.ready ? "ok" : "checking"}`} aria-hidden="true" />
+          <span className="light-label">控制 WS</span>
+        </span>
+        <span className="service-light-pill" title={`交互管道: ${pipelineStatus}`}>
+          <span className={`light-dot dot-${pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking"}`} aria-hidden="true" />
+          <span className="light-label">交互管道</span>
+        </span>
+        <span className="service-light-pill" title={`字幕代理: ${subtitleStatus}`}>
+          <span className={`light-dot dot-${subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking"}`} aria-hidden="true" />
+          <span className="light-label">字幕代理</span>
+        </span>
         {services.map((s) => (
           <ServiceLight
             key={s.name}
