@@ -10,7 +10,7 @@ LLM、控制面、前端状态、安全边界、配置与文档均已接线并�
 
 | 门禁 | 结果 |
 |---|---|
-| `uv run pytest tests/ -W error::pytest.PytestUnraisableExceptionWarning` | 271 passed；分支覆盖率 84.65%，门槛 80% |
+| `uv run pytest tests/ -W error::pytest.PytestUnraisableExceptionWarning` | 271 passed；分支覆盖率 84.55%，门槛 80% |
 | `uv run mypy src/` | 29 个源文件 clean |
 | `uv run ruff check src/ tests/` | clean |
 | `npm test -- --run` | 5 个文件、13 项测试通过 |
