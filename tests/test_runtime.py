@@ -29,14 +29,16 @@ def _patched(stack: ExitStack) -> tuple:
             proxy_cls, hub_cls, *_ = _patched(stack)
             runtime = UIRuntime(settings)   # 必须在 with 内构造（__init__ 即 new 组件）
     """
+    stack.enter_context(patch("voice_realtime.ui.runtime.InteractionOwnership"))
+    stack.enter_context(patch("voice_realtime.ui.runtime.ensure_punkt_tab", return_value=True))
     return tuple(
         stack.enter_context(patch(path))
         for path in (
             "voice_realtime.ui.runtime.SubtitleProxy",
             "voice_realtime.ui.runtime.AudioHub",
             "voice_realtime.ui.runtime.build_pipeline",
-            "voice_realtime.ui.runtime.PipelineWorker",
-            "voice_realtime.ui.runtime.WorkerRunner",
+            "voice_realtime.interaction.session.PipelineWorker",
+            "voice_realtime.interaction.session.WorkerRunner",
         )
     )
 
@@ -47,15 +49,23 @@ async def _hung() -> None:
 
 
 def _mock_async_components(proxy, hub, runner) -> None:
-    """把关键方法升级为 async mock；runner.run 永久挂起保持 task 活跃。"""
+    """把关键方法升级为 async mock；runner.end 触发 run 优雅退出。"""
+    stopped = asyncio.Event()
+
+    async def end(*_args, **_kwargs) -> None:
+        stopped.set()
+
     proxy.start = AsyncMock()
     proxy.stop = AsyncMock()
     proxy.push_audio = AsyncMock()
     hub.start = AsyncMock()
     hub.stop = AsyncMock()
     hub.add_sink = MagicMock()
+    hub.muted = False
+    hub.set_muted = MagicMock()
     runner.add_workers = AsyncMock()
-    runner.run = AsyncMock(side_effect=_hung)
+    runner.run = AsyncMock(side_effect=stopped.wait)
+    runner.end = AsyncMock(side_effect=end)
 
 
 class TestStart:
@@ -155,7 +165,8 @@ class TestStop:
 
             await runtime.stop()
 
-        assert runner_task.cancelled()
+        assert runner_task.done()
+        runner.end.assert_awaited_once()
         hub.stop.assert_awaited_once()
         proxy.stop.assert_awaited_once()
         assert not runtime.pipelines_active
@@ -234,7 +245,8 @@ class TestControlCommands:
             assert task is not None
             await runtime.stop_session()
 
-        assert task.cancelled()
+        assert task.done()
+        runner.end.assert_awaited_once()
         hub.start.assert_awaited_once()
         proxy.start.assert_awaited_once()
         # stop_session 不关闭 hub/proxy
@@ -259,5 +271,5 @@ class TestControlCommands:
             await runtime.restart_pipeline()
             await asyncio.sleep(0)
 
-        assert first_task.cancelled()
+        assert first_task.done()
         assert build.call_count == 2
