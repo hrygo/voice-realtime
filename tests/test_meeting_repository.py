@@ -156,7 +156,10 @@ async def test_minutes_claim_and_complete_are_transactional(
     assert job.minutes.attempts == 1
 
     result = MinutesResult(overview="已记录内容")
-    await repository.complete_minutes(created.id, result)
+    completed = await repository.complete_minutes(created.id, result)
+    assert completed.status.value == "completed"
+    assert completed.content_json is not None
+    assert completed.content_json.overview == "已记录内容"
     assert await repository.claim_minutes() is None
     latest = await repository.get_latest_minutes(meeting.id)
     assert latest is not None

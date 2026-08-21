@@ -126,7 +126,9 @@ class MeetingRepository(Protocol):
 
     async def claim_minutes(self) -> MinutesJob | None: ...
 
-    async def complete_minutes(self, minutes_id: UUID, result: MinutesResult) -> None: ...
+    async def complete_minutes(
+        self, minutes_id: UUID, result: MinutesResult
+    ) -> MinutesRecord: ...
 
     async def fail_minutes(
         self,
@@ -908,7 +910,9 @@ class PostgresMeetingRepository:
                 raise RepositoryUnavailableError("纪要对应的会议不存在")
             return MinutesJob(minutes=minutes, meeting=_meeting_from_row(meeting_row))
 
-    async def complete_minutes(self, minutes_id: UUID, result: MinutesResult) -> None:
+    async def complete_minutes(
+        self, minutes_id: UUID, result: MinutesResult
+    ) -> MinutesRecord:
         validated_result, markdown = _coerce_minutes_result(result)
         async with self._connection() as connection, connection.transaction():
             now = _utc_now()
@@ -919,6 +923,7 @@ class PostgresMeetingRepository:
                         raw_output = NULL, error_code = NULL, error_message = NULL,
                         generated_at = %s, lease_until = NULL, updated_at = %s
                     WHERE id = %s AND status = %s
+                    RETURNING {_MINUTES_COLUMNS}
                     """,
                 (
                     MinutesStatus.COMPLETED.value,
@@ -930,8 +935,10 @@ class PostgresMeetingRepository:
                     MinutesStatus.GENERATING.value,
                 ),
             )
-            if cursor.rowcount != 1:
+            row = await cursor.fetchone()
+            if row is None:
                 raise MeetingConflictError("纪要任务不在 generating 状态")
+            return _minutes_from_row(row)
 
     async def fail_minutes(
         self,

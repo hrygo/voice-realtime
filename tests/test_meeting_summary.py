@@ -122,8 +122,12 @@ class _Repository:
     async def get_meeting(self, _meeting_id: UUID) -> SimpleNamespace:
         return SimpleNamespace(speakers={})
 
-    async def complete_minutes(self, _minutes_id: UUID, result: object) -> None:
+    async def complete_minutes(self, _minutes_id: UUID, result: object) -> object:
         self.completed = result
+        return SimpleNamespace(
+            status=SimpleNamespace(value="completed"),
+            content_json=result.content_json,
+        )
 
     async def fail_minutes(
         self, _minutes_id: UUID, *, code: str, message: str, raw_output: str | None = None
@@ -241,6 +245,10 @@ async def test_summary_publishes_generating_and_completed_events() -> None:
         "minutes_state_changed",
     ]
     assert [event[2]["status"] for event in events] == ["generating", "completed"]
+    completed_minutes = events[-1][2]["minutes"]
+    assert completed_minutes is not None
+    assert completed_minutes.status.value == "completed"
+    assert completed_minutes.content_json.overview == "确定发布计划。"
 
 
 def test_markdown_renderer_is_deterministic() -> None:
