@@ -95,46 +95,46 @@ class InteractionSettings(BaseSettings):
         description="是否启用 LM Studio 原生会话链后台压缩",
     )
     context_soft_input_tokens: int = Field(
-        default=6000,
+        default=16384,
         ge=512,
         description="达到后后台生成压缩候选的真实 input token 水位",
     )
     context_hard_input_tokens: int = Field(
-        default=10000,
+        default=32768,
         ge=1024,
         description="上下文延迟保护水位；失败时保留旧链而非破坏性截断",
     )
     context_target_input_tokens: int = Field(
-        default=2500,
+        default=8192,
         ge=256,
         description="新链预热后的目标 input token 规模",
     )
     context_recent_turn_pairs: int = Field(
-        default=4,
+        default=16,
         ge=1,
         le=16,
         description="压缩时优先原样保留的最近完整问答组数",
     )
     context_max_unsummarized_messages: int = Field(
-        default=40,
+        default=128,
         ge=4,
         le=1000,
         description="低 token、多轮短对话的备用压缩触发器",
     )
     context_ttft_soft_seconds: float = Field(
-        default=1.5,
+        default=3.0,
         ge=0.1,
         le=30.0,
         description="连续两轮达到时提前触发压缩的 TTFT 秒数",
     )
     context_summary_max_output_tokens: int = Field(
-        default=1024,
+        default=2048,
         ge=128,
         le=4096,
         description="结构化摘要的最大输出 token 数",
     )
     context_summary_timeout_seconds: float = Field(
-        default=20.0,
+        default=30.0,
         ge=1.0,
         le=120.0,
         description="单次原生摘要调用超时秒数",

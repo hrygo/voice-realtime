@@ -64,7 +64,7 @@
   `max_tokens`；后台原生摘要/预热可使用 LM Studio 支持的 `max_output_tokens`。
 - 长会话由应用层根据原生 `input_tokens` / TTFT 滚动压缩：结构化摘要使用 `store:false`，新链
   预热只接受精确 `MEMORY_READY`、零 reasoning tokens 和合法 response ID，再按 generation / turn /
-  旧 ID 原子换链。默认 soft/hard/target 为 6000/10000/2500 tokens、保留最近 4 组问答；
+  旧 ID 原子换链。默认 soft/hard/target 为 16384/32768/8192 tokens、保留最近 16 组问答；
   `VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 可回滚。断链必须先恢复记忆再重试当前 user，
   禁止静默空链降级。详见 ADR-003。
 - `LmStudioNativeLLMService`（`interaction/reasoning.py`）与 `MeetingSummaryService`（`meeting/summary.py`）均封装原生端点；**切勿改回**向 OpenAI 端点注入 `extra_body` 的方案。

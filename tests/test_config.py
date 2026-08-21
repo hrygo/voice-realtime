@@ -23,23 +23,23 @@ def test_interaction_context_compaction_defaults() -> None:
     config = settings.context_compaction_config()
 
     assert config.enabled is True
-    assert config.soft_input_tokens == 6000
-    assert config.hard_input_tokens == 10000
-    assert config.target_input_tokens == 2500
-    assert config.recent_turn_pairs == 4
-    assert config.max_unsummarized_messages == 40
-    assert config.ttft_soft_seconds == 1.5
-    assert config.summary_max_output_tokens == 1024
-    assert config.summary_timeout_seconds == 20.0
+    assert config.soft_input_tokens == 16384
+    assert config.hard_input_tokens == 32768
+    assert config.target_input_tokens == 8192
+    assert config.recent_turn_pairs == 16
+    assert config.max_unsummarized_messages == 128
+    assert config.ttft_soft_seconds == 3.0
+    assert config.summary_max_output_tokens == 2048
+    assert config.summary_timeout_seconds == 30.0
     assert config.capacity_ratio == 0.8
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"context_target_input_tokens": 6000},
-        {"context_soft_input_tokens": 10000},
-        {"context_hard_input_tokens": 5999},
+        {"context_target_input_tokens": 16384},
+        {"context_soft_input_tokens": 32768},
+        {"context_hard_input_tokens": 16383},
         {"context_recent_turn_pairs": 0},
         {"context_capacity_ratio": 0.99},
     ],

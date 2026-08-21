@@ -23,17 +23,18 @@ Pipecat 摘要会形成“本地历史已变短、模型侧历史仍增长”的
 - Pipecat 继续保存完整带角色历史，作为恢复与审计边界；不就地删改历史消息。
 - 应用根据原生 `chat.end.result.stats.input_tokens`、TTFT、未压缩消息数和模型容量决定压缩。
 - 后台以 `store: false`、`reasoning: "off"`、`temperature: 0` 和
-  `max_output_tokens: 1024` 生成严格的 `ConversationMemorySnapshot`。
+  `max_output_tokens: 2048` 生成严格的 `ConversationMemorySnapshot`。
 - 摘要请求携带完整 JSON Schema；模型输出必须通过禁止额外字段、来源轮次范围和角色映射校验，
   最多进行一次只含错误类别、不回显内容的格式纠正。
-- 新链预热把结构化快照与最近四组完整问答作为不受信历史数据发送，要求精确返回
+- 新链预热把结构化快照与最近十六组完整问答作为不受信历史数据发送，要求精确返回
   `MEMORY_READY`、零 reasoning tokens 和合法 `resp_` ID。
 - 候选链只有在请求 generation、已完成用户轮数、旧 response ID 和服务生命周期全部未变化时
   原子替换；否则丢弃，当前链继续服务。
 - 下一条真实用户指令始终作为预热链之后独立的原生 user turn，不进入记忆包。
 - 旧 response ID 失效时，必须先用已验证的完整历史恢复种子链，再原样重试当前用户一次；恢复失败
   明确报错，禁止静默降级为空链。
-- 默认 soft/hard/target 水位分别为 6000/10000/2500 tokens，保留四组近期问答；可用
+- 默认 soft/hard/target 水位分别为 16384/32768/8192 tokens，保留十六组近期问答；短消息
+  兜底提高到 128 条，连续 TTFT 触发提高到 3 秒。可用
   `VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 整体回滚。
 
 ## 备选方案

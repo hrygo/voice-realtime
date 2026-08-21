@@ -427,8 +427,9 @@ class TestLmStudioNativeLLMService:
         assert payload["store"] is False
         assert payload["reasoning"] == "off"
         assert payload["temperature"] == 0
-        assert payload["max_output_tokens"] == 1024
+        assert payload["max_output_tokens"] == 2048
         assert payload["stream"] is False
+        assert svc._native_chat_once.await_args.kwargs["timeout_seconds"] == 30.0
         assert summary_input["required_json_schema"]["additionalProperties"] is False
         assert "facts" in summary_input["required_json_schema"]["$defs"]["MemoryEntity"][
             "properties"

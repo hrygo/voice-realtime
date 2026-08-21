@@ -216,6 +216,20 @@ def test_window_returns_none_when_only_recent_pairs_exist() -> None:
     )
 
 
+def test_default_window_keeps_sixteen_recent_pairs() -> None:
+    config = ContextCompactionConfig()
+
+    window = build_compaction_window(
+        alternating_turns(40),
+        empty_memory_snapshot(),
+        recent_turn_pairs=config.recent_turn_pairs,
+    )
+
+    assert window is not None
+    assert [turn.turn_id for turn in window.turns_to_summarize] == list(range(1, 9))
+    assert [turn.turn_id for turn in window.recent_turns] == list(range(9, 41))
+
+
 def test_packet_rejects_non_alternating_or_non_contiguous_recent_turns() -> None:
     snapshot = ConversationMemorySnapshot.model_validate(valid_snapshot_payload(1, 2))
     same_role = [
@@ -274,14 +288,14 @@ def test_fit_window_never_truncates_latest_pair() -> None:
             {"input_tokens": 210000, "model_context_length": 262144},
             CompactionDecision(True, "capacity"),
         ),
-        ({"input_tokens": 10000}, CompactionDecision(True, "hard")),
-        ({"input_tokens": 6000}, CompactionDecision(True, "tokens")),
-        ({"unsummarized_messages": 40}, CompactionDecision(True, "messages")),
+        ({"input_tokens": 32768}, CompactionDecision(True, "hard")),
+        ({"input_tokens": 16384}, CompactionDecision(True, "tokens")),
+        ({"unsummarized_messages": 128}, CompactionDecision(True, "messages")),
         (
-            {"ttft_seconds": 1.6, "ttft_soft_hits": 2},
+            {"ttft_seconds": 3.1, "ttft_soft_hits": 2},
             CompactionDecision(True, "ttft"),
         ),
-        ({"input_tokens": 5999}, CompactionDecision(False, "none")),
+        ({"input_tokens": 16383}, CompactionDecision(False, "none")),
     ],
 )
 def test_policy_uses_real_usage_with_deterministic_precedence(
@@ -303,9 +317,9 @@ def test_policy_uses_real_usage_with_deterministic_precedence(
 def test_context_compaction_config_rejects_invalid_threshold_order() -> None:
     with pytest.raises(ValueError, match=r"target.*soft.*hard"):
         ContextCompactionConfig(
-            target_input_tokens=6000,
-            soft_input_tokens=6000,
-            hard_input_tokens=10000,
+            target_input_tokens=16384,
+            soft_input_tokens=16384,
+            hard_input_tokens=32768,
         )
 
 

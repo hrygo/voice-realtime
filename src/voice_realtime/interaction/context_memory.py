@@ -202,14 +202,14 @@ class ContextCompactionConfig:
     """运行时压缩阈值；由 InteractionSettings 映射生成。"""
 
     enabled: bool = True
-    soft_input_tokens: int = 6000
-    hard_input_tokens: int = 10000
-    target_input_tokens: int = 2500
-    recent_turn_pairs: int = 4
-    max_unsummarized_messages: int = 40
-    ttft_soft_seconds: float = 1.5
-    summary_max_output_tokens: int = 1024
-    summary_timeout_seconds: float = 20.0
+    soft_input_tokens: int = 16384
+    hard_input_tokens: int = 32768
+    target_input_tokens: int = 8192
+    recent_turn_pairs: int = 16
+    max_unsummarized_messages: int = 128
+    ttft_soft_seconds: float = 3.0
+    summary_max_output_tokens: int = 2048
+    summary_timeout_seconds: float = 30.0
     capacity_ratio: float = 0.8
 
     def __post_init__(self) -> None:

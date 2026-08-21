@@ -155,7 +155,7 @@ Pipecat 的四字符 token 估算作为主判断。
 - 不接受额外字段；不接受 Markdown、代码块、工具调用或自然语言前后缀。
 - 模型不能为近期原文生成内容；`recent_turns` 只能由应用从已完成消息复制。
 
-最终 memory packet 额外包含最近四组完整问答：
+最终 memory packet 默认额外包含最近十六组完整问答：
 
 ```json
 {
@@ -214,7 +214,7 @@ Pipecat 的四字符 token 估算作为主判断。
   "input": "前一快照、带 turn_id/role 的待压缩历史、来源范围和完整 JSON Schema",
   "reasoning": "off",
   "temperature": 0,
-  "max_output_tokens": 1024,
+  "max_output_tokens": 2048,
   "store": false,
   "stream": false
 }
@@ -248,14 +248,14 @@ Pipecat、TTS、UI 或对话事件；它只作为新链内部的 assistant turn�
 | 配置 | 默认值 | 含义 |
 |---|---:|---|
 | `context_compaction_enabled` | `true` | 是否启用后台压缩 |
-| `context_soft_input_tokens` | `6000` | 达到后后台生成候选 |
-| `context_hard_input_tokens` | `10000` | 延迟保护水位；候选仍失败时继续旧链并告警，不丢历史 |
-| `context_target_input_tokens` | `2500` | 新链预热后的目标输入规模 |
-| `context_recent_turn_pairs` | `4` | 优先原样保留的最近问答组数 |
-| `context_max_unsummarized_messages` | `40` | 低 token、多轮短对话的备用触发器 |
-| `context_ttft_soft_seconds` | `1.5` | 连续达到时提前触发 |
-| `context_summary_max_output_tokens` | `1024` | 摘要输出上限 |
-| `context_summary_timeout_seconds` | `20` | 单次摘要超时 |
+| `context_soft_input_tokens` | `16384` | 达到后后台生成候选 |
+| `context_hard_input_tokens` | `32768` | 延迟保护水位；候选仍失败时继续旧链并告警，不丢历史 |
+| `context_target_input_tokens` | `8192` | 新链预热后的目标输入规模 |
+| `context_recent_turn_pairs` | `16` | 优先原样保留的最近问答组数 |
+| `context_max_unsummarized_messages` | `128` | 低 token、多轮短对话的备用触发器 |
+| `context_ttft_soft_seconds` | `3.0` | 连续达到时提前触发 |
+| `context_summary_max_output_tokens` | `2048` | 摘要输出上限 |
+| `context_summary_timeout_seconds` | `30` | 单次摘要超时 |
 
 `context_hard_input_tokens` 是延迟保护线，不是模型容量线。若压缩持续失败，当前 262,144 窗口仍有
 充足安全空间，因此优先保留正确历史而不是破坏性截断。另设模型已加载 context length 的 80% 为
@@ -388,7 +388,7 @@ LM Studio response chain 一致的轮次。即使下游 TTS 尚未播放完，�
 ### 单元测试
 
 - snapshot schema 拒绝额外字段、越界来源、非法角色、超长内容和嵌套攻击。
-- 最近四组问答按完整 pair 保留；未完成 assistant turn 不进入 packet。
+- 最近十六组问答按完整 pair 保留；未完成 assistant turn 不进入 packet。
 - 用真实 stats 而非字符估算触发 soft/hard；TTFT 和消息数备用条件生效。
 - 摘要严格使用 `store:false`、`reasoning:"off"`、`temperature:0` 和输出上限。
 - 预热严格使用 `store:true`，只接受 `MEMORY_READY`、reasoning zero 和合法 ID。
@@ -417,7 +417,7 @@ LM Studio response chain 一致的轮次。即使下游 TTS 尚未播放完，�
 - 切换后询问早期对象、近期原话和发言者，答案正确。
 - 预热内部确认不进入 TTS/UI。
 - 强制使旧 ID 失效，证明记忆恢复后当前用户输入仍是独立 user turn。
-- 压缩后实际 `input_tokens <= 2500`；后台冷链预热不阻塞当前回复，换链后的用户 turn TTFT 目标
+- 默认压缩后实际 `input_tokens <= 8192`；后台冷链预热不阻塞当前回复，换链后的用户 turn TTFT 目标
   不超过 1 秒。
 - 所有摘要和正常请求 `reasoning_output_tokens=0`。
 

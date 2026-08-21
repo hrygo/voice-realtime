@@ -1,5 +1,10 @@
 # LM Studio Context Compaction Implementation Plan
 
+> 历史说明：本计划记录首次实现时的 6000/10000/2500 tokens 与最近四组问答默认值；
+> 2026-08-22 已按长会话优先策略调整为 16384/32768/8192 tokens、最近十六组问答、
+> 128 条消息、TTFT 3 秒、摘要上限 2048 tokens 和 30 秒超时。当前契约以 ADR-003、
+> `InteractionSettings` 与上下文压缩设计文档为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 LM Studio 原生有状态对话链上实现后台结构化摘要、预热新链和原子切换，使长语音会话保持角色/对象记忆并把实际模型输入控制在实时延迟预算内。
