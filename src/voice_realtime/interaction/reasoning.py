@@ -78,6 +78,7 @@ DEFAULT_SYSTEM_PROMPT = (
 _NATIVE_CHAT_PATH = "/api/v1/chat"
 _NATIVE_MODELS_PATH = "/api/v1/models"
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
+_RECOVERY_RECENT_TURN_PAIRS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,11 +290,17 @@ class LmStudioNativeLLMService(OpenAILLMService):
     def reset_conversation(self) -> None:
         """使在途请求失效并开启新的 LM Studio 对话链。"""
         self._request_generation += 1
+        task = self._compaction_task
+        self._compaction_task = None
+        if task is not None and not task.done():
+            task.cancel()
         self._previous_response_id = None
         self._system_prompt = None
         self._completed_user_turns = 0
         self._last_chat_stats = None
         self._last_assistant_text = None
+        self._memory_packet = None
+        self._ttft_soft_hits = 0
 
     async def _native_chat_once(
         self, payload: dict[str, Any], *, timeout_seconds: float
@@ -459,6 +466,54 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 len(packet.recent_turns),
             )
         return result
+
+    async def _recover_invalid_chain(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        current_user: str,
+        system_prompt: str,
+        generation: int,
+    ) -> str:
+        """用已验证的完整历史预热替代链，绝不把当前指令当成历史。"""
+        try:
+            _, parsed_current_user, _ = _conversation_input(messages)
+            if parsed_current_user != current_user:
+                raise ValueError("current user input changed during recovery")
+            turns = normalize_completed_turns(messages)
+            if not turns:
+                raise ValueError("no complete history is available for recovery")
+
+            previous_snapshot = (
+                self._memory_packet.snapshot
+                if self._memory_packet is not None
+                else empty_memory_snapshot()
+            )
+            window = build_compaction_window(
+                turns,
+                previous_snapshot,
+                _RECOVERY_RECENT_TURN_PAIRS,
+            )
+            if window is None:
+                recent_turns = turns[previous_snapshot.source_turn_end :]
+                if not recent_turns:
+                    raise ValueError("no recent complete history is available for recovery")
+                packet = build_memory_packet(previous_snapshot, recent_turns)
+            else:
+                fitted_window = fit_compaction_window(
+                    window,
+                    max_recent_bytes=self._compaction_config.target_input_tokens * 4,
+                )
+                snapshot = await self._summarize_window(fitted_window)
+                packet = build_memory_packet(snapshot, fitted_window.recent_turns)
+
+            candidate = await self._prewarm_chain(packet, system_prompt)
+            if generation != self._request_generation or self._native_client_closed:
+                raise ValueError("recovery candidate became stale")
+            if candidate.response_id is None:
+                raise ValueError("recovery response_id is missing")
+            return candidate.response_id
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
+            raise RuntimeError("上下文恢复失败") from exc
 
     async def _run_compaction(
         self,
@@ -654,9 +709,19 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 self._last_assistant_text = None
                 retry_payload = dict(payload)
                 retry_payload.pop("previous_response_id", None)
-                retry_payload["system_prompt"] = system_prompt
+                current_user = retry_payload.get("input")
+                if not isinstance(current_user, str) or not current_user:
+                    raise ValueError("LM Studio current user input is invalid") from exc
+                seed_response_id = await self._recover_invalid_chain(
+                    messages,
+                    current_user,
+                    system_prompt,
+                    generation,
+                )
+                retry_payload.pop("system_prompt", None)
+                retry_payload["previous_response_id"] = seed_response_id
                 logger.warning(
-                    "LM Studio 上下文链失效，当前轮将创建新链（generation=%s）",
+                    "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
                     generation,
                 )
                 async for retry_chunk in self._native_completions(
@@ -735,8 +800,23 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 generation,
             )
 
+    async def _cancel_compaction(self) -> None:
+        task = self._compaction_task
+        self._compaction_task = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("LM Studio 上下文压缩任务清理失败")
+
     async def close(self) -> None:
-        """关闭原生 HTTP 客户端；允许 stop/cleanup 重复调用。"""
+        """取消后台候选并关闭原生 HTTP 客户端；允许重复调用。"""
+        await self._cancel_compaction()
         if self._native_client_closed:
             return
         await self._http.aclose()

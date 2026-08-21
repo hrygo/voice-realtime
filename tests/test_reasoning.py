@@ -12,7 +12,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -23,6 +23,7 @@ from pipecat.services.openai.llm import OpenAILLMService
 from voice_realtime.interaction.context_memory import (
     CompactionWindow,
     ContextCompactionConfig,
+    ConversationMemoryPacket,
     ConversationTurn,
     build_memory_packet,
     empty_memory_snapshot,
@@ -154,6 +155,20 @@ def two_pair_window() -> CompactionWindow:
         expected_snapshot_start=1,
         expected_snapshot_end=2,
     )
+
+
+def valid_packet() -> ConversationMemoryPacket:
+    return build_memory_packet(
+        empty_memory_snapshot(),
+        [
+            ConversationTurn(turn_id=1, role="user", content="你好"),
+            ConversationTurn(turn_id=2, role="assistant", content="你好"),
+        ],
+    )
+
+
+async def wait_forever() -> None:
+    await asyncio.Event().wait()
 
 
 SSE_LINES = [
@@ -641,7 +656,7 @@ class TestLmStudioNativeLLMService:
             _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
         assert svc._previous_response_id is None
 
-    async def test_invalid_previous_response_id_rebuilds_chain_once(self) -> None:
+    async def test_invalid_previous_id_prewarm_history_before_retrying_user(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         payloads: list[dict[str, Any]] = []
         call_count = 0
@@ -671,6 +686,7 @@ class TestLmStudioNativeLLMService:
                 yield FakeSSEResponse(stream_lines("恢复", "resp_recovered"))
 
         svc._http.stream = fake_stream  # type: ignore[method-assign]
+        svc._recover_invalid_chain = AsyncMock(return_value="resp_recovered_seed")
         _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
         chunks = [
             chunk
@@ -679,9 +695,71 @@ class TestLmStudioNativeLLMService:
 
         assert [chunk.choices[0].delta.content for chunk in chunks] == ["恢复"]
         assert payloads[1]["previous_response_id"] == "resp_first"
-        assert "previous_response_id" not in payloads[2]
-        assert payloads[2]["system_prompt"] == "你是一个中文语音助手"
+        svc._recover_invalid_chain.assert_awaited_once()
+        assert payloads[2]["previous_response_id"] == "resp_recovered_seed"
+        assert payloads[2]["input"] == "第二轮用户指令"
+        assert "system_prompt" not in payloads[2]
         assert svc._previous_response_id == "resp_recovered"
+
+    async def test_failed_recovery_never_silently_starts_empty_chain(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        call_count = 0
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield FakeSSEResponse(SSE_LINES)
+                return
+            yield FakeSSEResponse(
+                [],
+                status_code=400,
+                error_body={
+                    "error": {
+                        "param": "previous_response_id",
+                        "message": "previous_response_id was not found",
+                    }
+                },
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        svc._recover_invalid_chain = AsyncMock(
+            side_effect=RuntimeError("上下文恢复失败")
+        )
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+        with pytest.raises(RuntimeError, match="上下文恢复"):
+            _ = [
+                chunk
+                async for chunk in await svc.get_chat_completions(
+                    make_second_turn_context()
+                )
+            ]
+
+        assert call_count == 2
+        assert svc._previous_response_id is None
+
+    async def test_recovery_packet_excludes_current_user_instruction(self) -> None:
+        svc = compaction_service(soft_input_tokens=6000)
+        svc._prewarm_chain = AsyncMock(
+            return_value=native_result("MEMORY_READY", "resp_seed", 300)
+        )
+
+        response_id = await svc._recover_invalid_chain(
+            make_second_turn_context().get_messages(),
+            "第二轮用户指令",
+            "你是一个中文语音助手",
+            generation=0,
+        )
+
+        packet = svc._prewarm_chain.await_args.args[0]
+        assert response_id == "resp_seed"
+        assert [turn.content for turn in packet.recent_turns] == [
+            "第一轮用户指令",
+            "第一轮助手回答",
+        ]
+        assert "第二轮用户指令" not in str(packet.model_dump())
 
     @pytest.mark.parametrize(
         "chat_end_line,error_type",
@@ -754,6 +832,7 @@ class TestLmStudioNativeLLMService:
             )
 
         svc._http.stream = fake_stream  # type: ignore[method-assign]
+        svc._recover_invalid_chain = AsyncMock(return_value="resp_recovered_seed")
         _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
         with pytest.raises(httpx.HTTPStatusError):
             _ = [
@@ -764,6 +843,7 @@ class TestLmStudioNativeLLMService:
             ]
 
         assert call_count == 3
+        svc._recover_invalid_chain.assert_awaited_once()
         assert svc._previous_response_id is None
 
     async def test_sse_error_event_raises(self) -> None:
@@ -798,6 +878,33 @@ class TestLmStudioNativeLLMService:
         svc._http.stream = fake_stream  # type: ignore[method-assign]
         with pytest.raises(RuntimeError, match="no message content"):
             _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+    def test_reset_cancels_compaction_and_clears_memory(self) -> None:
+        svc = compaction_service()
+        task = MagicMock()
+        task.done.return_value = False
+        svc._compaction_task = task
+        svc._memory_packet = valid_packet()
+        svc._last_chat_stats = NativeChatStats(100, 8, 0, 0.2)
+        svc._ttft_soft_hits = 2
+
+        svc.reset_conversation()
+
+        task.cancel.assert_called_once_with()
+        assert svc.compaction_task is None
+        assert svc.memory_packet is None
+        assert svc.last_chat_stats is None
+        assert svc._ttft_soft_hits == 0
+
+    async def test_close_awaits_cancelled_compaction_before_http_close(self) -> None:
+        svc = compaction_service()
+        svc._compaction_task = asyncio.create_task(wait_forever())
+        svc._http.aclose = AsyncMock()
+
+        await svc.close()
+
+        assert svc.compaction_task is None
+        svc._http.aclose.assert_awaited_once()
 
     async def test_close_releases_native_client(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
