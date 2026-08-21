@@ -197,8 +197,9 @@ Pipecat 的四字符 token 估算作为主判断。
   superseded 记录。
 
 摘要请求使用独立、固定的 summarizer system prompt，要求输出 schema JSON。摘要输入把每条消息
-标为 `turn_id` 和 `role`，但整体仍视为待抽取数据。模型输出按外部不可信输入处理，不能未经校验
-进入新链。
+标为 `turn_id` 和 `role`，并携带 `ConversationMemorySnapshot.model_json_schema()` 的完整 schema，
+但整体仍视为待抽取数据。模型输出按外部不可信输入处理，不能未经校验进入新链；首次校验失败时
+最多重试一次，纠错请求只增加 `schema_validation_failed` 类别和结构修正要求，不回显错误内容。
 
 禁止把原始历史或模型摘要拼进 `system_prompt`，避免把历史 user 内容提升到系统指令层级。
 
@@ -210,7 +211,7 @@ Pipecat 的四字符 token 估算作为主判断。
 {
   "model": "qwen/qwen3.6-35b-a3b",
   "system_prompt": "固定结构化摘要提示词",
-  "input": "带 turn_id 和 role 的待压缩历史",
+  "input": "前一快照、带 turn_id/role 的待压缩历史、来源范围和完整 JSON Schema",
   "reasoning": "off",
   "temperature": 0,
   "max_output_tokens": 1024,
@@ -416,8 +417,20 @@ LM Studio response chain 一致的轮次。即使下游 TTS 尚未播放完，�
 - 切换后询问早期对象、近期原话和发言者，答案正确。
 - 预热内部确认不进入 TTS/UI。
 - 强制使旧 ID 失效，证明记忆恢复后当前用户输入仍是独立 user turn。
-- 压缩后实际 `input_tokens <= 2500`；冷链 TTFT 目标不超过 1 秒。
+- 压缩后实际 `input_tokens <= 2500`；后台冷链预热不阻塞当前回复，换链后的用户 turn TTFT 目标
+  不超过 1 秒。
 - 所有摘要和正常请求 `reasoning_output_tokens=0`。
+
+2026-08-22 本机 `qwen/qwen3.6-35b-a3b`、262144 context 实测结果：
+
+| 指标 | 结果 |
+|---|---:|
+| 压缩前 / 预热后 `input_tokens` | 4218 / 1143 |
+| 压缩前 TTFT / 后台预热 TTFT | 0.523s / 1.314s |
+| 换链后八次用户探针最大 TTFT | 0.507s |
+| 摘要、预热和八次探针 reasoning tokens | 全部为 0 |
+| 事实、角色、更新覆盖、注入隔离、当次指令检查 | 20 / 20 |
+| response ID | 已变化，候选链独立创建 |
 
 ### 质量门禁
 
