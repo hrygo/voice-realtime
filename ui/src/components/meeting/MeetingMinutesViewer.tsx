@@ -33,6 +33,44 @@ export function MeetingMinutesViewer({
   const isFailed = status === "failed";
   const jsonContent = minutes?.content_json;
 
+  const [completedItems, setCompletedItems] = useState<Set<number>>(() => {
+    if (!minutes?.id) return new Set();
+    try {
+      const raw = localStorage.getItem(`voice-studio:action-items:${minutes.id}`);
+      return raw ? new Set<number>(JSON.parse(raw)) : new Set<number>();
+    } catch {
+      return new Set<number>();
+    }
+  });
+
+  const toggleActionItem = (idx: number) => {
+    setCompletedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      if (minutes?.id) {
+        try {
+          localStorage.setItem(`voice-studio:action-items:${minutes.id}`, JSON.stringify(Array.from(next)));
+        } catch {
+          // Ignore
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleCopyChecklist = async () => {
+    if (!jsonContent?.action_items?.length) return;
+    const text = jsonContent.action_items
+      .map(
+        (item, i) =>
+          `${completedItems.has(i) ? "- [x]" : "- [ ]"} ${item.task}${item.owner ? ` (@${item.owner})` : ""}${item.due_date ? ` (截止: ${item.due_date})` : ""}`,
+      )
+      .join("\n");
+    await navigator.clipboard.writeText(text);
+    showToast("待办事项 Checklist 已成功复制", "success");
+  };
+
   return (
     <div className="minutes-pane">
       <div className="pane-header">
@@ -250,34 +288,60 @@ export function MeetingMinutesViewer({
             {/* 4. 待办行动项 */}
             {jsonContent.action_items && jsonContent.action_items.length > 0 && (
               <div className="minutes-card">
-                <h4 className="minutes-card-title">
-                  <span>📌</span>
-                  <span>待办行动项 ({jsonContent.action_items.length})</span>
-                </h4>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <h4 className="minutes-card-title" style={{ margin: 0 }}>
+                    <span>📌</span>
+                    <span>待办行动项 ({jsonContent.action_items.length})</span>
+                  </h4>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    style={{ fontSize: "0.68rem", padding: "2px 6px" }}
+                    onClick={() => void handleCopyChecklist()}
+                    title="复制待办为标准 Markdown Checklist 格式"
+                  >
+                    📋 复制清单
+                  </button>
+                </div>
                 <div className="structured-list">
-                  {jsonContent.action_items.map((item, idx) => (
-                    <div key={idx} className="structured-item">
-                      <div className="item-main">
-                        <span>☐</span>
-                        <strong style={{ color: "var(--text-primary)" }}>{item.task}</strong>
-                      </div>
-                      <div className="item-meta-tags">
-                        {item.owner && <span className="owner-tag">👤 {item.owner}</span>}
-                        {item.due_date && <span className="due-tag">📅 {item.due_date}</span>}
-                        {item.evidence_segment_ids?.map((id, i) => (
-                          <button
-                            key={id}
-                            type="button"
-                            className="evidence-pill"
-                            onClick={() => onSelectEvidence(id)}
+                  {jsonContent.action_items.map((item, idx) => {
+                    const isDone = completedItems.has(idx);
+                    return (
+                      <div key={idx} className={`structured-item ${isDone ? "item-completed" : ""}`}>
+                        <div
+                          className="item-main action-checkbox-row"
+                          onClick={() => toggleActionItem(idx)}
+                          style={{ cursor: "pointer", userSelect: "none" }}
+                          title="点击标记完成/未完成"
+                        >
+                          <span className="action-check-box">{isDone ? "☑️" : "☐"}</span>
+                          <strong
+                            style={{
+                              color: isDone ? "var(--text-muted)" : "var(--text-primary)",
+                              textDecoration: isDone ? "line-through" : "none",
+                            }}
                           >
-                            <span>📌</span>
-                            <span>证据 #{i + 1}</span>
-                          </button>
-                        ))}
+                            {item.task}
+                          </strong>
+                        </div>
+                        <div className="item-meta-tags">
+                          {item.owner && <span className="owner-tag">👤 {item.owner}</span>}
+                          {item.due_date && <span className="due-tag">📅 {item.due_date}</span>}
+                          {item.evidence_segment_ids?.map((id, i) => (
+                            <button
+                              key={id}
+                              type="button"
+                              className="evidence-pill"
+                              onClick={() => onSelectEvidence(id)}
+                            >
+                              <span>📌</span>
+                              <span>证据 #{i + 1}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

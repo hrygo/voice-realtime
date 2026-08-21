@@ -68,6 +68,22 @@ export function MeetingSpeakerModal({
               if (e.key === "Escape") onClose();
             }}
           />
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", alignSelf: "center" }}>
+              快捷预设:
+            </span>
+            {["🎤 主持人", "📊 汇报人", "💻 技术负责", "🎨 产品经理", "💼 决策人"].map((role) => (
+              <button
+                key={role}
+                type="button"
+                className="btn-secondary"
+                style={{ fontSize: "0.68rem", padding: "1px 6px" }}
+                onClick={() => setName(role.replace(/^.. /, ""))}
+              >
+                {role}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="modal-actions">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
 import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
@@ -20,7 +20,7 @@ interface ServicesResponse {
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
   wlk: "WhisperLiveKit (:8001)",
-  tts: "TTS 桥 (:8765)",
+  tts: "Qwen3-TTS 桥 (:8765)",
   lm: "LM Studio (:1234)",
 };
 
@@ -57,29 +57,6 @@ interface StatusBarProps {
   onOpenShortcuts?: () => void;
 }
 
-function ServiceLight({
-  service,
-  onRefresh,
-}: {
-  service: ServiceInfo;
-  onRefresh: () => void;
-}) {
-  const displayName = SERVICE_DISPLAY_NAMES[service.name] || service.name;
-  const statusText = STATUS_LABELS[service.status] || service.status;
-
-  return (
-    <button
-      type="button"
-      className="service-light-pill"
-      onClick={onRefresh}
-      title={`${displayName} - ${statusText}\n地址: ${service.url}\n(点击重新探活)`}
-    >
-      <span className={`light-dot dot-${service.status}`} aria-hidden="true" />
-      <span className="light-label">{displayName}</span>
-    </button>
-  );
-}
-
 function ThemeToggle() {
   const theme = useUISettingsStore((s) => s.theme);
   const setTheme = useUISettingsStore((s) => s.setTheme);
@@ -110,6 +87,8 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);
   const [sessionSeconds, setSessionSeconds] = useState(0);
+  const [healthPopoverOpen, setHealthPopoverOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const micMuted = useUISettingsStore((s) => s.micMuted);
   const pipelineStatus = useUISettingsStore((s) => s.pipelineStatus);
@@ -206,6 +185,18 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     };
   }, [fetchServices]);
 
+  // Click outside to close health popover
+  useEffect(() => {
+    if (!healthPopoverOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setHealthPopoverOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClickOutside);
+    return () => window.removeEventListener("mousedown", handleClickOutside);
+  }, [healthPopoverOpen]);
+
   // Global 'M' shortcut for Mute
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -224,6 +215,45 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
   const meetingStatus = useMeetingStore((s) => s.status);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 
+  // Compute aggregate system health (7 checkpoints)
+  const healthItems = [
+    {
+      id: "ws",
+      name: "控制 WebSocket",
+      status: commandSocket.ready ? "ok" : "checking",
+      detail: commandSocket.state,
+    },
+    {
+      id: "pipeline",
+      name: "交互管道 (Pipecat)",
+      status: pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking",
+      detail: pipelineStatus,
+    },
+    {
+      id: "subtitle",
+      name: "字幕代理 (SubtitleProxy)",
+      status: subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
+      detail: subtitleStatus,
+    },
+    {
+      id: "storage",
+      name: "PostgreSQL 知识库",
+      status: storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error",
+      detail: storageHealth,
+    },
+    ...services.map((s) => ({
+      id: s.name,
+      name: SERVICE_DISPLAY_NAMES[s.name] || s.name,
+      status: s.status,
+      detail: `${s.url} (${STATUS_LABELS[s.status] || s.status})`,
+    })),
+  ];
+
+  const okCount = healthItems.filter((h) => h.status === "ok").length;
+  const totalCount = healthItems.length;
+  const hasError = healthItems.some((h) => h.status === "error" || h.status === "unreachable");
+  const isAllOk = okCount === totalCount;
+
   return (
     <header className="status-bar">
       <div className="status-left">
@@ -233,29 +263,47 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
         </div>
         <span className="status-badge-chip">Apple Silicon / MLX</span>
 
-        {/* 全局互斥模式指示器 */}
-        {isMeetingRecording ? (
-          <span className="status-mode-pill mode-meeting" title="当前活跃模式：会议助手录制中（语音交互已自动挂起）">
-            <span className="mode-pill-dot recording" />
-            <span>会议录制中</span>
-          </span>
-        ) : phase === "speaking" ? (
-          <span className="status-mode-pill mode-assistant" title="当前活跃模式：语音助手播报中">
-            <span>🗣️ 助手播报中</span>
-          </span>
-        ) : phase === "listening" ? (
-          <span className="status-mode-pill mode-assistant" title="当前活跃模式：语音助手聆听中">
-            <span>👂 助手聆听中</span>
-          </span>
-        ) : phase === "thinking" ? (
-          <span className="status-mode-pill mode-assistant" title="当前活跃模式：助手思考中">
-            <span>🧠 助手思考中</span>
-          </span>
-        ) : (
-          <span className="status-mode-pill mode-idle" title="当前系统处于待命就绪状态">
-            <span>💤 系统待命</span>
-          </span>
-        )}
+        {/* 全局互斥模式指示器 (防抖固定尺寸胶囊) */}
+        {(() => {
+          let className = "mode-idle";
+          let icon: React.ReactNode = "💤";
+          let label = "系统待命";
+          let title = "当前系统处于待命就绪状态";
+
+          if (isMeetingRecording) {
+            className = "mode-meeting";
+            icon = <span className="mode-pill-dot recording" aria-hidden="true" />;
+            label = "会议录制中";
+            title = "当前活跃模式：会议助手录制中（语音交互已自动挂起）";
+          } else if (phase === "speaking") {
+            className = "mode-speaking";
+            icon = "🗣️";
+            label = "助手播报中";
+            title = "当前活跃模式：语音助手播报中";
+          } else if (phase === "listening") {
+            className = "mode-listening";
+            icon = "👂";
+            label = "助手聆听中";
+            title = "当前活跃模式：语音助手聆听中";
+          } else if (phase === "thinking") {
+            className = "mode-thinking";
+            icon = "🧠";
+            label = "助手思考中";
+            title = "当前活跃模式：助手思考中";
+          } else if (phase === "degraded") {
+            className = "mode-degraded";
+            icon = "⚠️";
+            label = "系统受限";
+            title = "当前语音服务处于降级或受限状态";
+          }
+
+          return (
+            <span className={`status-mode-pill ${className}`} title={title}>
+              <span className="mode-pill-indicator">{icon}</span>
+              <span className="mode-pill-label">{label}</span>
+            </span>
+          );
+        })()}
 
         {/* 麦克风电平 & 静音控件 */}
         <button
@@ -272,19 +320,19 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "9px" : "4px",
+                height: micMuted ? "2px" : phase === "listening" ? "10px" : "4px",
               }}
             />
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "10px" : "6px",
+                height: micMuted ? "2px" : phase === "listening" ? "12px" : "7px",
               }}
             />
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "7px" : "3px",
+                height: micMuted ? "2px" : phase === "listening" ? "8px" : "3px",
               }}
             />
           </div>
@@ -292,30 +340,64 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
         </button>
       </div>
 
-      <div className="status-lights" aria-label="服务状态监控">
-        <span className="service-light-pill" title={`控制 WebSocket: ${commandSocket.state}`}>
-          <span className={`light-dot dot-${commandSocket.ready ? "ok" : "checking"}`} aria-hidden="true" />
-          <span className="light-label">控制 WS</span>
-        </span>
-        <span className="service-light-pill" title={`交互管道: ${pipelineStatus}`}>
-          <span className={`light-dot dot-${pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking"}`} aria-hidden="true" />
-          <span className="light-label">交互管道</span>
-        </span>
-        <span className="service-light-pill" title={`字幕代理: ${subtitleStatus}`}>
-          <span className={`light-dot dot-${subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking"}`} aria-hidden="true" />
-          <span className="light-label">字幕代理</span>
-        </span>
-        <span className="service-light-pill" title={`PostgreSQL 会议存储: ${storageHealth}`}>
-          <span className={`light-dot dot-${storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error"}`} aria-hidden="true" />
-          <span className="light-label">PG 存储</span>
-        </span>
-        {services.map((s) => (
-          <ServiceLight
-            key={s.name}
-            service={s}
-            onRefresh={() => fetchServices(true)}
+      {/* 统一的系统健康中心 Popover 触发器 */}
+      <div className="status-center-health" ref={popoverRef}>
+        <button
+          type="button"
+          className={`health-master-pill ${isAllOk ? "all-ok" : hasError ? "has-error" : "checking"}`}
+          onClick={() => setHealthPopoverOpen((prev) => !prev)}
+          title="点击查看全系统 7 项服务健康状态与探活"
+        >
+          <span
+            className={`light-dot ${isAllOk ? "dot-ok" : hasError ? "dot-error" : "dot-checking"}`}
+            aria-hidden="true"
           />
-        ))}
+          <span className="health-master-label">
+            {isAllOk ? `引擎全就绪 (${okCount}/${totalCount})` : hasError ? `异常 (${okCount}/${totalCount})` : `探活中 (${okCount}/${totalCount})`}
+          </span>
+          <span className="health-master-chevron">{healthPopoverOpen ? "▲" : "▼"}</span>
+        </button>
+
+        {healthPopoverOpen && (
+          <div className="health-popover-dialog" role="dialog" aria-label="系统服务监控">
+            <div className="health-popover-header">
+              <div className="health-popover-title">
+                <span>🛡️ 系统服务健康状态</span>
+                <span className="health-summary-count">
+                  {okCount}/{totalCount} 项在线
+                </span>
+              </div>
+              <button
+                type="button"
+                className="health-refresh-btn"
+                onClick={() => fetchServices(true)}
+                title="重新探活所有后端服务"
+              >
+                🔄 刷新探活
+              </button>
+            </div>
+
+            <div className="health-popover-list">
+              {healthItems.map((item) => (
+                <div key={item.id} className="health-popover-row">
+                  <div className="health-row-left">
+                    <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
+                    <span className="health-row-name">{item.name}</span>
+                  </div>
+                  <span className={`health-row-status status-${item.status}`}>
+                    {STATUS_LABELS[item.status as ServiceStatus] || item.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="health-popover-footer">
+              <span className="health-footer-tip">
+                全部服务运行于本地环回地址 (127.0.0.1)，数据不出本机
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="status-right">

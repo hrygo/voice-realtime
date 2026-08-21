@@ -58,10 +58,13 @@ export function MeetingHistorySidebar({
 }: MeetingHistorySidebarProps) {
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "recording" | "completed">("all");
 
-  const filteredList = historyList.filter((m) =>
-    m.title.toLowerCase().includes(searchQuery.toLowerCase().trim()),
-  );
+  const filteredList = historyList.filter((m) => {
+    if (statusFilter === "recording" && m.status !== "recording") return false;
+    if (statusFilter === "completed" && m.status !== "completed") return false;
+    return m.title.toLowerCase().includes(searchQuery.toLowerCase().trim());
+  });
 
   return (
     <aside className="meeting-sidebar">
@@ -100,6 +103,54 @@ export function MeetingHistorySidebar({
             ✕
           </button>
         )}
+      </div>
+
+      <div style={{ display: "flex", gap: "4px", padding: "0 10px 8px 10px" }}>
+        <button
+          type="button"
+          className={`btn-secondary ${statusFilter === "all" ? "active" : ""}`}
+          style={{
+            fontSize: "0.68rem",
+            padding: "2px 6px",
+            flex: 1,
+            justifyContent: "center",
+            background: statusFilter === "all" ? "var(--color-accent)" : "var(--bg-tertiary)",
+            color: statusFilter === "all" ? "#fff" : "var(--text-secondary)",
+          }}
+          onClick={() => setStatusFilter("all")}
+        >
+          全部
+        </button>
+        <button
+          type="button"
+          className={`btn-secondary ${statusFilter === "recording" ? "active" : ""}`}
+          style={{
+            fontSize: "0.68rem",
+            padding: "2px 6px",
+            flex: 1,
+            justifyContent: "center",
+            background: statusFilter === "recording" ? "var(--color-red)" : "var(--bg-tertiary)",
+            color: statusFilter === "recording" ? "#fff" : "var(--text-secondary)",
+          }}
+          onClick={() => setStatusFilter("recording")}
+        >
+          录制中
+        </button>
+        <button
+          type="button"
+          className={`btn-secondary ${statusFilter === "completed" ? "active" : ""}`}
+          style={{
+            fontSize: "0.68rem",
+            padding: "2px 6px",
+            flex: 1,
+            justifyContent: "center",
+            background: statusFilter === "completed" ? "var(--color-green)" : "var(--bg-tertiary)",
+            color: statusFilter === "completed" ? "#fff" : "var(--text-secondary)",
+          }}
+          onClick={() => setStatusFilter("completed")}
+        >
+          已完成
+        </button>
       </div>
 
       <div className="history-list">

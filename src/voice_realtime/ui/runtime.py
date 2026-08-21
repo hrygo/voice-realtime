@@ -236,8 +236,20 @@ class UIRuntime:
         if self._sinks_wired:
             return
         self.hub.add_sink("pipecat", self._enqueue_audio)
-        self.hub.add_sink("subtitle", self.subtitle_proxy.push_audio)
+        self.hub.add_sink("subtitle", self._push_subtitle_audio)
         self._sinks_wired = True
+
+    async def _push_subtitle_audio(self, data: bytes) -> None:
+        if self.hub.muted:
+            return
+        # 语音助手模式下，若 TTS 正在播报且未触发真人插话，阻断外放回声流向字幕服务
+        if (
+            self.mode is RuntimeMode.ASSISTANT
+            and self.session.active
+            and self.session.is_echo_suppressing(data)
+        ):
+            return
+        await self.subtitle_proxy.push_audio(data)
 
     async def _start_hub(self) -> bool:
         try:

@@ -164,6 +164,25 @@ def create_app(
             logger.warning("Voice Studio: 桥 /v1/voices 请求失败: %s", exc)
             raise HTTPException(status_code=502, detail="TTS 桥音色列表不可用") from exc
 
+    @app.post("/v1/audio/speech")
+    async def proxy_speech(request: Request) -> Response:
+        """代理 TTS 桥音频合成（POST /v1/audio/speech），供前端音色试听。"""
+        url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/audio/speech")
+        try:
+            body = await request.body()
+            headers = {"Content-Type": "application/json"}
+            async with local_async_client(timeout=10.0) as client:
+                resp = await client.post(url, content=body, headers=headers)
+                resp.raise_for_status()
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=resp.headers.get("content-type", "audio/wav"),
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("Voice Studio: 桥 /v1/audio/speech 试听请求失败: %s", exc)
+            raise HTTPException(status_code=502, detail="TTS 桥语音合成不可用") from exc
+
     _mount_websocket_routes(app, cfg)
     _mount_static(app, cfg.ui.static_dir)
     return app

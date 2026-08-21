@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -21,6 +22,7 @@ from voice_realtime.interaction.ownership import (
     InteractionOwnershipError,
 )
 from voice_realtime.interaction.pipeline import (
+    EchoState,
     EchoSuppressionProcessor,
     build_pipeline,
     build_system_prompt,
@@ -55,6 +57,7 @@ class InteractionSession:
         runner_factory: Callable[[], WorkerRunner] | None = None,
         stop_timeout_secs: float = 3.0,
         handle_signals: bool = False,
+        echo_state: EchoState | None = None,
     ) -> None:
         self._settings = settings
         self._audio_queue = audio_queue
@@ -72,11 +75,25 @@ class InteractionSession:
         self._runner: WorkerRunner | None = None
         self._runner_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
+        self._echo_state = echo_state if echo_state is not None else EchoState()
         self._echo_suppressor: EchoSuppressionProcessor | None = None
         self._llm_service: LmStudioNativeLLMService | None = None
         self._persona: str | None = None
         self._duplex_mode = DuplexMode.SPEAKER_FOCUS
         self._started_at: str | None = None
+
+    @property
+    def echo_state(self) -> EchoState:
+        return self._echo_state
+
+    def is_echo_suppressing(self, audio: bytes | None = None) -> bool:
+        """检查当前会话是否处于回声抑制期（TTS 播报且未发生真人插话）。"""
+        if not self.active:
+            return False
+        now = time.monotonic()
+        if self._echo_suppressor is not None:
+            return self._echo_suppressor.is_suppressing(now)
+        return self._echo_state.is_suppressing(now, self._settings.echo_tail_hangover_secs)
 
     @property
     def state(self) -> InteractionSessionState:
@@ -152,10 +169,12 @@ class InteractionSession:
             self._state = InteractionSessionState.OWNERSHIP_CONFLICT
             raise
         try:
+            self._echo_state.reset()
             pipeline = self._pipeline_factory(
                 self._settings,
                 persona=self._persona,
                 audio_queue=self._audio_queue,
+                echo_state=self._echo_state,
             )
             self._echo_suppressor = next(
                 (
@@ -254,6 +273,7 @@ class InteractionSession:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         self._clear_runtime_references()
+        self._echo_state.reset()
         self._drain_audio_queue()
         if release_ownership:
             self._ownership.close()

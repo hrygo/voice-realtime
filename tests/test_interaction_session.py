@@ -111,3 +111,39 @@ async def test_restart_preserves_persona_and_duplex(tmp_path: Path) -> None:
     second_observers = session._worker_factory.call_args.kwargs["observers"]  # type: ignore[attr-defined]
     assert second_observers == [observer]
     await session.stop()
+
+
+async def test_echo_state_and_is_echo_suppressing(tmp_path: Path) -> None:
+    """测试 InteractionSession 的 echo_state 与 is_echo_suppressing 状态。"""
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        await stopped.wait()
+
+    async def end(*_args: object, **_kwargs: object) -> None:
+        stopped.set()
+
+    session, _factory, _runner = _session(
+        tmp_path,
+        run=AsyncMock(side_effect=run),
+        end=AsyncMock(side_effect=end),
+    )
+    # 未启动时 is_echo_suppressing 为 False
+    assert not session.is_echo_suppressing()
+
+    await session.start()
+    assert session.active
+    assert not session.is_echo_suppressing()
+
+    # 模拟 TTS 播报启动
+    session.echo_state.on_tts_started()
+    assert session.is_echo_suppressing()
+
+    # 模拟 TTS 结束
+    session.echo_state.on_tts_stopped()
+    # 在 hangover 期内仍处于 suppressing
+    assert session.is_echo_suppressing()
+
+    await session.stop()
+    # 会话停止后 reset，is_echo_suppressing 为 False
+    assert not session.is_echo_suppressing()

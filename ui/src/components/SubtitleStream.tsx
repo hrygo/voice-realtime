@@ -7,12 +7,6 @@ import {
   useSubtitleStore,
   type SubtitleLine,
 } from "../stores/subtitleStore";
-import {
-  selectAgentReplies,
-  selectAssistantPhase,
-  selectAssistantTranscript,
-  useAssistantStore,
-} from "../stores/assistantStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { showToast } from "./Toast";
 import "./SubtitleStream.css";
@@ -39,20 +33,19 @@ export default function SubtitleStream({
   onNavigateMeeting,
 }: SubtitleStreamProps) {
   const { lines, partial, connected, starredIndices, toggleStar } = useSubtitleStore();
-  const assistantPhase = useAssistantStore(selectAssistantPhase);
-  const assistantTranscript = useAssistantStore(selectAssistantTranscript);
   const teleprompterSettings = useUISettingsStore((s) => s.teleprompterSettings);
   const setTeleprompterSettings = useUISettingsStore((s) => s.setTeleprompterSettings);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const presentationScrollRef = useRef<HTMLDivElement>(null);
 
-  /* ---- 工具栏状态 ---- */
   const [searchQuery, setSearchQuery] = useState("");
   const [speakerFilter, setSpeakerFilter] = useState<string>("all");
   const [fontSizeMode, setFontSizeMode] = useState<FontSizeMode>("normal");
   const [presentationMode, setPresentationMode] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showGuideLine, setShowGuideLine] = useState(true);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -87,9 +80,28 @@ export default function SubtitleStream({
     useSubtitleStore.getState().setConnected(state === "open");
   }, [state]);
 
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setIsScrolledUp(distanceToBottom > 60);
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      setIsScrolledUp(false);
+    }
+    const presEl = presentationScrollRef.current;
+    if (presEl) {
+      presEl.scrollTo({ top: presEl.scrollHeight, behavior: "smooth" });
+    }
+  }, []);
+
   // Auto-scroll (rAF batching to avoid layout thrashing during rapid streaming)
   useEffect(() => {
-    if (document.hidden) return;
+    if (document.hidden || isScrolledUp) return;
     const frame = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el) el.scrollTop = el.scrollHeight;
@@ -98,7 +110,7 @@ export default function SubtitleStream({
       if (presEl) presEl.scrollTop = presEl.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [assistantTranscript, lines, partial]);
+  }, [lines, partial, isScrolledUp]);
 
   // Available unique speakers
   const availableSpeakers = useMemo(() => {
@@ -126,11 +138,6 @@ export default function SubtitleStream({
         );
       });
   }, [lines, speakerFilter, searchQuery, starredIndices]);
-
-  const agentReplies = useMemo(
-    () => selectAgentReplies(assistantTranscript, searchQuery),
-    [assistantTranscript, searchQuery],
-  );
 
   /* ---- 导出操作 ---- */
   const handleExportMarkdown = useCallback(() => {
@@ -190,7 +197,7 @@ export default function SubtitleStream({
 
   const handleClear = useCallback(() => {
     useSubtitleStore.getState().clear();
-    showToast("字幕列表已清空", "info");
+    showToast("字幕记录已清空", "info");
   }, []);
 
   const cycleFontSize = useCallback(() => {
@@ -226,7 +233,7 @@ export default function SubtitleStream({
 
   return (
     <section
-      className={`panel subtitle-panel ${assistantPhase === "speaking" ? "assistant-active" : ""}`}
+      className="panel subtitle-panel"
       aria-label="实时字幕"
     >
       {/* 头部 */}
@@ -238,6 +245,9 @@ export default function SubtitleStream({
           <span className={`subtitle-status-pill ${connected ? "connected" : ""}`}>
             <span className="subtitle-status-dot" />
             {connected ? "WhisperLiveKit 已连接" : "等待连接"}
+          </span>
+          <span className="subtitle-mode-pill" title="处于实时字幕 Tab 时，AI 语音交互已自动挂起，麦克风仅用于字幕转录">
+            <span>🛡️ 纯净字幕 (AI 助手已挂起)</span>
           </span>
         </div>
 
@@ -325,6 +335,7 @@ export default function SubtitleStream({
       <div
         className={`subtitle-stream-body font-${fontSizeMode}`}
         ref={scrollRef}
+        onScroll={handleScroll}
         aria-live="polite"
       >
         {filteredLines.map(({ line, originalIndex }) => (
@@ -344,29 +355,7 @@ export default function SubtitleStream({
           </div>
         )}
 
-        {agentReplies.length > 0 && (
-          <div className="agent-reply-section-label">
-            <span>🤖</span> Agent 实时回复
-          </div>
-        )}
-
-        {agentReplies.map((reply, index) => (
-          <div
-            className={`subtitle-row-card agent-reply-card ${reply.final ? "final" : "streaming"}`}
-            key={`${reply.turnId ?? index}-${index}`}
-          >
-            <div className="subtitle-row-header">
-              <span className="subtitle-speaker-badge agent-speaker-badge">🤖 Agent</span>
-              <span className="subtitle-time-badge">
-                {reply.timestamp ?? (reply.turnId === undefined ? "实时" : `轮次 #${reply.turnId}`)}
-              </span>
-            </div>
-            <p className="subtitle-line-text">{reply.text}</p>
-            {!reply.final && <span className="agent-streaming-indicator">正在生成</span>}
-          </div>
-        ))}
-
-        {!lines.length && !partial && !agentReplies.length && (
+        {!lines.length && !partial && (
           <div className="subtitle-empty-wrap">
             <span className="subtitle-empty-icon">🎙️</span>
             <p className="subtitle-empty-title">等待语音字幕...</p>
@@ -374,6 +363,18 @@ export default function SubtitleStream({
               WhisperLiveKit 流式 ASR 正在监听，系统检测到发言后将实时输出带说话人分离的字幕。
             </p>
           </div>
+        )}
+
+        {/* 智能贴底悬浮按钮 */}
+        {isScrolledUp && (
+          <button
+            type="button"
+            className="subtitle-scroll-bottom-btn"
+            onClick={scrollToBottom}
+            aria-label="回到底部"
+          >
+            <span>↓</span> 恢复跟随最新字幕
+          </button>
         )}
       </div>
 
@@ -437,9 +438,8 @@ export default function SubtitleStream({
         </div>
 
         <div className="subtitle-meta-stats">
-          <span>{lines.length} 条人声</span>
-          <span>· {agentReplies.length} 条 Agent 回复</span>
-          {starredIndices.size > 0 && <span>(⭐ {starredIndices.size})</span>}
+          <span>{lines.length} 条字幕</span>
+          {starredIndices.size > 0 && <span>· (⭐ {starredIndices.size} 重点)</span>}
         </div>
       </footer>
 
@@ -486,6 +486,15 @@ export default function SubtitleStream({
                   {Number(teleprompterSettings.fontSize).toFixed(1)}rem
                 </span>
               </div>
+
+              <button
+                type="button"
+                className={`presentation-tool-btn ${showGuideLine ? "active" : ""}`}
+                onClick={() => setShowGuideLine(!showGuideLine)}
+                title="开启/关闭视线阅读导轨"
+              >
+                <span>📏 导轨 {showGuideLine ? "开" : "关"}</span>
+              </button>
 
               <button
                 type="button"
@@ -542,6 +551,13 @@ export default function SubtitleStream({
             style={{ fontSize: `${teleprompterSettings.fontSize}rem` }}
             onClick={(e) => e.stopPropagation()}
           >
+            {showGuideLine && (
+              <div className="teleprompter-guide-line" aria-hidden="true">
+                <span className="guide-marker left">▶</span>
+                <span className="guide-marker right">◀</span>
+              </div>
+            )}
+
             <div className="presentation-container">
               {!lines.length && !partial && (
                 <div className="presentation-empty">

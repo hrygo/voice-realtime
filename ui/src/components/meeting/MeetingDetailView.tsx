@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import type {
   ExportFormat,
   MeetingDetail,
@@ -42,6 +42,67 @@ export function MeetingDetailView({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Split ratio (left pane percentage, e.g. 48)
+  const [splitPercent, setSplitPercent] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem("voice-studio:meeting-split-ratio");
+      if (stored) {
+        const val = parseFloat(stored);
+        if (val >= 25 && val <= 75) return val;
+      }
+    } catch {
+      // Ignore
+    }
+    return 48;
+  });
+
+  const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleSplitterMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDraggingSplitter(true);
+  };
+
+  useEffect(() => {
+    if (!isDraggingSplitter) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const offset = e.clientX - rect.left;
+      const pct = Math.min(75, Math.max(25, (offset / rect.width) * 100));
+      setSplitPercent(pct);
+      try {
+        localStorage.setItem("voice-studio:meeting-split-ratio", pct.toFixed(1));
+      } catch {
+        // Ignore
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingSplitter(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDraggingSplitter]);
+
+  const handleResetSplit = () => {
+    setSplitPercent(48);
+    try {
+      localStorage.setItem("voice-studio:meeting-split-ratio", "48");
+    } catch {
+      // Ignore
+    }
+    showToast("双栏比例已重置为默认", "info");
+  };
 
   // Sync title when selected meeting changes
   useEffect(() => {
@@ -94,6 +155,30 @@ export function MeetingDetailView({
         showToast(err instanceof Error ? err.message : "导出失败", "error");
       }
     }
+  };
+
+  const handleCopyReport = async () => {
+    setIsExportMenuOpen(false);
+    if (!minutes?.content_json) {
+      showToast("暂无可导出的结构化纪要", "warning");
+      return;
+    }
+    const j = minutes.content_json;
+    let report = `# 📢 会议总结: ${meeting.title}\n\n`;
+    report += `**会议时间**: ${meeting.started_at ? new Date(meeting.started_at).toLocaleString() : "未知"}\n`;
+    report += `**说话人**: ${Object.values(meeting.speakers || {}).map((s) => s.display_name).join(", ") || "发言人"}\n\n`;
+    if (j.overview) report += `## 📋 会议概要\n${j.overview}\n\n`;
+    if (j.topics?.length) {
+      report += `## 💡 核心议题\n` + j.topics.map((t, idx) => `${idx + 1}. **${t.title}**: ${t.summary}`).join("\n") + "\n\n";
+    }
+    if (j.decisions?.length) {
+      report += `## ✅ 决策事项\n` + j.decisions.map((d) => `- ${d.content}`).join("\n") + "\n\n";
+    }
+    if (j.action_items?.length) {
+      report += `## 📌 待办行动项\n` + j.action_items.map((a) => `- [ ] ${a.task}${a.owner ? ` (@${a.owner})` : ""}${a.due_date ? ` (截止: ${a.due_date})` : ""}`).join("\n") + "\n\n";
+    }
+    await navigator.clipboard.writeText(report);
+    showToast("会议汇报排版已成功复制到剪贴板", "success");
   };
 
   const handleRegenerate = async () => {
@@ -162,6 +247,13 @@ export function MeetingDetailView({
                 <button
                   type="button"
                   className="export-item"
+                  onClick={() => void handleCopyReport()}
+                >
+                  📋 复制汇报格式
+                </button>
+                <button
+                  type="button"
+                  className="export-item"
                   onClick={() => void handleExport("md")}
                 >
                   📝 Markdown (.md)
@@ -203,12 +295,26 @@ export function MeetingDetailView({
         </div>
       </div>
 
-      <div className="dual-pane-grid">
+      <div
+        className={`dual-pane-grid ${isDraggingSplitter ? "is-resizing" : ""}`}
+        ref={containerRef}
+        style={{
+          gridTemplateColumns: `${splitPercent}% 6px calc(${100 - splitPercent}% - 6px)`,
+        }}
+      >
         <MeetingTranscriptViewer
           segments={segments}
           highlightedSegmentId={highlightedSegmentId}
           onRenameSpeaker={onRenameSpeaker}
         />
+        <div
+          className="pane-splitter"
+          onMouseDown={handleSplitterMouseDown}
+          onDoubleClick={handleResetSplit}
+          title="按住鼠标拖拽调节左右栏宽度，双击重置比例"
+        >
+          <div className="splitter-handle-bar" />
+        </div>
         <MeetingMinutesViewer
           minutes={minutes}
           minutesList={minutesList}

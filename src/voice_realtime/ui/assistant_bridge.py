@@ -172,14 +172,9 @@ class StatusBridgeObserver(BaseObserver):
                 await self._emit_event(
                     {"type": "tts", "state": "started", "sentence": self._current_sentence}
                 )
-        elif isinstance(frame, TTSStoppedFrame):
+        elif isinstance(frame, (TTSStoppedFrame, BotStoppedSpeakingFrame)):
             self._tts_active = False
             await self._emit_event({"type": "tts", "state": "stopped"})
-            self._tts_chunks = 0
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            if self._tts_active:
-                self._tts_active = False
-                await self._emit_event({"type": "tts", "state": "stopped"})
             self._tts_chunks = 0
         elif isinstance(frame, TTSAudioRawFrame):
             if self._t_tts_first is None:
@@ -199,10 +194,8 @@ class StatusBridgeObserver(BaseObserver):
                 {"type": "vad", "state": "user_silence", "t": self._now()}
             )
         elif isinstance(frame, (InterruptionFrame, CancelFrame, ErrorFrame)):
-            was_active = self._tts_active
             self._tts_active = False
-            if was_active:
-                await self._emit_event({"type": "tts", "state": "stopped"})
+            await self._emit_event({"type": "tts", "state": "stopped"})
             await self._emit_event(
                 {"type": "interruption", "state": "detected", "t": self._now()}
             )

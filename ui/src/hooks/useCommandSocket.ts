@@ -100,18 +100,31 @@ export class CommandChannel {
     }
   }
 
-  send(command: ControlCommand): Promise<RuntimeStateSnapshot> {
+  send(command: ControlCommand, timeoutMs?: number): Promise<RuntimeStateSnapshot> {
     const socket = this.socket;
     if (!this.ready || !socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new CommandError("控制端尚未完成状态同步", "service_unavailable"));
     }
 
     const requestId = makeRequestId();
+    // 会议冲刷/结束涉及 WhisperLiveKit 声纹对账与数据库事务，给予充足的 30s 超时时间
+    const isMeetingOrModeCmd =
+      command.cmd === "end_meeting" ||
+      command.cmd === "stop_active_mode" ||
+      command.cmd === "start_meeting";
+    const effectiveTimeoutMs =
+      timeoutMs ??
+      (this.options.timeoutMs !== undefined
+        ? this.options.timeoutMs
+        : isMeetingOrModeCmd
+          ? 30000
+          : 10000);
+
     return new Promise<RuntimeStateSnapshot>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new CommandError("控制指令确认超时", "timeout"));
-      }, this.options.timeoutMs ?? 8000);
+      }, effectiveTimeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       try {
         const payload: Record<string, unknown> = {
@@ -161,7 +174,7 @@ function makeRequestId(): string {
 export interface CommandSocketApi {
   readonly state: ConnectionState;
   readonly ready: boolean;
-  readonly sendCommand: (command: ControlCommand) => Promise<RuntimeStateSnapshot>;
+  readonly sendCommand: (command: ControlCommand, timeoutMs?: number) => Promise<RuntimeStateSnapshot>;
 }
 
 export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
@@ -211,10 +224,10 @@ export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
     };
   }, [url]);
 
-  const sendCommand = useCallback((command: ControlCommand) => {
+  const sendCommand = useCallback((command: ControlCommand, timeoutMs?: number) => {
     const channel = channelRef.current;
     return channel
-      ? channel.send(command)
+      ? channel.send(command, timeoutMs)
       : Promise.reject(new CommandError("控制端尚未初始化", "service_unavailable"));
   }, []);
 

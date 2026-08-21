@@ -28,28 +28,60 @@ interface SubtitleState {
   clear: () => void;
 }
 
-interface SubtitleReducerState {
+export interface SubtitleReducerState {
   readonly lines: SubtitleLine[];
+  readonly rawLines?: SubtitleLine[];
   readonly partial: string;
+  readonly clearedOffset?: number;
 }
 
 export function reduceSubtitleSnapshot(
   state: SubtitleReducerState,
   snap: Partial<SubtitleSnapshot>,
 ): SubtitleReducerState {
+  const rawLines = snap.lines ?? state.rawLines ?? state.lines;
+  const rawCount = rawLines.length;
+  const currentCleared = state.clearedOffset ?? 0;
+  // 如果后端 WLK 重启导致 rawLines 变短，重置 offset
+  const clearedOffset = currentCleared > rawCount ? 0 : currentCleared;
+  const visibleLines = rawLines.slice(clearedOffset);
+
   return {
-    lines: snap.lines ?? state.lines,
+    rawLines,
+    lines: visibleLines,
     partial: snap.buffer_transcription ?? state.partial,
+    clearedOffset,
   };
+}
+
+interface SubtitleState {
+  lines: SubtitleLine[];
+  rawLines: SubtitleLine[];
+  partial: string;
+  connected: boolean;
+  starredIndices: Set<number>;
+  clearedOffset: number;
+  applySnapshot: (snap: Partial<SubtitleSnapshot>) => void;
+  setConnected: (v: boolean) => void;
+  toggleStar: (index: number) => void;
+  clear: () => void;
 }
 
 export const useSubtitleStore = create<SubtitleState>((set) => ({
   lines: [],
+  rawLines: [],
   partial: "",
   connected: false,
   starredIndices: new Set<number>(),
+  clearedOffset: 0,
   applySnapshot: (snap) =>
-    set((state) => reduceSubtitleSnapshot(state, snap)),
+    set((state) => {
+      const reduced = reduceSubtitleSnapshot(state, snap);
+      return {
+        ...state,
+        ...reduced,
+      };
+    }),
   setConnected: (v) => set({ connected: v }),
   toggleStar: (index) =>
     set((s) => {
@@ -61,7 +93,16 @@ export const useSubtitleStore = create<SubtitleState>((set) => ({
       }
       return { starredIndices: next };
     }),
-  clear: () => set({ lines: [], partial: "", starredIndices: new Set<number>() }),
+  clear: () =>
+    set((state) => {
+      const totalRaw = state.rawLines.length > 0 ? state.rawLines.length : (state.lines.length + state.clearedOffset);
+      return {
+        clearedOffset: totalRaw,
+        lines: [],
+        partial: "",
+        starredIndices: new Set<number>(),
+      };
+    }),
 }));
 
 /** 说话人配色：对齐 wlk 官方 UI（按 speaker 取色，超过 8 轮换）。 */

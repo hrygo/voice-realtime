@@ -85,11 +85,42 @@ class TestStart:
 
         proxy.start.assert_awaited_once()
         hub.add_sink.assert_any_call("pipecat", runtime._enqueue_audio)
-        hub.add_sink.assert_any_call("subtitle", proxy.push_audio)
+        hub.add_sink.assert_any_call("subtitle", runtime._push_subtitle_audio)
         hub.start.assert_awaited_once()
         build.assert_called_once()
         _, kwargs = worker_cls.call_args
         assert kwargs["observers"] == [runtime.observer]
+
+    async def test_push_subtitle_audio_echo_gating(self, settings: Settings) -> None:
+        """测试在助手模式下 TTS 播报期间阻断音频流向字幕代理，非播报期间放行。"""
+        with ExitStack() as stack:
+            proxy_cls, hub_cls, build, _worker_cls, runner_cls = _patched(stack)
+            runtime = UIRuntime(settings)
+            proxy = proxy_cls.return_value
+            hub = hub_cls.return_value
+            runner = runner_cls.return_value
+            _mock_async_components(proxy, hub, runner)
+            build.return_value = MagicMock(name="pipeline")
+
+            await runtime.start()
+            await asyncio.sleep(0)
+
+            # 初始状态：未播报，音频正常放行给字幕代理
+            await runtime._push_subtitle_audio(b"\x01\x02" * 256)
+            proxy.push_audio.assert_awaited_once_with(b"\x01\x02" * 256)
+            proxy.push_audio.reset_mock()
+
+            # 激活 TTS 播报：此时为外放回声，应阻断推流
+            runtime.session.echo_state.on_tts_started()
+            assert runtime.session.is_echo_suppressing()
+            await runtime._push_subtitle_audio(b"\x01\x02" * 256)
+            proxy.push_audio.assert_not_awaited()
+
+            # 静音状态下也不推流
+            runtime.session.echo_state.reset()
+            hub.muted = True
+            await runtime._push_subtitle_audio(b"\x01\x02" * 256)
+            proxy.push_audio.assert_not_awaited()
 
     async def test_hub_failure_skips_pipeline(self, settings: Settings) -> None:
         """麦克风不可用时管道不装配，但 runtime 仍视为已启动（其余能力可用）。"""

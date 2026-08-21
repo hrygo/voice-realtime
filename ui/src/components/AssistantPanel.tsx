@@ -62,6 +62,13 @@ export const DUPLEX_MODE_PRESENTATION: Record<
   },
 };
 
+const VOICE_CONFIGS: Record<string, { label: string; tag: string }> = {
+  default: { label: "默认原声", tag: "标准" },
+  warm: { label: "温暖磁性", tag: "亲和" },
+  bright: { label: "清脆干练", tag: "活力" },
+  calm: { label: "沉稳专业", tag: "严谨" },
+};
+
 function formatMetric(value: number | null): string {
   return value === null ? "—" : `${value}ms`;
 }
@@ -87,6 +94,7 @@ export default function AssistantPanel({
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [interruptionActive, setInterruptionActive] = useState(false);
+  const [textInput, setTextInput] = useState("");
 
   /* ---- 交互模式 (外放专注 vs 耳机双工打断) ---- */
   const duplexMode = useUISettingsStore((s) => s.duplexMode);
@@ -108,6 +116,7 @@ export default function AssistantPanel({
   const voice = useUISettingsStore((s) => s.voice);
   const micMuted = useUISettingsStore((s) => s.micMuted);
   const [availableVoices, setAvailableVoices] = useState<readonly string[]>(FALLBACK_VOICES);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
 
   // 打断插话动效监听
   useEffect(() => {
@@ -224,6 +233,83 @@ export default function AssistantPanel({
     },
     [sendCommandWith],
   );
+
+  /** 试听音色：请求后端 /v1/audio/speech 获取真实音频并播放 */
+  const handlePreviewVoice = useCallback(
+    async (v: string) => {
+      if (isPreviewPlaying) return;
+      setIsPreviewPlaying(true);
+      showToast(`🔊 正在生成音色 [${v}] 试听...`, "info");
+      try {
+        const previewText = "你好，我是你的语音助手，很高兴为你服务。";
+        const res = await fetch("/v1/audio/speech", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "VoiceDesign",
+            input: previewText,
+            voice: v,
+            response_format: "wav",
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audio.onended = () => {
+          setIsPreviewPlaying(false);
+          URL.revokeObjectURL(audioUrl);
+        };
+        audio.onerror = () => {
+          setIsPreviewPlaying(false);
+          URL.revokeObjectURL(audioUrl);
+          showToast("试听音频播放失败", "error");
+        };
+        await audio.play();
+      } catch {
+        setIsPreviewPlaying(false);
+        showToast("试听请求失败，请确保 TTS 桥已启动", "error");
+      }
+    },
+    [isPreviewPlaying],
+  );
+
+  /** 文字兜底发送 */
+  const handleSendText = () => {
+    const trimmed = textInput.trim();
+    if (!trimmed) return;
+    setTextInput("");
+    const store = useAssistantStore.getState();
+    store.applyEvent({
+      type: "stt",
+      state: "final",
+      text: trimmed,
+    });
+    showToast("已发送输入文本", "info");
+  };
+
+  /** 导出对话 */
+  const handleExportChat = (format: "md" | "txt") => {
+    if (!transcript.length) {
+      showToast("暂无对话记录可导出", "warning");
+      return;
+    }
+    let content = "";
+    if (format === "md") {
+      content = `# Voice Studio 语音交互记录\n\n- 日期: ${new Date().toLocaleString()}\n- 提示词人格: ${persona}\n- 音色: ${voice}\n\n---\n\n` +
+        transcript.map((b) => `### ${b.role === "user" ? "👤 用户" : "🤖 助手"} (${b.timestamp || ""})\n\n${b.text}\n`).join("\n");
+    } else {
+      content = transcript.map((b) => `[${b.role === "user" ? "用户" : "助手"}] ${b.text}`).join("\n\n");
+    }
+    const blob = new Blob([content], { type: format === "md" ? "text/markdown" : "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `voice-assistant-chat-${new Date().toISOString().substring(0, 10)}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(`已成功导出对话记录 (.${format})`, "success");
+  };
 
   /** 结束当前会议录制 */
   const handleStopMeeting = useCallback(async () => {
@@ -345,47 +431,71 @@ export default function AssistantPanel({
 
   const currentPhaseConfig = PHASE_CONFIG[phase];
   const allTemplates: readonly PersonaTemplate[] = [...BUILTIN_PERSONAS, ...customPersonas];
+  const isCustomActive = !allTemplates.some((preset) => persona.trim() === preset.prompt.trim());
 
   return (
     <div className="assistant-workspace">
-      {/* 左侧控制与人设侧边栏 */}
+      {/* 左侧控制与人设侧边栏 (紧凑无滚动条设计) */}
       <aside className="assistant-sidebar">
-        <div className="assistant-sidebar-section">
+        {/* 1. 人设提示词 (下拉选择 + 快速编辑) */}
+        <div className="assistant-sidebar-section persona-section-compact">
           <div className="sidebar-section-header">
-            <span className="sidebar-section-title">🎭 人设提示词库</span>
+            <span className="sidebar-section-title">
+              <span className="sidebar-title-icon">🎭</span> 助手人设
+            </span>
             <button
               type="button"
               className="sidebar-action-btn"
               onClick={openPersona}
               title="管理与定制人设提示词 (快捷键 Cmd+K)"
             >
-              + 自定义
+              ✏️ 编辑 / 新增
             </button>
           </div>
 
-          <div className="persona-cards-list">
-            {allTemplates.map((preset) => {
-              const isSelected = persona.trim() === preset.prompt.trim();
-              return (
-                <div
-                  key={preset.id}
-                  className={`persona-sidebar-card ${isSelected ? "active" : ""}`}
-                  onClick={() => void handleSelectPersona(preset.prompt, preset.name)}
-                >
-                  <div className="persona-card-header">
-                    <span className="persona-card-name">{preset.name}</span>
-                    {isSelected && <span className="persona-active-badge">✓ 生效中</span>}
-                  </div>
-                  <p className="persona-card-prompt">{preset.prompt}</p>
-                </div>
-              );
-            })}
+          <div className="persona-select-container">
+            <select
+              className="persona-dropdown-sidebar"
+              value={isCustomActive ? "__custom__" : persona}
+              onChange={(e) => {
+                if (e.target.value === "__custom__") {
+                  openPersona();
+                  return;
+                }
+                const selected = allTemplates.find((t) => t.prompt === e.target.value);
+                if (selected) {
+                  void handleSelectPersona(selected.prompt, selected.name);
+                }
+              }}
+            >
+              {allTemplates.map((preset) => (
+                <option key={preset.id} value={preset.prompt}>
+                  {preset.name} {!preset.isBuiltin ? "(自定义)" : ""}
+                </option>
+              ))}
+              {isCustomActive && <option value="__custom__">当前自定义人设 (编辑中)</option>}
+            </select>
           </div>
+
+          <p className="persona-prompt-preview" onClick={openPersona} title="点击展开编辑系统提示词">
+            {persona || "你是一个聪明的全本地语音助手。"}
+          </p>
         </div>
 
-        <div className="assistant-sidebar-section">
-          <span className="sidebar-section-title">🔊 TTS 播报音色</span>
-          <div className="voice-select-wrap-sidebar">
+        {/* 2. TTS 播报音色 (空间高度压缩) */}
+        <div className="assistant-sidebar-section voice-section-compact">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-title">
+              <span className="sidebar-title-icon">🔊</span> 播报音色
+            </span>
+            {VOICE_CONFIGS[voice] && (
+              <span className="voice-timbre-badge">
+                {VOICE_CONFIGS[voice].label} · {VOICE_CONFIGS[voice].tag}
+              </span>
+            )}
+          </div>
+
+          <div className="voice-compact-row">
             <select
               id="assistant-voice"
               className="voice-select-dropdown-sidebar"
@@ -393,41 +503,83 @@ export default function AssistantPanel({
               onChange={(e) => void handleVoiceChange(e.target.value)}
               disabled={!commandSocket.ready}
             >
-              {availableVoices.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
+              {availableVoices.map((v) => {
+                const desc = VOICE_CONFIGS[v];
+                return (
+                  <option key={v} value={v}>
+                    {desc ? `${desc.label} (${v})` : v}
+                  </option>
+                );
+              })}
             </select>
+            <button
+              type="button"
+              className={`btn-voice-preview ${isPreviewPlaying ? "playing" : ""}`}
+              onClick={() => void handlePreviewVoice(voice)}
+              disabled={isPreviewPlaying}
+              title="生成并播放当前音色试听"
+            >
+              {isPreviewPlaying ? "🔊 播放中..." : "🔊 试听"}
+            </button>
           </div>
         </div>
 
-        {latestMetrics && (
-          <div className="assistant-sidebar-section telemetry-section">
-            <span className="sidebar-section-title">⚡ 交互时延监控</span>
-            <div className="telemetry-grid">
-              <div className="telemetry-item">
-                <span className="telemetry-label">STT 识别</span>
-                <span className="telemetry-val">{formatMetric(latestMetrics.sttMs)}</span>
+        {/* 3. 交互时延监控 (流水线高科技 HUD) */}
+        <div className="assistant-sidebar-section telemetry-section-modern">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-title">
+              <span className="sidebar-title-icon">⚡</span> 交互时延监控
+            </span>
+            {latestMetrics && latestMetrics.e2eMs !== null ? (
+              <span className={`telemetry-grade-badge ${latestMetrics.e2eMs < 1200 ? "fast" : latestMetrics.e2eMs < 2500 ? "good" : "slow"}`}>
+                {latestMetrics.e2eMs < 1200 ? "极速响应" : latestMetrics.e2eMs < 2500 ? "性能良好" : "时延偏高"}
+              </span>
+            ) : (
+              <span className="telemetry-grade-badge idle">待命中</span>
+            )}
+          </div>
+
+          {latestMetrics ? (
+            <div className="telemetry-pipeline-hud">
+              {/* 3步微流水线 */}
+              <div className="telemetry-flow-grid">
+                <div className="telemetry-flow-node">
+                  <span className="flow-step-tag">1. STT 识别</span>
+                  <span className="flow-step-val">{formatMetric(latestMetrics.sttMs)}</span>
+                </div>
+                <div className="telemetry-flow-arrow">➔</div>
+                <div className="telemetry-flow-node">
+                  <span className="flow-step-tag">2. LLM 首字</span>
+                  <span className="flow-step-val">{formatMetric(latestMetrics.llmTtftMs)}</span>
+                </div>
+                <div className="telemetry-flow-arrow">➔</div>
+                <div className="telemetry-flow-node">
+                  <span className="flow-step-tag">3. TTS 首包</span>
+                  <span className="flow-step-val">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
+                </div>
               </div>
-              <div className="telemetry-item">
-                <span className="telemetry-label">LLM 首字 (TTFT)</span>
-                <span className="telemetry-val">{formatMetric(latestMetrics.llmTtftMs)}</span>
-              </div>
-              <div className="telemetry-item">
-                <span className="telemetry-label">TTS 首包 (TTFB)</span>
-                <span className="telemetry-val">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
-              </div>
-              <div className="telemetry-item highlight">
-                <span className="telemetry-label">端到端总时延</span>
-                <span className="telemetry-val">{formatMetric(latestMetrics.e2eMs)}</span>
+
+              {/* 端到端总时延高亮条 */}
+              <div className="telemetry-e2e-strip">
+                <span className="e2e-label">⚡ 端到端总时延 (E2E)</span>
+                <span className="e2e-val">{formatMetric(latestMetrics.e2eMs)}</span>
               </div>
             </div>
-          </div>
-        )}
+          ) : (
+            <div className="telemetry-placeholder-compact">
+              <span>🎙️ 对话后实时呈现全链路耗时</span>
+            </div>
+          )}
+        </div>
 
-        <div className="assistant-sidebar-section controls-section">
-          <span className="sidebar-section-title">🛠️ 会话控制</span>
+        {/* 4. 会话控制 */}
+        <div className="assistant-sidebar-section controls-section-compact">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-title">
+              <span className="sidebar-title-icon">🛠️</span> 会话控制
+            </span>
+          </div>
+
           <div className="sidebar-ctrl-buttons">
             <button
               type="button"
@@ -436,7 +588,7 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="清空 LLM 上下文记忆 (快捷键 Cmd+Shift+C)"
             >
-              🧹 清空上下文
+              <span>🧹</span> 清空记忆
             </button>
             <button
               type="button"
@@ -448,7 +600,7 @@ export default function AssistantPanel({
               disabled={!transcript.length}
               title="清空屏幕对话记录"
             >
-              🗑️ 清空屏幕
+              <span>🗑️</span> 清空屏幕
             </button>
             <button
               type="button"
@@ -457,7 +609,7 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="重启后端交互管道"
             >
-              🔄 重启管道
+              <span>🔄</span> 重启管道
             </button>
             <button
               type="button"
@@ -466,7 +618,36 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="停止语音会话"
             >
-              ⏹️ 停止会话
+              <span>⏹️</span> 停止会话
+            </button>
+          </div>
+        </div>
+
+        {/* 5. 记录导出 */}
+        <div className="assistant-sidebar-section export-section-compact">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-title">
+              <span className="sidebar-title-icon">📥</span> 导出对话
+            </span>
+          </div>
+          <div className="export-btn-group">
+            <button
+              type="button"
+              className="btn-export-pill"
+              onClick={() => handleExportChat("md")}
+              disabled={!transcript.length}
+              title="导出为 Markdown 格式"
+            >
+              <span>📄</span> Markdown
+            </button>
+            <button
+              type="button"
+              className="btn-export-pill"
+              onClick={() => handleExportChat("txt")}
+              disabled={!transcript.length}
+              title="导出为纯文本格式"
+            >
+              <span>📑</span> 纯文本
             </button>
           </div>
         </div>
@@ -666,6 +847,32 @@ export default function AssistantPanel({
               <span>↓</span> 最新对话
             </button>
           )}
+
+          {/* 文字输入兜底栏 (Text-to-Chat) */}
+          <div className="assistant-input-bar">
+            <input
+              type="text"
+              className="assistant-text-input"
+              placeholder="💬 输入文字与助手对话 (按 Enter 发送)..."
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendText();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="assistant-send-btn"
+              onClick={handleSendText}
+              disabled={!textInput.trim()}
+              title="发送文字消息"
+            >
+              <span>↑</span> 发送
+            </button>
+          </div>
         </div>
       </main>
 

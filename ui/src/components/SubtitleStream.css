@@ -69,6 +69,19 @@
   box-shadow: 0 0 6px var(--color-green-glow);
 }
 
+.subtitle-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-cyan) 12%, var(--bg-card));
+  color: var(--color-cyan);
+  border: 1px solid color-mix(in srgb, var(--color-cyan) 30%, transparent);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
 .subtitle-sync-chip {
   display: inline-flex;
   align-items: center;
@@ -381,43 +394,6 @@
   line-height: 1.45;
   color: var(--color-cyan);
   font-style: italic;
-}
-
-.agent-reply-section-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding-top: 9px;
-  border-top: 1px solid var(--border-dim);
-  color: var(--color-accent-light);
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.agent-reply-card {
-  background: color-mix(in srgb, var(--color-accent) 9%, var(--bg-card));
-  border-color: color-mix(in srgb, var(--color-accent) 32%, transparent);
-}
-
-.agent-reply-card.streaming {
-  border-style: dashed;
-}
-
-.agent-speaker-badge {
-  color: var(--color-accent-light);
-  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
-}
-
-.agent-streaming-indicator {
-  width: fit-content;
-  padding: 1px 6px;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
-  color: var(--color-accent-light);
-  font-size: 0.64rem;
-  animation: partial-pulse 1.5s infinite ease-in-out;
 }
 
 /* Search Highlight Mark */
@@ -842,4 +818,59 @@ mark.subtitle-highlight {
   .presentation-font-slider {
     width: 70px;
   }
+}
+
+/* Smart Scroll to Bottom Floating Button */
+.subtitle-scroll-bottom-btn {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: #ffffff;
+  border: 1px solid var(--border-glow);
+  box-shadow: var(--shadow-float);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 auto;
+  align-self: center;
+  transition: all 0.2s ease;
+}
+
+.subtitle-scroll-bottom-btn:hover {
+  background: var(--color-accent-hover);
+  transform: translateX(-50%) translateY(-2px);
+  box-shadow: 0 6px 20px var(--color-accent-glow);
+}
+
+/* Teleprompter Reading Guide Line */
+.teleprompter-guide-line {
+  position: fixed;
+  top: 38%;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 5%, var(--color-cyan) 25%, var(--color-cyan) 75%, transparent 95%);
+  box-shadow: 0 0 12px var(--color-cyan-glow);
+  pointer-events: none;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  opacity: 0.65;
+}
+
+.guide-marker {
+  font-size: 1rem;
+  color: var(--color-cyan);
+  filter: drop-shadow(0 0 6px var(--color-cyan-glow));
+  transform: translateY(-1px);
 }

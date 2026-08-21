@@ -180,10 +180,10 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
         );
         return withActivity({ ...snapshot, transcript: settledTranscript }, IDLE_ACTIVITY);
       }
-      if (event.state === "started" || snapshot.phase === "speaking") {
+      if (event.state === "started" || event.state === "synthesizing" || snapshot.phase === "speaking") {
         return withActivity(snapshot, { listening: false, thinking: false, speaking: true });
       }
-      return withActivity(snapshot, { listening: false, thinking: true, speaking: false });
+      return withActivity(snapshot, IDLE_ACTIVITY);
     case "interruption": {
       // 标记当前最后一个未落定的助手气泡为被打断状态
       const markedTranscript = snapshot.transcript.map((b, idx) => {

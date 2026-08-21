@@ -607,6 +607,20 @@ class EchoSuppressionProcessor(FrameProcessor):
                 self._peak_envelope = 0.96 * self._peak_envelope + 0.04 * rms
         return False
 
+    @property
+    def barge_in_active(self) -> bool:
+        return self._barge_in_active
+
+    @property
+    def echo_state(self) -> EchoState:
+        return self._echo_state
+
+    def is_suppressing(self, now: float | None = None) -> bool:
+        if self._barge_in_active:
+            return False
+        current_time = time.monotonic() if now is None else now
+        return self._echo_state.is_suppressing(current_time, self._tail_hangover_secs)
+
 
 def build_pipeline(
     settings: InteractionSettings,
@@ -615,6 +629,8 @@ def build_pipeline(
     context: LLMContext | None = None,
     persona: str | None = None,
     audio_queue: asyncio.Queue[bytes] | None = None,
+    echo_state: EchoState | None = None,
+    echo_buffer: EchoTextBuffer | None = None,
 ) -> Pipeline:
     """按配置装配交互管道。transport 可注入（测试/无麦克风环境）。
 
@@ -665,8 +681,12 @@ def build_pipeline(
     context = context or LLMContext(
         messages=[{"role": "system", "content": build_system_prompt(persona)}]
     )
-    echo_state = EchoState()
-    echo_buffer = EchoTextBuffer(window_secs=settings.echo_text_window_secs)
+    echo_state = echo_state if echo_state is not None else EchoState()
+    echo_buffer = (
+        echo_buffer
+        if echo_buffer is not None
+        else EchoTextBuffer(window_secs=settings.echo_text_window_secs)
+    )
     echo_suppressor = EchoSuppressionProcessor(
         barge_in_gain=settings.echo_barge_in_gain,
         barge_in_frames=settings.echo_barge_in_frames,
