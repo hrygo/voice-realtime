@@ -393,24 +393,25 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 "start": window.expected_snapshot_start,
                 "end": window.expected_snapshot_end,
             },
+            "required_json_schema": ConversationMemorySnapshot.model_json_schema(),
         }
-        transcript_json = json.dumps(
-            transcript,
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
         last_error: ValueError | None = None
         for attempt in range(2):
-            correction = (
-                ""
-                if attempt == 0
-                else "\n上次输出未通过 JSON schema 校验；请仅修正格式和来源范围。"
-            )
+            request_data = dict(transcript)
+            if attempt:
+                request_data["validation_feedback"] = {
+                    "category": "schema_validation_failed",
+                    "instruction": "仅修正 JSON 结构、枚举、额外字段和来源范围。",
+                }
             result = await self._native_chat_once(
                 {
                     "model": self._model,
                     "system_prompt": SUMMARY_SYSTEM_PROMPT,
-                    "input": transcript_json + correction,
+                    "input": json.dumps(
+                        request_data,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
                     "reasoning": "off",
                     "temperature": 0,
                     "max_output_tokens": self._compaction_config.summary_max_output_tokens,
@@ -511,6 +512,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 raise ValueError("recovery candidate became stale")
             if candidate.response_id is None:
                 raise ValueError("recovery response_id is missing")
+            self._memory_packet = packet
             return candidate.response_id
         except (httpx.HTTPError, TypeError, ValueError) as exc:
             raise RuntimeError("上下文恢复失败") from exc
@@ -536,13 +538,14 @@ class LmStudioNativeLLMService(OpenAILLMService):
             snapshot = await self._summarize_window(fitted_window)
             packet = build_memory_packet(snapshot, fitted_window.recent_turns)
             candidate = await self._prewarm_chain(packet, system_prompt)
-        except (httpx.HTTPError, TypeError, ValueError):
+        except (httpx.HTTPError, TypeError, ValueError) as exc:
             logger.warning(
-                "LM Studio 上下文压缩候选失败（generation=%s summarize_turns=%s recent_turns=%s）",
+                "LM Studio 上下文压缩候选失败"
+                "（reason=%s generation=%s summarize_turns=%s recent_turns=%s）",
+                type(exc).__name__,
                 generation,
                 len(window.turns_to_summarize),
                 len(window.recent_turns),
-                exc_info=True,
             )
             return
 
@@ -632,7 +635,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 self._compaction_config.recent_turn_pairs,
             )
         except ValueError:
-            logger.warning("LM Studio 上下文压缩跳过非法角色历史", exc_info=True)
+            logger.warning("LM Studio 上下文压缩跳过非法角色历史")
             return
         if window is None or self._previous_response_id is None:
             return
@@ -856,13 +859,24 @@ class LmStudioNativeLLMService(OpenAILLMService):
             cast(ChatCompletionMessageParam, dict(message)) for message in messages
         ]
         system_prompt, user_input, user_turns = _conversation_input(messages)
-        start_new_chain = (
-            self._previous_response_id is None
-            or self._system_prompt != system_prompt
+        must_reset_chain = self._previous_response_id is not None and (
+            self._system_prompt != system_prompt
             or user_turns <= self._completed_user_turns
         )
+        if must_reset_chain:
+            self.reset_conversation()
         self._request_generation += 1
         generation = self._request_generation
+        if self._previous_response_id is None and user_turns > 1:
+            seed_response_id = await self._recover_invalid_chain(
+                frozen_messages,
+                user_input,
+                system_prompt,
+                generation,
+            )
+            self._previous_response_id = seed_response_id
+            self._system_prompt = system_prompt
+            self._completed_user_turns = user_turns - 1
         payload: dict[str, Any] = {
             "model": self._model,
             "input": user_input,
@@ -871,7 +885,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
             "store": True,
             "stream": True,
         }
-        if start_new_chain:
+        if self._previous_response_id is None:
             payload["system_prompt"] = system_prompt
         else:
             payload["previous_response_id"] = self._previous_response_id

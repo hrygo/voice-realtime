@@ -422,12 +422,17 @@ class TestLmStudioNativeLLMService:
         snapshot = await svc._summarize_window(two_pair_window())
 
         payload = svc._native_chat_once.await_args.args[0]
+        summary_input = json.loads(payload["input"])
         assert payload["system_prompt"]
         assert payload["store"] is False
         assert payload["reasoning"] == "off"
         assert payload["temperature"] == 0
         assert payload["max_output_tokens"] == 1024
         assert payload["stream"] is False
+        assert summary_input["required_json_schema"]["additionalProperties"] is False
+        assert "facts" in summary_input["required_json_schema"]["$defs"]["MemoryEntity"][
+            "properties"
+        ]
         assert snapshot.source_turn_end == 2
 
     async def test_summary_retries_invalid_json_once(self) -> None:
@@ -443,6 +448,10 @@ class TestLmStudioNativeLLMService:
 
         assert snapshot.source_turn_end == 2
         assert svc._native_chat_once.await_count == 2
+        retry_input = json.loads(svc._native_chat_once.await_args.args[0]["input"])
+        assert retry_input["validation_feedback"]["category"] == (
+            "schema_validation_failed"
+        )
 
     async def test_summary_rejects_reasoning_output(self) -> None:
         svc = compaction_service()
@@ -517,6 +526,20 @@ class TestLmStudioNativeLLMService:
         assert svc._previous_response_id == "resp_old"
         assert svc.memory_packet is None
 
+    async def test_compaction_failure_log_never_contains_exception_content(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        svc = compaction_service()
+        svc._previous_response_id = "resp_old"
+        svc._completed_user_turns = 2
+        svc._summarize_window = AsyncMock(
+            side_effect=ValueError("PRIVATE_HISTORY_VALUE")
+        )
+
+        await svc._run_compaction(two_pair_window(), "系统", generation=0, user_turns=2)
+
+        assert "PRIVATE_HISTORY_VALUE" not in caplog.text
+
     async def test_second_turn_uses_previous_response_id_and_only_current_user(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         payloads: list[dict[str, Any]] = []
@@ -544,10 +567,60 @@ class TestLmStudioNativeLLMService:
         assert "第一轮助手回答" not in str(payloads[1])
         assert svc._previous_response_id == "resp_second"
 
+    async def test_existing_local_history_is_seeded_before_current_user(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        payloads: list[dict[str, Any]] = []
+
+        @asynccontextmanager
+        async def fake_stream(
+            _method: str, _url: str, json: dict[str, Any] | None = None, **_: Any
+        ) -> Any:
+            payloads.append(json or {})
+            yield FakeSSEResponse(stream_lines("恢复", "resp_recovered"))
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        svc._recover_invalid_chain = AsyncMock(return_value="resp_seed")
+
+        _ = [
+            chunk
+            async for chunk in await svc.get_chat_completions(make_second_turn_context())
+        ]
+
+        svc._recover_invalid_chain.assert_awaited_once()
+        assert payloads[0]["previous_response_id"] == "resp_seed"
+        assert payloads[0]["input"] == "第二轮用户指令"
+        assert "system_prompt" not in payloads[0]
+
+    async def test_system_change_clears_stale_memory_before_history_seed(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._previous_response_id = "resp_old"
+        svc._system_prompt = "旧系统"
+        svc._completed_user_turns = 1
+        svc._memory_packet = valid_packet()
+        observed_memory: list[ConversationMemoryPacket | None] = []
+
+        async def fake_recover(*_: Any, **__: Any) -> str:
+            observed_memory.append(svc.memory_packet)
+            return "resp_seed"
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(stream_lines("恢复", "resp_recovered"))
+
+        svc._recover_invalid_chain = AsyncMock(side_effect=fake_recover)
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        context = make_second_turn_context()
+        context.messages[0]["content"] = "新系统"
+
+        _ = [chunk async for chunk in await svc.get_chat_completions(context)]
+
+        assert observed_memory == [None]
+
     async def test_valid_stream_commit_schedules_and_swaps_compacted_chain(self) -> None:
         svc = compaction_service()
         svc._native_chat_once = AsyncMock(
             side_effect=[
+                native_result("MEMORY_READY", "resp_seed", 200),
                 native_result(snapshot_json(1, 2), None, 300),
                 native_result("MEMORY_READY", "resp_compacted", 1800),
             ]
