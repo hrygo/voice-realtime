@@ -8,6 +8,7 @@ chat.end 原子提交，以及 SSE → OpenAI 兼容 chunk 的转换。
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from typing import Any
@@ -19,9 +20,18 @@ from pipecat.frames.frames import EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
+from voice_realtime.interaction.context_memory import (
+    CompactionWindow,
+    ContextCompactionConfig,
+    ConversationTurn,
+    build_memory_packet,
+    empty_memory_snapshot,
+    parse_snapshot,
+)
 from voice_realtime.interaction.pipeline import build_system_prompt
 from voice_realtime.interaction.reasoning import (
     LmStudioNativeLLMService,
+    NativeChatResult,
     NativeChatStats,
 )
 
@@ -77,6 +87,72 @@ def fake_json_response(data: dict[str, object], status_code: int = 200) -> httpx
         status_code,
         request=httpx.Request("POST", "http://localhost:1234/api/v1/chat"),
         json=data,
+    )
+
+
+def snapshot_json(start: int, end: int) -> str:
+    payload = {
+        "schema_version": 1,
+        "source_turn_start": start,
+        "source_turn_end": end,
+        "participants": [
+            {"id": "local_user", "role": "user", "names": ["用户"]},
+            {"id": "voice_assistant", "role": "assistant", "names": ["助手"]},
+        ],
+        "entities": [],
+        "user_preferences": [],
+        "goals_and_constraints": [],
+        "decisions": [],
+        "open_items": [],
+        "conversation_summary": "压缩后的历史。",
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def native_result(
+    content: str,
+    response_id: str | None,
+    input_tokens: int,
+    *,
+    reasoning_output_tokens: int = 0,
+) -> NativeChatResult:
+    return NativeChatResult(
+        content=content,
+        response_id=response_id,
+        stats=NativeChatStats(
+            input_tokens=input_tokens,
+            total_output_tokens=8,
+            reasoning_output_tokens=reasoning_output_tokens,
+            ttft_seconds=0.2,
+        ),
+    )
+
+
+def compaction_service(soft_input_tokens: int = 512) -> LmStudioNativeLLMService:
+    config = ContextCompactionConfig(
+        soft_input_tokens=soft_input_tokens,
+        hard_input_tokens=max(soft_input_tokens + 1, 10000),
+        target_input_tokens=256,
+        recent_turn_pairs=1,
+    )
+    return LmStudioNativeLLMService(
+        model="m", base_url="http://localhost:1234", compaction_config=config
+    )
+
+
+def two_pair_window() -> CompactionWindow:
+    return CompactionWindow(
+        previous_snapshot=empty_memory_snapshot(),
+        turns_to_summarize=(
+            ConversationTurn(turn_id=1, role="user", content="用户叫青竹"),
+            ConversationTurn(turn_id=2, role="assistant", content="已经记住"),
+        ),
+        recent_turns=(
+            ConversationTurn(turn_id=3, role="user", content="项目叫声流"),
+            ConversationTurn(turn_id=4, role="assistant", content="项目名称已确认"),
+        ),
+        expected_snapshot_start=1,
+        expected_snapshot_end=2,
     )
 
 
@@ -322,6 +398,110 @@ class TestLmStudioNativeLLMService:
         assert await svc._get_model_context_length() is None
         svc._http.get.assert_awaited_once()
 
+    async def test_summary_uses_native_stateless_reasoning_off_payload(self) -> None:
+        svc = compaction_service()
+        svc._native_chat_once = AsyncMock(
+            return_value=native_result(snapshot_json(1, 2), None, 300)
+        )
+
+        snapshot = await svc._summarize_window(two_pair_window())
+
+        payload = svc._native_chat_once.await_args.args[0]
+        assert payload["system_prompt"]
+        assert payload["store"] is False
+        assert payload["reasoning"] == "off"
+        assert payload["temperature"] == 0
+        assert payload["max_output_tokens"] == 1024
+        assert payload["stream"] is False
+        assert snapshot.source_turn_end == 2
+
+    async def test_summary_retries_invalid_json_once(self) -> None:
+        svc = compaction_service()
+        svc._native_chat_once = AsyncMock(
+            side_effect=[
+                native_result("不是 JSON", None, 200),
+                native_result(snapshot_json(1, 2), None, 220),
+            ]
+        )
+
+        snapshot = await svc._summarize_window(two_pair_window())
+
+        assert snapshot.source_turn_end == 2
+        assert svc._native_chat_once.await_count == 2
+
+    async def test_summary_rejects_reasoning_output(self) -> None:
+        svc = compaction_service()
+        svc._native_chat_once = AsyncMock(
+            return_value=native_result(
+                snapshot_json(1, 2), None, 300, reasoning_output_tokens=1
+            )
+        )
+
+        with pytest.raises(ValueError, match="reasoning"):
+            await svc._summarize_window(two_pair_window())
+
+    async def test_prewarm_requires_exact_memory_ready(self) -> None:
+        svc = compaction_service()
+        snapshot = parse_snapshot(snapshot_json(1, 2), expected_start=1, expected_end=2)
+        packet = build_memory_packet(snapshot, two_pair_window().recent_turns)
+        svc._native_chat_once = AsyncMock(
+            return_value=native_result("MEMORY_READY", "resp_compacted", 1800)
+        )
+
+        result = await svc._prewarm_chain(packet, "系统")
+
+        payload = svc._native_chat_once.await_args.args[0]
+        assert payload["system_prompt"] == "系统"
+        assert payload["input"].endswith("仅回复 MEMORY_READY")
+        assert payload["store"] is True
+        assert payload["reasoning"] == "off"
+        assert payload["temperature"] == 0
+        assert payload["max_output_tokens"] == 16
+        assert result.response_id == "resp_compacted"
+
+    async def test_compaction_prewarm_atomically_replaces_chain(self) -> None:
+        svc = compaction_service()
+        svc._previous_response_id = "resp_old"
+        svc._completed_user_turns = 2
+        svc._native_chat_once = AsyncMock(
+            side_effect=[
+                native_result(snapshot_json(1, 2), None, 300),
+                native_result("MEMORY_READY", "resp_compacted", 1800),
+            ]
+        )
+
+        await svc._run_compaction(two_pair_window(), "系统", generation=0, user_turns=2)
+
+        assert svc._previous_response_id == "resp_compacted"
+        assert svc.memory_packet is not None
+        assert svc.memory_packet.snapshot.source_turn_end == 2
+
+    async def test_new_request_invalidates_late_compaction_candidate(self) -> None:
+        svc = compaction_service()
+        svc._previous_response_id = "resp_old"
+        svc._completed_user_turns = 2
+        gate = asyncio.Event()
+
+        async def delayed_call(
+            payload: dict[str, Any], *, timeout_seconds: float
+        ) -> NativeChatResult:
+            del timeout_seconds
+            if payload["store"] is False:
+                return native_result(snapshot_json(1, 2), None, 300)
+            await gate.wait()
+            return native_result("MEMORY_READY", "resp_compacted", 1800)
+
+        svc._native_chat_once = AsyncMock(side_effect=delayed_call)
+        task = asyncio.create_task(
+            svc._run_compaction(two_pair_window(), "系统", generation=0, user_turns=2)
+        )
+        svc._request_generation = 1
+        gate.set()
+        await task
+
+        assert svc._previous_response_id == "resp_old"
+        assert svc.memory_packet is None
+
     async def test_second_turn_uses_previous_response_id_and_only_current_user(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         payloads: list[dict[str, Any]] = []
@@ -348,6 +528,31 @@ class TestLmStudioNativeLLMService:
         assert "第一轮用户指令" not in str(payloads[1])
         assert "第一轮助手回答" not in str(payloads[1])
         assert svc._previous_response_id == "resp_second"
+
+    async def test_valid_stream_commit_schedules_and_swaps_compacted_chain(self) -> None:
+        svc = compaction_service()
+        svc._native_chat_once = AsyncMock(
+            side_effect=[
+                native_result(snapshot_json(1, 2), None, 300),
+                native_result("MEMORY_READY", "resp_compacted", 1800),
+            ]
+        )
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(stream_lines("第二轮回答", "resp_second", 6100))
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [
+            chunk
+            async for chunk in await svc.get_chat_completions(make_second_turn_context())
+        ]
+        task = svc.compaction_task
+        assert task is not None
+        await task
+
+        assert svc._previous_response_id == "resp_compacted"
+        assert svc.memory_packet is not None
 
     async def test_reset_conversation_starts_new_chain_with_current_system_prompt(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")

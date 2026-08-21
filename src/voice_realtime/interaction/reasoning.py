@@ -15,6 +15,7 @@ QA 验证结论（2026-08-17，本机实测）：
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -31,7 +32,22 @@ from pipecat.frames.frames import CancelFrame, EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
-from voice_realtime.interaction.context_memory import ContextCompactionConfig
+from voice_realtime.interaction.context_memory import (
+    MEMORY_READY,
+    SUMMARY_SYSTEM_PROMPT,
+    CompactionWindow,
+    ContextCompactionConfig,
+    ConversationMemoryPacket,
+    ConversationMemorySnapshot,
+    build_compaction_window,
+    build_memory_packet,
+    empty_memory_snapshot,
+    fit_compaction_window,
+    normalize_completed_turns,
+    parse_snapshot,
+    serialize_memory_packet,
+    should_compact,
+)
 from voice_realtime.network import local_async_client
 
 logger = logging.getLogger(__name__)
@@ -250,6 +266,9 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._last_assistant_text: str | None = None
         self._model_context_length: int | None = None
         self._model_context_length_discovered = False
+        self._memory_packet: ConversationMemoryPacket | None = None
+        self._compaction_task: asyncio.Task[None] | None = None
+        self._ttft_soft_hits = 0
 
     @property
     def last_chat_stats(self) -> NativeChatStats | None:
@@ -258,6 +277,14 @@ class LmStudioNativeLLMService(OpenAILLMService):
     @property
     def last_assistant_text(self) -> str | None:
         return self._last_assistant_text
+
+    @property
+    def memory_packet(self) -> ConversationMemoryPacket | None:
+        return self._memory_packet
+
+    @property
+    def compaction_task(self) -> asyncio.Task[None] | None:
+        return self._compaction_task
 
     def reset_conversation(self) -> None:
         """使在途请求失效并开启新的 LM Studio 对话链。"""
@@ -346,6 +373,254 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._model_context_length_discovered = True
         return discovered
 
+    async def _summarize_window(
+        self, window: CompactionWindow
+    ) -> ConversationMemorySnapshot:
+        """把冻结的旧历史压缩为严格、带来源范围的结构化快照。"""
+        transcript = {
+            "previous_snapshot": window.previous_snapshot.model_dump(),
+            "turns_to_summarize": [
+                turn.model_dump() for turn in window.turns_to_summarize
+            ],
+            "required_source_range": {
+                "start": window.expected_snapshot_start,
+                "end": window.expected_snapshot_end,
+            },
+        }
+        transcript_json = json.dumps(
+            transcript,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            correction = (
+                ""
+                if attempt == 0
+                else "\n上次输出未通过 JSON schema 校验；请仅修正格式和来源范围。"
+            )
+            result = await self._native_chat_once(
+                {
+                    "model": self._model,
+                    "system_prompt": SUMMARY_SYSTEM_PROMPT,
+                    "input": transcript_json + correction,
+                    "reasoning": "off",
+                    "temperature": 0,
+                    "max_output_tokens": self._compaction_config.summary_max_output_tokens,
+                    "store": False,
+                    "stream": False,
+                },
+                timeout_seconds=self._compaction_config.summary_timeout_seconds,
+            )
+            if result.stats.reasoning_output_tokens != 0:
+                raise ValueError("LM Studio summary reasoning output must be zero")
+            try:
+                return parse_snapshot(
+                    result.content,
+                    expected_start=window.expected_snapshot_start,
+                    expected_end=window.expected_snapshot_end,
+                )
+            except ValueError as exc:
+                last_error = exc
+        if last_error is None:  # pragma: no cover - 循环结构的静态兜底
+            raise RuntimeError("LM Studio summary validation did not run")
+        raise last_error
+
+    async def _prewarm_chain(
+        self,
+        packet: ConversationMemoryPacket,
+        system_prompt: str,
+    ) -> NativeChatResult:
+        """把历史记忆作为数据预热新链，但不混入下一条真实用户指令。"""
+        result = await self._native_chat_once(
+            {
+                "model": self._model,
+                "system_prompt": system_prompt,
+                "input": serialize_memory_packet(packet) + "\n仅回复 MEMORY_READY",
+                "reasoning": "off",
+                "temperature": 0,
+                "max_output_tokens": 16,
+                "store": True,
+                "stream": False,
+            },
+            timeout_seconds=self._compaction_config.summary_timeout_seconds,
+        )
+        if result.content.strip() != MEMORY_READY:
+            raise ValueError("LM Studio prewarm acknowledgement is invalid")
+        if result.stats.reasoning_output_tokens != 0:
+            raise ValueError("LM Studio prewarm reasoning output must be zero")
+        if result.response_id is None or not _RESPONSE_ID_RE.fullmatch(result.response_id):
+            raise ValueError("LM Studio prewarm response_id is invalid")
+        if result.stats.input_tokens > self._compaction_config.target_input_tokens:
+            logger.info(
+                "LM Studio 压缩预热超过目标水位（input_tokens=%s target=%s recent_turns=%s）",
+                result.stats.input_tokens,
+                self._compaction_config.target_input_tokens,
+                len(packet.recent_turns),
+            )
+        return result
+
+    async def _run_compaction(
+        self,
+        window: CompactionWindow,
+        system_prompt: str,
+        *,
+        generation: int,
+        user_turns: int,
+        source_response_id: str | None = None,
+    ) -> None:
+        """在后台构造候选链，并仅在原会话边界未变化时原子提交。"""
+        captured_response_id = source_response_id or self._previous_response_id
+        if captured_response_id is None:
+            return
+        try:
+            fitted_window = fit_compaction_window(
+                window,
+                max_recent_bytes=self._compaction_config.target_input_tokens * 4,
+            )
+            snapshot = await self._summarize_window(fitted_window)
+            packet = build_memory_packet(snapshot, fitted_window.recent_turns)
+            candidate = await self._prewarm_chain(packet, system_prompt)
+        except (httpx.HTTPError, TypeError, ValueError):
+            logger.warning(
+                "LM Studio 上下文压缩候选失败（generation=%s summarize_turns=%s recent_turns=%s）",
+                generation,
+                len(window.turns_to_summarize),
+                len(window.recent_turns),
+                exc_info=True,
+            )
+            return
+
+        still_current = (
+            generation == self._request_generation
+            and user_turns == self._completed_user_turns
+            and not self._native_client_closed
+            and self._previous_response_id == captured_response_id
+        )
+        if not still_current:
+            logger.info(
+                "丢弃已过期的 LM Studio 上下文压缩候选（generation=%s）",
+                generation,
+            )
+            return
+
+        self._previous_response_id = candidate.response_id
+        self._system_prompt = system_prompt
+        self._memory_packet = packet
+
+    async def _evaluate_capacity_and_compact(
+        self,
+        window: CompactionWindow,
+        system_prompt: str,
+        *,
+        generation: int,
+        user_turns: int,
+        source_response_id: str,
+        stats: NativeChatStats,
+        unsummarized_messages: int,
+    ) -> None:
+        model_context_length = await self._get_model_context_length()
+        decision = should_compact(
+            self._compaction_config,
+            input_tokens=stats.input_tokens,
+            ttft_seconds=stats.ttft_seconds,
+            ttft_soft_hits=self._ttft_soft_hits,
+            unsummarized_messages=unsummarized_messages,
+            model_context_length=model_context_length,
+        )
+        if decision.triggered:
+            await self._run_compaction(
+                window,
+                system_prompt,
+                generation=generation,
+                user_turns=user_turns,
+                source_response_id=source_response_id,
+            )
+
+    @staticmethod
+    def _observe_compaction_task(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("LM Studio 上下文压缩后台任务异常")
+
+    def _schedule_compaction(
+        self,
+        messages: list[ChatCompletionMessageParam],
+        assistant_text: str,
+        system_prompt: str,
+        generation: int,
+    ) -> None:
+        """在有效用户响应提交后按水位调度至多一个后台候选。"""
+        stats = self._last_chat_stats
+        if not self._compaction_config.enabled or stats is None or self._native_client_closed:
+            return
+        if stats.ttft_seconds >= self._compaction_config.ttft_soft_seconds:
+            self._ttft_soft_hits += 1
+        else:
+            self._ttft_soft_hits = 0
+        if self._compaction_task is not None and not self._compaction_task.done():
+            return
+
+        try:
+            turns = normalize_completed_turns(messages, assistant_text=assistant_text)
+            previous_snapshot = (
+                self._memory_packet.snapshot
+                if self._memory_packet is not None
+                else empty_memory_snapshot()
+            )
+            window = build_compaction_window(
+                turns,
+                previous_snapshot,
+                self._compaction_config.recent_turn_pairs,
+            )
+        except ValueError:
+            logger.warning("LM Studio 上下文压缩跳过非法角色历史", exc_info=True)
+            return
+        if window is None or self._previous_response_id is None:
+            return
+
+        user_turns = len(turns) // 2
+        unsummarized_messages = len(turns) - previous_snapshot.source_turn_end
+        decision = should_compact(
+            self._compaction_config,
+            input_tokens=stats.input_tokens,
+            ttft_seconds=stats.ttft_seconds,
+            ttft_soft_hits=self._ttft_soft_hits,
+            unsummarized_messages=unsummarized_messages,
+            model_context_length=(
+                self._model_context_length
+                if self._model_context_length_discovered
+                else None
+            ),
+        )
+        source_response_id = self._previous_response_id
+        if decision.triggered:
+            coroutine = self._run_compaction(
+                window,
+                system_prompt,
+                generation=generation,
+                user_turns=user_turns,
+                source_response_id=source_response_id,
+            )
+        elif not self._model_context_length_discovered:
+            coroutine = self._evaluate_capacity_and_compact(
+                window,
+                system_prompt,
+                generation=generation,
+                user_turns=user_turns,
+                source_response_id=source_response_id,
+                stats=stats,
+                unsummarized_messages=unsummarized_messages,
+            )
+        else:
+            return
+        task = asyncio.create_task(coroutine, name=f"lm-context-compact-{generation}")
+        task.add_done_callback(self._observe_compaction_task)
+        self._compaction_task = task
+
     async def _native_completions(
         self,
         payload: dict[str, Any],
@@ -353,6 +628,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
         generation: int,
         system_prompt: str,
         user_turns: int,
+        messages: list[ChatCompletionMessageParam],
         allow_chain_retry: bool = True,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
@@ -388,6 +664,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
                     generation=generation,
                     system_prompt=system_prompt,
                     user_turns=user_turns,
+                    messages=messages,
                     allow_chain_retry=False,
                 ):
                     yield retry_chunk
@@ -451,6 +728,12 @@ class LmStudioNativeLLMService(OpenAILLMService):
             self._completed_user_turns = user_turns
             self._last_chat_stats = final_result.stats
             self._last_assistant_text = final_result.content
+            self._schedule_compaction(
+                messages,
+                final_result.content,
+                system_prompt,
+                generation,
+            )
 
     async def close(self) -> None:
         """关闭原生 HTTP 客户端；允许 stop/cleanup 重复调用。"""
@@ -489,6 +772,9 @@ class LmStudioNativeLLMService(OpenAILLMService):
             convert_developer_to_user=False,
         )
         messages = params_from_context["messages"]
+        frozen_messages = [
+            cast(ChatCompletionMessageParam, dict(message)) for message in messages
+        ]
         system_prompt, user_input, user_turns = _conversation_input(messages)
         start_new_chain = (
             self._previous_response_id is None
@@ -516,5 +802,6 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 generation=generation,
                 system_prompt=system_prompt,
                 user_turns=user_turns,
+                messages=frozen_messages,
             ),
         )
