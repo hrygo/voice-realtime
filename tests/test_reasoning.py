@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pipecat.frames.frames import EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -31,11 +32,22 @@ SSE_LINES = [
 
 
 class FakeSSEResponse:
-    def __init__(self, lines: list[str]) -> None:
+    def __init__(
+        self,
+        lines: list[str],
+        *,
+        status_code: int = 200,
+        error_body: dict[str, Any] | None = None,
+    ) -> None:
         self._lines = lines
+        self._response = httpx.Response(
+            status_code,
+            request=httpx.Request("POST", "http://localhost:1234/api/v1/chat"),
+            json=error_body,
+        )
 
     def raise_for_status(self) -> None:
-        pass
+        self._response.raise_for_status()
 
     async def aiter_lines(self) -> Any:
         for line in self._lines:
@@ -224,6 +236,7 @@ class TestLmStudioNativeLLMService:
             ": ping",
             "data: not json",
             'data: {"type":"message.delta","content":"测试"}',
+            'data: {"type":"chat.end","result":{"response_id":"resp_done"}}',
             "data: [DONE]",
             'data: {"type":"message.delta","content":"不会被消费"}',
         ]
@@ -235,6 +248,144 @@ class TestLmStudioNativeLLMService:
         svc._http.stream = fake_stream  # type: ignore[method-assign]
         chunks = [chunk async for chunk in await svc.get_chat_completions(make_context())]
         assert [c.choices[0].delta.content for c in chunks] == ["测试"]
+
+    async def test_missing_chat_end_raises_without_committing_state(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(['data: {"type":"message.delta","content":"测试"}'])
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(RuntimeError, match=r"chat\.end"):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        assert svc._previous_response_id is None
+
+    async def test_invalid_previous_response_id_rebuilds_chain_once(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        payloads: list[dict[str, Any]] = []
+        call_count = 0
+
+        @asynccontextmanager
+        async def fake_stream(
+            _method: str, _url: str, json: dict[str, Any] | None = None, **_: Any
+        ) -> Any:
+            nonlocal call_count
+            call_count += 1
+            payloads.append(json or {})
+            if call_count == 1:
+                yield FakeSSEResponse(SSE_LINES)
+            elif call_count == 2:
+                yield FakeSSEResponse(
+                    [],
+                    status_code=400,
+                    error_body={
+                        "error": {
+                            "type": "invalid_request",
+                            "param": "previous_response_id",
+                            "message": "previous_response_id was not found",
+                        }
+                    },
+                )
+            else:
+                yield FakeSSEResponse(
+                    [
+                        'data: {"type":"message.delta","content":"恢复"}',
+                        (
+                            'data: {"type":"chat.end","result":'
+                            '{"response_id":"resp_recovered"}}'
+                        ),
+                    ]
+                )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        chunks = [
+            chunk
+            async for chunk in await svc.get_chat_completions(make_second_turn_context())
+        ]
+
+        assert [chunk.choices[0].delta.content for chunk in chunks] == ["恢复"]
+        assert payloads[1]["previous_response_id"] == "resp_first"
+        assert "previous_response_id" not in payloads[2]
+        assert payloads[2]["system_prompt"] == "你是一个中文语音助手"
+        assert svc._previous_response_id == "resp_recovered"
+
+    @pytest.mark.parametrize(
+        "chat_end_line,error_type",
+        [
+            ('data: {"type":"chat.end","result":[]}', TypeError),
+            (
+                'data: {"type":"chat.end","result":{"response_id":"bad"}}',
+                ValueError,
+            ),
+        ],
+    )
+    async def test_invalid_chat_end_never_commits_state(
+        self, chat_end_line: str, error_type: type[Exception]
+    ) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(
+                ['data: {"type":"message.delta","content":"测试"}', chat_end_line]
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(error_type):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        assert svc._previous_response_id is None
+
+    async def test_reset_during_inflight_stream_discards_late_response_id(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(SSE_LINES)
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        stream = await svc.get_chat_completions(make_context())
+        svc.reset_conversation()
+        chunks = [chunk async for chunk in stream]
+
+        assert [chunk.choices[0].delta.content for chunk in chunks] == ["你", "好"]
+        assert svc._previous_response_id is None
+
+    async def test_invalid_previous_response_id_is_retried_only_once(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        call_count = 0
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield FakeSSEResponse(SSE_LINES)
+                return
+            yield FakeSSEResponse(
+                [],
+                status_code=400,
+                error_body={
+                    "error": {
+                        "param": "previous_response_id",
+                        "message": "previous_response_id was not found",
+                    }
+                },
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        with pytest.raises(httpx.HTTPStatusError):
+            _ = [
+                chunk
+                async for chunk in await svc.get_chat_completions(
+                    make_second_turn_context()
+                )
+            ]
+
+        assert call_count == 3
+        assert svc._previous_response_id is None
 
     async def test_sse_error_event_raises(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")

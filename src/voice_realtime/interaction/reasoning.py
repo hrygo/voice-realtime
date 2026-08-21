@@ -16,6 +16,7 @@ QA 验证结论（2026-08-17，本机实测）：
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
@@ -29,6 +30,8 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
 from voice_realtime.network import local_async_client
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = (
     "# 角色\n"
@@ -86,6 +89,25 @@ def _conversation_input(
         if message.get("role") == "user" and _text_content(message) is not None
     )
     return system_prompt, user_input, user_turns
+
+
+def _is_invalid_previous_response_id(exc: httpx.HTTPStatusError) -> bool:
+    """仅识别 LM Studio 明确指向 previous_response_id 的 400/404。"""
+    if exc.response.status_code not in {400, 404}:
+        return False
+    try:
+        body = exc.response.json()
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return False
+    if error.get("param") == "previous_response_id":
+        return True
+    message = error.get("message")
+    return isinstance(message, str) and "previous_response_id" in message
 
 
 class LmStudioNativeLLMService(OpenAILLMService):
@@ -146,12 +168,42 @@ class LmStudioNativeLLMService(OpenAILLMService):
         generation: int,
         system_prompt: str,
         user_turns: int,
+        allow_chain_retry: bool = True,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
         saw_content = False
         response_id: str | None = None
         async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                can_rebuild = (
+                    allow_chain_retry
+                    and "previous_response_id" in payload
+                    and generation == self._request_generation
+                    and _is_invalid_previous_response_id(exc)
+                )
+                if not can_rebuild:
+                    raise
+                self._previous_response_id = None
+                self._system_prompt = None
+                self._completed_user_turns = 0
+                retry_payload = dict(payload)
+                retry_payload.pop("previous_response_id", None)
+                retry_payload["system_prompt"] = system_prompt
+                logger.warning(
+                    "LM Studio 上下文链失效，当前轮将创建新链（generation=%s）",
+                    generation,
+                )
+                async for retry_chunk in self._native_completions(
+                    retry_payload,
+                    generation=generation,
+                    system_prompt=system_prompt,
+                    user_turns=user_turns,
+                    allow_chain_retry=False,
+                ):
+                    yield retry_chunk
+                return
             async for line in resp.aiter_lines():
                 if not line.startswith("data: "):
                     continue
@@ -197,7 +249,9 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 yield cast(ChatCompletionChunk, cast(Any, chunk))
         if not saw_content:
             raise RuntimeError("LM Studio returned no message content")
-        if response_id is not None and generation == self._request_generation:
+        if response_id is None:
+            raise RuntimeError("LM Studio stream ended without a valid chat.end")
+        if generation == self._request_generation:
             self._previous_response_id = response_id
             self._system_prompt = system_prompt
             self._completed_user_turns = user_turns
