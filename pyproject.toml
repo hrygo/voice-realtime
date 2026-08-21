@@ -37,6 +37,7 @@ tts = [
 # 交互管道 (Pipecat: FunASR STT + LLM + 自定义 TTS + AudioHub 采集) — 重型依赖，独立组
 interaction = [
     "pipecat-ai[funasr,silero,openai,soundfile,websocket,local]>=1.0",
+    "modelscope>=1.39",
     "torch>=2.5",
     "torchaudio>=2.5",
     "pyaudio>=0.2.14",

@@ -66,6 +66,7 @@ def test_subtitle_defaults_to_qwen3_asr_1_7b_quality_profile() -> None:
     assert settings.qwen3_streaming_device == "mps"
     assert settings.punctuation_split is True
     assert "Qwen3-ASR" in settings.context
+    assert "保留英文、数字、连字符和大小写" in settings.context
 
 
 @pytest.mark.parametrize(

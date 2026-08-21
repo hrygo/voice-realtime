@@ -138,7 +138,7 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 
 > 📦 **依赖组说明**：
 > - `tts`：`mlx-audio[tts]` + `misaki[zh]`（重型依赖）
-> - `interaction`：`pipecat-ai[funasr,silero,openai,soundfile,websocket,local]` + `torch/torchaudio`（重型依赖）
+> - `interaction`：`pipecat-ai[funasr,silero,openai,soundfile,websocket,local]` + `modelscope` + `torch/torchaudio`（重型依赖）
 > - `dev`：`pytest` 系列 + `ruff` + `mypy`
 > - *新增任何依赖前请严格确认 Python 3.12 兼容性锁定。*
 

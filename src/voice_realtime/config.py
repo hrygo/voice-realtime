@@ -18,8 +18,9 @@ DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
 DEFAULT_ASR_CONTEXT = (
-    "术语：Voice Studio、LM Studio、Qwen3-ASR、WhisperLiveKit、SenseVoice、"
-    "Sortformer、Pipecat、PostgreSQL、MLX。"
+    "你是中文语音识别器。请逐字准确转写，保留英文、数字、连字符和大小写。"
+    "专有名词词表：Voice Studio；LM Studio；Qwen3-ASR；WhisperLiveKit；SenseVoice；"
+    "Sortformer；Pipecat；PostgreSQL；MLX。"
 )
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 # Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy

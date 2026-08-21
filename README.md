@@ -30,7 +30,8 @@ Python 严格锁定 `>=3.12,<3.13`。
 
 ## 启动
 
-先用 `scripts/download-models.sh` 准备本地模型，再分别启动四个运行单元：
+先用 `scripts/download-models.sh` 准备本地模型（Qwen3-ASR 在中国大陆使用官方
+ModelScope 镜像），再分别启动四个运行单元：
 
 ```bash
 uv sync --all-extras

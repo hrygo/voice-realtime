@@ -133,7 +133,8 @@ Expected: PASS。
 - Modify: `docs/会议助手后端运行与前后端联调.md`
 
 **Interfaces:**
-- 模型安装脚本把 `Qwen/Qwen3-ASR-1.7B` 写入 `runtime/qwen3-asr-1.7b`。
+- 模型安装脚本通过 Qwen 官方 ModelScope 镜像把 `Qwen/Qwen3-ASR-1.7B` 写入
+  `runtime/qwen3-asr-1.7b`。
 - 文档统一以 1.7B、MPS windowed、严格离线和会议后字幕自动恢复为准。
 
 - [x] **Step 1: 修改脚本与文档**
@@ -154,15 +155,15 @@ Expected: 不再存在把 0.6B 描述为当前默认路径的匹配。
 **Interfaces:**
 - `vr-subtitles` 从默认本地目录加载官方 Qwen3-ASR 1.7B。
 
-- [ ] **Step 1: 下载官方模型到默认目录**
+- [x] **Step 1: 下载官方模型到默认目录**
 
-Run: `uv run python -c "from huggingface_hub import snapshot_download; print(snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='runtime/qwen3-asr-1.7b'))"`
+Run: `uv run python -c "from modelscope import snapshot_download; print(snapshot_download('Qwen/Qwen3-ASR-1.7B', local_dir='runtime/qwen3-asr-1.7b', max_workers=8))"`
 
-- [ ] **Step 2: 验证模型完整性**
+- [x] **Step 2: 验证模型完整性**
 
 确认 `config.json`、tokenizer 文件和全部 safetensors shard 存在，且启动参数使用默认目录。
 
-- [ ] **Step 3: 执行全量门禁**
+- [x] **Step 3: 执行全量门禁**
 
 Run:
 
@@ -176,7 +177,7 @@ cd ui && npm run build
 
 Expected: 全部退出码为 0，分支覆盖率不低于 80%。
 
-- [ ] **Step 4: 执行真实闭环**
+- [x] **Step 4: 执行真实闭环**
 
 依次启动 `vr-subtitles`、`vr-bridge`、临时 schema 下的 `vr-ui`；验证健康检查、EOF、
 `assistant -> meeting -> idle -> assistant`、冲突拒绝、字幕重新 connected、数据库无音频载荷。

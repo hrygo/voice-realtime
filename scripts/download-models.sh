@@ -22,11 +22,12 @@ PY
 
 echo "== 下载 Qwen3-ASR streaming (WhisperLiveKit) =="
 uv run python - <<'PY'
-from huggingface_hub import snapshot_download
+from modelscope import snapshot_download
 
 p = snapshot_download(
     "Qwen/Qwen3-ASR-1.7B",
     local_dir="runtime/qwen3-asr-1.7b",
+    max_workers=8,
 )
 print(f"Qwen3-ASR 1.7B 本地目录: {p}")
 PY

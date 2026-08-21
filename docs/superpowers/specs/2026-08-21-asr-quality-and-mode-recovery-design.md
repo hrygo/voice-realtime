@@ -60,14 +60,14 @@ windowed 质量配置：
 - audio backend `windowed`
 - punctuation split 开启
 
-新增可选 `context` 字段，通过 `--qwen3-streaming-context` 传递领域词、人名和缩写。
+新增可选 `context` 字段，通过 `--qwen3-streaming-context` 传递转写约束、领域词、人名和缩写。
 字段限制长度并去除边界空白，避免无界 prompt。非 `qwen3-streaming` 后端不接收这些专属参数。
 
 ### 4. 模型准备
 
-`scripts/download-models.sh` 使用 `snapshot_download()` 把官方 1.7B 模型物化到
-`runtime/qwen3-asr-1.7b`。TTS 和 SenseVoice 只下载到 Hugging Face 缓存；运行时解析为缓存快照。
-下载仍是一次性显式安装动作，运行服务默认离线。
+`scripts/download-models.sh` 使用 Qwen 官方 ModelScope 镜像的 `snapshot_download()` 把
+1.7B 模型物化到 `runtime/qwen3-asr-1.7b`。TTS 和 SenseVoice 只下载到 Hugging Face
+缓存；运行时解析为缓存快照。下载仍是一次性显式安装动作，运行服务默认离线。
 
 ## 错误处理
 

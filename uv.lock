@@ -2630,6 +2630,7 @@ dev = [
     { name = "ruff" },
 ]
 interaction = [
+    { name = "modelscope" },
     { name = "pipecat-ai", extra = ["funasr", "local", "soundfile", "websocket"] },
     { name = "pyaudio" },
     { name = "torch" },
@@ -2649,6 +2650,7 @@ requires-dist = [
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
     { name = "misaki", extras = ["zh"], marker = "extra == 'tts'", specifier = ">=0.9.4" },
     { name = "mlx-audio", extras = ["tts"], marker = "extra == 'tts'", specifier = ">=0.4.8" },
+    { name = "modelscope", marker = "extra == 'interaction'", specifier = ">=1.39" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
     { name = "pipecat-ai", extras = ["funasr", "silero", "openai", "soundfile", "websocket", "local"], marker = "extra == 'interaction'", specifier = ">=1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
