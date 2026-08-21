@@ -25,7 +25,8 @@ SSE_LINES = [
     'data: {"type":"message.delta","content":"你"}',
     'data: {"type":"message.delta","content":"好"}',
     'data: {"type":"message.delta","content":""}',
-    'data: {"type":"message.complete"}',
+    'data: {"type":"message.end"}',
+    'data: {"type":"chat.end","result":{"response_id":"resp_first"}}',
 ]
 
 
@@ -46,6 +47,17 @@ def make_context() -> LLMContext:
         messages=[
             {"role": "system", "content": "你是一个中文语音助手"},
             {"role": "user", "content": "你好"},
+        ]
+    )
+
+
+def make_second_turn_context() -> LLMContext:
+    return LLMContext(
+        messages=[
+            {"role": "system", "content": "你是一个中文语音助手"},
+            {"role": "user", "content": "第一轮用户指令"},
+            {"role": "assistant", "content": "第一轮助手回答"},
+            {"role": "user", "content": "第二轮用户指令"},
         ]
     )
 
@@ -106,13 +118,104 @@ class TestLmStudioNativeLLMService:
         assert payload["reasoning"] == "off"
         assert payload["temperature"] == 0.9
         assert payload["stream"] is True
-        # input items：无 role 字段、按序为文本内容
-        assert payload["input"] == [
-            {"type": "text", "content": "你是一个中文语音助手"},
-            {"type": "text", "content": "你好"},
-        ]
+        assert payload["system_prompt"] == "你是一个中文语音助手"
+        assert payload["input"] == "你好"
+        assert payload["store"] is True
+        assert "previous_response_id" not in payload
         # SSE → chunk 转换：空 delta 被过滤
         assert [c.choices[0].delta.content for c in chunks] == ["你", "好"]
+        assert svc._previous_response_id == "resp_first"
+
+    async def test_second_turn_uses_previous_response_id_and_only_current_user(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        payloads: list[dict[str, Any]] = []
+        response_ids = iter(("resp_first", "resp_second"))
+
+        @asynccontextmanager
+        async def fake_stream(
+            _method: str, _url: str, json: dict[str, Any] | None = None, **_: Any
+        ) -> Any:
+            payloads.append(json or {})
+            response_id = next(response_ids)
+            yield FakeSSEResponse(
+                [
+                    'data: {"type":"message.delta","content":"好"}',
+                    (
+                        'data: {"type":"chat.end","result":{"response_id":"'
+                        f'{response_id}"}}}}'
+                    ),
+                ]
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        _ = [
+            chunk
+            async for chunk in await svc.get_chat_completions(make_second_turn_context())
+        ]
+
+        assert payloads[1]["input"] == "第二轮用户指令"
+        assert payloads[1]["previous_response_id"] == "resp_first"
+        assert "system_prompt" not in payloads[1]
+        assert "第一轮用户指令" not in str(payloads[1])
+        assert "第一轮助手回答" not in str(payloads[1])
+        assert svc._previous_response_id == "resp_second"
+
+    async def test_reset_conversation_starts_new_chain_with_current_system_prompt(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        payloads: list[dict[str, Any]] = []
+
+        @asynccontextmanager
+        async def fake_stream(
+            _method: str, _url: str, json: dict[str, Any] | None = None, **_: Any
+        ) -> Any:
+            payloads.append(json or {})
+            yield FakeSSEResponse(SSE_LINES)
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+        svc.reset_conversation()
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+        assert payloads[1]["system_prompt"] == "你是一个中文语音助手"
+        assert "previous_response_id" not in payloads[1]
+        assert svc._previous_response_id == "resp_first"
+
+    @pytest.mark.parametrize(
+        "messages,match",
+        [
+            ([{"role": "user", "content": "你好"}], "exactly one text system"),
+            (
+                [
+                    {"role": "system", "content": "系统一"},
+                    {"role": "system", "content": "系统二"},
+                    {"role": "user", "content": "你好"},
+                ],
+                "exactly one text system",
+            ),
+            (
+                [
+                    {"role": "system", "content": "系统"},
+                    {"role": "assistant", "content": "回答"},
+                ],
+                "end with a text user",
+            ),
+            (
+                [
+                    {"role": "system", "content": "系统"},
+                    {"role": "user", "content": []},
+                ],
+                "user message must contain text",
+            ),
+        ],
+    )
+    async def test_context_role_boundary_is_strict(
+        self, messages: list[dict[str, Any]], match: str
+    ) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+
+        with pytest.raises(ValueError, match=match):
+            await svc.get_chat_completions(LLMContext(messages=messages))  # type: ignore[arg-type]
 
     async def test_sse_handles_done_and_malformed_lines(self) -> None:
         """验证 SSE 遇到 [DONE] 正常退出、遇到非 JSON 或空行不崩溃。"""

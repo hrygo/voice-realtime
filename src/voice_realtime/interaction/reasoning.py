@@ -1,13 +1,13 @@
-"""LM Studio 适配：原生 /api/v1/chat 端点 LLM 服务（reasoning 开关）。
+"""LM Studio 适配：原生 /api/v1/chat 端点与有状态对话链。
 
 QA 验证结论（2026-08-17，本机实测）：
 - LM Studio 的 OpenAI 兼容端点 **忽略** `reasoning` 参数：模型始终思考
   （`reasoning_content` 占满 token、`content` 为空、TTFT 被思考拉长）。
 - reasoning 开关只在 **原生 `/api/v1/chat`** 端点生效：
   `reasoning:"off"` 时 `reasoning_output_tokens=0`、TTFT 0.261s（实测）。
-- 原生端点输入是**无 role 的 text items 序列**（按顺序隐式推断角色），
-  支持 `stream:true` 的 SSE（`message.delta` 事件逐字输出）；
-  不接受 `max_tokens`/`role` 字段。
+- 原生端点以 `system_prompt` 表示系统角色、`input` 表示本轮用户消息，
+  通过 `response_id` / `previous_response_id` 保留历史 user/assistant 角色；
+  支持 `stream:true` 的 SSE（`message.delta` 事件逐字输出）。
 
 本服务子类化 `OpenAILLMService`（复用适配器、上下文、指标、中断机制），
 仅覆写 `get_chat_completions` 的传输层走原生端点。
@@ -16,6 +16,7 @@ QA 验证结论（2026-08-17，本机实测）：
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast
@@ -53,6 +54,7 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 _NATIVE_CHAT_PATH = "/api/v1/chat"
+_RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 
 
 def _text_content(message: ChatCompletionMessageParam) -> str | None:
@@ -61,6 +63,29 @@ def _text_content(message: ChatCompletionMessageParam) -> str | None:
     if isinstance(content, str) and content:
         return content
     return None
+
+
+def _conversation_input(
+    messages: list[ChatCompletionMessageParam],
+) -> tuple[str, str, int]:
+    """从带角色历史中提取系统提示、本轮用户输入和用户轮次数。"""
+    system_messages = [message for message in messages if message.get("role") == "system"]
+    if len(system_messages) != 1:
+        raise ValueError("LM context must contain exactly one text system message")
+    system_prompt = _text_content(system_messages[0])
+    if system_prompt is None:
+        raise ValueError("LM context must contain exactly one text system message")
+    if not messages or messages[-1].get("role") != "user":
+        raise ValueError("LM context must end with a text user message")
+    user_input = _text_content(messages[-1])
+    if user_input is None:
+        raise ValueError("LM context user message must contain text")
+    user_turns = sum(
+        1
+        for message in messages
+        if message.get("role") == "user" and _text_content(message) is not None
+    )
+    return system_prompt, user_input, user_turns
 
 
 class LmStudioNativeLLMService(OpenAILLMService):
@@ -102,12 +127,29 @@ class LmStudioNativeLLMService(OpenAILLMService):
             timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
         )
         self._native_client_closed = False
+        self._previous_response_id: str | None = None
+        self._system_prompt: str | None = None
+        self._completed_user_turns = 0
+        self._request_generation = 0
+
+    def reset_conversation(self) -> None:
+        """使在途请求失效并开启新的 LM Studio 对话链。"""
+        self._request_generation += 1
+        self._previous_response_id = None
+        self._system_prompt = None
+        self._completed_user_turns = 0
 
     async def _native_completions(
-        self, payload: dict[str, Any]
+        self,
+        payload: dict[str, Any],
+        *,
+        generation: int,
+        system_prompt: str,
+        user_turns: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
         saw_content = False
+        response_id: str | None = None
         async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
@@ -127,6 +169,15 @@ class LmStudioNativeLLMService(OpenAILLMService):
                     isinstance(event_type, str) and event_type.endswith(".error")
                 ):
                     raise RuntimeError("LM Studio stream reported an error")
+                if event_type == "chat.end":
+                    result = event.get("result")
+                    if not isinstance(result, dict):
+                        raise TypeError("LM Studio chat.end result must be an object")
+                    candidate = result.get("response_id")
+                    if not isinstance(candidate, str) or not _RESPONSE_ID_RE.fullmatch(candidate):
+                        raise ValueError("LM Studio chat.end response_id is invalid")
+                    response_id = candidate
+                    continue
                 if event_type != "message.delta":
                     continue
                 content = event.get("content")
@@ -146,6 +197,10 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 yield cast(ChatCompletionChunk, cast(Any, chunk))
         if not saw_content:
             raise RuntimeError("LM Studio returned no message content")
+        if response_id is not None and generation == self._request_generation:
+            self._previous_response_id = response_id
+            self._system_prompt = system_prompt
+            self._completed_user_turns = user_turns
 
     async def close(self) -> None:
         """关闭原生 HTTP 客户端；允许 stop/cleanup 重复调用。"""
@@ -184,16 +239,32 @@ class LmStudioNativeLLMService(OpenAILLMService):
             convert_developer_to_user=False,
         )
         messages = params_from_context["messages"]
-        input_items = [
-            {"type": "text", "content": text}
-            for text in (_text_content(m) for m in messages)
-            if text
-        ]
+        system_prompt, user_input, user_turns = _conversation_input(messages)
+        start_new_chain = (
+            self._previous_response_id is None
+            or self._system_prompt != system_prompt
+            or user_turns <= self._completed_user_turns
+        )
+        self._request_generation += 1
+        generation = self._request_generation
         payload: dict[str, Any] = {
             "model": self._model,
-            "input": input_items,
+            "input": user_input,
             "reasoning": self._reasoning,
             "temperature": self._temperature,
+            "store": True,
             "stream": True,
         }
-        return cast(AsyncStream[ChatCompletionChunk], self._native_completions(payload))
+        if start_new_chain:
+            payload["system_prompt"] = system_prompt
+        else:
+            payload["previous_response_id"] = self._previous_response_id
+        return cast(
+            AsyncStream[ChatCompletionChunk],
+            self._native_completions(
+                payload,
+                generation=generation,
+                system_prompt=system_prompt,
+                user_turns=user_turns,
+            ),
+        )
