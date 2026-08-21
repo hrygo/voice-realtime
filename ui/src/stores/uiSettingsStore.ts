@@ -116,6 +116,9 @@ export function applyTheme(theme: Theme): void {
 
 interface UISettingsState {
   theme: Theme;
+  mode: "assistant" | "meeting" | "idle";
+  activeMeetingId: string | null;
+  storageHealth: string;
   persona: string;
   voice: string;
   duplexMode: DuplexMode;
@@ -128,6 +131,7 @@ interface UISettingsState {
   teleprompterSettings: TeleprompterSettings;
 
   setTheme: (theme: Theme) => void;
+  setMode: (mode: "assistant" | "meeting" | "idle") => void;
   applyRuntimeState: (state: RuntimeStateSnapshot) => void;
   setTeleprompterSettings: (settings: Partial<TeleprompterSettings>) => void;
   addCustomPersona: (name: string, prompt: string) => void;
@@ -137,6 +141,9 @@ interface UISettingsState {
 
 export const useUISettingsStore = create<UISettingsState>((set, get) => ({
   theme: initialTheme(),
+  mode: "assistant",
+  activeMeetingId: null,
+  storageHealth: "ok",
   persona: readStorage<string>(
     "voice-studio:persona",
     BUILTIN_PERSONAS[0]?.prompt || "",
@@ -160,12 +167,18 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
     writeStorage("voice-studio:theme", theme);
     applyTheme(theme);
   },
+  setMode: (mode) => {
+    set({ mode });
+  },
   applyRuntimeState: (state) => {
     const persona = state.persona ?? BUILTIN_PERSONAS[0]?.prompt ?? "";
     set({
+      mode: state.mode || (state.active_meeting_id ? "meeting" : "assistant"),
+      activeMeetingId: state.active_meeting_id || null,
+      storageHealth: state.storage || "ok",
       persona,
-      voice: state.voice,
-      duplexMode: state.duplex_mode,
+      voice: state.voice ?? "default",
+      duplexMode: state.duplex_mode ?? "speaker_focus",
       micMuted: state.mic_muted,
       pipelineStatus: state.pipeline,
       subtitleStatus: state.subtitle,
@@ -173,8 +186,8 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
       serverSynchronized: true,
     });
     writeStorage("voice-studio:persona", persona);
-    writeStorage("voice-studio:voice", state.voice);
-    writeStorage("voice-studio:duplex-mode", state.duplex_mode);
+    if (state.voice) writeStorage("voice-studio:voice", state.voice);
+    if (state.duplex_mode) writeStorage("voice-studio:duplex-mode", state.duplex_mode);
     writeStorage("voice-studio:mic-muted", state.mic_muted);
   },
   setTeleprompterSettings: (partial) => {

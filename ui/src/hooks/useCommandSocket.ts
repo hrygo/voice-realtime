@@ -68,7 +68,7 @@ export class CommandChannel {
     }
     if (!isRecord(value)) return;
 
-    if (value.event === "state" && isRuntimeState(value.state)) {
+    if ((value.event === "state" || value.event === "runtime_state") && isRuntimeState(value.state)) {
       this.options.applyState(value.state);
       this.setReady(true);
       return;
@@ -91,10 +91,10 @@ export class CommandChannel {
     if (response.ok) {
       request.resolve(response.state);
     } else {
-      request.reject(new CommandError(
-        response.message || "控制指令执行失败",
-        response.error_code || "command_failed",
-      ));
+      const errObj = response.error;
+      const errMsg = errObj?.message || response.message || "控制指令执行失败";
+      const errCode = errObj?.code || response.error_code || "command_failed";
+      request.reject(new CommandError(errMsg, errCode));
     }
   }
 
@@ -112,7 +112,13 @@ export class CommandChannel {
       }, this.options.timeoutMs ?? 8000);
       this.pending.set(requestId, { resolve, reject, timer });
       try {
-        socket.send(JSON.stringify({ request_id: requestId, ...command }));
+        socket.send(
+          JSON.stringify({
+            contract_version: "1",
+            request_id: requestId,
+            ...command,
+          }),
+        );
       } catch {
         clearTimeout(timer);
         this.pending.delete(requestId);

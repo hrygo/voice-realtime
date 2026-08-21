@@ -113,6 +113,7 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
   const micMuted = useUISettingsStore((s) => s.micMuted);
   const pipelineStatus = useUISettingsStore((s) => s.pipelineStatus);
   const subtitleStatus = useUISettingsStore((s) => s.subtitleStatus);
+  const storageHealth = useUISettingsStore((s) => s.storageHealth);
   const sessionStartedAt = useUISettingsStore((s) => s.sessionStartedAt);
   const phase = useAssistantStore(selectAssistantPhase);
 
@@ -275,6 +276,10 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
         <span className="service-light-pill" title={`字幕代理: ${subtitleStatus}`}>
           <span className={`light-dot dot-${subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking"}`} aria-hidden="true" />
           <span className="light-label">字幕代理</span>
+        </span>
+        <span className="service-light-pill" title={`PostgreSQL 会议存储: ${storageHealth}`}>
+          <span className={`light-dot dot-${storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error"}`} aria-hidden="true" />
+          <span className="light-label">PG 存储</span>
         </span>
         {services.map((s) => (
           <ServiceLight
