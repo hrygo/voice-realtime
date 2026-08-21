@@ -18,6 +18,13 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
     assert InteractionSettings().max_session_seconds == 0
 
 
+def test_interaction_vad_defaults() -> None:
+    settings = InteractionSettings()
+    assert settings.vad_confidence == 0.7
+    assert settings.vad_start_secs == 0.2
+    assert settings.vad_min_volume == 0.65
+
+
 def test_interaction_context_compaction_defaults() -> None:
     settings = InteractionSettings()
     config = settings.context_compaction_config()

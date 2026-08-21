@@ -715,7 +715,12 @@ def build_pipeline(
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(
                 sample_rate=settings.sample_rate,
-                params=VADParams(stop_secs=settings.silence_secs),
+                params=VADParams(
+                    confidence=settings.vad_confidence,
+                    start_secs=settings.vad_start_secs,
+                    stop_secs=settings.silence_secs,
+                    min_volume=settings.vad_min_volume,
+                ),
             ),
             user_mute_strategies=[
                 HangoverUserMuteStrategy(

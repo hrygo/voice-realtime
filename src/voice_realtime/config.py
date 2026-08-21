@@ -168,6 +168,24 @@ class InteractionSettings(BaseSettings):
         le=3.0,
         description="端点判定静音阈值 (秒)；需小于 STT ttfs_p99 以保留转写等待窗口",
     )
+    vad_confidence: float = Field(
+        default=0.7,
+        ge=0.1,
+        le=1.0,
+        description="Silero VAD 人声判定置信度阈值",
+    )
+    vad_start_secs: float = Field(
+        default=0.2,
+        ge=0.05,
+        le=1.0,
+        description="VAD 判定人声开始所需持续语音秒数",
+    )
+    vad_min_volume: float = Field(
+        default=0.65,
+        ge=0.1,
+        le=1.0,
+        description="VAD 最小音量能量门槛（过滤环境微弱杂音/按键声/呼吸声）",
+    )
     echo_barge_in_gain: float = Field(
         default=2.5,
         ge=1.2,

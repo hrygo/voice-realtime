@@ -295,6 +295,8 @@ class TestBuildPipeline:
         user_agg = pipeline.processors[5]  # pair.user()（input/echo/stt/self-echo 之后）
         analyzer = user_agg._params.vad_analyzer  # type: ignore[attr-defined]
         assert analyzer.params.stop_secs == 0.8  # 跟随 settings.silence_secs（fixture=0.8）
+        assert analyzer.params.confidence == 0.7
+        assert analyzer.params.min_volume == 0.65
 
     def test_context_contains_system_prompt(
         self,
