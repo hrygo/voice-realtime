@@ -25,6 +25,7 @@ from voice_realtime.interaction.pipeline import (
     build_pipeline,
     build_system_prompt,
 )
+from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
 from voice_realtime.interaction.types import DuplexMode
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class InteractionSession:
         self._runner_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
         self._echo_suppressor: EchoSuppressionProcessor | None = None
+        self._llm_service: LmStudioNativeLLMService | None = None
         self._persona: str | None = None
         self._duplex_mode = DuplexMode.SPEAKER_FOCUS
         self._started_at: str | None = None
@@ -133,6 +135,8 @@ class InteractionSession:
             worker = self._worker
             if worker is None:
                 return
+            if self._llm_service is not None:
+                self._llm_service.reset_conversation()
             prompt = build_system_prompt(self._persona)
             await worker.queue_frame(
                 LLMMessagesUpdateFrame(messages=[{"role": "system", "content": prompt}])
@@ -158,6 +162,14 @@ class InteractionSession:
                     processor
                     for processor in pipeline.processors
                     if isinstance(processor, EchoSuppressionProcessor)
+                ),
+                None,
+            )
+            self._llm_service = next(
+                (
+                    processor
+                    for processor in pipeline.processors
+                    if isinstance(processor, LmStudioNativeLLMService)
                 ),
                 None,
             )
@@ -281,4 +293,5 @@ class InteractionSession:
         self._runner = None
         self._runner_task = None
         self._echo_suppressor = None
+        self._llm_service = None
         self._started_at = None
