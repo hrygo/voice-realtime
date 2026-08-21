@@ -365,7 +365,12 @@ async def test_summary_client_rejects_empty_transcript_and_adds_repair_instructi
     client._build_payload = build_payload  # type: ignore[method-assign]
     with pytest.raises(SummaryValidationError):
         await client.generate(_document(), (), repair=True)
-    assert "只修复 JSON 结构" in str(payloads[0]["input"])
+    instructions = str(payloads[0]["input"])
+    assert "只修复 JSON 结构" in instructions
+    assert '"evidence_segment_ids"' in instructions
+    assert '"task"' in instructions
+    assert '"additionalProperties":false' in instructions
+    assert "禁止使用 segments" in instructions
 
 
 @pytest.mark.asyncio
@@ -391,6 +396,9 @@ async def test_summary_client_reduce_sends_only_map_results_and_closes_idempoten
     assert len(captured) == 1
     assert "确定发布计划。" in str(captured[0]["input"])
     assert "归并器" in str(captured[0]["input"])
+    assert '"evidence_segment_ids"' in str(captured[0]["input"])
+    assert '"task"' in str(captured[0]["input"])
+    assert "禁止使用 segments" in str(captured[0]["input"])
 
     await client.close()
     await client.close()

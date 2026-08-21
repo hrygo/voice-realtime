@@ -6,6 +6,7 @@ import MeetingPanel from "./components/meeting/MeetingPanel";
 import ShortcutsModal from "./components/ShortcutsModal";
 import { ToastContainer } from "./components/Toast";
 import { useCommandSocket } from "./hooks/useCommandSocket";
+import { useMeetingSocket } from "./hooks/useMeetingSocket";
 import { useMeetingStore } from "./stores/meetingStore";
 import "./App.css";
 
@@ -15,6 +16,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("assistant");
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const commandSocket = useCommandSocket();
+  useMeetingSocket();
   const meetingStatus = useMeetingStore((s) => s.status);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 

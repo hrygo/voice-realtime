@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useMeetingStore } from "../../stores/meetingStore";
-import { useMeetingSocket } from "../../hooks/useMeetingSocket";
 import type { CommandSocketApi } from "../../hooks/useCommandSocket";
 import { MeetingHistorySidebar } from "./MeetingHistorySidebar";
 import { MeetingIdleView } from "./MeetingIdleView";
@@ -18,9 +17,6 @@ interface MeetingPanelProps {
 }
 
 export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
-  // Connect to /ws/v1/meetings
-  useMeetingSocket();
-
   const store = useMeetingStore();
   const [isStarting, setIsStarting] = useState(false);
   const [isEnding, setIsEnding] = useState(false);

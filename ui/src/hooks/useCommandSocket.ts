@@ -74,22 +74,23 @@ export class CommandChannel {
       return;
     }
 
-    if (
-      typeof value.request_id !== "string"
-      || typeof value.cmd !== "string"
-      || typeof value.ok !== "boolean"
-      || !isRuntimeState(value.state)
-    ) {
+    if (typeof value.request_id !== "string" || typeof value.ok !== "boolean") {
       return;
     }
     const response = value as unknown as CommandResponse;
-    this.options.applyState(response.state);
+    if (isRuntimeState(response.state)) {
+      this.options.applyState(response.state);
+    }
     const request = this.pending.get(response.request_id);
     if (!request) return;
     clearTimeout(request.timer);
     this.pending.delete(response.request_id);
     if (response.ok) {
-      request.resolve(response.state);
+      if (isRuntimeState(response.state)) {
+        request.resolve(response.state);
+      } else {
+        request.reject(new CommandError("服务端状态快照格式无效", "invalid_response"));
+      }
     } else {
       const errObj = response.error;
       const errMsg = errObj?.message || response.message || "控制指令执行失败";
@@ -112,13 +113,20 @@ export class CommandChannel {
       }, this.options.timeoutMs ?? 8000);
       this.pending.set(requestId, { resolve, reject, timer });
       try {
-        socket.send(
-          JSON.stringify({
-            contract_version: "1",
-            request_id: requestId,
-            ...command,
-          }),
-        );
+        const payload: Record<string, unknown> = {
+          request_id: requestId,
+          ...command,
+        };
+        if (
+          "contract_version" in command ||
+          command.cmd === "start_meeting" ||
+          command.cmd === "end_meeting" ||
+          command.cmd === "start_assistant" ||
+          command.cmd === "stop_active_mode"
+        ) {
+          payload.contract_version = "1";
+        }
+        socket.send(JSON.stringify(payload));
       } catch {
         clearTimeout(timer);
         this.pending.delete(requestId);
@@ -155,7 +163,7 @@ export interface CommandSocketApi {
   readonly sendCommand: (command: ControlCommand) => Promise<RuntimeStateSnapshot>;
 }
 
-export function useCommandSocket(url = "/ws/assistant/cmd"): CommandSocketApi {
+export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
   const [state, setState] = useState<ConnectionState>("connecting");
   const [ready, setReady] = useState(false);
   const channelRef = useRef<CommandChannel | null>(null);

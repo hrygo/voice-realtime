@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type {
   ExportFormat,
   MeetingDetail,
@@ -42,6 +42,25 @@ export function MeetingDetailView({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Sync title when selected meeting changes
+  useEffect(() => {
+    setTitle(meeting.title);
+    setIsEditingTitle(false);
+  }, [meeting.id, meeting.title]);
+
+  // Click outside to close export menu
+  useEffect(() => {
+    if (!isExportMenuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".export-dropdown-wrapper")) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, [isExportMenuOpen]);
 
   const statusInfo = getStatusLabel(meeting.status);
 

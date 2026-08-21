@@ -55,6 +55,22 @@ export function MeetingRecordingView({
     return () => clearInterval(interval);
   }, [startedAt]);
 
+  // Keyboard shortcut: 'm' / 'M' to toggle mic when not typing in an input
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (e.key === "m" || e.key === "M") {
+        e.preventDefault();
+        onToggleMic();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onToggleMic]);
+
   // Auto-scroll on new segments / partial
   useEffect(() => {
     if (autoScroll && scrollRef.current) {

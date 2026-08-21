@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   type HealthChangedPayload,
   type MeetingEventEnvelope,
@@ -27,9 +27,6 @@ export function isMeetingEventEnvelope(val: unknown): val is MeetingEventEnvelop
 
 export function useMeetingSocket(url = "/ws/v1/meetings") {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
-  const meetingStore = useMeetingStore();
-  const meetingStoreRef = useRef(meetingStore);
-  meetingStoreRef.current = meetingStore;
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -43,14 +40,14 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
       if (!isMeetingEventEnvelope(envelope)) return;
 
-      const store = meetingStoreRef.current;
+      const store = useMeetingStore.getState();
       const { type, meeting_id, payload } = envelope;
 
       switch (type as MeetingEventType) {
         case "meeting_snapshot": {
           const p = payload as MeetingSnapshotPayload;
           store.applySnapshot(p);
-          if (meeting_id) {
+          if (meeting_id && meeting_id.trim() !== "" && meeting_id !== "null") {
             void store.syncBaselineTranscript(meeting_id);
           }
           break;
@@ -71,7 +68,11 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
         case "transcript_reconciled": {
           const p = payload as TranscriptReconciledPayload;
           // 检测 revision 是否跳变，若跳变过大触发 resync
-          if (p.transcript_revision > store.transcriptRevision + 10) {
+          if (
+            meeting_id &&
+            meeting_id.trim() !== "" &&
+            p.transcript_revision > store.transcriptRevision + 10
+          ) {
             void store.syncBaselineTranscript(meeting_id);
           } else {
             store.reconcileTranscript(
@@ -120,7 +121,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
         }
 
         case "resync_required": {
-          if (meeting_id) {
+          if (meeting_id && meeting_id.trim() !== "") {
             void store.syncBaselineTranscript(meeting_id);
           }
           break;

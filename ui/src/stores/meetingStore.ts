@@ -415,97 +415,84 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   },
 
   updateMeetingTitle: async (id, title) => {
-    try {
-      const updated = await meetingApi.updateMeetingTitle(id, title);
-      set((state) => ({
-        selectedMeeting:
-          state.selectedMeeting?.id === id
-            ? { ...state.selectedMeeting, title: updated.title }
-            : state.selectedMeeting,
-        historyList: state.historyList.map((m) =>
-          m.id === id ? { ...m, title: updated.title } : m,
-        ),
-      }));
-    } catch (err) {
-      throw err;
-    }
+    const updated = await meetingApi.updateMeetingTitle(id, title);
+    set((state) => ({
+      selectedMeeting:
+        state.selectedMeeting?.id === id
+          ? { ...state.selectedMeeting, title: updated.title }
+          : state.selectedMeeting,
+      historyList: state.historyList.map((m) =>
+        m.id === id ? { ...m, title: updated.title } : m,
+      ),
+    }));
   },
 
   updateSpeakerName: async (id, speakerKey, displayName) => {
-    try {
-      const updated = await meetingApi.updateSpeakerName(id, speakerKey, displayName);
-      set((state) => {
-        // 如果当前是查看历史详情
-        if (state.selectedMeeting?.id === id) {
-          const speakers = { ...state.selectedMeeting.speakers, [speakerKey]: updated };
-          const segments = state.selectedSegments.map((seg) =>
-            seg.speaker_key === speakerKey ? { ...seg, speaker_name: displayName } : seg,
-          );
-          const isStale = state.selectedMinutes
-            ? true
-            : false;
-          return {
-            selectedMeeting: { ...state.selectedMeeting, speakers },
-            selectedSegments: segments,
-            selectedMinutes: state.selectedMinutes
-              ? { ...state.selectedMinutes, is_stale: isStale }
-              : null,
-          };
-        }
-        return {};
-      });
-    } catch (err) {
-      throw err;
-    }
+    const updated = await meetingApi.updateSpeakerName(id, speakerKey, displayName);
+    set((state) => {
+      // 如果当前是查看历史详情
+      if (state.selectedMeeting?.id === id) {
+        const speakers = { ...state.selectedMeeting.speakers, [speakerKey]: updated };
+        const segments = state.selectedSegments.map((seg) =>
+          seg.speaker_key === speakerKey ? { ...seg, speaker_name: displayName } : seg,
+        );
+        const isStale = state.selectedMinutes ? true : false;
+        return {
+          selectedMeeting: { ...state.selectedMeeting, speakers },
+          selectedSegments: segments,
+          selectedMinutes: state.selectedMinutes
+            ? { ...state.selectedMinutes, is_stale: isStale }
+            : null,
+        };
+      }
+      return {};
+    });
   },
 
   triggerGenerateMinutes: async (id) => {
-    try {
-      const newMinutes = await meetingApi.generateMinutes(id);
-      set((state) => {
-        if (state.selectedMeeting?.id === id) {
-          const list = [...state.selectedMinutesList.filter((m) => m.version !== newMinutes.version), newMinutes];
-          return {
-            selectedMinutes: newMinutes,
-            selectedMinutesVersion: newMinutes.version,
-            selectedMinutesList: list,
-          };
-        }
-        if (state.activeMeetingId === id) {
-          return {
-            minutes: newMinutes,
-            activeMinutesVersion: newMinutes.version,
-          };
-        }
-        return {};
-      });
-    } catch (err) {
-      throw err;
-    }
+    const newMinutes = await meetingApi.generateMinutes(id);
+    set((state) => {
+      if (state.selectedMeeting?.id === id) {
+        const list = [
+          ...state.selectedMinutesList.filter((m) => m.version !== newMinutes.version),
+          newMinutes,
+        ];
+        return {
+          selectedMinutes: newMinutes,
+          selectedMinutesVersion: newMinutes.version,
+          selectedMinutesList: list,
+        };
+      }
+      if (state.activeMeetingId === id) {
+        return {
+          minutes: newMinutes,
+          activeMinutesVersion: newMinutes.version,
+        };
+      }
+      return {};
+    });
   },
 
   selectHistoryMinutesVersion: async (id, version) => {
-    try {
-      const versionData = await meetingApi.fetchMinutesVersion(id, version);
-      set({
-        selectedMinutes: versionData,
-        selectedMinutesVersion: version,
-      });
-    } catch (err) {
-      throw err;
-    }
+    const versionData = await meetingApi.fetchMinutesVersion(id, version);
+    set({
+      selectedMinutes: versionData,
+      selectedMinutesVersion: version,
+    });
   },
 
   deleteMeeting: async (id) => {
-    try {
-      await meetingApi.deleteMeeting(id);
-      set((state) => ({
-        historyList: state.historyList.filter((m) => m.id !== id),
-        selectedMeetingId: state.selectedMeetingId === id ? null : state.selectedMeetingId,
-        selectedMeeting: state.selectedMeetingId === id ? null : state.selectedMeeting,
-      }));
-    } catch (err) {
-      throw err;
-    }
+    await meetingApi.deleteMeeting(id);
+    set((state) => ({
+      historyList: state.historyList.filter((m) => m.id !== id),
+      selectedMeetingId: state.selectedMeetingId === id ? null : state.selectedMeetingId,
+      selectedMeeting: state.selectedMeetingId === id ? null : state.selectedMeeting,
+      selectedSegments: state.selectedMeetingId === id ? [] : state.selectedSegments,
+      selectedMinutes: state.selectedMeetingId === id ? null : state.selectedMinutes,
+      selectedMinutesList: state.selectedMeetingId === id ? [] : state.selectedMinutesList,
+      activeMeetingId: state.activeMeetingId === id ? null : state.activeMeetingId,
+      activeMeeting: state.activeMeetingId === id ? null : state.activeMeeting,
+      status: state.activeMeetingId === id ? "idle" : state.status,
+    }));
   },
 }));
