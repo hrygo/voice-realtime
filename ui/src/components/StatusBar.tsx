@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
 import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
+import { useMeetingStore } from "../stores/meetingStore";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import "./StatusBar.css";
@@ -220,6 +221,9 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     return () => window.removeEventListener("keydown", handleKey);
   }, [micMuted, setMicMuted]);
 
+  const meetingStatus = useMeetingStore((s) => s.status);
+  const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
+
   return (
     <header className="status-bar">
       <div className="status-left">
@@ -228,6 +232,30 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
           <h1 className="status-title">Voice Studio</h1>
         </div>
         <span className="status-badge-chip">Apple Silicon / MLX</span>
+
+        {/* 全局互斥模式指示器 */}
+        {isMeetingRecording ? (
+          <span className="status-mode-pill mode-meeting" title="当前活跃模式：会议助手录制中（语音交互已自动挂起）">
+            <span className="mode-pill-dot recording" />
+            <span>会议录制中</span>
+          </span>
+        ) : phase === "speaking" ? (
+          <span className="status-mode-pill mode-assistant" title="当前活跃模式：语音助手播报中">
+            <span>🗣️ 助手播报中</span>
+          </span>
+        ) : phase === "listening" ? (
+          <span className="status-mode-pill mode-assistant" title="当前活跃模式：语音助手聆听中">
+            <span>👂 助手聆听中</span>
+          </span>
+        ) : phase === "thinking" ? (
+          <span className="status-mode-pill mode-assistant" title="当前活跃模式：助手思考中">
+            <span>🧠 助手思考中</span>
+          </span>
+        ) : (
+          <span className="status-mode-pill mode-idle" title="当前系统处于待命就绪状态">
+            <span>💤 系统待命</span>
+          </span>
+        )}
 
         {/* 麦克风电平 & 静音控件 */}
         <button

@@ -69,6 +69,46 @@
   box-shadow: 0 0 6px var(--color-green-glow);
 }
 
+.subtitle-sync-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-green) 14%, var(--bg-card));
+  color: var(--color-green);
+  border: 1px solid color-mix(in srgb, var(--color-green) 35%, transparent);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.subtitle-sync-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-green);
+  box-shadow: 0 0 6px var(--color-green-glow);
+  animation: pulse-dot 1.8s infinite;
+}
+
+.subtitle-jump-btn {
+  background: transparent;
+  border: none;
+  color: var(--color-accent-light);
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 1px 4px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  margin-left: 2px;
+}
+
+.subtitle-jump-btn:hover {
+  background: var(--bg-hover);
+  text-decoration: underline;
+}
+
 /* Subtitle Control Toolbar */
 .subtitle-tools-bar {
   display: flex;

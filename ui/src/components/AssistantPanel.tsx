@@ -17,6 +17,7 @@ import {
   type DuplexMode,
   type PersonaTemplate,
 } from "../stores/uiSettingsStore";
+import { MarkdownRenderer } from "./meeting/MarkdownRenderer";
 import { showToast } from "./Toast";
 import "./AssistantPanel.css";
 
@@ -65,7 +66,17 @@ function formatMetric(value: number | null): string {
   return value === null ? "—" : `${value}ms`;
 }
 
-export default function AssistantPanel({ commandSocket }: { readonly commandSocket: CommandSocketApi }) {
+interface AssistantPanelProps {
+  readonly commandSocket: CommandSocketApi;
+  readonly isMeetingRecording?: boolean;
+  readonly onNavigateMeeting?: () => void;
+}
+
+export default function AssistantPanel({
+  commandSocket,
+  isMeetingRecording = false,
+  onNavigateMeeting,
+}: AssistantPanelProps) {
   const phase = useAssistantStore(selectAssistantPhase);
   const transcript = useAssistantStore(selectAssistantTranscript);
   const connected = useAssistantStore(selectAssistantConnected);
@@ -214,10 +225,27 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
     [sendCommandWith],
   );
 
+  /** 结束当前会议录制 */
+  const handleStopMeeting = useCallback(async () => {
+    const acknowledged = await sendCommandWith(
+      { cmd: "stop_active_mode" },
+      "已结束会议录制，系统恢复待命",
+    );
+    if (acknowledged) {
+      showToast("会议录制已结束", "info");
+    }
+  }, [sendCommandWith]);
+
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
   /** 复制气泡文本 */
-  const handleCopyBubble = useCallback((text: string) => {
+  const handleCopyBubble = useCallback((text: string, key: string) => {
     navigator.clipboard.writeText(text).then(
-      () => showToast("已复制对话内容", "success"),
+      () => {
+        setCopiedKey(key);
+        showToast("已复制对话内容", "success");
+        setTimeout(() => setCopiedKey((prev) => (prev === key ? null : prev)), 2000);
+      },
       () => showToast("复制失败", "error"),
     );
   }, []);
@@ -301,251 +329,345 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
     return () => window.removeEventListener("keydown", handleGlobalShortcuts);
   }, [sendCommand]);
 
+  const handleSelectPersona = useCallback(
+    async (prompt: string, name: string) => {
+      setPersonaDraft(prompt);
+      const acknowledged = await sendCommandWith(
+        { cmd: "set_persona", prompt },
+        `已切换为人设：“${name}”`,
+      );
+      if (!acknowledged) {
+        showToast("切换人设失败", "error");
+      }
+    },
+    [sendCommandWith],
+  );
+
   const currentPhaseConfig = PHASE_CONFIG[phase];
   const allTemplates: readonly PersonaTemplate[] = [...BUILTIN_PERSONAS, ...customPersonas];
 
   return (
-    <section className="panel assistant-panel" aria-label="语音助手">
-      {/* 头部 */}
-      <header className="panel-header assistant-header">
-        <div className="assistant-header-title-wrap">
-          <h2>
-            <span>🤖</span> 语音助手
-          </h2>
-          <span className={`assistant-connection-badge ${connected ? "connected" : ""}`}>
-            <span className="assistant-connection-dot" />
-            {connected ? "状态桥已连接" : "连接中..."}
-          </span>
+    <div className="assistant-workspace">
+      {/* 左侧控制与人设侧边栏 */}
+      <aside className="assistant-sidebar">
+        <div className="assistant-sidebar-section">
+          <div className="sidebar-section-header">
+            <span className="sidebar-section-title">🎭 人设提示词库</span>
+            <button
+              type="button"
+              className="sidebar-action-btn"
+              onClick={openPersona}
+              title="管理与定制人设提示词 (快捷键 Cmd+K)"
+            >
+              + 自定义
+            </button>
+          </div>
+
+          <div className="persona-cards-list">
+            {allTemplates.map((preset) => {
+              const isSelected = persona.trim() === preset.prompt.trim();
+              return (
+                <div
+                  key={preset.id}
+                  className={`persona-sidebar-card ${isSelected ? "active" : ""}`}
+                  onClick={() => void handleSelectPersona(preset.prompt, preset.name)}
+                >
+                  <div className="persona-card-header">
+                    <span className="persona-card-name">{preset.name}</span>
+                    {isSelected && <span className="persona-active-badge">✓ 生效中</span>}
+                  </div>
+                  <p className="persona-card-prompt">{preset.prompt}</p>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
-        {/* 交互打断模式选择器 */}
-        <div className="duplex-mode-selector" role="radiogroup" aria-label="交互打断模式">
-          <button
-            type="button"
-            className={`duplex-mode-btn ${duplexMode === "speaker_focus" ? "active speaker" : ""}`}
-            onClick={() => handleDuplexModeChange("speaker_focus")}
-            disabled={!commandSocket.ready}
-            title="外放专注模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
-          >
-            <span className="duplex-mode-icon">🔊</span>
-            <span className="duplex-mode-label">外放 · 不可打断</span>
-          </button>
-          <button
-            type="button"
-            className={`duplex-mode-btn ${duplexMode === "headphone_duplex" ? "active headphone" : ""}`}
-            onClick={() => handleDuplexModeChange("headphone_duplex")}
-            disabled={!commandSocket.ready}
-            title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
-          >
-            <span className="duplex-mode-icon">🎧</span>
-            <span className="duplex-mode-label">耳机 · 可插话</span>
-            <span className="duplex-caution-badge">仅限耳机</span>
-          </button>
-        </div>
-
-        <div
-          className={`assistant-phase-badge ${currentPhaseConfig.className}`}
-          title={currentPhaseConfig.desc}
-        >
-          <span>{currentPhaseConfig.icon}</span>
-          <span>{currentPhaseConfig.label}</span>
-        </div>
-      </header>
-
-      <div
-        className={`duplex-mode-explainer mode-${duplexMode}`}
-        role="status"
-        aria-live="polite"
-      >
-        <span className="duplex-mode-current">
-          {duplexPresentation.icon} 当前：{duplexPresentation.label}
-        </span>
-        <strong>{duplexPresentation.summary}</strong>
-        <span>{duplexPresentation.detail}</span>
-      </div>
-
-      {/* 状态步骤指示栏 + 打断插话指示 */}
-      <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
-        <div className={`phase-step-item ${phase === "listening" ? "active step-listening" : ""}`}>
-          <span className="phase-step-icon">👂</span>
-          <span>1. 聆听</span>
-        </div>
-        <div className={`phase-step-item ${phase === "thinking" ? "active step-thinking" : ""}`}>
-          <span className="phase-step-icon">🧠</span>
-          <span>2. 思考</span>
-        </div>
-        <div className={`phase-step-item ${phase === "speaking" ? "active step-speaking" : ""}`}>
-          <span className="phase-step-icon">🗣️</span>
-          <span>3. 播报</span>
+        <div className="assistant-sidebar-section">
+          <span className="sidebar-section-title">🔊 TTS 播报音色</span>
+          <div className="voice-select-wrap-sidebar">
+            <select
+              id="assistant-voice"
+              className="voice-select-dropdown-sidebar"
+              value={voice}
+              onChange={(e) => void handleVoiceChange(e.target.value)}
+              disabled={!commandSocket.ready}
+            >
+              {availableVoices.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {latestMetrics && (
-          <div
-            className="assistant-metrics-pill"
-            title={`STT 耗时: ${formatMetric(latestMetrics.sttMs)} | LLM 首字 (TTFT): ${formatMetric(latestMetrics.llmTtftMs)} | TTS 首包: ${formatMetric(latestMetrics.ttsTtfbMs)} | 端到端总时延: ${formatMetric(latestMetrics.e2eMs)}`}
-          >
-            <span>⚡ #{latestMetrics.turnId}</span>
-            <span>{formatMetric(latestMetrics.e2eMs)}</span>
-            <span className="metrics-detail-hint">
-              (STT {formatMetric(latestMetrics.sttMs)} · TTFT {formatMetric(latestMetrics.llmTtftMs)})
-            </span>
-          </div>
-        )}
-
-        {interruptionActive && duplexPresentation.interruptionEnabled && (
-          <div className="interruption-alert-chip" role="alert">
-            <span>⚡ 已响应插话打断 (耳机)</span>
-          </div>
-        )}
-      </div>
-
-      {/* 60FPS 声学动态可视化波形 */}
-      <div className="assistant-waveform-container">
-        <AssistantWaveform phase={phase} isMuted={micMuted} />
-      </div>
-
-      {/* 对话气泡流 */}
-      <div className="assistant-transcript-container">
-        <div
-          className="assistant-transcript"
-          ref={transcriptScrollRef}
-          onScroll={handleScroll}
-          aria-live="polite"
-        >
-          {transcript.map((bubble: AssistantBubble, idx: number) => (
-            <div
-              className={`assistant-bubble-row ${bubble.role}`}
-              key={`${bubble.role}-${bubble.turnId ?? idx}-${bubble.timestamp ?? idx}`}
-            >
-              <div className="bubble-meta-header">
-                <span className="bubble-role-badge">
-                  {bubble.role === "user" ? "👤 你" : "🤖 AI 助手"}
-                </span>
-                {bubble.turnId !== undefined && (
-                  <span className="bubble-turn-pill">#{bubble.turnId}</span>
-                )}
-                {bubble.timestamp && (
-                  <span className="bubble-time-pill">{bubble.timestamp}</span>
-                )}
-                {bubble.interrupted && (
-                  <span className="bubble-interrupted-tag">⚡ 已打断 (耳机插话)</span>
-                )}
+          <div className="assistant-sidebar-section telemetry-section">
+            <span className="sidebar-section-title">⚡ 交互时延监控</span>
+            <div className="telemetry-grid">
+              <div className="telemetry-item">
+                <span className="telemetry-label">STT 识别</span>
+                <span className="telemetry-val">{formatMetric(latestMetrics.sttMs)}</span>
               </div>
-              <div className={`bubble-card ${bubble.final ? "final" : "streaming"}`}>
-                <span>{bubble.text}</span>
-                <div className="bubble-actions-group">
-                  <button
-                    type="button"
-                    className="bubble-action-btn"
-                    onClick={() => handleCopyBubble(bubble.text)}
-                    title="复制内容"
-                  >
-                    📋
-                  </button>
-                </div>
+              <div className="telemetry-item">
+                <span className="telemetry-label">LLM 首字 (TTFT)</span>
+                <span className="telemetry-val">{formatMetric(latestMetrics.llmTtftMs)}</span>
+              </div>
+              <div className="telemetry-item">
+                <span className="telemetry-label">TTS 首包 (TTFB)</span>
+                <span className="telemetry-val">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
+              </div>
+              <div className="telemetry-item highlight">
+                <span className="telemetry-label">端到端总时延</span>
+                <span className="telemetry-val">{formatMetric(latestMetrics.e2eMs)}</span>
               </div>
             </div>
-          ))}
+          </div>
+        )}
 
-          {!transcript.length && (
-            <div className="assistant-empty-state">
-              <span className="empty-state-icon">🎙️</span>
-              <p className="empty-state-title">等待语音输入...</p>
-              <p className="empty-state-desc">
-                直接对着麦克风说话，AI 助手将实时转写、推理并语音应答。
-                {duplexPresentation.summary}。
-              </p>
+        <div className="assistant-sidebar-section controls-section">
+          <span className="sidebar-section-title">🛠️ 会话控制</span>
+          <div className="sidebar-ctrl-buttons">
+            <button
+              type="button"
+              className="btn-sidebar-ctrl"
+              onClick={() => sendCommand("clear_context")}
+              disabled={!commandSocket.ready}
+              title="清空 LLM 上下文记忆 (快捷键 Cmd+Shift+C)"
+            >
+              🧹 清空上下文
+            </button>
+            <button
+              type="button"
+              className="btn-sidebar-ctrl"
+              onClick={() => {
+                clearTranscript();
+                showToast("对话记录已清空", "info");
+              }}
+              disabled={!transcript.length}
+              title="清空屏幕对话记录"
+            >
+              🗑️ 清空屏幕
+            </button>
+            <button
+              type="button"
+              className="btn-sidebar-ctrl"
+              onClick={() => sendCommand("restart")}
+              disabled={!commandSocket.ready}
+              title="重启后端交互管道"
+            >
+              🔄 重启管道
+            </button>
+            <button
+              type="button"
+              className="btn-sidebar-ctrl danger"
+              onClick={() => sendCommand("stop_session")}
+              disabled={!commandSocket.ready}
+              title="停止语音会话"
+            >
+              ⏹️ 停止会话
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* 右侧主互动区 */}
+      <main className="assistant-main-stage">
+        {/* 头部 */}
+        <header className="assistant-stage-header">
+          <div className="assistant-header-title-wrap">
+            <h2>
+              <span>🤖</span> 实时语音互动
+            </h2>
+            <span className={`assistant-connection-badge ${connected ? "connected" : ""}`}>
+              <span className="assistant-connection-dot" />
+              {connected ? "状态桥已连接" : "连接中..."}
+            </span>
+          </div>
+
+          <div className="duplex-mode-selector" role="radiogroup" aria-label="交互打断模式">
+            <button
+              type="button"
+              className={`duplex-mode-btn ${duplexMode === "speaker_focus" ? "active speaker" : ""}`}
+              onClick={() => handleDuplexModeChange("speaker_focus")}
+              disabled={!commandSocket.ready}
+              title="外放专注模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
+            >
+              <span className="duplex-mode-icon">🔊</span>
+              <span className="duplex-mode-label">外放 · 不可打断</span>
+            </button>
+            <button
+              type="button"
+              className={`duplex-mode-btn ${duplexMode === "headphone_duplex" ? "active headphone" : ""}`}
+              onClick={() => handleDuplexModeChange("headphone_duplex")}
+              disabled={!commandSocket.ready}
+              title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
+            >
+              <span className="duplex-mode-icon">🎧</span>
+              <span className="duplex-mode-label">耳机 · 可插话</span>
+              <span className="duplex-caution-badge">仅限耳机</span>
+            </button>
+          </div>
+
+          <div
+            className={`assistant-phase-badge ${currentPhaseConfig.className}`}
+            title={currentPhaseConfig.desc}
+          >
+            <span>{currentPhaseConfig.icon}</span>
+            <span>{currentPhaseConfig.label}</span>
+          </div>
+        </header>
+
+        {isMeetingRecording && (
+          <div className="assistant-meeting-suspension-banner" role="alert">
+            <div className="suspension-banner-text">
+              <span className="suspension-icon">🎙️</span>
+              <div className="suspension-desc-wrap">
+                <strong>会议录制进行中 · 语音交互已自动挂起</strong>
+                <p>
+                  为彻底防止扬声器 TTS 播报回声污染会议纪要与声纹分轨，语音交互已安全挂起。
+                </p>
+              </div>
+            </div>
+            <div className="suspension-banner-actions">
+              {onNavigateMeeting && (
+                <button
+                  type="button"
+                  className="suspension-action-btn primary"
+                  onClick={onNavigateMeeting}
+                >
+                  查看进行中会议 →
+                </button>
+              )}
+              <button
+                type="button"
+                className="suspension-action-btn danger"
+                onClick={() => void handleStopMeeting()}
+                disabled={!commandSocket.ready}
+                title="结束正在录制的会议并恢复待命"
+              >
+                ⏹ 结束会议录制
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div
+          className={`duplex-mode-explainer mode-${duplexMode}`}
+          role="status"
+          aria-live="polite"
+        >
+          <span className="duplex-mode-current">
+            {duplexPresentation.icon} 当前：{duplexPresentation.label}
+          </span>
+          <strong>{duplexPresentation.summary}</strong>
+          <span>{duplexPresentation.detail}</span>
+        </div>
+
+        {/* 状态步骤指示栏 + 打断插话指示 */}
+        <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
+          <div className={`phase-step-item ${phase === "listening" ? "active step-listening" : ""}`}>
+            <span className="phase-step-icon">👂</span>
+            <span>1. 聆听麦克风</span>
+          </div>
+          <div className={`phase-step-item ${phase === "thinking" ? "active step-thinking" : ""}`}>
+            <span className="phase-step-icon">🧠</span>
+            <span>2. LM Studio 推理</span>
+          </div>
+          <div className={`phase-step-item ${phase === "speaking" ? "active step-speaking" : ""}`}>
+            <span className="phase-step-icon">🗣️</span>
+            <span>3. Qwen3-TTS 播报</span>
+          </div>
+
+          {interruptionActive && duplexPresentation.interruptionEnabled && (
+            <div className="interruption-alert-chip" role="alert">
+              <span>⚡ 已响应插话打断 (耳机)</span>
             </div>
           )}
         </div>
 
-        {/* 智能贴底按钮 */}
-        {isScrolledUp && (
-          <button
-            type="button"
-            className="scroll-to-bottom-btn"
-            onClick={scrollToBottom}
-            aria-label="回到底部"
-          >
-            <span>↓</span> 最新对话
-          </button>
-        )}
-      </div>
-
-      {/* 控制中心底部栏 */}
-      <footer className="assistant-controls-footer">
-        <button
-          type="button"
-          className="btn-ctrl"
-          onClick={() => sendCommand("restart")}
-          disabled={!commandSocket.ready}
-          title="重启后端交互管道"
-        >
-          <span>🔄</span> 重启
-        </button>
-        <button
-          type="button"
-          className="btn-ctrl btn-ctrl-danger"
-          onClick={() => sendCommand("stop_session")}
-          disabled={!commandSocket.ready}
-          title="停止当前语音会话"
-        >
-          <span>⏹️</span> 停止
-        </button>
-        <button
-          type="button"
-          className="btn-ctrl"
-          onClick={() => sendCommand("clear_context")}
-          disabled={!commandSocket.ready}
-          title="清空 LLM 上下文记忆 (快捷键 Cmd+Shift+C)"
-        >
-          <span>🧹</span> 清空上下文
-        </button>
-        <button
-          type="button"
-          className="btn-ctrl"
-          onClick={() => {
-            clearTranscript();
-            showToast("对话记录已清空", "info");
-          }}
-          disabled={!transcript.length}
-          title="清空屏幕对话记录"
-        >
-          <span>🗑️</span> 清空记录
-        </button>
-        <button
-          type="button"
-          className="btn-ctrl"
-          onClick={openPersona}
-          title="管理与定制人设提示词 (快捷键 Cmd+K)"
-        >
-          <span>🎭</span> 人设库
-        </button>
-
-        {/* 音色下拉 */}
-        <div className="voice-select-wrap">
-          <label htmlFor="assistant-voice" className="voice-select-label">
-            🔊
-          </label>
-          <select
-            id="assistant-voice"
-            className="voice-select-dropdown"
-            value={voice}
-            onChange={(e) => void handleVoiceChange(e.target.value)}
-            disabled={!commandSocket.ready}
-          >
-            {availableVoices.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
+        {/* 60FPS 声学动态可视化波形 */}
+        <div className="assistant-waveform-container">
+          <AssistantWaveform phase={phase} isMuted={micMuted} />
         </div>
 
-        <span className="command-status-tag">
-          {commandSocket.ready ? "🟢 已同步" : commandSocket.state === "open" ? "🟡 同步中" : "🟡 连接中"}
-        </span>
-      </footer>
+        {/* 对话气泡流 */}
+        <div className="assistant-transcript-container">
+          <div
+            className="assistant-transcript"
+            ref={transcriptScrollRef}
+            onScroll={handleScroll}
+            aria-live="polite"
+          >
+            {transcript.map((bubble: AssistantBubble, idx: number) => {
+              const bubbleKey = `${bubble.role}-${bubble.turnId ?? idx}-${bubble.timestamp ?? idx}`;
+              const isCopied = copiedKey === bubbleKey;
+              return (
+                <div
+                  className={`assistant-bubble-row ${bubble.role}`}
+                  key={bubbleKey}
+                >
+                  <div className="bubble-meta-header">
+                    <span className="bubble-role-badge">
+                      {bubble.role === "user" ? "👤 你" : "🤖 AI 助手"}
+                    </span>
+                    {bubble.turnId !== undefined && (
+                      <span className="bubble-turn-pill">#{bubble.turnId}</span>
+                    )}
+                    {bubble.timestamp && (
+                      <span className="bubble-time-pill">{bubble.timestamp}</span>
+                    )}
+                    {bubble.interrupted && (
+                      <span className="bubble-interrupted-tag">⚡ 已打断 (耳机插话)</span>
+                    )}
+                  </div>
+                  <div className={`bubble-card ${bubble.final ? "final" : "streaming"}`}>
+                    {bubble.role === "assistant" && bubble.final ? (
+                      <MarkdownRenderer content={bubble.text} />
+                    ) : (
+                      <span>{bubble.text}</span>
+                    )}
+                    <div className="bubble-actions-group">
+                      <button
+                        type="button"
+                        className={`bubble-action-btn ${isCopied ? "copied" : ""}`}
+                        onClick={() => handleCopyBubble(bubble.text, bubbleKey)}
+                        title="复制内容"
+                      >
+                        {isCopied ? "✓ 已复制" : "📋 复制"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {!transcript.length && (
+              <div className="assistant-empty-state">
+                <span className="empty-state-icon">🎙️</span>
+                <p className="empty-state-title">等待语音输入...</p>
+                <p className="empty-state-desc">
+                  直接对着麦克风说话，AI 助手将实时转写、推理并语音应答。
+                  {duplexPresentation.summary}。
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* 智能贴底按钮 */}
+          {isScrolledUp && (
+            <button
+              type="button"
+              className="scroll-to-bottom-btn"
+              onClick={scrollToBottom}
+              aria-label="回到底部"
+            >
+              <span>↓</span> 最新对话
+            </button>
+          )}
+        </div>
+      </main>
 
       {/* 人格与提示词管理器 Modal */}
       {personaOpen && (
@@ -674,7 +796,7 @@ export default function AssistantPanel({ commandSocket }: { readonly commandSock
           </div>
         </div>
       )}
-    </section>
+    </div>
   );
 }
 

@@ -57,6 +57,45 @@
   white-space: nowrap;
 }
 
+.status-mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.status-mode-pill.mode-meeting {
+  background: color-mix(in srgb, var(--color-red) 16%, var(--bg-card));
+  color: var(--color-red);
+  border: 1px solid color-mix(in srgb, var(--color-red) 40%, transparent);
+}
+
+.status-mode-pill.mode-assistant {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-card));
+  color: var(--color-accent-light);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+.status-mode-pill.mode-idle {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.mode-pill-dot.recording {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-red);
+  box-shadow: 0 0 6px var(--color-red-glow);
+  animation: pulse-dot 1.2s infinite;
+}
+
 /* Service Health Badges */
 .status-lights {
   display: flex;

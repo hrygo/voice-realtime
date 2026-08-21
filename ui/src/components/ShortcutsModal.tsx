@@ -6,6 +6,7 @@ interface ShortcutsModalProps {
 }
 
 const SHORTCUTS = [
+  { key: "Cmd / Ctrl + 1 / 2 / 3", desc: "快速切换「语音助手」/「会议助手」/「实时字幕」" },
   { key: "M", desc: "切换麦克风静音 / 恢复录音" },
   { key: "Cmd / Ctrl + K", desc: "打开 / 关闭人设提示词库" },
   { key: "Cmd / Ctrl + Shift + C", desc: "清空 LLM 上下文记忆" },

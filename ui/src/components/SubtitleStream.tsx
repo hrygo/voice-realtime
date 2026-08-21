@@ -29,7 +29,15 @@ function downloadBlob(content: string, filename: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function SubtitleStream() {
+interface SubtitleStreamProps {
+  readonly isMeetingRecording?: boolean;
+  readonly onNavigateMeeting?: () => void;
+}
+
+export default function SubtitleStream({
+  isMeetingRecording = false,
+  onNavigateMeeting,
+}: SubtitleStreamProps) {
   const { lines, partial, connected, starredIndices, toggleStar } = useSubtitleStore();
   const assistantPhase = useAssistantStore(selectAssistantPhase);
   const assistantTranscript = useAssistantStore(selectAssistantTranscript);
@@ -234,6 +242,23 @@ export default function SubtitleStream() {
         </div>
 
         <div className="subtitle-header-right">
+          {isMeetingRecording && (
+            <span className="subtitle-sync-chip" title="当前会议正在录制中，字幕流与会议声纹分轨保持同步">
+              <span className="subtitle-sync-dot" />
+              <span>与会议录制同步中</span>
+              {onNavigateMeeting && (
+                <button
+                  type="button"
+                  className="subtitle-jump-btn"
+                  onClick={onNavigateMeeting}
+                  title="转到会议助手面板"
+                >
+                  查看会议 →
+                </button>
+              )}
+            </span>
+          )}
+
           <button
             type="button"
             className="presentation-mode-btn"

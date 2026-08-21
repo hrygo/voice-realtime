@@ -18,17 +18,53 @@ export default function App() {
   const commandSocket = useCommandSocket();
   useMeetingSocket();
   const meetingStatus = useMeetingStore((s) => s.status);
+  const sessionStartedAt = useMeetingStore((s) => s.sessionStartedAt);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 
-  // Global Keyboard Shortcuts
+  // Live elapsed time for meeting recording
+  const [recordingElapsed, setRecordingElapsed] = useState(0);
+  useEffect(() => {
+    if (!isMeetingRecording || !sessionStartedAt) {
+      setRecordingElapsed(0);
+      return;
+    }
+    const startMs = Date.parse(sessionStartedAt);
+    const tick = () => {
+      const diff = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      setRecordingElapsed(diff);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [isMeetingRecording, sessionStartedAt]);
+
+  const formatTabTimer = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  };
+
+  // Global Keyboard Shortcuts (Cmd/Ctrl + 1/2/3 for tabs, ? for help)
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    // If typing in an input or textarea, don't trigger global ?
     const target = e.target as HTMLElement;
     const isInput = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
-    if (e.key === "?" && !isInput && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault();
-      setShortcutsOpen((prev) => !prev);
+    if (!isInput) {
+      if (e.key === "?" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+      } else if ((e.metaKey || e.ctrlKey) && !e.shiftKey) {
+        if (e.key === "1") {
+          e.preventDefault();
+          setActiveTab("assistant");
+        } else if (e.key === "2") {
+          e.preventDefault();
+          setActiveTab("meeting");
+        } else if (e.key === "3") {
+          e.preventDefault();
+          setActiveTab("subtitles");
+        }
+      }
     }
   }, []);
 
@@ -49,46 +85,51 @@ export default function App() {
           type="button"
           className={`workspace-tab-btn ${activeTab === "assistant" ? "active" : ""}`}
           onClick={() => setActiveTab("assistant")}
+          title="切换至语音助手 (快捷键 Cmd+1)"
         >
           <span>🤖</span> 语音助手
+          {isMeetingRecording && (
+            <span className="tab-status-chip suspended" title="会议录制中，语音交互已挂起以防回声">
+              已挂起
+            </span>
+          )}
         </button>
         <button
           type="button"
           className={`workspace-tab-btn ${activeTab === "meeting" ? "active" : ""}`}
           onClick={() => setActiveTab("meeting")}
+          title="切换至会议助手 (快捷键 Cmd+2)"
         >
           <span>🎙️</span> 会议助手
           {isMeetingRecording && (
-            <span
-              style={{
-                display: "inline-block",
-                width: "8px",
-                height: "8px",
-                borderRadius: "50%",
-                background: "var(--color-red)",
-                marginLeft: "4px",
-              }}
-            />
+            <span className="tab-status-chip recording" title="会议录制进行中">
+              <span className="tab-recording-dot" /> 录制中 {recordingElapsed > 0 && `(${formatTabTimer(recordingElapsed)})`}
+            </span>
           )}
         </button>
         <button
           type="button"
           className={`workspace-tab-btn ${activeTab === "subtitles" ? "active" : ""}`}
           onClick={() => setActiveTab("subtitles")}
+          title="切换至实时字幕 (快捷键 Cmd+3)"
         >
           <span>📝</span> 实时字幕
+          {isMeetingRecording && (
+            <span className="tab-status-chip sync" title="与会议转录同步中">
+              同步中
+            </span>
+          )}
         </button>
       </nav>
 
       <main className="app-main">
         {activeTab === "assistant" && (
-          <div className="assistant-layout">
-            <div className="panel-wrapper">
-              <AssistantPanel commandSocket={commandSocket} />
-            </div>
-            <div className="panel-wrapper subtitle-companion">
-              <SubtitleStream />
-            </div>
+          <div className="single-panel-layout">
+            <AssistantPanel
+              commandSocket={commandSocket}
+              isMeetingRecording={isMeetingRecording}
+              onNavigateMeeting={() => setActiveTab("meeting")}
+            />
           </div>
         )}
 
@@ -100,7 +141,10 @@ export default function App() {
 
         {activeTab === "subtitles" && (
           <div className="single-panel-layout">
-            <SubtitleStream />
+            <SubtitleStream
+              isMeetingRecording={isMeetingRecording}
+              onNavigateMeeting={() => setActiveTab("meeting")}
+            />
           </div>
         )}
       </main>

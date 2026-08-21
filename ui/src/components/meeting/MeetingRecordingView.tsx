@@ -107,6 +107,12 @@ export function MeetingRecordingView({
             <span className="recording-dot" />
             <span>{formatElapsed(elapsed)}</span>
           </div>
+          <div className="recording-vu-meter" title={micMuted ? "麦克风已静音" : "麦克风音频采集中"}>
+            <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "12px" }} />
+            <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "16px" }} />
+            <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "10px" }} />
+            <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "14px" }} />
+          </div>
           <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
             已记录 {segments.length} 个转录段落
           </span>

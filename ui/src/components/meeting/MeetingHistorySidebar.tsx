@@ -57,6 +57,11 @@ export function MeetingHistorySidebar({
   onDeleteMeeting,
 }: MeetingHistorySidebarProps) {
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredList = historyList.filter((m) =>
+    m.title.toLowerCase().includes(searchQuery.toLowerCase().trim()),
+  );
 
   return (
     <aside className="meeting-sidebar">
@@ -76,12 +81,35 @@ export function MeetingHistorySidebar({
         </button>
       </div>
 
+      <div className="history-search-wrap">
+        <span className="history-search-icon">🔍</span>
+        <input
+          type="text"
+          className="history-search-input"
+          placeholder="搜索历史会议..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button
+            type="button"
+            className="history-search-clear"
+            onClick={() => setSearchQuery("")}
+            title="清空搜索"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
       <div className="history-list">
-        {historyList.length === 0 && !isLoading && (
-          <div className="history-empty">暂无会议记录</div>
+        {filteredList.length === 0 && !isLoading && (
+          <div className="history-empty">
+            {searchQuery ? `未找到包含 "${searchQuery}" 的会议` : "暂无会议记录"}
+          </div>
         )}
 
-        {historyList.map((m) => {
+        {filteredList.map((m) => {
           const isSelected = selectedMeetingId === m.id;
           const isActiveRecording = activeMeetingId === m.id;
           const statusInfo = getStatusLabel(m.status);
