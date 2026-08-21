@@ -8,6 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, field_validator
@@ -16,6 +17,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
+DEFAULT_ASR_CONTEXT = (
+    "术语：Voice Studio、LM Studio、Qwen3-ASR、WhisperLiveKit、SenseVoice、"
+    "Sortformer、Pipecat、PostgreSQL、MLX。"
+)
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 # Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
 # 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
@@ -53,6 +58,10 @@ class BridgeSettings(BaseSettings):
     host: str = Field(default="127.0.0.1", description="桥服务监听地址")
     port: int = Field(default=8765, description="桥服务监听端口")
     model: str = Field(default=DEFAULT_QWEN3_TTS_MODEL, description="mlx-audio Qwen3-TTS 模型 ID")
+    allow_model_downloads: bool = Field(
+        default=False,
+        description="是否允许 TTS 启动时联网下载模型；默认只使用本地缓存",
+    )
     voice: str = Field(default="default", description="VoiceDesign 音色 profile")
     sample_rate: int = Field(default=TTS_OUTPUT_SAMPLE_RATE, description="输出采样率 (Hz)")
     chunk_ms: int = Field(default=100, description="流式分块大小 (ms)")
@@ -188,7 +197,7 @@ class SubtitleSettings(BaseSettings):
     port: int = Field(default=8001, description="字幕服务端口")
     model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
     model_dir: Path = Field(
-        default=Path("runtime/qwen3-asr-0.6b"),
+        default=Path("runtime/qwen3-asr-1.7b"),
         description="ASR 本地模型目录（离线环境必填，避免启动时拉取模型）",
     )
     output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
@@ -204,6 +213,22 @@ class SubtitleSettings(BaseSettings):
     diarization_max_speakers: int = Field(
         default=4, ge=1, le=4, description="最多匿名说话人数"
     )
+    punctuation_split: bool = Field(
+        default=True,
+        description="使用转录标点改善说话人边界",
+    )
+    context: str = Field(
+        default=DEFAULT_ASR_CONTEXT,
+        max_length=2000,
+        description="Qwen3-ASR 领域词、人名和缩写上下文",
+    )
+    qwen3_streaming_chunk_sec: float = Field(default=2.0, ge=0.5, le=10.0)
+    qwen3_streaming_left_context_sec: float = Field(default=12.0, ge=2.0, le=60.0)
+    qwen3_streaming_right_context_ms: int = Field(default=640, ge=0, le=5000)
+    qwen3_streaming_hold_back_words: int = Field(default=6, ge=0, le=50)
+    qwen3_streaming_stable_iterations: int = Field(default=2, ge=1, le=10)
+    qwen3_streaming_max_new_tokens: int = Field(default=256, ge=32, le=2048)
+    qwen3_streaming_device: Literal["auto", "mps", "cpu"] = "mps"
 
     @field_validator("backend")
     @classmethod
@@ -219,6 +244,11 @@ class SubtitleSettings(BaseSettings):
         if v != "sortformer":
             raise ValueError("首版仅支持 sortformer diarization 后端")
         return v
+
+    @field_validator("context")
+    @classmethod
+    def _strip_context(cls, value: str) -> str:
+        return value.strip()
 
     _validate_host = field_validator("host")(_validate_loopback_host)
 

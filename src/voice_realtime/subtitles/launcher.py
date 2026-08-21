@@ -16,6 +16,16 @@ from voice_realtime.config import SubtitleSettings
 from voice_realtime.logging import setup_logging
 
 logger = logging.getLogger(__name__)
+_SENSITIVE_VALUE_FLAGS = {"--qwen3-streaming-context"}
+
+
+def _redact_argv(argv: list[str]) -> list[str]:
+    """复制命令并遮蔽可能包含姓名或业务术语的参数值。"""
+    redacted = list(argv)
+    for index, argument in enumerate(redacted[:-1]):
+        if argument in _SENSITIVE_VALUE_FLAGS:
+            redacted[index + 1] = "<redacted>"
+    return redacted
 
 
 def resolve_wlk_command(repo: Path | None = None) -> str:
@@ -54,8 +64,31 @@ def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> li
             f"字幕本地模型目录不存在: {settings.model_dir}；"
             "请准备本地模型，或显式设置 allow_model_downloads=True"
         )
+    if settings.backend == "qwen3-streaming":
+        argv += [
+            "--qwen3-streaming-chunk-sec",
+            str(settings.qwen3_streaming_chunk_sec),
+            "--qwen3-streaming-left-context-sec",
+            str(settings.qwen3_streaming_left_context_sec),
+            "--qwen3-streaming-right-context-ms",
+            str(settings.qwen3_streaming_right_context_ms),
+            "--qwen3-streaming-hold-back-words",
+            str(settings.qwen3_streaming_hold_back_words),
+            "--qwen3-streaming-stable-iterations",
+            str(settings.qwen3_streaming_stable_iterations),
+            "--qwen3-streaming-max-new-tokens",
+            str(settings.qwen3_streaming_max_new_tokens),
+            "--qwen3-streaming-device",
+            settings.qwen3_streaming_device,
+            "--qwen3-streaming-audio-backend",
+            "windowed",
+        ]
+        if settings.context:
+            argv += ["--qwen3-streaming-context", settings.context]
     if getattr(settings, "diarization", False):
         argv += ["--diarization"]
+        if settings.punctuation_split:
+            argv += ["--punctuation-split"]
         backend = str(getattr(settings, "diarization_backend", "sortformer"))
         argv += ["--diarization-backend", backend]
         model_path = getattr(settings, "diarization_model_path", None)
@@ -114,7 +147,7 @@ def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Po
     executable = resolve_wlk_command(settings.repo_path)
     log_dir.mkdir(parents=True, exist_ok=True)
     argv = build_server_argv(settings, executable=executable)
-    logger.info("启动字幕服务: %s", " ".join(argv))
+    logger.info("启动字幕服务: %s", " ".join(_redact_argv(argv)))
     stdout_path = log_dir / "subtitles.out.log"
     stderr_path = log_dir / "subtitles.err.log"
     with (

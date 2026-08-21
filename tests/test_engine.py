@@ -55,12 +55,40 @@ def engine(settings: BridgeSettings) -> TTSEngine:
     return TTSEngine(settings)
 
 
+@pytest.fixture(autouse=True)
+def resolve_test_model() -> None:
+    with patch(
+        "voice_realtime.tts_bridge.engine.resolve_model_snapshot",
+        return_value="/cache/test-tts-model",
+    ):
+        yield
+
+
 class TestLoad:
     def test_load_uses_mlx_audio_utils(self, engine: TTSEngine) -> None:
         with patch("mlx_audio.tts.utils.load", return_value=_mock_model()) as mock_load:
             engine.load()
-        mock_load.assert_called_once_with(TEST_MODEL)
+        mock_load.assert_called_once_with("/cache/test-tts-model")
         assert engine.loaded
+
+    def test_load_resolves_model_with_download_policy(self) -> None:
+        settings = BridgeSettings(
+            model=TEST_MODEL,
+            warmup_on_start=False,
+            allow_model_downloads=True,
+        )
+        engine = TTSEngine(settings)
+        with (
+            patch(
+                "voice_realtime.tts_bridge.engine.resolve_model_snapshot",
+                return_value="/cache/downloaded-tts",
+            ) as resolve,
+            patch("mlx_audio.tts.utils.load", return_value=_mock_model()) as load,
+        ):
+            engine.load()
+
+        resolve.assert_called_once_with(TEST_MODEL, allow_downloads=True)
+        load.assert_called_once_with("/cache/downloaded-tts")
 
     def test_load_warmup_drains_generator(self) -> None:
         settings = BridgeSettings(model=TEST_MODEL, warmup_on_start=True)

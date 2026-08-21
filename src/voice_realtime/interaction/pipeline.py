@@ -24,10 +24,8 @@ import logging
 import re
 import time
 from collections import deque
-from pathlib import Path
 from typing import Any
 
-from huggingface_hub import snapshot_download
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -72,6 +70,7 @@ from voice_realtime.interaction.reasoning import (
     LmStudioNativeLLMService,
 )
 from voice_realtime.interaction.tts import LocalBridgeTTSService
+from voice_realtime.model_cache import resolve_model_snapshot
 
 DEFAULT_SENSEVOICE_REPO = "FunAudioLLM/SenseVoiceSmall"
 _PIPECAT_LANGUAGES = {
@@ -100,11 +99,10 @@ def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
     （本环境 SSRF 拦截），因此任何 repo ID 都先经 snapshot_download 落到本地。
     已是本地路径（目录/文件存在）则原样透传。
     """
-    if model and Path(model).exists():
-        return model
-    return snapshot_download(
-        model or DEFAULT_SENSEVOICE_REPO,
-        local_files_only=not allow_downloads,
+    return resolve_model_snapshot(
+        model,
+        default_repo=DEFAULT_SENSEVOICE_REPO,
+        allow_downloads=allow_downloads,
     )
 
 

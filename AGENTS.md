@@ -108,7 +108,7 @@ uv run mypy src/
 # 3. Python 代码风格与 Lint 检查
 uv run ruff check src/ tests/
 
-# 4. 前端测试（44 passed / 11 test files）
+# 4. 前端测试（52 passed / 11 test files）
 cd ui && npm test -- --run
 
 # 5. 前端类型检查与生产构建
@@ -154,7 +154,7 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 | **TTS 桥服务** (Port: `8765`) | `mlx-audio` Qwen3-TTS (24 kHz WAV/PCM)，`VoiceDesign` 音色 profile |
 | **SenseVoice 缓存快照** | `~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…` |
 | **Sortformer 说话人分离** | `runtime/sortformer.nemo` |
-| **Qwen3-ASR 本地目录** | `runtime/qwen3-asr-0.6b` |
+| **Qwen3-ASR 本地目录** | `runtime/qwen3-asr-1.7b`（MPS/windowed，12s 左上下文，支持领域词 context） |
 | **NLTK punkt_tab** | `~/nltk_data/tokenizers/punkt_tab`（TTS 断句必需；`vr-ui`/`vr-interact` 自动检查与修复） |
 | **实测性能基准 (QA 参考)** | SenseVoice RTF $\approx 0.17$；推理关闭时 TTFT $\approx 0.24 \sim 0.26\text{s}$ / $\sim 97 \sim 113\text{ tok/s}$ |
 

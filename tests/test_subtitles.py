@@ -14,6 +14,7 @@ import pytest
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.subtitles.events import SubtitleStream, parse_event, parse_events
 from voice_realtime.subtitles.launcher import (
+    _redact_argv,
     build_server_argv,
     prepare_whisperlivekit,
     resolve_wlk_command,
@@ -107,6 +108,17 @@ class TestParseEvent:
 
 
 class TestBuildServerArgv:
+    def test_context_is_redacted_from_logged_command(self) -> None:
+        argv = ["wlk", "serve", "--qwen3-streaming-context", "参会人姓名：张三"]
+
+        assert _redact_argv(argv) == [
+            "wlk",
+            "serve",
+            "--qwen3-streaming-context",
+            "<redacted>",
+        ]
+        assert argv[-1] == "参会人姓名：张三"
+
     def test_builds_wlk_serve_command(self) -> None:
         model_dir = Path("/tmp/WhisperLiveKit-model")
         settings = SubtitleSettings(
@@ -147,6 +159,51 @@ class TestBuildServerArgv:
         assert argv[argv.index("--model_dir") + 1] == str(model_dir)
         assert "--model" not in argv
 
+    def test_qwen3_quality_profile_and_context_are_forwarded(self, tmp_path: Path) -> None:
+        model_dir = tmp_path / "qwen3-asr-1.7b"
+        model_dir.mkdir()
+        settings = SubtitleSettings(
+            model_dir=model_dir,
+            diarization=False,
+            context="术语：量子之声、Qwen3-ASR",
+            qwen3_streaming_chunk_sec=2.5,
+            qwen3_streaming_left_context_sec=16.0,
+            qwen3_streaming_right_context_ms=960,
+            qwen3_streaming_hold_back_words=8,
+            qwen3_streaming_stable_iterations=3,
+            qwen3_streaming_max_new_tokens=384,
+            qwen3_streaming_device="mps",
+        )
+
+        argv = build_server_argv(settings)
+
+        expected = {
+            "--qwen3-streaming-chunk-sec": "2.5",
+            "--qwen3-streaming-left-context-sec": "16.0",
+            "--qwen3-streaming-right-context-ms": "960",
+            "--qwen3-streaming-hold-back-words": "8",
+            "--qwen3-streaming-stable-iterations": "3",
+            "--qwen3-streaming-max-new-tokens": "384",
+            "--qwen3-streaming-device": "mps",
+            "--qwen3-streaming-audio-backend": "windowed",
+            "--qwen3-streaming-context": "术语：量子之声、Qwen3-ASR",
+        }
+        for flag, value in expected.items():
+            assert argv[argv.index(flag) + 1] == value
+
+    def test_non_qwen_backend_does_not_receive_qwen_quality_flags(self, tmp_path: Path) -> None:
+        model_dir = tmp_path / "funasr"
+        model_dir.mkdir()
+        settings = SubtitleSettings(
+            backend="funasr",
+            model_dir=model_dir,
+            diarization=False,
+        )
+
+        argv = build_server_argv(settings)
+
+        assert not any(arg.startswith("--qwen3-streaming-") for arg in argv)
+
     def test_meeting_diarization_uses_offline_sortformer_flags(self, tmp_path: Path) -> None:
         model_dir = tmp_path / "model"
         model_dir.mkdir()
@@ -168,6 +225,7 @@ class TestBuildServerArgv:
         assert argv[argv.index("--sortformer-model-path") + 1] == str(speaker_model)
         assert argv[argv.index("--sortformer-max-speakers") + 1] == "4"
         assert argv[argv.index("--retention-seconds") + 1] == "0"
+        assert "--punctuation-split" in argv
 
     def test_missing_diarization_model_fails_fast_offline(self, tmp_path: Path) -> None:
         model_dir = tmp_path / "model"

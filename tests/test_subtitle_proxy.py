@@ -98,6 +98,19 @@ class FlushableFakeStream(FakeStream):
             self._events_queue.put_nowait(SubtitleEvent(kind="ready_to_stop", raw={}))
 
 
+class StreamSequence:
+    """按普通字幕、会议捕获、恢复字幕的顺序返回预置连接。"""
+
+    def __init__(self, *streams: FakeStream) -> None:
+        self._streams = iter(streams)
+        self.created: list[FakeStream] = []
+
+    def __call__(self, **_kwargs: object) -> FakeStream:
+        stream = next(self._streams)
+        self.created.append(stream)
+        return stream
+
+
 @pytest.fixture()
 def settings(tmp_path: Path) -> SubtitleSettings:
     model_dir = tmp_path / "model"
@@ -120,6 +133,86 @@ class TestClientManagement:
 
 
 class TestMeetingCapture:
+    async def test_finish_capture_resumes_browser_supervisor(
+        self, settings: SubtitleSettings
+    ) -> None:
+        initial = FakeStream([])
+        capture = FlushableFakeStream(_snapshot("尾句"))
+        resumed = FakeStream([])
+        factory = StreamSequence(initial, capture, resumed)
+        proxy = SubtitleProxy(settings, stream_factory=factory)
+        await proxy.start()
+
+        await proxy.begin_capture("meeting:test")
+        await proxy.finish_capture(timeout_secs=1)
+        await asyncio.sleep(0)
+
+        assert proxy.capture_owner is None
+        assert proxy.state == "connected"
+        assert proxy._supervisor_task is not None
+        assert factory.created == [initial, capture, resumed]
+        await proxy.stop()
+
+    async def test_abort_capture_resumes_browser_supervisor(
+        self, settings: SubtitleSettings
+    ) -> None:
+        initial = FakeStream([])
+        capture = FlushableFakeStream(_snapshot("中止"))
+        resumed = FakeStream([])
+        factory = StreamSequence(initial, capture, resumed)
+        proxy = SubtitleProxy(settings, stream_factory=factory)
+        await proxy.start()
+
+        await proxy.begin_capture("meeting:test")
+        await proxy.abort_capture()
+        await asyncio.sleep(0)
+
+        assert proxy.capture_owner is None
+        assert proxy.state == "connected"
+        assert proxy._supervisor_task is not None
+        assert factory.created == [initial, capture, resumed]
+        await proxy.stop()
+
+    async def test_capture_timeout_resumes_browser_supervisor(
+        self, settings: SubtitleSettings
+    ) -> None:
+        initial = FakeStream([])
+        capture = FlushableFakeStream(_snapshot("不会 ready"))
+        capture._events_queue = asyncio.Queue()
+        resumed = FakeStream([])
+        factory = StreamSequence(initial, capture, resumed)
+        proxy = SubtitleProxy(settings, stream_factory=factory)
+        await proxy.start()
+
+        await proxy.begin_capture("meeting:test")
+        capture._events_queue = asyncio.Queue()
+        with pytest.raises(FinalizationTimeout):
+            await proxy.finish_capture(timeout_secs=0.01)
+        await asyncio.sleep(0)
+
+        assert proxy.capture_owner is None
+        assert proxy.state == "connected"
+        assert proxy._supervisor_task is not None
+        assert factory.created == [initial, capture, resumed]
+        await proxy.stop()
+
+    async def test_stop_during_capture_does_not_resume_browser_supervisor(
+        self, settings: SubtitleSettings
+    ) -> None:
+        initial = FakeStream([])
+        capture = FlushableFakeStream(_snapshot("关闭"))
+        factory = StreamSequence(initial, capture)
+        proxy = SubtitleProxy(settings, stream_factory=factory)
+        await proxy.start()
+
+        await proxy.begin_capture("meeting:test")
+        await proxy.stop()
+
+        assert proxy.capture_owner is None
+        assert proxy.state == "stopped"
+        assert proxy._supervisor_task is None
+        assert factory.created == [initial, capture]
+
     async def test_capture_does_not_write_legacy_srt(
         self, settings: SubtitleSettings
     ) -> None:
@@ -131,6 +224,7 @@ class TestMeetingCapture:
         await proxy.finish_capture(timeout_secs=1)
 
         assert not (settings.output_dir / "current.srt").exists()
+        await proxy.stop()
 
     async def test_finish_capture_sends_empty_pcm_and_waits_ready(
         self, settings: SubtitleSettings
@@ -145,6 +239,7 @@ class TestMeetingCapture:
         assert stream.sent[-1] == b""
         assert final.segments[-1].text == "尾句"
         assert proxy.capture_owner is None
+        await proxy.stop()
 
     async def test_capture_accepts_audio_without_browser_clients(
         self, settings: SubtitleSettings
@@ -159,6 +254,7 @@ class TestMeetingCapture:
 
         assert b"pcm" in stream.sent
         await proxy.abort_capture()
+        await proxy.stop()
 
     async def test_finish_capture_timeout_preserves_last_window(
         self, settings: SubtitleSettings
@@ -175,6 +271,7 @@ class TestMeetingCapture:
 
         assert isinstance(exc_info.value.last_window, TranscriptWindow)
         assert proxy.capture_owner is None
+        await proxy.stop()
 
 
 class TestBroadcast:

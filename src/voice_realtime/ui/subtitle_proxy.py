@@ -189,17 +189,14 @@ class SubtitleProxy:
         self._persisted_confirmed_signature = None
         self._last_error = None
         self._stop_event.clear()
-        self._state = SubtitleProxyState.CONNECTING
-        self._supervisor_task = asyncio.create_task(self._supervise_connection())
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await self._resume_browser_connection()
 
     async def stop(self) -> None:
         """停止重连、关闭流和客户端 worker，并归档本次 SRT。"""
-        if self._capture_owner is not None:
-            await self.abort_capture()
         self._running = False
         self._stop_event.set()
+        if self._capture_owner is not None:
+            await self.abort_capture()
         if self._supervisor_task is not None:
             self._supervisor_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -302,6 +299,20 @@ class SubtitleProxy:
             with contextlib.suppress(Exception):
                 await stream.close()
         self._stream = None
+
+    async def _resume_browser_connection(self) -> None:
+        """会议流释放后恢复应用级字幕连接，不参与应用 shutdown。"""
+        if (
+            not self._running
+            or self._capture_owner is not None
+            or self._supervisor_task is not None
+        ):
+            return
+        self._stop_event.clear()
+        self._state = SubtitleProxyState.CONNECTING
+        self._supervisor_task = asyncio.create_task(self._supervise_connection())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
     async def _capture_event_loop(self, stream: SubtitleStream) -> None:
         active_stream = stream
@@ -679,3 +690,4 @@ class SubtitleProxy:
         self._capture_owner = None
         self._drain_audio_buffer()
         self._state = SubtitleProxyState.STOPPED
+        await self._resume_browser_connection()

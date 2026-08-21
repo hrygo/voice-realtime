@@ -5,9 +5,10 @@ cd "$(dirname "$0")/.."
 
 echo "== 下载 Qwen3-TTS (VoiceDesign) =="
 uv run python - <<'PY'
-from mlx_audio.tts.utils import load
-m = load("mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
-print(f"Qwen3-TTS 加载成功: {m.config.tts_model_type}")
+from huggingface_hub import snapshot_download
+
+p = snapshot_download("mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16")
+print(f"Qwen3-TTS 缓存: {p}")
 PY
 
 echo "== 下载 SenseVoice (FunASR) =="
@@ -22,8 +23,12 @@ PY
 echo "== 下载 Qwen3-ASR streaming (WhisperLiveKit) =="
 uv run python - <<'PY'
 from huggingface_hub import snapshot_download
-p = snapshot_download("qfuxa/qwen3-asr-0.6b-streaming")
-print(f"qwen3-asr streaming 缓存: {p}")
+
+p = snapshot_download(
+    "Qwen/Qwen3-ASR-1.7B",
+    local_dir="runtime/qwen3-asr-1.7b",
+)
+print(f"Qwen3-ASR 1.7B 本地目录: {p}")
 PY
 
 echo "全部模型就绪"

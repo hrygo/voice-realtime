@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from voice_realtime.config import BridgeSettings
+from voice_realtime.model_cache import resolve_model_snapshot
 
 VOICE_PROFILES: dict[str, str] = {
     "default": "自然清晰的中文女声，语气平和亲切，语速适中，适合日常对话。",
@@ -90,7 +91,11 @@ class TTSEngine:
             return
         from mlx_audio.tts.utils import load  # type: ignore[import-untyped]
 
-        self._model = load(self._settings.model)
+        model_path = resolve_model_snapshot(
+            self._settings.model,
+            allow_downloads=self._settings.allow_model_downloads,
+        )
+        self._model = load(model_path)
         if self._settings.warmup_on_start:
             self._warmup()
 

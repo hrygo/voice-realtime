@@ -48,8 +48,47 @@ def test_removed_configuration_knobs_are_not_model_fields() -> None:
 
 
 def test_subtitle_downloads_are_disabled_by_default() -> None:
+    assert BridgeSettings().allow_model_downloads is False
     assert SubtitleSettings().allow_model_downloads is False
     assert InteractionSettings().allow_model_downloads is False
+
+
+def test_subtitle_defaults_to_qwen3_asr_1_7b_quality_profile() -> None:
+    settings = SubtitleSettings()
+
+    assert settings.model_dir.as_posix() == "runtime/qwen3-asr-1.7b"
+    assert settings.qwen3_streaming_chunk_sec == 2.0
+    assert settings.qwen3_streaming_left_context_sec == 12.0
+    assert settings.qwen3_streaming_right_context_ms == 640
+    assert settings.qwen3_streaming_hold_back_words == 6
+    assert settings.qwen3_streaming_stable_iterations == 2
+    assert settings.qwen3_streaming_max_new_tokens == 256
+    assert settings.qwen3_streaming_device == "mps"
+    assert settings.punctuation_split is True
+    assert "Qwen3-ASR" in settings.context
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("qwen3_streaming_chunk_sec", 0.1),
+        ("qwen3_streaming_left_context_sec", 0.5),
+        ("qwen3_streaming_right_context_ms", -1),
+        ("qwen3_streaming_hold_back_words", -1),
+        ("qwen3_streaming_stable_iterations", 0),
+        ("qwen3_streaming_max_new_tokens", 8),
+        ("qwen3_streaming_device", "cuda"),
+    ],
+)
+def test_subtitle_quality_profile_rejects_invalid_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        SubtitleSettings(**{field: value})
+
+
+def test_subtitle_context_is_bounded_and_stripped() -> None:
+    assert SubtitleSettings(context="  专有名词  ").context == "专有名词"
+    with pytest.raises(ValidationError):
+        SubtitleSettings(context="词" * 2001)
 
 
 def test_meeting_settings_reject_non_loopback_database_url() -> None:

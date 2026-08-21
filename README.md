@@ -20,7 +20,8 @@ Python 严格锁定 `>=3.12,<3.13`。
 运行单元只有四个：
 
 - `vr-ui`：Web 控制台、麦克风采集、交互管道、状态与控制协议。
-- `vr-subtitles`：WhisperLiveKit/Qwen3-ASR 字幕服务，必须启用 `--pcm-input`。
+- `vr-subtitles`：WhisperLiveKit/Qwen3-ASR 1.7B（MPS/windowed）字幕服务，必须启用
+  `--pcm-input`。
 - `vr-bridge`：Qwen3-TTS 的 OpenAI 兼容桥，固定输出 24kHz。
 - LM Studio：加载 `qwen/qwen3.6-35b-a3b`，原生 `/api/v1/chat` 推理。
 
@@ -29,7 +30,7 @@ Python 严格锁定 `>=3.12,<3.13`。
 
 ## 启动
 
-先确认本地模型已缓存，再分别启动四个运行单元：
+先用 `scripts/download-models.sh` 准备本地模型，再分别启动四个运行单元：
 
 ```bash
 uv sync --all-extras
@@ -53,8 +54,8 @@ uv run vr-interact
 - 控制连接先接收完整状态握手；命令带 `request_id`，只有成功确认后前端才持久化状态。
 - 麦克风静音是真实的服务端静音，会阻断扇出并清空交互队列。
 - 字幕代理消费 WhisperLiveKit 全量快照，断线后指数退避重连；confirmed 字幕原子写入
-  `runtime/subtitles/current.srt`，停止时归档。
-- 默认禁止交互 STT 与字幕 ASR 隐式下载模型；缓存/模型目录缺失时启动会立即报错。
+  `runtime/subtitles/current.srt`，停止时归档；会议专属捕获释放后自动恢复普通字幕连接。
+- 默认禁止 TTS、交互 STT 与字幕 ASR 隐式下载模型；缓存/模型目录缺失时启动会立即报错。
 - TTS 请求可按请求指定 voice；MLX 生成串行、有界，并在取消后停止继续积压。
 
 ## 会议助手
