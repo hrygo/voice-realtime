@@ -1,6 +1,6 @@
 # LM Studio Stateful Context Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 让语音助手通过 LM Studio 原生有状态会话链准确保留 system/user/assistant 角色，并只把本轮用户指令作为当前 input。
 
@@ -31,7 +31,7 @@
 - Consumes: Pipecat `LLMContext` 和其 adapter 产生的 `ChatCompletionMessageParam` 列表。
 - Produces: `LmStudioNativeLLMService.reset_conversation() -> None`；首轮/续轮 native payload；只读测试属性 `_previous_response_id`、`_completed_user_turns` 和 `_request_generation`。
 
-- [ ] **Step 1: 将旧 payload 测试改成角色感知的失败测试**
+- [x] **Step 1: 将旧 payload 测试改成角色感知的失败测试**
 
 ```python
 assert payload["system_prompt"] == "你是一个中文语音助手"
@@ -47,13 +47,13 @@ assert all(message["content"] not in str(payload) for message in historical_assi
 'data: {"type":"chat.end","result":{"response_id":"resp_first"}}'
 ```
 
-- [ ] **Step 2: 运行目标测试并确认旧实现失败**
+- [x] **Step 2: 运行目标测试并确认旧实现失败**
 
-Run: `uv run pytest tests/test_reasoning.py::TestLmStudioNativeLLMService::test_native_request_payload_and_sse_conversion -q`
+Run: `uv run pytest tests/test_reasoning.py::TestLmStudioNativeLLMService::test_native_request_payload_and_sse_conversion -q --no-cov`
 
 Expected: FAIL，旧 payload 的 `input` 是无角色 text items，且没有 `system_prompt` / `store`。
 
-- [ ] **Step 3: 添加上下文提取和最小会话状态**
+- [x] **Step 3: 添加上下文提取和最小会话状态**
 
 在 `reasoning.py` 中加入严格提取函数：
 
@@ -83,13 +83,13 @@ self._request_generation = 0
 `reset_conversation()` 增加 generation 并清空其余字段。新链 payload 使用
 `system_prompt + input + store`；正常续轮使用 `input + previous_response_id + store`。
 
-- [ ] **Step 4: 运行目标测试并确认转绿**
+- [x] **Step 4: 运行目标测试并确认转绿**
 
-Run: `uv run pytest tests/test_reasoning.py::TestLmStudioNativeLLMService::test_native_request_payload_and_sse_conversion -q`
+Run: `uv run pytest tests/test_reasoning.py::TestLmStudioNativeLLMService::test_native_request_payload_and_sse_conversion -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 添加续轮、历史 assistant 不重发、非法上下文和 reset 测试**
+- [x] **Step 5: 添加续轮、历史 assistant 不重发、非法上下文和 reset 测试**
 
 测试必须覆盖：
 
@@ -105,13 +105,13 @@ assert svc._previous_response_id is None
 并参数化验证：缺少 system、多个 system、最后一条不是 user、user content 非文本均抛
 `ValueError`。
 
-- [ ] **Step 6: 运行 reasoning 测试文件**
+- [x] **Step 6: 运行 reasoning 测试文件**
 
-Run: `uv run pytest tests/test_reasoning.py -q`
+Run: `uv run pytest tests/test_reasoning.py -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 7: 提交原生上下文切片**
+- [x] **Step 7: 提交原生上下文切片**
 
 ```bash
 git add src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
@@ -128,7 +128,7 @@ git commit -m "fix(interaction): 保留 LM Studio 原生对话角色"
 - Consumes: Task 1 的 native payload、request generation 和上下文元数据。
 - Produces: `_native_completions(payload, *, generation, system_prompt, user_turns, allow_chain_retry=True)`；有效 `chat.end` 原子提交；失效 previous ID 最多重建一次。
 
-- [ ] **Step 1: 添加缺失 final、错误、中断和迟到提交的失败测试**
+- [x] **Step 1: 添加缺失 final、错误、中断和迟到提交的失败测试**
 
 测试断言：
 
@@ -144,13 +144,13 @@ assert svc._previous_response_id is None
 
 另测无效 `response_id`、非对象 `chat.end.result`、显式 error event 都不提交状态。
 
-- [ ] **Step 2: 运行新增测试并确认失败**
+- [x] **Step 2: 运行新增测试并确认失败**
 
-Run: `uv run pytest tests/test_reasoning.py -q`
+Run: `uv run pytest tests/test_reasoning.py -q --no-cov`
 
 Expected: FAIL，旧流消费器不要求 `chat.end`、不保存 ID、无 generation 防护。
 
-- [ ] **Step 3: 实现严格 chat.end 与代次提交**
+- [x] **Step 3: 实现严格 chat.end 与代次提交**
 
 核心提交条件：
 
@@ -168,19 +168,19 @@ if generation == self._request_generation:
 `response_id` 必须匹配 `^resp_[A-Za-z0-9_-]+$`。任何 error、异常、取消或过期 generation
 都不得推进状态。
 
-- [ ] **Step 4: 实现 previous_response_id 失效的一次性新链重试**
+- [x] **Step 4: 实现 previous_response_id 失效的一次性新链重试**
 
 只对 HTTP 400/404 且结构化 error 的 `param == "previous_response_id"`，或 error message
 明确包含该字段时执行：清空失效链、移除 `previous_response_id`、加入当前 `system_prompt`，用同一
 generation 重试一次。其他状态码和第二次失败原样抛出。
 
-- [ ] **Step 5: 运行 reasoning 测试并确认转绿**
+- [x] **Step 5: 运行 reasoning 测试并确认转绿**
 
-Run: `uv run pytest tests/test_reasoning.py -q`
+Run: `uv run pytest tests/test_reasoning.py -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交流式状态切片**
+- [x] **Step 6: 提交流式状态切片**
 
 ```bash
 git add src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
@@ -191,14 +191,14 @@ git commit -m "fix(interaction): 原子提交 LM Studio 会话状态"
 
 **Files:**
 - Modify: `src/voice_realtime/interaction/session.py`
-- Test: `tests/test_interaction_session.py`
+- Create: `tests/test_interaction_context.py`
 - Test: `tests/test_runtime.py`
 
 **Interfaces:**
 - Consumes: Task 1 的 `LmStudioNativeLLMService.reset_conversation()`。
 - Produces: `InteractionSession._llm_service: LmStudioNativeLLMService | None`；clear 时同时重置 native chain 和 Pipecat messages。
 
-- [ ] **Step 1: 添加 clear_context 会重置原生链的失败测试**
+- [x] **Step 1: 添加 clear_context 会重置原生链的失败测试**
 
 构造 `pipeline.processors=[MagicMock(spec=LmStudioNativeLLMService)]`，启动 session 后执行：
 
@@ -210,13 +210,13 @@ worker.queue_frame.assert_awaited_once()
 
 并验证 stop 后 `_llm_service is None`，没有 worker 时 clear 仍为幂等 no-op。
 
-- [ ] **Step 2: 运行 session/runtime 目标测试并确认失败**
+- [x] **Step 2: 运行 session/runtime 目标测试并确认失败**
 
-Run: `uv run pytest tests/test_interaction_session.py tests/test_runtime.py::TestControlCommands -q`
+Run: `uv run pytest tests/test_interaction_context.py tests/test_runtime.py::TestControlCommands -q --no-cov`
 
 Expected: FAIL，session 尚未保存或重置 LLM 服务引用。
 
-- [ ] **Step 3: 实现服务发现、重置和引用清理**
+- [x] **Step 3: 实现服务发现、重置和引用清理**
 
 在 pipeline 装配后查找唯一 `LmStudioNativeLLMService`：
 
@@ -230,16 +230,16 @@ self._llm_service = next(
 `clear_context()` 在排队 `LLMMessagesUpdateFrame` 前使在途 generation 失效并重置 native chain；
 `_clear_runtime_references()` 释放引用。persona 继续复用 control 层现有 set-then-clear 流程。
 
-- [ ] **Step 4: 运行 session/runtime 目标测试并确认转绿**
+- [x] **Step 4: 运行 session/runtime 目标测试并确认转绿**
 
-Run: `uv run pytest tests/test_interaction_session.py tests/test_runtime.py::TestControlCommands -q`
+Run: `uv run pytest tests/test_interaction_context.py tests/test_runtime.py::TestControlCommands -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交生命周期切片**
+- [x] **Step 5: 提交生命周期切片**
 
 ```bash
-git add src/voice_realtime/interaction/session.py tests/test_interaction_session.py tests/test_runtime.py
+git add src/voice_realtime/interaction/session.py tests/test_interaction_context.py tests/test_runtime.py
 git commit -m "fix(interaction): 清空上下文时重置原生会话"
 ```
 
@@ -255,14 +255,14 @@ git commit -m "fix(interaction): 清空上下文时重置原生会话"
 - Consumes: Tasks 1-3 的最终协议和测试结果。
 - Produces: 与实现一致的权威运行约束和可复现验收记录。
 
-- [ ] **Step 1: 更新协议文档**
+- [x] **Step 1: 更新协议文档**
 
 删除“无 role text items 按顺序隐式推断角色”，替换为：首轮 `system_prompt + input`，后续
 `previous_response_id + input`，只在 `chat.end` 提交 ID，clear/persona 创建新链。
 
-- [ ] **Step 2: 运行后端目标质量门禁**
+- [x] **Step 2: 运行后端目标质量门禁**
 
-Run: `uv run pytest tests/test_reasoning.py tests/test_interaction_session.py tests/test_runtime.py -q`
+Run: `uv run pytest tests/test_reasoning.py tests/test_interaction_context.py tests/test_runtime.py -q --no-cov`
 
 Run: `uv run mypy src/`
 
@@ -270,13 +270,13 @@ Run: `uv run ruff check src/ tests/`
 
 Expected: 全部退出码 0。
 
-- [ ] **Step 3: 运行本机真实 LM Studio 冒烟**
+- [x] **Step 3: 运行本机真实 LM Studio 冒烟**
 
 使用 `qwen/qwen3.6-35b-a3b` 验证：首轮保存一个用户属性，第二轮通过 previous ID 回答该属性；
 两轮 `reasoning_output_tokens == 0`。随后创建新链，验证旧属性不可引用且新 persona 生效。不得把
 测试正文写入日志或项目文件。
 
-- [ ] **Step 4: 运行完整项目门禁**
+- [x] **Step 4: 运行完整项目门禁**
 
 Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
@@ -290,7 +290,7 @@ Run: `cd ui && npm run build`
 
 Expected: 后端覆盖率达到配置阈值且全部门禁退出码 0。
 
-- [ ] **Step 5: 自审 diff 并提交文档与验收结果**
+- [x] **Step 5: 自审 diff 并提交文档与验收结果**
 
 ```bash
 git diff --check
@@ -299,7 +299,7 @@ git add AGENTS.md docs/
 git commit -m "docs: 更新 LM Studio 有状态上下文契约"
 ```
 
-- [ ] **Step 6: 最终审查**
+- [x] **Step 6: 最终审查**
 
 按正确性、可读性、架构、安全、性能五个维度复核全部提交；确认无角色压平、正文日志、状态竞态、
 无界重试、依赖升级或无关重构。

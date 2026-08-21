@@ -2,8 +2,8 @@
 
 关键背景（QA 实测）：OpenAI 兼容端点忽略 reasoning 参数导致模型始终思考；
 本服务走原生 /api/v1/chat 端点（SSE，message.delta 逐字输出）。
-核心验证点：payload 构造（input items 转换、无 role 字段、reasoning/stream）
-与 SSE → OpenAI 兼容 chunk 的转换（空 delta 过滤）。
+核心验证点：首轮 system_prompt/current input、后续 previous_response_id/current input、
+chat.end 原子提交，以及 SSE → OpenAI 兼容 chunk 的转换。
 """
 
 from __future__ import annotations

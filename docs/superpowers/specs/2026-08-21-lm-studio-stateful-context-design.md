@@ -21,6 +21,8 @@ Pipecat 聚合器链。
 - SSE `chat.end` 携带与非流式响应等价的最终结果及可选 `response_id`。
 - 2026-08-21 本机 LM Studio 0.4.21+2 实测：使用 `previous_response_id` 的第二轮能准确识别
   第一轮 user 内容，两轮 `reasoning_output_tokens` 均为 0。
+- 2026-08-21 实现后真实 SSE 冒烟：首轮回复“收到”，续轮能回答“用户：青竹”；调用
+  `reset_conversation()` 后新链回答“未知”，三个请求均取得新的 `resp_` response ID。
 
 ## 非目标
 
@@ -175,6 +177,17 @@ system_prompt → user input → assistant output → user input → ...
 6. 本机真实两轮对话能识别首轮 user 信息，且 reasoning token 为 0。
 7. 本机真实 clear 后无法引用旧轮内容，persona 在新链生效。
 8. 后端测试、mypy strict、ruff、前端测试与生产构建全部通过。
+
+## 实施验收（2026-08-21）
+
+- 真实 LM Studio SSE：首轮“收到”，续轮“用户：青竹”，reset 后“未知”；三轮 response ID
+  均按新链/续链语义推进。
+- `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`：505 passed，分支覆盖率
+  84.20%。
+- `uv run mypy src/`：43 source files clean；`uv run ruff check src/ tests/`：clean。
+- `npm test -- --run`：52 passed；当前 HEAD 的临时隔离工作区 `npm run build`：通过。
+- 共享工作区的生产构建另被用户未提交的 `AssistantPanel.tsx` 文字输入事件字段错误阻塞；该文件不在
+  本设计实施范围内，也未纳入本任务提交。
 
 ## 参考
 

@@ -56,7 +56,11 @@
 
 ### 1. LM Studio 推理开关只能走原生端点
 - OpenAI 兼容 `/v1/chat/completions` **忽略** `reasoning` 参数；唯一有效方式为**原生 `/api/v1/chat` + `reasoning: "off"`**（实测 `reasoning_output_tokens=0`）。
-- 原生 payload **无 `role`、无 `max_tokens`**（否则报错 `"Unrecognized key(s)"`）；流式 SSE 事件为 `message.delta`；非流式响应为 `output[].content`（**非** OpenAI `choices`）。
+- 原生 `/api/v1/chat` 不接收 OpenAI `messages` 角色历史：交互首轮必须发送独立的
+  `system_prompt` + 当前 user `input`，后续只发送当前 `input` + `previous_response_id`；
+  LM Studio 由此保存真实 system/user/assistant 角色链。不得把历史 assistant 压成 user text item。
+- 流式正文事件为 `message.delta`，只有 `chat.end.result.response_id` 才提交新会话状态；
+  `clear_context` / persona 切换必须重置 response chain。payload 不发送 `role` 或 `max_tokens`。
 - `LmStudioNativeLLMService`（`interaction/reasoning.py`）与 `MeetingSummaryService`（`meeting/summary.py`）均封装原生端点；**切勿改回**向 OpenAI 端点注入 `extra_body` 的方案。
 
 ### 2. 离线优先与模型下载源
