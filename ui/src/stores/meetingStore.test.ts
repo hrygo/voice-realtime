@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { useMeetingStore } from "./meetingStore";
+import { beforeEach, describe, expect, it } from "vitest";
+
 import type { TranscriptSegment } from "../contracts/meetingContract";
 import { mockMinutesCompleted, mockSegments } from "../test/fixtures/meetingFixtures";
+import { useMeetingStore } from "./meetingStore";
 
 describe("meetingStore", () => {
   beforeEach(() => {
@@ -178,4 +179,26 @@ describe("meetingStore", () => {
       expect(state.partialText).toBe("实时转录预览文字");
     });
   });
+
+  describe("updateMeetingState", () => {
+    it("updates status and activeMeetingId when meetingId is provided", () => {
+      useMeetingStore
+        .getState()
+        .updateMeetingState("recording", "2026-08-21T10:00:00Z", null, null, "m-test-id");
+      const state = useMeetingStore.getState();
+      expect(state.status).toBe("recording");
+      expect(state.activeMeetingId).toBe("m-test-id");
+      expect(state.sessionStartedAt).toBe("2026-08-21T10:00:00Z");
+    });
+
+    it("preserves activeMeetingId when meetingId is omitted or undefined", () => {
+      useMeetingStore.setState({ activeMeetingId: "existing-id" });
+      useMeetingStore.getState().updateMeetingState("finalizing");
+      const state = useMeetingStore.getState();
+      expect(state.status).toBe("finalizing");
+      expect(state.activeMeetingId).toBe("existing-id");
+      expect(state.isFinalizing).toBe(true);
+    });
+  });
 });
+

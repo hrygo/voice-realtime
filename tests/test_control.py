@@ -131,6 +131,16 @@ class TestDispatch:
         assert resp["ok"] is True
         runtime.end_meeting.assert_awaited_once_with(meeting_id)
 
+    async def test_end_meeting_without_id_delegates_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        runtime.end_meeting = AsyncMock()
+        resp = await bridge.handle(
+            {"request_id": "meeting-3", "cmd": "end_meeting"}
+        )
+        assert resp["ok"] is True
+        runtime.end_meeting.assert_awaited_once_with(None)
+
     async def test_v1_request_id_is_idempotent(
         self, runtime: MagicMock, bridge: ControlBridge
     ) -> None:

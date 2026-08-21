@@ -9,6 +9,7 @@ import {
 } from "../protocol";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useAssistantStore } from "../stores/assistantStore";
+import { useMeetingStore } from "../stores/meetingStore";
 import { ReconnectingSocket, type ConnectionState } from "./useEventSocket";
 
 interface PendingRequest {
@@ -172,6 +173,21 @@ export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
       applyState: (snapshot) => {
         useUISettingsStore.getState().applyRuntimeState(snapshot);
         useAssistantStore.getState().syncPipelineState(snapshot.pipeline);
+        if (snapshot.active_meeting_id) {
+          const meetingStore = useMeetingStore.getState();
+          if (meetingStore.activeMeetingId !== snapshot.active_meeting_id) {
+            useMeetingStore.setState({ activeMeetingId: snapshot.active_meeting_id });
+          }
+        }
+        if (snapshot.meeting_state) {
+          useMeetingStore.getState().updateMeetingState(
+            snapshot.meeting_state,
+            snapshot.meeting_started_at,
+            null,
+            null,
+            snapshot.active_meeting_id,
+          );
+        }
       },
       onReady: setReady,
     });

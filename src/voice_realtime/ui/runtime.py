@@ -205,7 +205,7 @@ class UIRuntime:
             raise MeetingUnavailableError("meeting service unavailable")
         return await coordinator.start_meeting(title)
 
-    async def end_meeting(self, meeting_id: str) -> Any:
+    async def end_meeting(self, meeting_id: str | None = None) -> Any:
         coordinator = self.mode_coordinator
         if coordinator is None:
             raise MeetingUnavailableError("meeting service unavailable")

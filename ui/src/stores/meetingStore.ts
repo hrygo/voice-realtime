@@ -73,6 +73,7 @@ export interface MeetingStoreState {
     startedAt?: string | null,
     endedAt?: string | null,
     reason?: string | null,
+    meetingId?: string | null,
   ) => void;
   readonly setSpeaker: (speakerKey: string, displayName: string, contentRevision: number) => void;
   readonly setMinutesState: (
@@ -208,9 +209,13 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     }));
   },
 
-  updateMeetingState: (status, startedAt, endedAt, reason) => {
+  updateMeetingState: (status, startedAt, endedAt, reason, meetingId) => {
     set((state) => ({
       status,
+      activeMeetingId:
+        meetingId !== undefined && meetingId !== null && meetingId !== ""
+          ? meetingId
+          : state.activeMeetingId,
       isFinalizing: status === "finalizing",
       sessionStartedAt: startedAt !== undefined ? startedAt : state.sessionStartedAt,
       sessionEndedAt: endedAt !== undefined ? endedAt : state.sessionEndedAt,

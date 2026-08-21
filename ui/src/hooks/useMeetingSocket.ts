@@ -55,7 +55,13 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
         case "meeting_state_changed": {
           const p = payload as MeetingStateChangedPayload;
-          store.updateMeetingState(p.status, p.started_at, p.ended_at, p.interruption_reason);
+          store.updateMeetingState(
+            p.status,
+            p.started_at,
+            p.ended_at,
+            p.interruption_reason,
+            meeting_id,
+          );
           break;
         }
 

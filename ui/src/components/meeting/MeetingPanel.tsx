@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMeetingStore } from "../../stores/meetingStore";
+import { useUISettingsStore } from "../../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../../hooks/useCommandSocket";
 import { MeetingHistorySidebar } from "./MeetingHistorySidebar";
 import { MeetingIdleView } from "./MeetingIdleView";
@@ -46,11 +47,14 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
 
     setIsStarting(true);
     try {
-      await commandSocket.sendCommand({
+      const resp = await commandSocket.sendCommand({
         cmd: "start_meeting",
         title,
         contract_version: "1",
       });
+      if (resp.active_meeting_id) {
+        useMeetingStore.setState({ activeMeetingId: resp.active_meeting_id });
+      }
       showToast("已成功开启会议模式", "success");
       // Deselect history to focus on live recording
       await store.selectMeeting(null);
@@ -62,7 +66,8 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   };
 
   const handleEndMeeting = async () => {
-    if (!store.activeMeetingId) return;
+    const meetingId =
+      store.activeMeetingId || useUISettingsStore.getState().activeMeetingId;
     if (!commandSocket.ready) {
       showToast("控制端连接中，请稍候再试", "warning");
       return;
@@ -70,11 +75,18 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
 
     setIsEnding(true);
     try {
-      await commandSocket.sendCommand({
-        cmd: "end_meeting",
-        meeting_id: store.activeMeetingId,
-        contract_version: "1",
-      });
+      if (meetingId) {
+        await commandSocket.sendCommand({
+          cmd: "end_meeting",
+          meeting_id: meetingId,
+          contract_version: "1",
+        });
+      } else {
+        await commandSocket.sendCommand({
+          cmd: "stop_active_mode",
+          contract_version: "1",
+        });
+      }
       showToast("会议已结束，正在冲刷转录并排队生成 AI 纪要", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "结束会议失败", "error");

@@ -82,7 +82,7 @@ class StartMeetingCommand(CommandBase):
 
 class EndMeetingCommand(CommandBase):
     cmd: Literal["end_meeting"]
-    meeting_id: MeetingId
+    meeting_id: MeetingId | None = None
     contract_version: Literal["1"] | None = None
 
 
