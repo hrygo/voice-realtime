@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from voice_realtime.interaction.context_memory import ContextCompactionConfig
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
@@ -88,6 +90,61 @@ class InteractionSettings(BaseSettings):
     )
     llm_model: str = Field(default=DEFAULT_LLM_MODEL, description="交互 LLM 模型 ID")
     llm_temperature: float = Field(default=0.7, description="非 thinking 采样温度")
+    context_compaction_enabled: bool = Field(
+        default=True,
+        description="是否启用 LM Studio 原生会话链后台压缩",
+    )
+    context_soft_input_tokens: int = Field(
+        default=6000,
+        ge=512,
+        description="达到后后台生成压缩候选的真实 input token 水位",
+    )
+    context_hard_input_tokens: int = Field(
+        default=10000,
+        ge=1024,
+        description="上下文延迟保护水位；失败时保留旧链而非破坏性截断",
+    )
+    context_target_input_tokens: int = Field(
+        default=2500,
+        ge=256,
+        description="新链预热后的目标 input token 规模",
+    )
+    context_recent_turn_pairs: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        description="压缩时优先原样保留的最近完整问答组数",
+    )
+    context_max_unsummarized_messages: int = Field(
+        default=40,
+        ge=4,
+        le=1000,
+        description="低 token、多轮短对话的备用压缩触发器",
+    )
+    context_ttft_soft_seconds: float = Field(
+        default=1.5,
+        ge=0.1,
+        le=30.0,
+        description="连续两轮达到时提前触发压缩的 TTFT 秒数",
+    )
+    context_summary_max_output_tokens: int = Field(
+        default=1024,
+        ge=128,
+        le=4096,
+        description="结构化摘要的最大输出 token 数",
+    )
+    context_summary_timeout_seconds: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=120.0,
+        description="单次原生摘要调用超时秒数",
+    )
+    context_capacity_ratio: float = Field(
+        default=0.8,
+        ge=0.5,
+        le=0.95,
+        description="已加载模型上下文容量的紧急保护比例",
+    )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
     stt_model: str = Field(
         default="",
@@ -165,6 +222,31 @@ class InteractionSettings(BaseSettings):
         if v != 16000:
             raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
         return v
+
+    @model_validator(mode="after")
+    def _validate_context_compaction_thresholds(self) -> InteractionSettings:
+        if not (
+            self.context_target_input_tokens
+            < self.context_soft_input_tokens
+            < self.context_hard_input_tokens
+        ):
+            raise ValueError("上下文 token 水位必须满足 target < soft < hard")
+        return self
+
+    def context_compaction_config(self) -> ContextCompactionConfig:
+        """映射为不依赖 pydantic-settings 的运行时压缩配置。"""
+        return ContextCompactionConfig(
+            enabled=self.context_compaction_enabled,
+            soft_input_tokens=self.context_soft_input_tokens,
+            hard_input_tokens=self.context_hard_input_tokens,
+            target_input_tokens=self.context_target_input_tokens,
+            recent_turn_pairs=self.context_recent_turn_pairs,
+            max_unsummarized_messages=self.context_max_unsummarized_messages,
+            ttft_soft_seconds=self.context_ttft_soft_seconds,
+            summary_max_output_tokens=self.context_summary_max_output_tokens,
+            summary_timeout_seconds=self.context_summary_timeout_seconds,
+            capacity_ratio=self.context_capacity_ratio,
+        )
 
     _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(
         _validate_loopback_url

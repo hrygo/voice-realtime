@@ -449,3 +449,11 @@ class TestSystemPrompt:
     def test_custom_persona_appended(self) -> None:
         prompt = build_system_prompt(persona="你是一位耐心的中医养生顾问。")
         assert "中医养生" in prompt
+
+    def test_memory_protocol_is_present_once_before_persona(self) -> None:
+        persona = "你是一位耐心顾问。"
+        prompt = build_system_prompt(persona=persona)
+
+        assert prompt.count("conversation_memory_data") == 1
+        assert "最新原生 user turn" in prompt
+        assert prompt.endswith(persona)

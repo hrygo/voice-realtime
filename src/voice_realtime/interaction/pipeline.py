@@ -65,6 +65,7 @@ from voice_realtime.config import (
     TTS_OUTPUT_SAMPLE_RATE,
     InteractionSettings,
 )
+from voice_realtime.interaction.context_memory import MEMORY_PROTOCOL
 from voice_realtime.interaction.reasoning import (
     DEFAULT_SYSTEM_PROMPT,
     LmStudioNativeLLMService,
@@ -108,9 +109,10 @@ def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
 
 def build_system_prompt(persona: str | None = None) -> str:
     """构造语音助手系统提示词。persona 追加在默认约束之后。"""
+    base_prompt = f"{DEFAULT_SYSTEM_PROMPT.rstrip()}\n\n{MEMORY_PROTOCOL.rstrip()}"
     if persona:
-        return f"{DEFAULT_SYSTEM_PROMPT}\n{persona}"
-    return DEFAULT_SYSTEM_PROMPT
+        return f"{base_prompt}\n\n{persona}"
+    return base_prompt
 
 
 _ECHO_BASELINE_WARMUP_FRAMES = 8  # 抑制开启后用于建立扬声器峰值包络的初始帧数（~128ms @16k/512B）
@@ -650,6 +652,7 @@ def build_pipeline(
         base_url=settings.llm_base_url,
         temperature=settings.llm_temperature,
         reasoning="off",
+        compaction_config=settings.context_compaction_config(),
     )
 
     tts = LocalBridgeTTSService(

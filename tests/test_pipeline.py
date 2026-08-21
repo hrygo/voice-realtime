@@ -138,6 +138,7 @@ class TestBuildPipeline:
             base_url="http://localhost:1234/v1",
             temperature=0.7,
             reasoning="off",
+            compaction_config=settings.context_compaction_config(),
         )
 
     def test_tts_points_at_bridge(
