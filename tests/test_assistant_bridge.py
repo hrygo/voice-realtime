@@ -135,17 +135,21 @@ class TestEventMapping:
         second = json.loads(client.call_args_list[1].args[0])
         assert second["state"] == "user_silence"
 
-    async def test_interruption_event_only_during_active_playback(self) -> None:
+    async def test_interruption_event_emitted_on_interruption_frame(self) -> None:
         observer = StatusBridgeObserver()
         client = _upsert_mock_client(observer)
-        await _push(observer, InterruptionFrame())
-        assert client.call_count == 0
-
-        await _push(observer, TTSStartedFrame())
         await _push(observer, InterruptionFrame())
         payload = json.loads(client.call_args.args[0])
         assert payload["type"] == "interruption"
         assert payload["state"] == "detected"
+
+        # 播报期间发生打断同时停止 TTS 状态
+        client.reset_mock()
+        await _push(observer, TTSStartedFrame())
+        await _push(observer, InterruptionFrame())
+        events = [json.loads(c.args[0]) for c in client.call_args_list]
+        assert any(e["type"] == "tts" and e["state"] == "stopped" for e in events)
+        assert any(e["type"] == "interruption" and e["state"] == "detected" for e in events)
 
     async def test_pipeline_started_via_callback(self) -> None:
         observer = StatusBridgeObserver()

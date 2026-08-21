@@ -152,13 +152,15 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       return event.state === "user_speaking"
         ? withActivity(snapshot, { listening: true, thinking: false, speaking: false })
         : withActivity(snapshot, { listening: false, thinking: true, speaking: false });
-    case "stt":
+    case "stt": {
+      const isMeaningful = Boolean(event.text.replace(/[。，！？,.!?\s]/g, "").trim());
       return withActivity(
         { ...snapshot, transcript: updateUserTranscript(snapshot.transcript, event) },
         event.state === "final"
-          ? { listening: false, thinking: true, speaking: false }
+          ? (isMeaningful ? { listening: false, thinking: true, speaking: false } : IDLE_ACTIVITY)
           : { listening: true, thinking: false, speaking: false },
       );
+    }
     case "llm": {
       const updated = {
         ...snapshot,
@@ -183,9 +185,9 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       }
       return withActivity(snapshot, { listening: false, thinking: true, speaking: false });
     case "interruption": {
-      // 标记当前最后一个助手气泡为被打断状态
+      // 标记当前最后一个未落定的助手气泡为被打断状态
       const markedTranscript = snapshot.transcript.map((b, idx) => {
-        if (idx === snapshot.transcript.length - 1 && b.role === "assistant") {
+        if (idx === snapshot.transcript.length - 1 && b.role === "assistant" && !b.final) {
           return { ...b, final: true, interrupted: true };
         }
         return b;
@@ -193,7 +195,7 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       return {
         ...withActivity(
           { ...snapshot, transcript: markedTranscript },
-          { listening: true, thinking: false, speaking: false },
+          IDLE_ACTIVITY,
         ),
         lastInterruptionTime: Date.now(),
         interruptionCount: snapshot.interruptionCount + 1,
@@ -212,26 +214,92 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
 }
 
 
+let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearWatchdog(): void {
+  if (watchdogTimer !== null) {
+    clearTimeout(watchdogTimer);
+    watchdogTimer = null;
+  }
+}
+
+function armWatchdog(
+  set: (fn: (state: AssistantStore) => Partial<AssistantStore>) => void,
+  delayMs = 15000,
+): void {
+  clearWatchdog();
+  watchdogTimer = setTimeout(() => {
+    watchdogTimer = null;
+    set((state) => {
+      if (state.activity.thinking || state.activity.speaking) {
+        const settledTranscript = state.transcript.map((b) =>
+          b.role === "assistant" && !b.final ? { ...b, final: true } : b,
+        );
+        return {
+          activity: IDLE_ACTIVITY,
+          phase: "idle",
+          transcript: settledTranscript,
+        };
+      }
+      return {};
+    });
+  }, delayMs);
+}
+
 export const useAssistantStore = create<AssistantStore>((set) => ({
   ...INITIAL_SNAPSHOT,
   connected: false,
-  applyEvent: (event) => set((state) => reduceAssistantEvent(state, event)),
-  setConnected: (connected) => set({ connected }),
-  syncPipelineState: (pipelineState) => set((state) => {
-    if (pipelineState === "running") {
-      return state.phase === "stopped" || state.phase === "degraded"
-        ? { phase: "idle", activity: IDLE_ACTIVITY }
-        : {};
-    }
-    if (pipelineState === "error" || pipelineState === "ownership_conflict") {
-      return { phase: "degraded", activity: IDLE_ACTIVITY };
-    }
-    if (pipelineState === "stopped" || pipelineState === "stopping") {
-      return { phase: "stopped", activity: IDLE_ACTIVITY };
-    }
-    return {};
-  }),
-  clearTranscript: () => set((state) => ({ ...state, transcript: [] })),
+  applyEvent: (event) =>
+    set((state) => {
+      const next = reduceAssistantEvent(state, event);
+      if (next.activity.thinking || next.activity.speaking) {
+        armWatchdog(set, 15000);
+      } else {
+        clearWatchdog();
+      }
+      return next;
+    }),
+  setConnected: (connected) =>
+    set((state) => {
+      if (!connected) {
+        clearWatchdog();
+        if (state.activity.thinking || state.activity.speaking) {
+          const settledTranscript = state.transcript.map((b) =>
+            b.role === "assistant" && !b.final ? { ...b, final: true } : b,
+          );
+          return {
+            connected,
+            activity: IDLE_ACTIVITY,
+            phase:
+              state.phase === "stopped" || state.phase === "degraded"
+                ? state.phase
+                : "idle",
+            transcript: settledTranscript,
+          };
+        }
+      }
+      return { connected };
+    }),
+  syncPipelineState: (pipelineState) =>
+    set((state) => {
+      if (pipelineState === "running") {
+        return state.phase === "stopped" || state.phase === "degraded"
+          ? { phase: "idle", activity: IDLE_ACTIVITY }
+          : {};
+      }
+      clearWatchdog();
+      if (pipelineState === "error" || pipelineState === "ownership_conflict") {
+        return { phase: "degraded", activity: IDLE_ACTIVITY };
+      }
+      if (pipelineState === "stopped" || pipelineState === "stopping") {
+        return { phase: "stopped", activity: IDLE_ACTIVITY };
+      }
+      return {};
+    }),
+  clearTranscript: () => {
+    clearWatchdog();
+    set((state) => ({ ...state, transcript: [] }));
+  },
 }));
 
 /** 供组件按字段订阅，避免为无关状态重复渲染。 */
@@ -277,7 +345,7 @@ function updateUserTranscript(
   transcript: readonly AssistantBubble[],
   event: Extract<AssistantEvent, { readonly type: "stt" }>,
 ): readonly AssistantBubble[] {
-  if (!event.text.trim()) return transcript;
+  if (!event.text.replace(/[。，！？,.!?\s]/g, "").trim()) return transcript;
 
   const draftIndex = lastIndexOf(transcript, (bubble) => bubble.role === "user" && !bubble.final);
   const time = formatTimeNow();

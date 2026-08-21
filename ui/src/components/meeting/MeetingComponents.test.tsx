@@ -228,4 +228,72 @@ describe("Meeting React Components DOM Rendering", () => {
 
     expect(handleSelectEvidence).toHaveBeenCalledWith("seg-001-uuid");
   });
+
+  it("renders MeetingMinutesViewer empty state and handles generate click when minutes is null", () => {
+    const handleRegenerate = vi.fn().mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(
+        <MeetingMinutesViewer
+          minutes={null}
+          minutesList={[]}
+          selectedVersion={null}
+          onSelectVersion={vi.fn()}
+          onRegenerate={handleRegenerate}
+          onSelectEvidence={vi.fn()}
+          isRegenerating={false}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("尚未生成 AI 结构化纪要");
+    const generateBtn = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("立即生成 AI 纪要"),
+    );
+    expect(generateBtn).not.toBeUndefined();
+    expect(generateBtn?.disabled).toBe(false);
+
+    act(() => {
+      generateBtn?.click();
+    });
+    expect(handleRegenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders MeetingMinutesViewer failed state with error message and handles retry", () => {
+    const handleRegenerate = vi.fn().mockResolvedValue(undefined);
+    const failedMinutes = {
+      ...mockMinutesCompleted,
+      status: "failed" as const,
+      content_json: null,
+      error_code: "summary_unavailable",
+      error_message: "AI 纪要服务暂不可用，请检查 LLM",
+    };
+
+    act(() => {
+      root.render(
+        <MeetingMinutesViewer
+          minutes={failedMinutes}
+          minutesList={[failedMinutes]}
+          selectedVersion={1}
+          onSelectVersion={vi.fn()}
+          onRegenerate={handleRegenerate}
+          onSelectEvidence={vi.fn()}
+          isRegenerating={false}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("AI 纪要生成失败");
+    expect(container.textContent).toContain("AI 纪要服务暂不可用，请检查 LLM");
+
+    const retryBtn = Array.from(container.querySelectorAll("button")).find((btn) =>
+      btn.textContent?.includes("重试生成"),
+    );
+    expect(retryBtn).not.toBeUndefined();
+
+    act(() => {
+      retryBtn?.click();
+    });
+    expect(handleRegenerate).toHaveBeenCalledTimes(1);
+  });
 });

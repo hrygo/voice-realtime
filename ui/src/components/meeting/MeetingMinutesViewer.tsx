@@ -28,8 +28,8 @@ export function MeetingMinutesViewer({
 }: MeetingMinutesViewerProps) {
   const [viewMode, setViewMode] = useState<"structured" | "markdown">("structured");
 
-  const status: MinutesStatus = minutes?.status || "queued";
-  const isGenerating = status === "queued" || status === "generating" || isRegenerating;
+  const status: MinutesStatus | null = minutes?.status || null;
+  const isGenerating = isRegenerating || status === "queued" || status === "generating";
   const isFailed = status === "failed";
   const jsonContent = minutes?.content_json;
 
@@ -70,7 +70,7 @@ export function MeetingMinutesViewer({
             onClick={() => void onRegenerate()}
             disabled={isGenerating}
           >
-            {isGenerating ? "生成中..." : "🔄 重新生成"}
+            {isGenerating ? "生成中..." : minutes ? "🔄 重新生成" : "✨ 生成纪要"}
           </button>
         </div>
       </div>
@@ -87,6 +87,26 @@ export function MeetingMinutesViewer({
               disabled={isGenerating}
             >
               立即重新生成
+            </button>
+          </div>
+        )}
+
+        {!minutes && !isGenerating && (
+          <div className="minutes-card" style={{ textAlign: "center", padding: "36px 16px" }}>
+            <div style={{ fontSize: "2rem", marginBottom: "8px" }}>✨</div>
+            <h4 style={{ fontSize: "0.95rem", color: "var(--text-primary)", marginBottom: "6px" }}>
+              尚未生成 AI 结构化纪要
+            </h4>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "16px" }}>
+              已封存会议转录可随时提取议题、决议、待办、风险及证据追溯。
+            </p>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{ padding: "6px 16px", fontSize: "0.82rem" }}
+              onClick={() => void onRegenerate()}
+            >
+              ✨ 立即生成 AI 纪要
             </button>
           </div>
         )}
@@ -114,18 +134,23 @@ export function MeetingMinutesViewer({
             <div className="minutes-card-title" style={{ color: "var(--color-red)" }}>
               <span>✕ AI 纪要生成失败</span>
             </div>
-            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", margin: "6px 0 10px 0" }}>
               {minutes?.error_message ||
                 getErrorMessageByCode(minutes?.error_code || "summary_unavailable")}
             </p>
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ alignSelf: "flex-start", marginTop: "8px" }}
-              onClick={() => void onRegenerate()}
-            >
-              重试生成
-            </button>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ fontSize: "0.78rem", padding: "4px 12px" }}
+                onClick={() => void onRegenerate()}
+              >
+                🔄 重试生成
+              </button>
+            </div>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-tertiary)", marginTop: "8px" }}>
+              提示：请确保 LLM 服务 (LM Studio) 在 localhost:1234 正常运行且已加载纪要模型。
+            </p>
           </div>
         )}
 

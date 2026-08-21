@@ -417,9 +417,14 @@ class MeetingSummaryClient:
         root_url = resolved_base_url.rstrip("/")
         if root_url.endswith("/v1"):
             root_url = root_url[: -len("/v1")]
+        timeout_secs = (
+            timeout
+            if timeout is not None
+            else float(getattr(settings, "summary_timeout_secs", 60.0) or 60.0)
+        )
         self._http = client or local_async_client(
             base_url=root_url,
-            timeout=httpx.Timeout(connect=5.0, read=timeout, write=10.0, pool=5.0),
+            timeout=httpx.Timeout(connect=5.0, read=timeout_secs, write=10.0, pool=5.0),
         )
         self._closed = False
 
@@ -466,8 +471,11 @@ class MeetingSummaryClient:
                         parts.append(content)
         except SummaryError:
             raise
+        except httpx.TimeoutException as exc:
+            raise SummaryUnavailableError("AI 纪要生成超时，请检查 LLM 服务负载后重试") from exc
         except (httpx.HTTPError, OSError) as exc:
-            raise SummaryUnavailableError("AI 纪要服务暂不可用") from exc
+            msg = "AI 纪要服务暂不可用，请检查 LLM (LM Studio) 是否正常运行"
+            raise SummaryUnavailableError(msg) from exc
         text = "".join(parts).strip()
         if not text:
             raise SummaryUnavailableError("LM Studio 未返回纪要内容")

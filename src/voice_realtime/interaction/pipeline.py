@@ -393,18 +393,19 @@ class SelfEchoFilter(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if (
-            isinstance(frame, TextFrame)
-            and self._echo_state.is_suppressing(
+        if isinstance(frame, TextFrame):
+            if not _normalize_text(frame.text):
+                self._dropped += 1
+                logger.debug("self-echo: 丢弃纯标点/空转写文本帧 %r", frame.text)
+                return
+            if self._echo_state.is_suppressing(
                 time.monotonic(), self._tail_hangover_secs
-            )
-            and self._buffer.matches(
+            ) and self._buffer.matches(
                 frame.text, self._min_ratio, self._min_chars, time.monotonic()
-            )
-        ):
-            self._dropped += 1
-            logger.info("self-echo: 丢弃与机器人近端播报相似的用户转写 %r", frame.text)
-            return
+            ):
+                self._dropped += 1
+                logger.info("self-echo: 丢弃与机器人近端播报相似的用户转写 %r", frame.text)
+                return
         await self.push_frame(frame, direction)
 
 

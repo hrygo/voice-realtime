@@ -5,6 +5,7 @@ import {
   parseAssistantEvent,
   reduceAssistantEvent,
   selectAgentReplies,
+  useAssistantStore,
 } from "./assistantStore";
 
 describe("reduceAssistantEvent", () => {
@@ -30,14 +31,35 @@ describe("reduceAssistantEvent", () => {
       .toBe("speaking");
   });
 
-  it("enters thinking after final STT", () => {
-    const next = reduceAssistantEvent(createAssistantSnapshot(), {
+  it("enters thinking after final STT with valid text, but stays idle on punctuation-only STT", () => {
+    const valid = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "stt",
       state: "final",
       text: "你好",
     });
+    expect(valid.phase).toBe("thinking");
 
-    expect(next.phase).toBe("thinking");
+    const punctuationOnly = reduceAssistantEvent(valid, {
+      type: "stt",
+      state: "final",
+      text: "。",
+    });
+    expect(punctuationOnly.phase).toBe("idle");
+  });
+
+  it("resets thinking state to idle on interruption", () => {
+    const thinking = reduceAssistantEvent(createAssistantSnapshot(), {
+      type: "stt",
+      state: "final",
+      text: "你好",
+    });
+    expect(thinking.phase).toBe("thinking");
+
+    const interrupted = reduceAssistantEvent(thinking, {
+      type: "interruption",
+      state: "detected",
+    });
+    expect(interrupted.phase).toBe("idle");
   });
 
   it("does not return to thinking when the LLM final marker arrives after playback", () => {
@@ -85,5 +107,20 @@ describe("reduceAssistantEvent", () => {
 
     expect(selectAgentReplies(transcript, "")).toEqual([transcript[1], transcript[2]]);
     expect(selectAgentReplies(transcript, "今天")).toEqual([transcript[2]]);
+  });
+});
+
+describe("useAssistantStore runtime watchdog & disconnect", () => {
+  it("resets active thinking state on disconnect", () => {
+    useAssistantStore.setState({
+      phase: "thinking",
+      activity: { listening: false, thinking: true, speaking: false },
+      connected: true,
+    });
+
+    useAssistantStore.getState().setConnected(false);
+
+    expect(useAssistantStore.getState().phase).toBe("idle");
+    expect(useAssistantStore.getState().activity.thinking).toBe(false);
   });
 });

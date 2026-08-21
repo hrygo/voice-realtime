@@ -105,6 +105,8 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
             p.error_code,
             p.error_message,
             p.minutes,
+            meeting_id,
+            p.minutes_id,
           );
           break;
         }

@@ -82,6 +82,8 @@ export interface MeetingStoreState {
     errCode?: string | null,
     errMsg?: string | null,
     minutes?: MeetingMinutesVersion | null,
+    meetingId?: string | null,
+    minutesId?: string | null,
   ) => void;
   readonly setActiveMinutesVersion: (version: number) => void;
   readonly addGap: (start_ms: number, end_ms: number, reason?: string) => void;
@@ -255,34 +257,96 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     });
   },
 
-  setMinutesState: (version, status, errCode, errMsg, minutesData) => {
+  setMinutesState: (
+    version,
+    status,
+    errCode,
+    errMsg,
+    minutesData,
+    meetingId,
+    minutesId,
+  ) => {
     set((state) => {
-      let currentMinutes = state.minutes;
-      if (minutesData) {
-        currentMinutes = {
-          ...minutesData,
-          is_stale: state.contentRevision > minutesData.source_content_revision,
-        };
-      } else if (currentMinutes && currentMinutes.version === version) {
-        currentMinutes = {
-          ...currentMinutes,
+      const isTargetActive =
+        !meetingId ||
+        meetingId === state.activeMeetingId ||
+        (!state.selectedMeetingId && Boolean(state.activeMeetingId));
+      const isTargetSelected =
+        Boolean(meetingId) &&
+        (meetingId === state.selectedMeetingId || meetingId === state.selectedMeeting?.id);
+
+      const resolveMinutesItem = (
+        existing: MeetingMinutesVersion | null,
+        targetMeetingId: string,
+      ): MeetingMinutesVersion => {
+        if (minutesData) {
+          return {
+            ...minutesData,
+            is_stale: state.contentRevision > minutesData.source_content_revision,
+          };
+        }
+        if (existing && existing.version === version) {
+          return {
+            ...existing,
+            status,
+            error_code: errCode !== undefined ? errCode : existing.error_code,
+            error_message: errMsg !== undefined ? errMsg : existing.error_message,
+          };
+        }
+        return {
+          id: minutesId || existing?.id || "",
+          meeting_id: targetMeetingId,
+          version,
           status,
-          error_code: errCode || currentMinutes.error_code,
-          error_message: errMsg || currentMinutes.error_message,
+          source_content_revision: existing?.source_content_revision ?? state.contentRevision,
+          model: existing?.model || "qwen/qwen3.8-27b",
+          prompt_version: existing?.prompt_version || "v1",
+          content_json: null,
+          content_markdown: null,
+          raw_output: null,
+          error_code: errCode || null,
+          error_message: errMsg || null,
+          is_stale: false,
+          created_at: existing?.created_at || new Date().toISOString(),
         };
+      };
+
+      let nextMinutes = state.minutes;
+      let nextActiveVersion = state.activeMinutesVersion;
+      let nextMinutesHistory = state.minutesHistory;
+      let nextSelectedMinutes = state.selectedMinutes;
+      let nextSelectedVersion = state.selectedMinutesVersion;
+      let nextSelectedList = state.selectedMinutesList;
+
+      // 1. 更新活跃会议纪要
+      if (isTargetActive) {
+        const targetActiveMeetingId = meetingId || state.activeMeetingId || "";
+        nextMinutes = resolveMinutesItem(state.minutes, targetActiveMeetingId);
+        nextActiveVersion = nextMinutes.version;
+        const updatedHistory = state.minutesHistory.filter((m) => m.version !== version);
+        updatedHistory.push(nextMinutes);
+        updatedHistory.sort((a, b) => a.version - b.version);
+        nextMinutesHistory = updatedHistory;
       }
 
-      // 更新纪要历史列表
-      const updatedHistory = state.minutesHistory.filter((m) => m.version !== version);
-      if (currentMinutes) {
-        updatedHistory.push(currentMinutes);
-        updatedHistory.sort((a, b) => a.version - b.version);
+      // 2. 更新选中历史会议纪要
+      if (isTargetSelected) {
+        const targetSelectedId = state.selectedMeetingId || meetingId || "";
+        nextSelectedMinutes = resolveMinutesItem(state.selectedMinutes, targetSelectedId);
+        nextSelectedVersion = nextSelectedMinutes.version;
+        const updatedSelectedList = state.selectedMinutesList.filter((m) => m.version !== version);
+        updatedSelectedList.push(nextSelectedMinutes);
+        updatedSelectedList.sort((a, b) => a.version - b.version);
+        nextSelectedList = updatedSelectedList;
       }
 
       return {
-        minutes: currentMinutes,
-        activeMinutesVersion: currentMinutes ? currentMinutes.version : state.activeMinutesVersion,
-        minutesHistory: updatedHistory,
+        minutes: nextMinutes,
+        activeMinutesVersion: nextActiveVersion,
+        minutesHistory: nextMinutesHistory,
+        selectedMinutes: nextSelectedMinutes,
+        selectedMinutesVersion: nextSelectedVersion,
+        selectedMinutesList: nextSelectedList,
       };
     });
   },
@@ -457,24 +521,39 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   triggerGenerateMinutes: async (id) => {
     const newMinutes = await meetingApi.generateMinutes(id);
     set((state) => {
-      if (state.selectedMeeting?.id === id) {
+      let nextSelectedMinutes = state.selectedMinutes;
+      let nextSelectedVersion = state.selectedMinutesVersion;
+      let nextSelectedList = state.selectedMinutesList;
+      let nextMinutes = state.minutes;
+      let nextActiveVersion = state.activeMinutesVersion;
+      let nextMinutesHistory = state.minutesHistory;
+
+      if (state.selectedMeeting?.id === id || state.selectedMeetingId === id) {
         const list = [
           ...state.selectedMinutesList.filter((m) => m.version !== newMinutes.version),
           newMinutes,
         ];
-        return {
-          selectedMinutes: newMinutes,
-          selectedMinutesVersion: newMinutes.version,
-          selectedMinutesList: list,
-        };
+        nextSelectedMinutes = newMinutes;
+        nextSelectedVersion = newMinutes.version;
+        nextSelectedList = list;
       }
       if (state.activeMeetingId === id) {
-        return {
-          minutes: newMinutes,
-          activeMinutesVersion: newMinutes.version,
-        };
+        const list = [
+          ...state.minutesHistory.filter((m) => m.version !== newMinutes.version),
+          newMinutes,
+        ];
+        nextMinutes = newMinutes;
+        nextActiveVersion = newMinutes.version;
+        nextMinutesHistory = list;
       }
-      return {};
+      return {
+        selectedMinutes: nextSelectedMinutes,
+        selectedMinutesVersion: nextSelectedVersion,
+        selectedMinutesList: nextSelectedList,
+        minutes: nextMinutes,
+        activeMinutesVersion: nextActiveVersion,
+        minutesHistory: nextMinutesHistory,
+      };
     });
   },
 

@@ -200,5 +200,56 @@ describe("meetingStore", () => {
       expect(state.isFinalizing).toBe(true);
     });
   });
+
+  describe("setMinutesState (§10, §14.2)", () => {
+    it("handles failure state when minutesData is null and creates failed minutes record", () => {
+      useMeetingStore.setState({ activeMeetingId: "m-fail-1", minutes: null });
+
+      useMeetingStore
+        .getState()
+        .setMinutesState(
+          1,
+          "failed",
+          "summary_unavailable",
+          "AI 纪要服务暂不可用",
+          null,
+          "m-fail-1",
+          "min-id-1",
+        );
+
+      const state = useMeetingStore.getState();
+      expect(state.minutes).not.toBeNull();
+      expect(state.minutes?.status).toBe("failed");
+      expect(state.minutes?.error_code).toBe("summary_unavailable");
+      expect(state.minutes?.error_message).toBe("AI 纪要服务暂不可用");
+      expect(state.minutesHistory).toHaveLength(1);
+      expect(state.minutesHistory[0]?.status).toBe("failed");
+    });
+
+    it("updates selectedMinutes and selectedMinutesList when viewing historical meeting", () => {
+      useMeetingStore.setState({
+        selectedMeetingId: "m-history-1",
+        selectedMinutes: null,
+        selectedMinutesList: [],
+      });
+
+      useMeetingStore
+        .getState()
+        .setMinutesState(
+          1,
+          "generating",
+          null,
+          null,
+          null,
+          "m-history-1",
+          "min-h-1",
+        );
+
+      const state = useMeetingStore.getState();
+      expect(state.selectedMinutes).not.toBeNull();
+      expect(state.selectedMinutes?.status).toBe("generating");
+      expect(state.selectedMinutesList).toHaveLength(1);
+    });
+  });
 });
 

@@ -31,7 +31,9 @@ from typing import Any
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    CancelFrame,
     EndFrame,
+    ErrorFrame,
     Frame,
     InterimTranscriptionFrame,
     InterruptionFrame,
@@ -196,7 +198,11 @@ class StatusBridgeObserver(BaseObserver):
             await self._emit_event(
                 {"type": "vad", "state": "user_silence", "t": self._now()}
             )
-        elif isinstance(frame, InterruptionFrame) and self._tts_active:
+        elif isinstance(frame, (InterruptionFrame, CancelFrame, ErrorFrame)):
+            was_active = self._tts_active
+            self._tts_active = False
+            if was_active:
+                await self._emit_event({"type": "tts", "state": "stopped"})
             await self._emit_event(
                 {"type": "interruption", "state": "detected", "t": self._now()}
             )

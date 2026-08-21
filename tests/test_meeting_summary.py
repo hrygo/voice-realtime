@@ -352,6 +352,14 @@ async def test_summary_client_wraps_transport_errors(error: BaseException) -> No
 
 
 @pytest.mark.asyncio
+async def test_summary_client_wraps_timeout_errors() -> None:
+    client = _stream_client((), error=httpx.ReadTimeout("read timed out"))
+
+    with pytest.raises(SummaryUnavailableError, match="超时"):
+        await client._stream_text({"model": "m"})
+
+
+@pytest.mark.asyncio
 async def test_summary_client_rejects_empty_transcript_and_adds_repair_instruction() -> None:
     client = _stream_client(
         (
