@@ -46,19 +46,42 @@ npm audit --audit-level=high
 ### 数据边界与 bootstrap
 
 - 在 meeting 源码和契约中检查不存在 `bytea`、音频 blob、WAV/PCM 数据列。
-- PostgreSQL bootstrap 脚本在显式事务内完整执行后 `ROLLBACK`，角色与正式 schema 均无残留。
+- PostgreSQL bootstrap 已持久创建 `voice_realtime_app` 和 `voice_realtime` schema；应用角色为
+  非 superuser、非 createrole、非 createdb，仅拥有本 schema 的 `USAGE/CREATE`。
 - 临时 schema 清理查询返回空结果。
-- `runtime/sortformer.nemo` 当前不存在；未获授权时未联网下载模型。
+- `runtime/sortformer.nemo` 已从 `nvidia/diar_streaming_sortformer_4spk-v2` 固定 revision
+  `5240a64075176943f677d30fa2171c780229f341` 下载；大小 `471367680` bytes，SHA-256
+  `b371afce2c4958186469df33d939936b9746c89f38b10a69cfd2c61254e83329`。
 
-## 尚未执行的现场验收
+## 本机正式部署与现场验收
 
-以下不属于自动化实现缺陷，但在本机正式启用前仍需完成：
+- PostgreSQL：正式 migration `version=1` 已由 `voice_realtime_app` 应用，六张会议表均存在；该角色
+  对 `ag_catalog`、`workstudio` 无 `USAGE/CREATE`，对数据库无 `CREATE`。本机 `.env` 已设置
+  socket DSN 与独立 schema，文件由 Git 忽略且不含密码。
+- WhisperLiveKit：服务以 `qwen3-streaming`、`--pcm-input`、Sortformer、最多 4 speakers、
+  `--retention-seconds 0` 运行。向 WebSocket 发送 1 秒内存静音 PCM 后发送 EOF，收到
+  `ready_to_stop`，服务无错误或崩溃，测试前后无音频文件新增。
+- LM Studio：`qwen/qwen3.8-27b` 4bit 以 262144 context、parallel 1 加载；原生
+  `/api/v1/chat` 接受 `reasoning:"off"`，实测 `reasoning_output_tokens=0`。
+- 联合冒烟：使用正式 repository 创建一条合成会议，写入 confirmed segment、封存、排队纪要，
+  真实 27B 生成结果通过精确 JSON Schema、evidence UUID 校验并持久化为 completed；测试记录随后
+  通过级联删除清理。
 
-1. 管理员运行 `psql knowledge -f scripts/bootstrap-meeting-db.sql`，持久创建最小权限角色与正式
-   `voice_realtime` schema。
-2. 预先放置本地 `runtime/sortformer.nemo`，或显式授权并执行模型下载；默认离线策略会在缺失时
-   fail-fast。
-3. 同时运行 WhisperLiveKit、LM Studio、麦克风和独立前端，完成真实多人说话、浏览器断线重连、
-   EOF 超时与长会议 map/reduce 的现场验收。
+现场验收曾发现模型把 `evidence_segment_ids` 输出为 `segments`、把行动项 `task` 输出为
+`content`。根因是旧提示未携带实际 schema。修复后，初次生成、repair 和 reduce 均注入由
+`MinutesResult.model_json_schema()` 生成的精确契约，并明确禁止别名；同一真实输入已重新通过。
+最终审查还发现 worker 的 completed 事件没有携带契约 fixture 要求的完整纪要。repository 现已在
+同一完成事务中 `RETURNING` 刚落库的版本，worker 将其直接放入 `minutes` 字段，避免前端停留在
+生成中状态。
 
-本次未创建正式数据库角色/schema，未下载模型，未保存或生成任何会议音频。
+## 尚未执行的人工验收
+
+以下能力需要真实参会场景，不使用合成静音即可替代，因此保留为上线观察项：
+
+1. 真实多人说话下的中文转录准确率与 Sortformer 说话人区分效果。
+2. 独立前端接入后的浏览器断线重连、长会议 map/reduce 与用户操作体验；前端团队需修复新会议
+   切换时旧 segments/speakers/minutes/gaps 未清理，以及迟到 transcript 请求覆盖当前会议的竞态。
+3. 麦克风设备切换、系统休眠和异常退出后的完整恢复演练。
+
+本次不采集麦克风、不保存或生成任何会议音频。Sortformer 当前在 macOS 上由上游实现选择 CPU，
+并非 MPS；这会影响长会议的实时余量，应在真实多人验收中观察。
