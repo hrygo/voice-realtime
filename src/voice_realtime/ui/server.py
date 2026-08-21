@@ -577,7 +577,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data:; connect-src 'self' ws://127.0.0.1:* "
+            "img-src 'self' data: blob:; media-src 'self' blob: data:; "
+            "connect-src 'self' ws://127.0.0.1:* "
             "ws://localhost:* http://127.0.0.1:* http://localhost:*; "
             "object-src 'none'; base-uri 'self'"
         )

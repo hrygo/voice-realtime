@@ -69,6 +69,7 @@ class TestHealth:
         assert resp.headers["x-content-type-options"] == "nosniff"
         assert resp.headers["x-frame-options"] == "DENY"
         assert "connect-src" in resp.headers["content-security-policy"]
+        assert "media-src 'self' blob: data:" in resp.headers["content-security-policy"]
 
     def test_meeting_api_allows_configured_loopback_frontend(self) -> None:
         application = create_app(Settings(), initialize_meeting=False)

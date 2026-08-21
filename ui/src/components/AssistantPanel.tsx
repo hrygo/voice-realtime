@@ -240,6 +240,8 @@ export default function AssistantPanel({
       if (isPreviewPlaying) return;
       setIsPreviewPlaying(true);
       showToast(`🔊 正在生成音色 [${v}] 试听...`, "info");
+
+      let blob: Blob;
       try {
         const previewText = "你好，我是你的语音助手，很高兴为你服务。";
         const res = await fetch("/v1/audio/speech", {
@@ -253,7 +255,14 @@ export default function AssistantPanel({
           }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
+        blob = await res.blob();
+      } catch (err) {
+        setIsPreviewPlaying(false);
+        showToast("试听请求失败，请确保 TTS 桥已启动", "error");
+        return;
+      }
+
+      try {
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
         audio.onended = () => {
@@ -263,12 +272,12 @@ export default function AssistantPanel({
         audio.onerror = () => {
           setIsPreviewPlaying(false);
           URL.revokeObjectURL(audioUrl);
-          showToast("试听音频播放失败", "error");
+          showToast("试听音频解码或播放失败", "error");
         };
         await audio.play();
-      } catch {
+      } catch (playErr) {
         setIsPreviewPlaying(false);
-        showToast("试听请求失败，请确保 TTS 桥已启动", "error");
+        showToast("音频播放被浏览器拦截，请点击页面后重试", "error");
       }
     },
     [isPreviewPlaying],
