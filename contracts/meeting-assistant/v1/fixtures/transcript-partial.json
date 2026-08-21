@@ -1,0 +1,8 @@
+{
+  "contract_version": "1",
+  "type": "transcript_partial",
+  "event_id": "00000000-0000-4000-8000-000000000011",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-21T10:02:10Z",
+  "payload": {"text": "正在确认", "speaker_key": "e1:s1", "speaker_name": "说话人 1"}
+}

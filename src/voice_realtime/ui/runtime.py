@@ -13,6 +13,12 @@ from voice_realtime.interaction.nltk_data import ensure_punkt_tab
 from voice_realtime.interaction.ownership import InteractionOwnership
 from voice_realtime.interaction.pipeline import build_pipeline
 from voice_realtime.interaction.session import InteractionSession
+from voice_realtime.meeting.models import RuntimeMode, StorageHealth
+from voice_realtime.meeting.runtime_mode import (
+    MeetingUnavailableError,
+    ModeConflictError,
+    RuntimeModeCoordinator,
+)
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
@@ -25,7 +31,13 @@ AUDIO_QUEUE_MAXSIZE = 256
 class UIRuntime:
     """UI 进程内组件门面；交互管道生命周期统一委托给 InteractionSession。"""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        meeting_session: Any | None = None,
+        mode_coordinator: RuntimeModeCoordinator | None = None,
+    ) -> None:
         self._settings = settings
         self._started = False
         self._hub_active = False
@@ -40,6 +52,25 @@ class UIRuntime:
             observers=[self.observer],
             ownership=InteractionOwnership(),
             pipeline_factory=build_pipeline,
+        )
+        self.meeting_session = meeting_session
+        self.mode_coordinator = mode_coordinator
+        if self.mode_coordinator is None and meeting_session is not None:
+            self.mode_coordinator = RuntimeModeCoordinator(
+                self.session,
+                meeting_session,
+                initial_mode=RuntimeMode.ASSISTANT,
+            )
+
+    def configure_meeting(self, meeting_session: Any) -> None:
+        """在基础运行时启动后注入会议服务及互斥模式编排。"""
+        if self.mode_coordinator is not None:
+            raise RuntimeError("meeting runtime 已配置")
+        self.meeting_session = meeting_session
+        self.mode_coordinator = RuntimeModeCoordinator(
+            self.session,
+            meeting_session,
+            initial_mode=(RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE),
         )
 
     async def start(self) -> None:
@@ -60,6 +91,8 @@ class UIRuntime:
     async def stop(self) -> None:
         if not self._started:
             return
+        if self.mode_coordinator is not None:
+            await self.mode_coordinator.stop()
         await self.session.stop(reason="UI 运行时停止")
         await self.hub.stop()
         await self.subtitle_proxy.stop()
@@ -111,6 +144,8 @@ class UIRuntime:
         self._drain_audio_queue()
 
     async def restart_pipeline(self) -> None:
+        if self.mode_coordinator is not None and self.mode_coordinator.mode is RuntimeMode.MEETING:
+            raise ModeConflictError("会议录制期间不能重启语音管道")
         self._drain_audio_queue()
         if self._started and self._hub_active:
             await self.session.restart()
@@ -119,6 +154,15 @@ class UIRuntime:
         subtitle_state = getattr(self.subtitle_proxy, "state", "stopped")
         if hasattr(subtitle_state, "value"):
             subtitle_state = subtitle_state.value
+        coordinator = self.mode_coordinator
+        meeting_record = coordinator.meeting_record if coordinator is not None else None
+        meeting_state = meeting_record.status if meeting_record is not None else None
+        meeting_started_at = (
+            meeting_record.started_at.isoformat() if meeting_record is not None else None
+        )
+        mode = coordinator.mode if coordinator is not None else (
+            RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE
+        )
         return RuntimeStateSnapshot(
             pipeline=self.session.state.value,
             subtitle=str(subtitle_state),
@@ -127,7 +171,60 @@ class UIRuntime:
             voice=self._settings.bridge.voice,
             duplex_mode=self.session.duplex_mode,
             session_started_at=self.session.started_at,
+            mode=mode,
+            active_meeting_id=(
+                str(coordinator.active_meeting_id)
+                if coordinator is not None and coordinator.active_meeting_id
+                else None
+            ),
+            meeting_state=meeting_state,
+            meeting_started_at=meeting_started_at,
+            storage=coordinator.storage if coordinator is not None else StorageHealth.OK,
+            runtime_revision=coordinator.runtime_revision if coordinator is not None else 0,
         )
+
+    @property
+    def mode(self) -> RuntimeMode:
+        if self.mode_coordinator is not None:
+            return self.mode_coordinator.mode
+        return RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE
+
+    @property
+    def active_meeting_id(self) -> Any | None:
+        coordinator = self.mode_coordinator
+        return coordinator.active_meeting_id if coordinator is not None else None
+
+    @property
+    def meeting_state(self) -> Any | None:
+        coordinator = self.mode_coordinator
+        return coordinator.meeting_state if coordinator is not None else None
+
+    async def start_meeting(self, title: str | None = None) -> Any:
+        coordinator = self.mode_coordinator
+        if coordinator is None:
+            raise MeetingUnavailableError("meeting service unavailable")
+        return await coordinator.start_meeting(title)
+
+    async def end_meeting(self, meeting_id: str) -> Any:
+        coordinator = self.mode_coordinator
+        if coordinator is None:
+            raise MeetingUnavailableError("meeting service unavailable")
+        return await coordinator.end_meeting(meeting_id)
+
+    async def start_assistant(self) -> None:
+        coordinator = self.mode_coordinator
+        if coordinator is None:
+            if not self.session.active and self._started and self._hub_active:
+                await self.session.start()
+            return
+        await coordinator.start_assistant()
+
+    async def stop_active_mode(self) -> None:
+        coordinator = self.mode_coordinator
+        if coordinator is None:
+            await self.session.stop(reason="停止当前模式")
+            return
+        await coordinator.stop_active_mode()
 
     async def _start_subtitle_proxy(self) -> None:
         try:
@@ -151,7 +248,10 @@ class UIRuntime:
             return False
 
     async def _enqueue_audio(self, data: bytes) -> None:
-        if self.hub.muted:
+        if self.hub.muted or (
+            self.mode_coordinator is not None
+            and self.mode_coordinator.mode is RuntimeMode.MEETING
+        ):
             return
         with contextlib.suppress(asyncio.QueueFull):
             self.audio_queue.put_nowait(data)

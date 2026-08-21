@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/minutes-version.schema.json",
+  "title": "MeetingMinutesVersion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "meeting_id", "version", "status", "source_content_revision", "model", "content_json", "content_markdown", "created_at", "is_stale"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "format": "uuid"},
+    "version": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["queued", "generating", "completed", "failed"]},
+    "source_content_revision": {"type": "integer", "minimum": 0},
+    "model": {"type": "string"},
+    "prompt_version": {"type": ["string", "null"]},
+    "content_json": {"anyOf": [{"$ref": "minutes-content.schema.json"}, {"type": "null"}]},
+    "content_markdown": {"type": ["string", "null"]},
+    "raw_output": {"type": ["string", "null"]},
+    "error_code": {"type": ["string", "null"]},
+    "error_message": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "is_stale": {"type": "boolean"}
+  }
+}

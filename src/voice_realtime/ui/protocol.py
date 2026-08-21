@@ -9,12 +9,21 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 
 from voice_realtime.interaction.types import DuplexMode as DuplexMode
+from voice_realtime.meeting.models import MeetingStatus, RuntimeMode, StorageHealth
 
 RequestId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 PersonaText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=4000),
+]
+MeetingTitle = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+]
+MeetingId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=64),
 ]
 
 
@@ -65,6 +74,28 @@ class SetMicMutedCommand(CommandBase):
     muted: bool
 
 
+class StartMeetingCommand(CommandBase):
+    cmd: Literal["start_meeting"]
+    title: MeetingTitle | None = None
+    contract_version: Literal["1"] | None = None
+
+
+class EndMeetingCommand(CommandBase):
+    cmd: Literal["end_meeting"]
+    meeting_id: MeetingId
+    contract_version: Literal["1"] | None = None
+
+
+class StartAssistantCommand(CommandBase):
+    cmd: Literal["start_assistant"]
+    contract_version: Literal["1"] | None = None
+
+
+class StopActiveModeCommand(CommandBase):
+    cmd: Literal["stop_active_mode"]
+    contract_version: Literal["1"] | None = None
+
+
 ControlCommand = Annotated[
     ClearContextCommand
     | StopSessionCommand
@@ -73,7 +104,11 @@ ControlCommand = Annotated[
     | SetVoiceCommand
     | SetDuplexModeCommand
     | SetBargeInModeCommand
-    | SetMicMutedCommand,
+    | SetMicMutedCommand
+    | StartMeetingCommand
+    | EndMeetingCommand
+    | StartAssistantCommand
+    | StopActiveModeCommand,
     Field(discriminator="cmd"),
 ]
 _COMMAND_ADAPTER: TypeAdapter[ControlCommand] = TypeAdapter(ControlCommand)
@@ -91,6 +126,12 @@ class RuntimeStateSnapshot(BaseModel):
     voice: str
     duplex_mode: DuplexMode
     session_started_at: str | None
+    mode: RuntimeMode = RuntimeMode.ASSISTANT
+    active_meeting_id: str | None = None
+    meeting_state: MeetingStatus | None = None
+    meeting_started_at: str | None = None
+    storage: StorageHealth = StorageHealth.OK
+    runtime_revision: int = Field(default=0, ge=0)
 
 
 class ErrorCode(StrEnum):
@@ -98,6 +139,11 @@ class ErrorCode(StrEnum):
     INVALID_PAYLOAD = "invalid_payload"
     COMMAND_FAILED = "command_failed"
     SERVICE_UNAVAILABLE = "service_unavailable"
+    STORAGE_UNAVAILABLE = "storage_unavailable"
+    TRANSCRIPTION_UNAVAILABLE = "transcription_unavailable"
+    MODE_CONFLICT = "mode_conflict"
+    MEETING_NOT_ACTIVE = "meeting_not_active"
+    FINALIZATION_TIMEOUT = "finalization_timeout"
 
 
 class CommandResponse(BaseModel):
@@ -111,6 +157,8 @@ class CommandResponse(BaseModel):
     state: RuntimeStateSnapshot
     error_code: ErrorCode | None = None
     message: str | None = None
+    contract_version: Literal["1"] | None = None
+    error: dict[str, Any] | None = None
 
 
 class RuntimeStateEvent(BaseModel):
@@ -120,6 +168,7 @@ class RuntimeStateEvent(BaseModel):
 
     event: Literal["state"] = "state"
     state: RuntimeStateSnapshot
+    contract_version: Literal["1"] | None = None
 
 
 def parse_command(payload: Mapping[str, Any]) -> ControlCommand:

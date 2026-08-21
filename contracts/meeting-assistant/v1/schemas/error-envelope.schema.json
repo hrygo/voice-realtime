@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/error-envelope.schema.json",
+  "title": "ApiErrorEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "request_id", "details"],
+      "properties": {
+        "code": {"type": "string"},
+        "message": {"type": "string"},
+        "request_id": {"type": "string"},
+        "details": {"type": "object"}
+      }
+    }
+  }
+}

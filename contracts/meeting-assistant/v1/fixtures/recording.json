@@ -1,0 +1,8 @@
+{
+  "contract_version": "1",
+  "type": "meeting_state_changed",
+  "event_id": "00000000-0000-4000-8000-000000000002",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-21T10:01:00Z",
+  "payload": {"status": "recording", "started_at": "2026-08-21T10:01:00Z", "ended_at": null, "interruption_reason": null}
+}

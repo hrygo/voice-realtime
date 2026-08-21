@@ -1,0 +1,68 @@
+asyncapi: 3.0.0
+info:
+  title: Voice Studio Meeting Assistant WebSocket API
+  version: 1.0.0
+  description: Versioned control and meeting-event channels for the separated frontend.
+servers:
+  local:
+    host: 127.0.0.1:8100
+    protocol: ws
+channels:
+  control:
+    address: /ws/v1/control
+    messages:
+      controlCommand:
+        $ref: '#/components/messages/ControlCommand'
+      controlResponse:
+        $ref: '#/components/messages/ControlResponse'
+  meetings:
+    address: /ws/v1/meetings
+    messages:
+      meetingEvent:
+        $ref: '#/components/messages/MeetingEvent'
+operations:
+  receiveControl:
+    action: receive
+    channel:
+      $ref: '#/channels/control'
+    messages:
+      - $ref: '#/channels/control/messages/controlCommand'
+  sendControl:
+    action: send
+    channel:
+      $ref: '#/channels/control'
+    messages:
+      - $ref: '#/channels/control/messages/controlResponse'
+  sendMeetingEvent:
+    action: send
+    channel:
+      $ref: '#/channels/meetings'
+    messages:
+      - $ref: '#/channels/meetings/messages/meetingEvent'
+components:
+  messages:
+    ControlCommand:
+      payload:
+        type: object
+        additionalProperties: false
+        required: [contract_version, request_id, cmd]
+        properties:
+          contract_version: {const: '1'}
+          request_id: {type: string, minLength: 1, maxLength: 64}
+          cmd: {type: string, enum: [start_meeting, end_meeting, start_assistant, stop_active_mode]}
+          title: {type: string, maxLength: 200}
+          meeting_id: {type: string, format: uuid}
+    ControlResponse:
+      payload:
+        type: object
+        required: [contract_version, request_id, cmd, ok, state, error]
+        properties:
+          contract_version: {const: '1'}
+          request_id: {type: string}
+          cmd: {type: string}
+          ok: {type: boolean}
+          state: {$ref: './schemas/runtime-state.schema.json'}
+          error: {type: [object, 'null']}
+    MeetingEvent:
+      payload:
+        $ref: './schemas/event-envelope.schema.json'

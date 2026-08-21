@@ -1,0 +1,25 @@
+{
+  "contract_version": "1",
+  "type": "meeting_snapshot",
+  "event_id": "00000000-0000-4000-8000-000000000001",
+  "meeting_id": "",
+  "occurred_at": "2026-08-21T10:00:00Z",
+  "payload": {
+    "meeting": {
+      "id": "00000000-0000-4000-8000-000000000000",
+      "title": "",
+      "status": "completed",
+      "language": "Chinese",
+      "started_at": null,
+      "ended_at": null,
+      "transcript_revision": 0,
+      "content_revision": 0,
+      "interruption_reason": null,
+      "created_at": "2026-08-21T10:00:00Z"
+    },
+    "health": {"storage": "ok", "transcription": "ok", "mic_muted": false, "recovery_journal_active": false},
+    "partial": null,
+    "transcript_revision": 0,
+    "content_revision": 0
+  }
+}

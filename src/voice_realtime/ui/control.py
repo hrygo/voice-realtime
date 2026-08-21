@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import OrderedDict
 from typing import Any, Protocol
 
 from pydantic import ValidationError
@@ -14,6 +16,7 @@ from voice_realtime.ui.protocol import (
     CommandResponse,
     ControlCommand,
     DuplexMode,
+    EndMeetingCommand,
     ErrorCode,
     RestartCommand,
     RuntimeStateSnapshot,
@@ -22,6 +25,9 @@ from voice_realtime.ui.protocol import (
     SetMicMutedCommand,
     SetPersonaCommand,
     SetVoiceCommand,
+    StartAssistantCommand,
+    StartMeetingCommand,
+    StopActiveModeCommand,
     StopSessionCommand,
     parse_command,
 )
@@ -38,6 +44,10 @@ _COMMAND_NAMES = frozenset(
         "set_duplex_mode",
         "set_barge_in_mode",
         "set_mic_muted",
+        "start_meeting",
+        "end_meeting",
+        "start_assistant",
+        "stop_active_mode",
     }
 )
 
@@ -47,6 +57,10 @@ class ControlRuntime(Protocol):
     async def stop_session(self) -> None: ...
     async def restart_pipeline(self) -> None: ...
     async def set_mic_muted(self, muted: bool) -> None: ...
+    async def start_meeting(self, title: str | None = None) -> Any: ...
+    async def end_meeting(self, meeting_id: str) -> Any: ...
+    async def start_assistant(self) -> None: ...
+    async def stop_active_mode(self) -> None: ...
     def set_persona(self, persona: str) -> None: ...
     def set_voice(self, voice: str) -> None: ...
     def set_duplex_mode(self, mode: DuplexMode) -> None: ...
@@ -59,12 +73,23 @@ class ControlBridge:
     def __init__(self, runtime: ControlRuntime, bridge: BridgeSettings) -> None:
         self._runtime = runtime
         self._bridge = bridge
+        self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._response_cache_size = 128
+        self._lock = asyncio.Lock()
 
     async def handle(self, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._lock:
+            return await self._handle(payload)
+
+    async def _handle(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = payload.get("request_id")
         cmd = payload.get("cmd")
         safe_request_id = request_id if isinstance(request_id, str) else ""
         safe_cmd = cmd if isinstance(cmd, str) else ""
+        if safe_request_id:
+            cached = self._response_cache.get(safe_request_id)
+            if cached is not None:
+                return cached
         try:
             command = parse_command(payload)
         except (ValidationError, ValueError):
@@ -73,25 +98,39 @@ class ControlBridge:
                 if isinstance(cmd, str) and cmd not in _COMMAND_NAMES
                 else ErrorCode.INVALID_PAYLOAD
             )
-            return self._response(
+            return self._remember(
+                safe_request_id,
+                self._response(
                 request_id=safe_request_id,
                 cmd=safe_cmd,
                 ok=False,
                 error_code=error_code,
                 message="控制命令无效",
+                ),
             )
         try:
             await self._dispatch(command)
-        except Exception:
+        except Exception as exc:
             logger.exception("ControlBridge: 命令 %s 执行失败", command.cmd)
-            return self._response(
+            error_code = getattr(exc, "code", ErrorCode.COMMAND_FAILED)
+            try:
+                normalized_code = ErrorCode(error_code)
+            except ValueError:
+                normalized_code = ErrorCode.COMMAND_FAILED
+            return self._remember(
+                command.request_id,
+                self._response(
                 request_id=command.request_id,
                 cmd=command.cmd,
                 ok=False,
-                error_code=ErrorCode.COMMAND_FAILED,
+                error_code=normalized_code,
                 message="命令执行失败，请检查相关服务状态",
+                ),
             )
-        return self._response(request_id=command.request_id, cmd=command.cmd, ok=True)
+        return self._remember(
+            command.request_id,
+            self._response(request_id=command.request_id, cmd=command.cmd, ok=True),
+        )
 
     async def _dispatch(self, command: ControlCommand) -> None:
         if isinstance(command, ClearContextCommand):
@@ -110,6 +149,14 @@ class ControlBridge:
             self._runtime.set_duplex_mode(command.mode)
         elif isinstance(command, SetMicMutedCommand):
             await self._runtime.set_mic_muted(command.muted)
+        elif isinstance(command, StartMeetingCommand):
+            await self._runtime.start_meeting(command.title)
+        elif isinstance(command, EndMeetingCommand):
+            await self._runtime.end_meeting(command.meeting_id)
+        elif isinstance(command, StartAssistantCommand):
+            await self._runtime.start_assistant()
+        elif isinstance(command, StopActiveModeCommand):
+            await self._runtime.stop_active_mode()
 
     async def _set_voice(self, voice: str) -> None:
         url = f"http://{self._bridge.host}:{self._bridge.port}/v1/voice"
@@ -133,5 +180,29 @@ class ControlBridge:
             state=self._runtime.snapshot(),
             error_code=error_code,
             message=message,
+            contract_version="1" if cmd in {
+                "start_meeting",
+                "end_meeting",
+                "start_assistant",
+                "stop_active_mode",
+            } else None,
+            error=(
+                {
+                    "code": error_code.value,
+                    "message": message or "命令执行失败",
+                    "request_id": request_id,
+                    "details": {},
+                }
+                if error_code is not None
+                else None
+            ),
         )
         return response.model_dump(mode="json")
+
+    def _remember(self, request_id: str, response: dict[str, Any]) -> dict[str, Any]:
+        if request_id:
+            self._response_cache[request_id] = response
+            self._response_cache.move_to_end(request_id)
+            while len(self._response_cache) > self._response_cache_size:
+                self._response_cache.popitem(last=False)
+        return response

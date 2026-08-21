@@ -273,3 +273,15 @@ class TestControlCommands:
 
         assert first_task.done()
         assert build.call_count == 2
+
+    def test_configure_meeting_installs_runtime_coordinator(self, settings: Settings) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            meeting = MagicMock()
+
+            runtime.configure_meeting(meeting)
+
+        assert runtime.meeting_session is meeting
+        assert runtime.mode_coordinator is not None
+        assert runtime.mode_coordinator.meeting is meeting

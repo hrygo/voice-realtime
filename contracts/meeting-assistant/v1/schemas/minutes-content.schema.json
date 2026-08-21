@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/minutes-content.schema.json",
+  "title": "MinutesContentJson",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["overview", "topics", "decisions", "action_items", "risks", "open_questions", "highlights"],
+  "properties": {
+    "overview": {"type": "string"},
+    "topics": {"type": "array", "items": {"$ref": "#/$defs/topic"}},
+    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
+    "action_items": {"type": "array", "items": {"$ref": "#/$defs/action_item"}},
+    "risks": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}},
+    "open_questions": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}},
+    "highlights": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}}
+  },
+  "$defs": {
+    "evidence_ids": {
+      "type": "array",
+      "items": {"type": "string", "format": "uuid"}
+    },
+    "topic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "summary", "evidence_segment_ids"],
+      "properties": {
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "evidence_segment_ids"],
+      "properties": {
+        "content": {"type": "string"},
+        "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
+      }
+    },
+    "action_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task", "owner", "due_date", "evidence_segment_ids"],
+      "properties": {
+        "task": {"type": "string"},
+        "owner": {"type": ["string", "null"]},
+        "due_date": {"type": ["string", "null"]},
+        "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
+      }
+    },
+    "evidence_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content", "evidence_segment_ids"],
+      "properties": {
+        "content": {"type": "string"},
+        "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
+      }
+    }
+  }
+}

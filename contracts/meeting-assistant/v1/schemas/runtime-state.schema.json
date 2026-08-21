@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/runtime-state.schema.json",
+  "title": "RuntimeState",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["mode"],
+  "properties": {
+    "mode": {"enum": ["assistant", "meeting", "idle"]},
+    "active_meeting_id": {"type": ["string", "null"]},
+    "meeting_state": {"type": ["string", "null"]},
+    "meeting_started_at": {"type": ["string", "null"], "format": "date-time"},
+    "pipeline": {"type": "string"},
+    "subtitle": {"type": "string"},
+    "storage": {"type": "string"},
+    "mic_muted": {"type": "boolean"},
+    "runtime_revision": {"type": "integer", "minimum": 0}
+  }
+}

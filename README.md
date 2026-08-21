@@ -1,6 +1,6 @@
 # voice-realtime
 
-全本地实时语音交互与实时字幕系统，面向 Apple Silicon、中文优先、离线运行。
+全本地实时语音交互、实时字幕与会议助手系统，面向 Apple Silicon、中文优先、离线运行。
 Python 严格锁定 `>=3.12,<3.13`。
 
 ## 当前架构
@@ -12,7 +12,9 @@ Python 严格锁定 `>=3.12,<3.13`。
 麦克风 → vr-ui :8100 / AudioHub
               ├─ AudioInjector → SenseVoice → LM Studio :1234
               │                              → vr-bridge :8765 → 扬声器
-              └─ PCM WebSocket → vr-subtitles :8001 → 字幕快照 + SRT
+              └─ PCM WebSocket → vr-subtitles :8001
+                                  ├─ 普通字幕 → 快照 + SRT
+                                  └─ 会议模式 → 实时文字 → PostgreSQL → AI 纪要
 ```
 
 运行单元只有四个：
@@ -55,12 +57,49 @@ uv run vr-interact
 - 默认禁止交互 STT 与字幕 ASR 隐式下载模型；缓存/模型目录缺失时启动会立即报错。
 - TTS 请求可按请求指定 voice；MLX 生成串行、有界，并在取消后停止继续积压。
 
+## 会议助手
+
+会议模式与语音助手互斥：开始会议会停止完整 Pipecat/LLM/TTS 交互链路，只保留麦克风到
+WhisperLiveKit 的实时转录；结束会议执行 EOF 冲刷，随后保持 `idle` 并异步生成 AI 纪要。
+会议模式不保存音频，也不写旧字幕 SRT；PostgreSQL 是 confirmed 转录、说话人映射和纪要的事实源。
+
+首次使用由本机 PostgreSQL 管理员创建最小权限角色和独立 schema：
+
+```bash
+psql knowledge -f scripts/bootstrap-meeting-db.sql
+```
+
+等价 SQL 为：
+
+```sql
+CREATE ROLE voice_realtime_app LOGIN;
+CREATE SCHEMA voice_realtime AUTHORIZATION voice_realtime_app;
+REVOKE ALL ON SCHEMA voice_realtime FROM PUBLIC;
+GRANT CONNECT ON DATABASE knowledge TO voice_realtime_app;
+GRANT USAGE, CREATE ON SCHEMA voice_realtime TO voice_realtime_app;
+```
+
+然后配置并启动；`vr-ui` 会在 advisory lock 保护下自动执行前向 migration：
+
+```bash
+export VR_MEETING_DATABASE_URL='postgresql://voice_realtime_app@/knowledge'
+export VR_MEETING_SCHEMA='voice_realtime'
+export VR_SUBTITLE_DIARIZATION_MODEL_PATH='runtime/sortformer.nemo'
+uv run vr-ui
+```
+
+独立前端使用 `/api/v1/*`、`/ws/v1/control` 和 `/ws/v1/meetings`；唯一契约位于
+[`contracts/meeting-assistant/v1`](contracts/meeting-assistant/v1)。完整部署、恢复和联调说明见
+[`docs/会议助手后端运行与前后端联调.md`](docs/会议助手后端运行与前后端联调.md)。
+
 ## 状态与诊断
 
 - `GET /health`：UI 进程存活。
 - `GET /api/runtime`：交互、字幕、静音、persona、voice、duplex 和会话开始时间。
 - `GET /api/services`：WhisperLiveKit、TTS 桥、LM Studio 探活及目标 LLM 是否已加载。
 - `GET /v1/voices`：代理 TTS 桥音色列表。
+- `GET /api/v1/runtime`：版本化运行模式与活动会议状态。
+- `GET /api/v1/meetings`：会议历史游标分页；详情、转录、纪要、导出和删除均为其子资源。
 
 ## 质量门禁
 

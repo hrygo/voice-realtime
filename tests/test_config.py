@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from voice_realtime.config import (
     BridgeSettings,
     InteractionSettings,
+    MeetingSettings,
     SubtitleSettings,
     UISettings,
 )
@@ -49,6 +50,16 @@ def test_removed_configuration_knobs_are_not_model_fields() -> None:
 def test_subtitle_downloads_are_disabled_by_default() -> None:
     assert SubtitleSettings().allow_model_downloads is False
     assert InteractionSettings().allow_model_downloads is False
+
+
+def test_meeting_settings_reject_non_loopback_database_url() -> None:
+    with pytest.raises(ValidationError):
+        MeetingSettings(database_url="postgresql://db.example.com/knowledge")
+
+
+def test_meeting_settings_rejects_unsafe_schema_name() -> None:
+    with pytest.raises(ValidationError):
+        MeetingSettings(schema="voice-realtime")
 
 
 @pytest.mark.parametrize(

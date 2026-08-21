@@ -11,8 +11,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from voice_realtime.config import SubtitleSettings
+from voice_realtime.meeting.models import TranscriptWindow
 from voice_realtime.subtitles.events import SubtitleEvent
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
+from voice_realtime.ui.subtitle_proxy import (
+    FinalizationTimeout,
+    SubtitleProxy,
+    SubtitleProxyState,
+)
 
 CONF = {"host": "127.0.0.1", "port": 8001, "language": "Chinese"}
 
@@ -44,6 +49,11 @@ class FakeStream:
         self.closed = False
 
     async def connect(self) -> None:
+        self.closed = False
+        if hasattr(self, "_events_queue"):
+            self._events_queue.put_nowait(
+                SubtitleEvent(kind="config", raw={"type": "config"})
+            )
         return
 
     @property
@@ -61,6 +71,31 @@ class FakeStream:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class FlushableFakeStream(FakeStream):
+    """收到 EOF 后发送 ready_to_stop，模拟 WLK 最终冲刷。"""
+
+    def __init__(self, final_payload: dict[str, object]) -> None:
+        super().__init__([])
+        self._final_payload = final_payload
+        self._events_queue: asyncio.Queue[SubtitleEvent] = asyncio.Queue()
+        self._events_queue.put_nowait(
+            SubtitleEvent(kind="config", raw={"type": "config"})
+        )
+
+    async def events(self) -> AsyncIterator[SubtitleEvent]:
+        while not self.closed:
+            event = await self._events_queue.get()
+            yield event
+
+    async def send_audio(self, chunk: bytes) -> None:
+        self.sent.append(chunk)
+        if chunk == b"":
+            self._events_queue.put_nowait(
+                SubtitleEvent(kind="confirmed", raw=self._final_payload)
+            )
+            self._events_queue.put_nowait(SubtitleEvent(kind="ready_to_stop", raw={}))
 
 
 @pytest.fixture()
@@ -82,6 +117,64 @@ class TestClientManagement:
         assert proxy.has_clients
         proxy.remove_client(send)
         assert not proxy.has_clients
+
+
+class TestMeetingCapture:
+    async def test_capture_does_not_write_legacy_srt(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = FlushableFakeStream(_snapshot("只写 PostgreSQL"))
+        proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
+        await proxy.start()
+        await proxy.begin_capture("meeting:test")
+        await asyncio.sleep(0)
+        await proxy.finish_capture(timeout_secs=1)
+
+        assert not (settings.output_dir / "current.srt").exists()
+
+    async def test_finish_capture_sends_empty_pcm_and_waits_ready(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = FlushableFakeStream(_snapshot("尾句"))
+        proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
+        await proxy.start()
+        await proxy.begin_capture("meeting:test")
+
+        final = await proxy.finish_capture(timeout_secs=1)
+
+        assert stream.sent[-1] == b""
+        assert final.segments[-1].text == "尾句"
+        assert proxy.capture_owner is None
+
+    async def test_capture_accepts_audio_without_browser_clients(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = FlushableFakeStream(_snapshot("持续记录"))
+        proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
+        await proxy.start()
+        await proxy.begin_capture("meeting:test")
+        assert not proxy.is_paused
+        await proxy.push_audio(b"pcm")
+        await asyncio.sleep(0)
+
+        assert b"pcm" in stream.sent
+        await proxy.abort_capture()
+
+    async def test_finish_capture_timeout_preserves_last_window(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = FlushableFakeStream(_snapshot("不会 ready"))
+        proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
+        await proxy.start()
+        await proxy.begin_capture("meeting:test")
+        proxy._capture_last_window = proxy._normalizer.normalize(_snapshot("上一句"), 1, 0)
+        stream._events_queue = asyncio.Queue()
+
+        with pytest.raises(FinalizationTimeout) as exc_info:
+            await proxy.finish_capture(timeout_secs=0.01)
+
+        assert isinstance(exc_info.value.last_window, TranscriptWindow)
+        assert proxy.capture_owner is None
 
 
 class TestBroadcast:

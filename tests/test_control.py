@@ -10,9 +10,13 @@ from voice_realtime.config import BridgeSettings
 from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import (
     DuplexMode,
+    EndMeetingCommand,
     RuntimeStateSnapshot,
     SetDuplexModeCommand,
     SetPersonaCommand,
+    StartAssistantCommand,
+    StartMeetingCommand,
+    StopActiveModeCommand,
     parse_command,
 )
 
@@ -106,6 +110,41 @@ class TestDispatch:
         assert resp["ok"] is True
         runtime.set_mic_muted.assert_awaited_once_with(True)
 
+    async def test_start_meeting_delegates_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        runtime.start_meeting = AsyncMock()
+        resp = await bridge.handle(
+            {"request_id": "meeting-1", "cmd": "start_meeting", "title": "周会"}
+        )
+        assert resp["ok"] is True
+        runtime.start_meeting.assert_awaited_once_with("周会")
+
+    async def test_end_meeting_delegates_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        runtime.end_meeting = AsyncMock()
+        meeting_id = "7e0c6f4e-9f2d-4f3a-9402-ec5cfa9d6f65"
+        resp = await bridge.handle(
+            {"request_id": "meeting-2", "cmd": "end_meeting", "meeting_id": meeting_id}
+        )
+        assert resp["ok"] is True
+        runtime.end_meeting.assert_awaited_once_with(meeting_id)
+
+    async def test_v1_request_id_is_idempotent(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        runtime.start_meeting = AsyncMock()
+        first = await bridge.handle(
+            {"request_id": "same", "cmd": "start_meeting", "title": "周会"}
+        )
+        second = await bridge.handle(
+            {"request_id": "same", "cmd": "start_meeting", "title": "另一场"}
+        )
+
+        assert second == first
+        runtime.start_meeting.assert_awaited_once_with("周会")
+
 
 class TestSetVoice:
     def _http_client_mock(self) -> AsyncMock:
@@ -172,3 +211,24 @@ class TestProtocol:
         )
         assert isinstance(command, SetDuplexModeCommand)
         assert command.mode is DuplexMode.HEADPHONE_DUPLEX
+
+    def test_new_mode_commands_are_strictly_typed(self) -> None:
+        assert isinstance(
+            parse_command({"request_id": "1", "cmd": "start_meeting"}), StartMeetingCommand
+        )
+        assert isinstance(
+            parse_command({"request_id": "2", "cmd": "start_assistant"}), StartAssistantCommand
+        )
+        assert isinstance(
+            parse_command({"request_id": "3", "cmd": "stop_active_mode"}), StopActiveModeCommand
+        )
+        assert isinstance(
+            parse_command(
+                {
+                    "request_id": "4",
+                    "cmd": "end_meeting",
+                    "meeting_id": "7e0c6f4e-9f2d-4f3a-9402-ec5cfa9d6f65",
+                }
+            ),
+            EndMeetingCommand,
+        )

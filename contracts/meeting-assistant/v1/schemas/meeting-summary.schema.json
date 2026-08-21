@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/meeting-summary.schema.json",
+  "title": "MeetingSummary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "status", "language", "started_at", "ended_at", "transcript_revision", "content_revision", "created_at"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "title": {"type": "string"},
+    "status": {"enum": ["recording", "finalizing", "completed", "interrupted", "storage_error"]},
+    "language": {"type": "string"},
+    "started_at": {"type": ["string", "null"], "format": "date-time"},
+    "ended_at": {"type": ["string", "null"], "format": "date-time"},
+    "transcript_revision": {"type": "integer", "minimum": 0},
+    "content_revision": {"type": "integer", "minimum": 0},
+    "interruption_reason": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/meeting-detail.schema.json",
+  "title": "MeetingDetail",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "status", "language", "started_at", "ended_at", "transcript_revision", "content_revision", "created_at", "audio_source", "metadata", "speakers", "latest_minutes", "updated_at"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "title": {"type": "string"},
+    "status": {"enum": ["recording", "finalizing", "completed", "interrupted", "storage_error"]},
+    "language": {"type": "string"},
+    "started_at": {"type": ["string", "null"], "format": "date-time"},
+    "ended_at": {"type": ["string", "null"], "format": "date-time"},
+    "transcript_revision": {"type": "integer", "minimum": 0},
+    "content_revision": {"type": "integer", "minimum": 0},
+    "interruption_reason": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "audio_source": {"const": "microphone"},
+    "metadata": {"type": "object"},
+    "speakers": {"type": "object", "additionalProperties": {"$ref": "#/$defs/speaker"}},
+    "latest_minutes": {"anyOf": [{"$ref": "#/$defs/minutes"}, {"type": "null"}]},
+    "updated_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "speaker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["speaker_key", "default_label", "display_name", "updated_at"],
+      "properties": {
+        "speaker_key": {"type": "string"},
+        "original_speaker": {"type": ["string", "null"]},
+        "default_label": {"type": "string"},
+        "display_name": {"type": "string"},
+        "updated_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "minutes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "meeting_id", "version", "status", "source_content_revision", "model", "content_json", "content_markdown", "created_at", "is_stale"],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "meeting_id": {"type": "string", "format": "uuid"},
+        "version": {"type": "integer", "minimum": 1},
+        "status": {"enum": ["queued", "generating", "completed", "failed"]},
+        "source_content_revision": {"type": "integer", "minimum": 0},
+        "model": {"type": "string"},
+        "prompt_version": {"type": ["string", "null"]},
+        "content_json": {"anyOf": [{"$ref": "minutes-content.schema.json"}, {"type": "null"}]},
+        "content_markdown": {"type": ["string", "null"]},
+        "raw_output": {"type": ["string", "null"]},
+        "error_code": {"type": ["string", "null"]},
+        "error_message": {"type": ["string", "null"]},
+        "created_at": {"type": "string", "format": "date-time"},
+        "is_stale": {"type": "boolean"}
+      }
+    }
+  }
+}

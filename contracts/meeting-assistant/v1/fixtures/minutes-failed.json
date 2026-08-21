@@ -1,0 +1,8 @@
+{
+  "contract_version": "1",
+  "type": "minutes_state_changed",
+  "event_id": "00000000-0000-4000-8000-000000000010",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-21T11:07:00Z",
+  "payload": {"minutes_id": "33333333-3333-4333-8333-333333333333", "version": 2, "status": "failed", "error_code": "summary_unavailable", "error_message": "AI 纪要模型服务不可用", "minutes": null}
+}

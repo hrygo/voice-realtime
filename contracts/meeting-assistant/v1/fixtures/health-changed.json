@@ -1,0 +1,8 @@
+{
+  "contract_version": "1",
+  "type": "health_changed",
+  "event_id": "00000000-0000-4000-8000-000000000013",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-21T10:03:10Z",
+  "payload": {"storage": "degraded", "transcription": "gap", "mic_muted": false, "recovery_journal_active": true}
+}

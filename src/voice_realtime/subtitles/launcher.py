@@ -54,6 +54,30 @@ def build_server_argv(settings: SubtitleSettings, executable: str = "wlk") -> li
             f"字幕本地模型目录不存在: {settings.model_dir}；"
             "请准备本地模型，或显式设置 allow_model_downloads=True"
         )
+    if getattr(settings, "diarization", False):
+        argv += ["--diarization"]
+        backend = str(getattr(settings, "diarization_backend", "sortformer"))
+        argv += ["--diarization-backend", backend]
+        model_path = getattr(settings, "diarization_model_path", None)
+        if model_path is not None:
+            path = Path(model_path)
+            if not path.exists() and not settings.allow_model_downloads:
+                raise FileNotFoundError(
+                    f"diarization 本地模型不存在: {path}；"
+                    "请准备 Sortformer 模型，或显式设置 allow_model_downloads=True"
+                )
+            if path.exists():
+                argv += ["--sortformer-model-path", str(path)]
+        elif not settings.allow_model_downloads:
+            raise FileNotFoundError(
+                "diarization 未配置本地模型；请准备 Sortformer 模型，或显式设置 "
+                "allow_model_downloads=True"
+            )
+        max_speakers = int(getattr(settings, "diarization_max_speakers", 4))
+        if not 1 <= max_speakers <= 4:
+            raise ValueError("diarization_max_speakers 必须在 1 到 4 之间")
+        argv += ["--sortformer-max-speakers", str(max_speakers)]
+        argv += ["--retention-seconds", "0"]
     return argv
 
 

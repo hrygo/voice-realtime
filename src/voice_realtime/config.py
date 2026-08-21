@@ -10,7 +10,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
@@ -196,6 +196,14 @@ class SubtitleSettings(BaseSettings):
         default=False,
         description="是否允许 WhisperLiveKit 启动时联网下载模型；默认严格离线",
     )
+    diarization: bool = Field(default=True, description="是否启用匿名说话人分离")
+    diarization_backend: str = Field(default="sortformer", description="说话人分离后端")
+    diarization_model_path: Path = Field(
+        default=Path("runtime/sortformer.nemo"), description="本地 Sortformer 模型路径"
+    )
+    diarization_max_speakers: int = Field(
+        default=4, ge=1, le=4, description="最多匿名说话人数"
+    )
 
     @field_validator("backend")
     @classmethod
@@ -205,7 +213,83 @@ class SubtitleSettings(BaseSettings):
             raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
         return v
 
+    @field_validator("diarization_backend")
+    @classmethod
+    def _validate_diarization_backend(cls, v: str) -> str:
+        if v != "sortformer":
+            raise ValueError("首版仅支持 sortformer diarization 后端")
+        return v
+
     _validate_host = field_validator("host")(_validate_loopback_host)
+
+
+class MeetingSettings(BaseSettings):
+    """会议助手 PostgreSQL、纪要和恢复 journal 配置。"""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VR_MEETING_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    database_url: str = Field(
+        default="postgresql:///knowledge",
+        description="本机 PostgreSQL DSN；不得把完整 DSN 写入日志",
+    )
+    schema_name: str = Field(
+        default="voice_realtime",
+        validation_alias=AliasChoices("schema", "VR_MEETING_SCHEMA"),
+        serialization_alias="schema",
+        description="会议表所在独立 schema",
+    )
+    summary_model: str = Field(default="qwen/qwen3.8-27b", description="会后纪要模型 ID")
+    summary_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
+    summary_reasoning: str = Field(default="off", description="纪要推理开关，首版固定 off")
+    finalization_timeout_secs: float = Field(default=30.0, ge=1.0, le=300.0)
+    recovery_dir: Path = Field(default=Path("runtime/meetings/recovery"))
+    summary_concurrency: int = Field(default=1, ge=1, le=8)
+    allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "http://127.0.0.1:8100",
+            "http://localhost:8100",
+            "http://127.0.0.1:5173",
+            "http://localhost:5173",
+        ]
+    )
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"postgresql", "postgres"}:
+            raise ValueError("会议数据库必须使用 PostgreSQL URL")
+        if parsed.hostname is not None:
+            _validate_loopback_host(parsed.hostname)
+        elif not parsed.path.lstrip("/"):
+            raise ValueError("PostgreSQL URL 必须指定数据库")
+        return value
+
+    @field_validator("schema_name")
+    @classmethod
+    def _validate_schema(cls, value: str) -> str:
+        import re
+
+        if re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", value) is None:
+            raise ValueError("schema 必须是安全的 PostgreSQL 标识符")
+        return value
+
+    @field_validator("summary_reasoning")
+    @classmethod
+    def _validate_reasoning(cls, value: str) -> str:
+        if value != "off":
+            raise ValueError("会议纪要首版只允许 summary_reasoning=off")
+        return value
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _validate_origins(cls, values: list[str]) -> list[str]:
+        return [_validate_loopback_url(value) for value in values]
 
 
 class Settings(BaseSettings):
@@ -216,15 +300,17 @@ class Settings(BaseSettings):
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)
     interaction: InteractionSettings = Field(default_factory=InteractionSettings)
     subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
+    meeting: MeetingSettings = Field(default_factory=MeetingSettings)
     ui: UISettings = Field(default_factory=UISettings)
 
     def dump_table(self) -> str:
         """以可读表格输出当前生效配置（用于启动横幅与诊断）。"""
         lines = ["voice-realtime 配置"]
-        for section in (self.bridge, self.interaction, self.subtitles, self.ui):
+        for section in (self.bridge, self.interaction, self.subtitles, self.meeting, self.ui):
             lines.append(f"\n[{type(section).__name__}]")
-            for key, value in section.model_dump().items():
-                lines.append(f"  {key}: {value}")
+            for key, value in section.model_dump(by_alias=True).items():
+                safe_value = "<redacted>" if key == "database_url" else value
+                lines.append(f"  {key}: {safe_value}")
         return "\n".join(lines)
 
 

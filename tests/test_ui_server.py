@@ -13,7 +13,7 @@ from starlette.websockets import WebSocketDisconnect
 from voice_realtime.config import Settings, SubtitleSettings
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
-from voice_realtime.ui.server import create_app
+from voice_realtime.ui.server import _initialize_meeting_backend, create_app
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
 
@@ -54,7 +54,7 @@ def app() -> TestClient:
         interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},  # unreachable
         ui={"static_dir": Path("/nonexistent/dist")},  # 无 dist 时走 placeholder
     )
-    app = create_app(mock_settings)
+    app = create_app(mock_settings, initialize_meeting=False)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -70,13 +70,72 @@ class TestHealth:
         assert resp.headers["x-frame-options"] == "DENY"
         assert "connect-src" in resp.headers["content-security-policy"]
 
+    def test_meeting_api_allows_configured_loopback_frontend(self) -> None:
+        application = create_app(Settings(), initialize_meeting=False)
+        client = TestClient(application, raise_server_exceptions=False)
+        response = client.options(
+            "/api/v1/meetings",
+            headers={
+                "origin": "http://localhost:5173",
+                "access-control-request-method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
     def test_runtime_snapshot(self) -> None:
-        app = create_app(Settings())
+        app = create_app(Settings(), initialize_meeting=False)
         app.state.runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/api/runtime")
         assert resp.status_code == 200
         assert resp.json()["pipeline"] == "running"
+
+    async def test_meeting_backend_lifecycle_is_injected(self) -> None:
+        settings = Settings()
+        app = create_app(settings, initialize_meeting=False)
+        runtime = Mock()
+        runtime.subtitle_proxy = Mock()
+        runtime.configure_meeting = Mock()
+        repository = Mock()
+        repository.start = AsyncMock()
+        repository.recover_stale = AsyncMock(return_value=0)
+        repository.close = AsyncMock()
+        journal = Mock()
+        journal.replay = AsyncMock(return_value=0)
+        summary_service = Mock()
+        summary_service.start = AsyncMock()
+        summary_service.stop = AsyncMock()
+        meeting_session = Mock()
+
+        with patch(
+            "voice_realtime.ui.server.run_migrations", new_callable=AsyncMock
+        ) as migrations, patch(
+            "voice_realtime.ui.server.PostgresMeetingRepository",
+            return_value=repository,
+        ), patch(
+            "voice_realtime.ui.server.RecoveryJournal", return_value=journal
+        ), patch(
+            "voice_realtime.ui.server.MeetingSummaryClient"
+        ), patch(
+            "voice_realtime.ui.server.MeetingSummaryService",
+            return_value=summary_service,
+        ), patch(
+            "voice_realtime.ui.server.MeetingSession", return_value=meeting_session
+        ):
+            ready = await _initialize_meeting_backend(app, settings, runtime)
+
+        assert ready
+        migrations.assert_awaited_once_with(
+            settings.meeting.database_url,
+            schema=settings.meeting.schema_name,
+        )
+        repository.start.assert_awaited_once()
+        journal.replay.assert_awaited_once_with(repository)
+        repository.recover_stale.assert_awaited_once()
+        runtime.configure_meeting.assert_called_once_with(meeting_session)
+        summary_service.start.assert_awaited_once()
+        assert app.state.meeting_repository is repository
 
 
 class TestServices:
@@ -99,7 +158,7 @@ class TestServices:
             subtitles={"host": "127.0.0.1", "port": 9999},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
 
         mock_resp = Mock()
         mock_resp.status_code = 200
@@ -128,7 +187,7 @@ class TestVoices:
             subtitles={"host": "127.0.0.1", "port": 9999},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
 
         mock_resp = Mock()
         mock_resp.status_code = 200
@@ -153,7 +212,7 @@ class TestVoices:
             subtitles={"host": "127.0.0.1", "port": 9999},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
 
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
             "voice_realtime.ui.server.httpx.AsyncClient.get",
@@ -189,7 +248,7 @@ class TestStaticMount:
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
             ui={"static_dir": dist},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
@@ -208,7 +267,7 @@ class TestWebSocketGateways:
             subtitles={"host": "127.0.0.1", "port": 9998},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
         app.state.runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
@@ -228,7 +287,10 @@ class TestWebSocketGateways:
 
     def test_ws_closed_when_runtime_unavailable(self) -> None:
         """runtime 未装配（测试直连/lifespan 未跑）时拒绝连接。"""
-        client = TestClient(create_app(Settings()), raise_server_exceptions=False)
+        client = TestClient(
+            create_app(Settings(), initialize_meeting=False),
+            raise_server_exceptions=False,
+        )
         with pytest.raises(WebSocketDisconnect), client.websocket_connect(
             "/ws/assistant"
         ) as ws:
@@ -258,7 +320,7 @@ class TestCommandGateway:
             subtitles={"host": "127.0.0.1", "port": 9998},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
-        app = create_app(mock_settings)
+        app = create_app(mock_settings, initialize_meeting=False)
         app.state.runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
@@ -294,8 +356,54 @@ class TestCommandGateway:
         assert resp["error_code"] == "invalid_payload"
 
     def test_cmd_closed_when_runtime_unavailable(self) -> None:
-        client = TestClient(create_app(Settings()), raise_server_exceptions=False)
+        client = TestClient(
+            create_app(Settings(), initialize_meeting=False),
+            raise_server_exceptions=False,
+        )
         with pytest.raises(WebSocketDisconnect), client.websocket_connect(
             "/ws/assistant/cmd"
         ) as ws:
             ws.receive_text()
+
+
+class TestMeetingV1Gateway:
+    def test_meeting_socket_sends_contract_snapshot(self) -> None:
+        app = create_app(Settings(), initialize_meeting=False)
+        app.state.runtime = _FakeRuntime()
+        client = TestClient(app, raise_server_exceptions=False)
+        with client.websocket_connect("/ws/v1/meetings") as ws:
+            event = ws.receive_json()
+        assert event["contract_version"] == "1"
+        assert event["type"] == "meeting_snapshot"
+        assert "meeting" in event["payload"]
+
+    def test_control_socket_uses_v1_envelope(self) -> None:
+        app = create_app(Settings(), initialize_meeting=False)
+        app.state.runtime = _FakeRuntime()
+        client = TestClient(app, raise_server_exceptions=False)
+        with client.websocket_connect("/ws/v1/control") as ws:
+            handshake = ws.receive_json()
+            assert handshake["contract_version"] == "1"
+            ws.send_json({"contract_version": "1", "request_id": "r1", "cmd": "start_meeting"})
+            response = ws.receive_json()
+        assert response["contract_version"] == "1"
+        assert response["request_id"] == "r1"
+        assert response["ok"] is False
+
+    def test_control_socket_rejects_unknown_fields(self) -> None:
+        app = create_app(Settings(), initialize_meeting=False)
+        app.state.runtime = _FakeRuntime()
+        client = TestClient(app, raise_server_exceptions=False)
+        with client.websocket_connect("/ws/v1/control") as ws:
+            ws.receive_json()
+            ws.send_json(
+                {
+                    "contract_version": "1",
+                    "request_id": "r2",
+                    "cmd": "start_meeting",
+                    "unexpected": True,
+                }
+            )
+            response = ws.receive_json()
+        assert response["ok"] is False
+        assert response["error"]["code"] == "invalid_payload"

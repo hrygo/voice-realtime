@@ -140,12 +140,47 @@ class TestBuildServerArgv:
     def test_existing_local_model_directory_is_used(self, tmp_path: Path) -> None:
         model_dir = tmp_path / "model"
         model_dir.mkdir()
-        settings = SubtitleSettings(model_dir=model_dir)
+        settings = SubtitleSettings(model_dir=model_dir, diarization=False)
 
         argv = build_server_argv(settings)
 
         assert argv[argv.index("--model_dir") + 1] == str(model_dir)
         assert "--model" not in argv
+
+    def test_meeting_diarization_uses_offline_sortformer_flags(self, tmp_path: Path) -> None:
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        speaker_model = tmp_path / "speaker.nemo"
+        speaker_model.write_bytes(b"local")
+        settings = SubtitleSettings(
+            model_dir=model_dir,
+            diarization=True,
+            diarization_backend="sortformer",
+            diarization_model_path=speaker_model,
+            diarization_max_speakers=4,
+            allow_model_downloads=False,
+        )
+
+        argv = build_server_argv(settings)
+
+        assert "--diarization" in argv
+        assert argv[argv.index("--diarization-backend") + 1] == "sortformer"
+        assert argv[argv.index("--sortformer-model-path") + 1] == str(speaker_model)
+        assert argv[argv.index("--sortformer-max-speakers") + 1] == "4"
+        assert argv[argv.index("--retention-seconds") + 1] == "0"
+
+    def test_missing_diarization_model_fails_fast_offline(self, tmp_path: Path) -> None:
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        settings = SubtitleSettings(
+            model_dir=model_dir,
+            diarization=True,
+            diarization_model_path=tmp_path / "missing.nemo",
+            allow_model_downloads=False,
+        )
+
+        with pytest.raises(FileNotFoundError, match="diarization"):
+            build_server_argv(settings)
 
     def test_missing_local_model_fails_fast_offline(self, tmp_path: Path) -> None:
         settings = SubtitleSettings(model_dir=tmp_path / "missing")
@@ -222,7 +257,7 @@ class TestLaunch:
 
         model_dir = tmp_path / "model"
         model_dir.mkdir()
-        settings = SubtitleSettings(repo_path=tmp_path, model_dir=model_dir)
+        settings = SubtitleSettings(repo_path=tmp_path, model_dir=model_dir, diarization=False)
         log_dir = tmp_path / "logs"
         with (
             patch(
