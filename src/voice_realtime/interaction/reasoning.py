@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -29,6 +31,7 @@ from pipecat.frames.frames import CancelFrame, EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
+from voice_realtime.interaction.context_memory import ContextCompactionConfig
 from voice_realtime.network import local_async_client
 
 logger = logging.getLogger(__name__)
@@ -57,7 +60,95 @@ DEFAULT_SYSTEM_PROMPT = (
 )
 
 _NATIVE_CHAT_PATH = "/api/v1/chat"
+_NATIVE_MODELS_PATH = "/api/v1/models"
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
+
+
+@dataclass(frozen=True, slots=True)
+class NativeChatStats:
+    """LM Studio 在 chat.end 中返回的可信用量与延迟统计。"""
+
+    input_tokens: int
+    total_output_tokens: int
+    reasoning_output_tokens: int
+    ttft_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class NativeChatResult:
+    """经过结构、内容、统计和响应 ID 校验的原生响应。"""
+
+    content: str
+    response_id: str | None
+    stats: NativeChatStats
+
+
+def _nonnegative_int(value: object, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"LM Studio stats.{field} must be a non-negative integer")
+    return value
+
+
+def _parse_native_result(
+    data: object, *, require_response_id: bool
+) -> NativeChatResult:
+    """严格解析原生最终响应，避免提交残缺或不可度量的上下文链。"""
+    if not isinstance(data, dict):
+        raise TypeError("LM Studio native result must be an object")
+
+    output = data.get("output")
+    if not isinstance(output, list):
+        raise TypeError("LM Studio native result output must be a list")
+    contents: list[str] = []
+    for item in output:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        content = item.get("content")
+        if not isinstance(content, str):
+            raise TypeError("LM Studio message content must be a string")
+        if content:
+            contents.append(content)
+    if not contents:
+        raise ValueError("LM Studio native result contains no message content")
+
+    stats = data.get("stats")
+    if not isinstance(stats, dict):
+        raise ValueError("LM Studio stats must be an object")
+    input_tokens = _nonnegative_int(stats.get("input_tokens"), field="input_tokens")
+    total_output_tokens = _nonnegative_int(
+        stats.get("total_output_tokens"), field="total_output_tokens"
+    )
+    reasoning_output_tokens = _nonnegative_int(
+        stats.get("reasoning_output_tokens"), field="reasoning_output_tokens"
+    )
+    raw_ttft = stats.get("time_to_first_token_seconds")
+    if (
+        isinstance(raw_ttft, bool)
+        or not isinstance(raw_ttft, (int, float))
+        or not math.isfinite(raw_ttft)
+        or raw_ttft < 0
+    ):
+        raise ValueError(
+            "LM Studio stats.time_to_first_token_seconds must be non-negative"
+        )
+
+    response_id = data.get("response_id")
+    if response_id is None:
+        if require_response_id:
+            raise ValueError("LM Studio native result response_id is required")
+    elif not isinstance(response_id, str) or not _RESPONSE_ID_RE.fullmatch(response_id):
+        raise ValueError("LM Studio native result response_id is invalid")
+
+    return NativeChatResult(
+        content="".join(contents),
+        response_id=response_id,
+        stats=NativeChatStats(
+            input_tokens=input_tokens,
+            total_output_tokens=total_output_tokens,
+            reasoning_output_tokens=reasoning_output_tokens,
+            ttft_seconds=float(raw_ttft),
+        ),
+    )
 
 
 def _text_content(message: ChatCompletionMessageParam) -> str | None:
@@ -126,6 +217,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
         reasoning: str = "off",
         temperature: float = 0.7,
         api_key: str = "lm-studio",
+        compaction_config: ContextCompactionConfig | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(
@@ -140,6 +232,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._reasoning = reasoning
         self._model = model
         self._temperature = temperature
+        self._compaction_config = compaction_config or ContextCompactionConfig(enabled=False)
         # 原生端点挂在 LM Studio 根路径下；兼容配置里带 "/v1" 的写法。
         root_url = base_url.rstrip("/")
         if root_url.endswith("/v1"):
@@ -153,6 +246,18 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._system_prompt: str | None = None
         self._completed_user_turns = 0
         self._request_generation = 0
+        self._last_chat_stats: NativeChatStats | None = None
+        self._last_assistant_text: str | None = None
+        self._model_context_length: int | None = None
+        self._model_context_length_discovered = False
+
+    @property
+    def last_chat_stats(self) -> NativeChatStats | None:
+        return self._last_chat_stats
+
+    @property
+    def last_assistant_text(self) -> str | None:
+        return self._last_assistant_text
 
     def reset_conversation(self) -> None:
         """使在途请求失效并开启新的 LM Studio 对话链。"""
@@ -160,6 +265,86 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._previous_response_id = None
         self._system_prompt = None
         self._completed_user_turns = 0
+        self._last_chat_stats = None
+        self._last_assistant_text = None
+
+    async def _native_chat_once(
+        self, payload: dict[str, Any], *, timeout_seconds: float
+    ) -> NativeChatResult:
+        """执行有界非流式原生请求，并严格校验完整响应。"""
+        response = await self._http.post(
+            _NATIVE_CHAT_PATH,
+            json=payload,
+            timeout=httpx.Timeout(
+                connect=5.0,
+                read=timeout_seconds,
+                write=10.0,
+                pool=5.0,
+            ),
+        )
+        response.raise_for_status()
+        return _parse_native_result(
+            response.json(), require_response_id=payload.get("store") is True
+        )
+
+    async def _get_model_context_length(self) -> int | None:
+        """尽力读取当前模型实例的上下文容量；失败结果也缓存。"""
+        if self._model_context_length_discovered:
+            return self._model_context_length
+
+        discovered: int | None = None
+        try:
+            response = await self._http.get(
+                _NATIVE_MODELS_PATH,
+                timeout=httpx.Timeout(5.0),
+            )
+            response.raise_for_status()
+            body = response.json()
+            models = body.get("models") if isinstance(body, dict) else None
+            if isinstance(models, list):
+                model = next(
+                    (
+                        item
+                        for item in models
+                        if isinstance(item, dict) and item.get("key") == self._model
+                    ),
+                    None,
+                )
+                if isinstance(model, dict):
+                    loaded_instances = model.get("loaded_instances")
+                    if isinstance(loaded_instances, list):
+                        ordered_instances = sorted(
+                            (item for item in loaded_instances if isinstance(item, dict)),
+                            key=lambda item: item.get("id") != self._model,
+                        )
+                        for instance in ordered_instances:
+                            config = instance.get("config")
+                            context_length = (
+                                config.get("context_length")
+                                if isinstance(config, dict)
+                                else None
+                            )
+                            if (
+                                isinstance(context_length, int)
+                                and not isinstance(context_length, bool)
+                                and context_length > 0
+                            ):
+                                discovered = context_length
+                                break
+                    if discovered is None:
+                        maximum = model.get("max_context_length")
+                        if (
+                            isinstance(maximum, int)
+                            and not isinstance(maximum, bool)
+                            and maximum > 0
+                        ):
+                            discovered = maximum
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError):
+            logger.debug("LM Studio 模型上下文容量当前不可用", exc_info=True)
+
+        self._model_context_length = discovered
+        self._model_context_length_discovered = True
+        return discovered
 
     async def _native_completions(
         self,
@@ -172,7 +357,8 @@ class LmStudioNativeLLMService(OpenAILLMService):
     ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
         saw_content = False
-        response_id: str | None = None
+        content_parts: list[str] = []
+        final_result: NativeChatResult | None = None
         async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
             try:
                 resp.raise_for_status()
@@ -188,6 +374,8 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 self._previous_response_id = None
                 self._system_prompt = None
                 self._completed_user_turns = 0
+                self._last_chat_stats = None
+                self._last_assistant_text = None
                 retry_payload = dict(payload)
                 retry_payload.pop("previous_response_id", None)
                 retry_payload["system_prompt"] = system_prompt
@@ -225,10 +413,15 @@ class LmStudioNativeLLMService(OpenAILLMService):
                     result = event.get("result")
                     if not isinstance(result, dict):
                         raise TypeError("LM Studio chat.end result must be an object")
-                    candidate = result.get("response_id")
-                    if not isinstance(candidate, str) or not _RESPONSE_ID_RE.fullmatch(candidate):
-                        raise ValueError("LM Studio chat.end response_id is invalid")
-                    response_id = candidate
+                    if final_result is not None:
+                        raise RuntimeError("LM Studio stream returned duplicate chat.end")
+                    stream_result = dict(result)
+                    stream_result["output"] = [
+                        {"type": "message", "content": "".join(content_parts)}
+                    ]
+                    final_result = _parse_native_result(
+                        stream_result, require_response_id=True
+                    )
                     continue
                 if event_type != "message.delta":
                     continue
@@ -238,6 +431,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 if not content:
                     continue
                 saw_content = True
+                content_parts.append(content)
                 chunk = SimpleNamespace(
                     usage=None,
                     model=None,
@@ -249,12 +443,14 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 yield cast(ChatCompletionChunk, cast(Any, chunk))
         if not saw_content:
             raise RuntimeError("LM Studio returned no message content")
-        if response_id is None:
+        if final_result is None:
             raise RuntimeError("LM Studio stream ended without a valid chat.end")
         if generation == self._request_generation:
-            self._previous_response_id = response_id
+            self._previous_response_id = final_result.response_id
             self._system_prompt = system_prompt
             self._completed_user_turns = user_turns
+            self._last_chat_stats = final_result.stats
+            self._last_assistant_text = final_result.content
 
     async def close(self) -> None:
         """关闭原生 HTTP 客户端；允许 stop/cleanup 重复调用。"""

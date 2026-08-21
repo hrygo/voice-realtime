@@ -8,6 +8,7 @@ chat.end 原子提交，以及 SSE → OpenAI 兼容 chunk 的转换。
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -19,7 +20,65 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
 from voice_realtime.interaction.pipeline import build_system_prompt
-from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
+from voice_realtime.interaction.reasoning import (
+    LmStudioNativeLLMService,
+    NativeChatStats,
+)
+
+SSE_STATS = {
+    "input_tokens": 6100,
+    "total_output_tokens": 12,
+    "reasoning_output_tokens": 0,
+    "time_to_first_token_seconds": 1.7,
+}
+
+
+def native_result_json(
+    content: str,
+    response_id: str | None,
+    *,
+    stats: dict[str, int | float] | None = None,
+) -> dict[str, object]:
+    body: dict[str, object] = {
+        "model_instance_id": "m",
+        "output": [{"type": "message", "content": content}],
+        "stats": stats
+        or {
+            "input_tokens": 100,
+            "total_output_tokens": 10,
+            "reasoning_output_tokens": 0,
+            "time_to_first_token_seconds": 0.2,
+        },
+    }
+    if response_id is not None:
+        body["response_id"] = response_id
+    return body
+
+
+def stream_lines(content: str, response_id: str, input_tokens: int = 100) -> list[str]:
+    result = native_result_json(
+        content,
+        response_id,
+        stats={
+            "input_tokens": input_tokens,
+            "total_output_tokens": 8,
+            "reasoning_output_tokens": 0,
+            "time_to_first_token_seconds": 0.2,
+        },
+    )
+    return [
+        f'data: {json.dumps({"type": "message.delta", "content": content}, ensure_ascii=False)}',
+        f'data: {json.dumps({"type": "chat.end", "result": result}, ensure_ascii=False)}',
+    ]
+
+
+def fake_json_response(data: dict[str, object], status_code: int = 200) -> httpx.Response:
+    return httpx.Response(
+        status_code,
+        request=httpx.Request("POST", "http://localhost:1234/api/v1/chat"),
+        json=data,
+    )
+
 
 SSE_LINES = [
     'data: {"type":"chat.start"}',
@@ -27,7 +86,11 @@ SSE_LINES = [
     'data: {"type":"message.delta","content":"好"}',
     'data: {"type":"message.delta","content":""}',
     'data: {"type":"message.end"}',
-    'data: {"type":"chat.end","result":{"response_id":"resp_first"}}',
+    "data: "
+    + json.dumps(
+        {"type": "chat.end", "result": native_result_json("你好", "resp_first")},
+        ensure_ascii=False,
+    ),
 ]
 
 
@@ -138,6 +201,127 @@ class TestLmStudioNativeLLMService:
         assert [c.choices[0].delta.content for c in chunks] == ["你", "好"]
         assert svc._previous_response_id == "resp_first"
 
+    async def test_chat_end_commits_usage_stats_with_response_id(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        result = native_result_json("你好", "resp_first", stats=SSE_STATS)
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(
+                [
+                    'data: {"type":"message.delta","content":"你好"}',
+                    "data: "
+                    + json.dumps(
+                        {"type": "chat.end", "result": result}, ensure_ascii=False
+                    ),
+                ]
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+        assert svc.last_chat_stats == NativeChatStats(6100, 12, 0, 1.7)
+        assert svc.last_assistant_text == "你好"
+
+    async def test_invalid_stats_prevents_chain_commit(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        result = native_result_json("你好", "resp_bad", stats={"input_tokens": -1})
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **__: Any) -> Any:
+            yield FakeSSEResponse(
+                [
+                    'data: {"type":"message.delta","content":"你好"}',
+                    "data: "
+                    + json.dumps(
+                        {"type": "chat.end", "result": result}, ensure_ascii=False
+                    ),
+                ]
+            )
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        with pytest.raises(ValueError, match="stats"):
+            _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
+
+        assert svc._previous_response_id is None
+        assert svc.last_chat_stats is None
+
+    async def test_native_chat_once_returns_validated_result(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.post = AsyncMock(
+            return_value=fake_json_response(native_result_json("摘要", None))
+        )
+
+        result = await svc._native_chat_once(
+            {"model": "m", "input": "历史", "store": False}, timeout_seconds=20.0
+        )
+
+        assert result.content == "摘要"
+        assert result.response_id is None
+        svc._http.post.assert_awaited_once()
+
+    async def test_native_chat_once_propagates_timeout(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.post = AsyncMock(side_effect=httpx.ReadTimeout("timeout"))
+
+        with pytest.raises(httpx.ReadTimeout):
+            await svc._native_chat_once(
+                {"model": "m", "input": "历史", "store": False},
+                timeout_seconds=1.0,
+            )
+
+    async def test_model_context_length_uses_loaded_instance_and_caches(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                request=httpx.Request("GET", "http://localhost:1234/api/v1/models"),
+                json={
+                    "models": [
+                        {
+                            "key": "m",
+                            "loaded_instances": [
+                                {"id": "m", "config": {"context_length": 262144}}
+                            ],
+                            "max_context_length": 131072,
+                        }
+                    ]
+                },
+            )
+        )
+
+        assert await svc._get_model_context_length() == 262144
+        assert await svc._get_model_context_length() == 262144
+        svc._http.get.assert_awaited_once()
+
+    async def test_model_context_length_falls_back_to_model_maximum(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.get = AsyncMock(
+            return_value=httpx.Response(
+                200,
+                request=httpx.Request("GET", "http://localhost:1234/api/v1/models"),
+                json={
+                    "models": [
+                        {
+                            "key": "m",
+                            "loaded_instances": [],
+                            "max_context_length": 65536,
+                        }
+                    ]
+                },
+            )
+        )
+
+        assert await svc._get_model_context_length() == 65536
+
+    async def test_model_context_length_failure_is_cached_as_unavailable(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._http.get = AsyncMock(side_effect=httpx.ConnectError("offline"))
+
+        assert await svc._get_model_context_length() is None
+        assert await svc._get_model_context_length() is None
+        svc._http.get.assert_awaited_once()
+
     async def test_second_turn_uses_previous_response_id_and_only_current_user(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         payloads: list[dict[str, Any]] = []
@@ -149,15 +333,7 @@ class TestLmStudioNativeLLMService:
         ) -> Any:
             payloads.append(json or {})
             response_id = next(response_ids)
-            yield FakeSSEResponse(
-                [
-                    'data: {"type":"message.delta","content":"好"}',
-                    (
-                        'data: {"type":"chat.end","result":{"response_id":"'
-                        f'{response_id}"}}}}'
-                    ),
-                ]
-            )
+            yield FakeSSEResponse(stream_lines("好", response_id))
 
         svc._http.stream = fake_stream  # type: ignore[method-assign]
         _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
@@ -235,8 +411,7 @@ class TestLmStudioNativeLLMService:
         lines = [
             ": ping",
             "data: not json",
-            'data: {"type":"message.delta","content":"测试"}',
-            'data: {"type":"chat.end","result":{"response_id":"resp_done"}}',
+            *stream_lines("测试", "resp_done"),
             "data: [DONE]",
             'data: {"type":"message.delta","content":"不会被消费"}',
         ]
@@ -288,15 +463,7 @@ class TestLmStudioNativeLLMService:
                     },
                 )
             else:
-                yield FakeSSEResponse(
-                    [
-                        'data: {"type":"message.delta","content":"恢复"}',
-                        (
-                            'data: {"type":"chat.end","result":'
-                            '{"response_id":"resp_recovered"}}'
-                        ),
-                    ]
-                )
+                yield FakeSSEResponse(stream_lines("恢复", "resp_recovered"))
 
         svc._http.stream = fake_stream  # type: ignore[method-assign]
         _ = [chunk async for chunk in await svc.get_chat_completions(make_context())]
@@ -316,7 +483,14 @@ class TestLmStudioNativeLLMService:
         [
             ('data: {"type":"chat.end","result":[]}', TypeError),
             (
-                'data: {"type":"chat.end","result":{"response_id":"bad"}}',
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "chat.end",
+                        "result": native_result_json("测试", "bad"),
+                    },
+                    ensure_ascii=False,
+                ),
                 ValueError,
             ),
         ],
