@@ -340,67 +340,67 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
         </button>
       </div>
 
-      {/* 统一的系统健康中心 Popover 触发器 */}
-      <div className="status-center-health" ref={popoverRef}>
-        <button
-          type="button"
-          className={`health-master-pill ${isAllOk ? "all-ok" : hasError ? "has-error" : "checking"}`}
-          onClick={() => setHealthPopoverOpen((prev) => !prev)}
-          title="点击查看全系统 7 项服务健康状态与探活"
-        >
-          <span
-            className={`light-dot ${isAllOk ? "dot-ok" : hasError ? "dot-error" : "dot-checking"}`}
-            aria-hidden="true"
-          />
-          <span className="health-master-label">
-            {isAllOk ? `引擎全就绪 (${okCount}/${totalCount})` : hasError ? `异常 (${okCount}/${totalCount})` : `探活中 (${okCount}/${totalCount})`}
-          </span>
-          <span className="health-master-chevron">{healthPopoverOpen ? "▲" : "▼"}</span>
-        </button>
+      <div className="status-right">
+        {/* 系统健康中心 Popover 触发器 (右侧自然流) */}
+        <div className="status-health-container" ref={popoverRef}>
+          <button
+            type="button"
+            className={`health-master-pill ${isAllOk ? "all-ok" : hasError ? "has-error" : "checking"}`}
+            onClick={() => setHealthPopoverOpen((prev) => !prev)}
+            title="点击查看全系统 7 项服务健康状态与探活"
+          >
+            <span
+              className={`light-dot ${isAllOk ? "dot-ok" : hasError ? "dot-error" : "dot-checking"}`}
+              aria-hidden="true"
+            />
+            <span className="health-master-label">
+              {isAllOk ? `引擎全就绪 (${okCount}/${totalCount})` : hasError ? `异常 (${okCount}/${totalCount})` : `探活中 (${okCount}/${totalCount})`}
+            </span>
+            <span className="health-master-chevron">{healthPopoverOpen ? "▲" : "▼"}</span>
+          </button>
 
-        {healthPopoverOpen && (
-          <div className="health-popover-dialog" role="dialog" aria-label="系统服务监控">
-            <div className="health-popover-header">
-              <div className="health-popover-title">
-                <span>🛡️ 系统服务健康状态</span>
-                <span className="health-summary-count">
-                  {okCount}/{totalCount} 项在线
-                </span>
-              </div>
-              <button
-                type="button"
-                className="health-refresh-btn"
-                onClick={() => fetchServices(true)}
-                title="重新探活所有后端服务"
-              >
-                🔄 刷新探活
-              </button>
-            </div>
-
-            <div className="health-popover-list">
-              {healthItems.map((item) => (
-                <div key={item.id} className="health-popover-row">
-                  <div className="health-row-left">
-                    <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
-                    <span className="health-row-name">{item.name}</span>
-                  </div>
-                  <span className={`health-row-status status-${item.status}`}>
-                    {STATUS_LABELS[item.status as ServiceStatus] || item.status}
+          {healthPopoverOpen && (
+            <div className="health-popover-dialog" role="dialog" aria-label="系统服务监控">
+              <div className="health-popover-header">
+                <div className="health-popover-title">
+                  <span>🛡️ 系统服务健康状态</span>
+                  <span className="health-summary-count">
+                    {okCount}/{totalCount} 项在线
                   </span>
                 </div>
-              ))}
-            </div>
+                <button
+                  type="button"
+                  className="health-refresh-btn"
+                  onClick={() => fetchServices(true)}
+                  title="重新探活所有后端服务"
+                >
+                  🔄 刷新探活
+                </button>
+              </div>
 
-            <div className="health-popover-footer">
-              <span className="health-footer-tip">
-                全部服务运行于本地环回地址 (127.0.0.1)，数据不出本机
-              </span>
-            </div>
-          </div>
-        )}
-      </div>
+              <div className="health-popover-list">
+                {healthItems.map((item) => (
+                  <div key={item.id} className="health-popover-row">
+                    <div className="health-row-left">
+                      <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
+                      <span className="health-row-name">{item.name}</span>
+                    </div>
+                    <span className={`health-row-status status-${item.status}`}>
+                      {STATUS_LABELS[item.status as ServiceStatus] || item.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
 
-      <div className="status-right">
+              <div className="health-popover-footer">
+                <span className="health-footer-tip">
+                  全部服务运行于本地环回地址 (127.0.0.1)，数据不出本机
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="session-timer" title="当前会话在线运行时长">
           <span>⏱️</span>
           <span>{formatTimer(sessionSeconds)}</span>

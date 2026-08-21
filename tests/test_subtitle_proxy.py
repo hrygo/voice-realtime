@@ -131,6 +131,39 @@ class TestClientManagement:
         proxy.remove_client(send)
         assert not proxy.has_clients
 
+    async def test_add_client_replays_latest_snapshot(self, settings: SubtitleSettings) -> None:
+        proxy = SubtitleProxy(settings)
+        payload = _snapshot("历史第一句")
+        await proxy._broadcast_payload(payload)
+
+        send = AsyncMock()
+        proxy.add_client(send)
+        await asyncio.sleep(0.01)
+
+        assert send.await_count == 1
+        replayed = json.loads(send.await_args.args[0])
+        assert replayed["lines"][0]["text"] == "历史第一句"
+        await proxy.stop()
+
+    async def test_clear_subtitles_resets_snapshot_and_broadcasts_empty(
+        self, settings: SubtitleSettings
+    ) -> None:
+        proxy = SubtitleProxy(settings)
+        send = AsyncMock()
+        proxy.add_client(send)
+
+        await proxy._broadcast_payload(_snapshot("旧内容"))
+        await asyncio.sleep(0.01)
+        assert send.await_count == 1
+
+        await proxy.clear_subtitles()
+        await asyncio.sleep(0.01)
+        assert send.await_count == 2
+        cleared = json.loads(send.await_args.args[0])
+        assert cleared["lines"] == []
+        assert cleared["buffer_transcription"] == ""
+        await proxy.stop()
+
 
 class TestMeetingCapture:
     async def test_finish_capture_resumes_browser_supervisor(

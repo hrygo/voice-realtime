@@ -24,6 +24,7 @@ import logging
 import re
 import time
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -317,10 +318,12 @@ class HangoverUserMuteStrategy(BaseUserMuteStrategy):
         self,
         tail_hangover_secs: float = 0.4,
         echo_state: EchoState | None = None,
+        suppression_checker: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()  # type: ignore[no-untyped-call]
         self._tail_hangover_secs = tail_hangover_secs
         self._echo_state = echo_state or EchoState()
+        self._suppression_checker = suppression_checker
 
     @property
     def _hangover_until(self) -> float:
@@ -329,6 +332,8 @@ class HangoverUserMuteStrategy(BaseUserMuteStrategy):
     async def process_frame(self, frame: Frame) -> bool:
         await super().process_frame(frame)
         now = time.monotonic()
+        if self._suppression_checker is not None:
+            return self._suppression_checker()
         return self._echo_state.is_suppressing(now, self._tail_hangover_secs)
 
 
@@ -716,6 +721,7 @@ def build_pipeline(
                 HangoverUserMuteStrategy(
                     tail_hangover_secs=settings.echo_tail_hangover_secs,
                     echo_state=echo_state,
+                    suppression_checker=echo_suppressor.is_suppressing,
                 )
             ],
         ),

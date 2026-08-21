@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { reduceSubtitleSnapshot, toSRT } from "./subtitleStore";
+import { formatSpeaker, reduceSubtitleSnapshot, toSRT } from "./subtitleStore";
+
+describe("formatSpeaker", () => {
+  it("formats positive and zero speaker IDs cleanly", () => {
+    expect(formatSpeaker(0)).toBe("说话人 0");
+    expect(formatSpeaker(1)).toBe("说话人 1");
+    expect(formatSpeaker(2)).toBe("说话人 2");
+  });
+
+  it("normalizes negative or unassigned speaker IDs to 0 instead of 未知", () => {
+    expect(formatSpeaker(-1)).toBe("说话人 0");
+    expect(formatSpeaker(-2)).toBe("说话人 0");
+  });
+});
 
 describe("subtitle snapshot reducer", () => {
   it("replaces confirmed lines and accepts an empty partial", () => {

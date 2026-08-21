@@ -92,6 +92,7 @@ class SubtitleProxy:
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self._AUDIO_QUEUE_SIZE)
+        self._last_payload: dict[str, Any] | None = None
         self._snapshot_signature: tuple[tuple[tuple[str, ...], ...], str] | None = None
         self._persisted_confirmed_signature: tuple[tuple[str, ...], ...] | None = None
         self._archived = False
@@ -146,9 +147,11 @@ class SubtitleProxy:
             self._gap_listeners.remove(listener)
 
     def add_client(self, ws_send: ClientSender) -> str:
-        """注册浏览器发送端；每个客户端拥有独立有界队列。"""
+        """注册浏览器发送端；每个客户端拥有独立有界队列并立即接收当前最新快照。"""
         if ws_send not in self._clients:
             queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._CLIENT_QUEUE_SIZE)
+            if self._last_payload is not None:
+                queue.put_nowait(json.dumps(self._last_payload, ensure_ascii=False))
             task = asyncio.create_task(self._client_send_loop(ws_send, queue))
             task.add_done_callback(self._consume_client_task_result)
             self._clients[ws_send] = _ClientChannel(queue=queue, task=task)
@@ -504,6 +507,7 @@ class SubtitleProxy:
 
     async def _broadcast_payload(self, payload: dict[str, Any]) -> None:
         """广播发生变化的完整快照，并在 confirmed 变化时原子写入 SRT。"""
+        self._last_payload = payload
         signature = self._snapshot_key(payload)
         if signature == self._snapshot_signature:
             return
@@ -520,6 +524,30 @@ class SubtitleProxy:
                 with contextlib.suppress(asyncio.QueueFull):
                     channel.queue.put_nowait(text)
             await asyncio.sleep(0)
+
+    async def clear_subtitles(self) -> None:
+        """清空当前字幕快照并重置服务端会话。"""
+        empty_payload = {"lines": [], "buffer_transcription": ""}
+        self._last_payload = empty_payload
+        self._snapshot_signature = None
+        self._persisted_confirmed_signature = None
+        self._session_has_confirmed = False
+        current = self._settings.output_dir / "current.srt"
+        if current.exists():
+            with contextlib.suppress(OSError):
+                current.unlink()
+        stream = self._stream
+        if stream is not None and self._capture_owner is None:
+            self._stream = None
+            with contextlib.suppress(Exception):
+                await stream.close()
+        text = json.dumps(empty_payload, ensure_ascii=False)
+        for channel in tuple(self._clients.values()):
+            if channel.queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    channel.queue.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                channel.queue.put_nowait(text)
 
     async def push_audio(self, data: bytes) -> None:
         """接收 s16le 音频；会议租约存在时不依赖浏览器订阅。"""

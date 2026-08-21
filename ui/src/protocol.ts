@@ -20,6 +20,7 @@ export interface RuntimeStateSnapshot {
 
 export type ControlCommand =
   | { readonly cmd: "clear_context" }
+  | { readonly cmd: "clear_subtitles" }
   | { readonly cmd: "stop_session" }
   | { readonly cmd: "restart" }
   | { readonly cmd: "set_persona"; readonly prompt: string }

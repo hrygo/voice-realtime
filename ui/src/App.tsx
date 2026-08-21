@@ -171,6 +171,7 @@ export default function App() {
             <SubtitleStream
               isMeetingRecording={isMeetingRecording}
               onNavigateMeeting={() => handleTabChange("meeting")}
+              commandSocket={commandSocket}
             />
           </div>
         )}

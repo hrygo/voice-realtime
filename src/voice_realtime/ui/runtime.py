@@ -139,6 +139,9 @@ class UIRuntime:
     async def clear_context(self) -> None:
         await self.session.clear_context()
 
+    async def clear_subtitles(self) -> None:
+        await self.subtitle_proxy.clear_subtitles()
+
     async def stop_session(self) -> None:
         await self.session.stop(reason="用户停止会话")
         self._drain_audio_queue()

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
 import {
+  formatSpeaker,
   speakerColor,
   toSRT,
   toMarkdownNotes,
@@ -8,6 +9,7 @@ import {
   type SubtitleLine,
 } from "../stores/subtitleStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
+import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import { showToast } from "./Toast";
 import "./SubtitleStream.css";
 
@@ -26,11 +28,13 @@ function downloadBlob(content: string, filename: string, mime: string) {
 interface SubtitleStreamProps {
   readonly isMeetingRecording?: boolean;
   readonly onNavigateMeeting?: () => void;
+  readonly commandSocket?: CommandSocketApi;
 }
 
 export default function SubtitleStream({
   isMeetingRecording = false,
   onNavigateMeeting,
+  commandSocket,
 }: SubtitleStreamProps) {
   const { lines, partial, connected, starredIndices, toggleStar } = useSubtitleStore();
   const teleprompterSettings = useUISettingsStore((s) => s.teleprompterSettings);
@@ -112,10 +116,10 @@ export default function SubtitleStream({
     return () => cancelAnimationFrame(frame);
   }, [lines, partial, isScrolledUp]);
 
-  // Available unique speakers
+  // Available unique speakers (归一化非负说话人，避免出现 -1)
   const availableSpeakers = useMemo(() => {
     const set = new Set<number>();
-    lines.forEach((l) => set.add(l.speaker));
+    lines.forEach((l) => set.add(l.speaker >= 0 ? l.speaker : 0));
     return Array.from(set).sort((a, b) => a - b);
   }, [lines]);
 
@@ -127,7 +131,8 @@ export default function SubtitleStream({
         if (speakerFilter === "starred") {
           if (!starredIndices.has(originalIndex)) return false;
         } else if (speakerFilter !== "all") {
-          if (String(line.speaker) !== speakerFilter) return false;
+          const spk = String(line.speaker >= 0 ? line.speaker : 0);
+          if (spk !== speakerFilter) return false;
         }
 
         const q = searchQuery.trim().toLowerCase();
@@ -165,7 +170,7 @@ export default function SubtitleStream({
   const handleExportTXT = useCallback(() => {
     if (!lines.length) return;
     const content = lines
-      .map((l) => `[${l.start} - ${l.end}] 说话人${l.speaker}: ${l.text}`)
+      .map((l) => `[${l.start} - ${l.end}] ${formatSpeaker(l.speaker)}: ${l.text}`)
       .join("\n");
     downloadBlob(
       content,
@@ -188,17 +193,24 @@ export default function SubtitleStream({
 
   const handleCopyAll = useCallback(() => {
     if (!lines.length) return;
-    const content = lines.map((l) => `说话人${l.speaker}: ${l.text}`).join("\n");
+    const content = lines.map((l) => `${formatSpeaker(l.speaker)}: ${l.text}`).join("\n");
     navigator.clipboard.writeText(content).then(
       () => showToast("所有字幕文本已复制到剪贴板", "success"),
       () => showToast("复制失败", "error"),
     );
   }, [lines]);
 
-  const handleClear = useCallback(() => {
+  const handleClear = useCallback(async () => {
     useSubtitleStore.getState().clear();
+    if (commandSocket?.ready) {
+      try {
+        await commandSocket.sendCommand({ cmd: "clear_subtitles" });
+      } catch {
+        // Fallback to local clear
+      }
+    }
     showToast("字幕记录已清空", "info");
-  }, []);
+  }, [commandSocket]);
 
   const cycleFontSize = useCallback(() => {
     setFontSizeMode((prev) => {
@@ -574,14 +586,12 @@ export default function SubtitleStream({
                     className={`presentation-line ${isLatest ? "latest-line" : ""}`}
                     key={idx}
                   >
-                    {line.speaker >= 0 && (
-                      <span
-                        className="presentation-speaker-tag"
-                        style={{ color: speakerColor(line.speaker) }}
-                      >
-                        👤 说话人 {line.speaker}
-                      </span>
-                    )}
+                    <span
+                      className="presentation-speaker-tag"
+                      style={{ color: speakerColor(line.speaker) }}
+                    >
+                      👤 {formatSpeaker(line.speaker)}
+                    </span>
                     <span className="presentation-line-text">{line.text}</span>
                   </div>
                 );
@@ -631,7 +641,7 @@ function SubtitleRow({
   };
 
   const handleCopySingle = () => {
-    navigator.clipboard.writeText(`[${line.start}] 说话人${line.speaker}: ${line.text}`).then(
+    navigator.clipboard.writeText(`[${line.start}] ${formatSpeaker(line.speaker)}: ${line.text}`).then(
       () => showToast("已复制单条字幕", "success"),
       () => showToast("复制失败", "error"),
     );
@@ -644,7 +654,7 @@ function SubtitleRow({
           className="subtitle-speaker-badge"
           style={{ color: speakerColor(line.speaker) }}
         >
-          {line.speaker >= 0 ? `👤 说话人 ${line.speaker}` : "👤 未知"}
+          👤 {formatSpeaker(line.speaker)}
         </span>
 
         <div className="subtitle-header-right-meta">

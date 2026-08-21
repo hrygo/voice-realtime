@@ -43,8 +43,10 @@ def _timestamp_ms(value: object) -> int:
 
 def _speaker_key(source_epoch: int, raw_speaker: object) -> str:
     """生成不透明、仅在当前 ASR epoch 内稳定的匿名 speaker key。"""
-    value = str(raw_speaker if raw_speaker is not None else "1").strip() or "1"
-    return f"epoch:{source_epoch}:speaker:{value}"
+    raw_val = str(raw_speaker if raw_speaker is not None else "0").strip()
+    if raw_val in {"-1", "-2", ""}:
+        raw_val = "0"
+    return f"epoch:{source_epoch}:speaker:{raw_val}"
 
 
 class TranscriptNormalizer:

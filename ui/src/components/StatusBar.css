@@ -20,8 +20,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 1 1 0%;
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .status-brand {
@@ -164,31 +163,34 @@
 }
 
 /* ==========================================================================
-   Consolidated Health Center & Popover
+   Consolidated Health Popover (Right Aligned Flow)
    ========================================================================== */
 
-.status-center-health {
+.status-health-container {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   flex-shrink: 0;
 }
 
 .health-master-pill {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 4px 12px;
+  gap: 6px;
+  padding: 3px 10px;
+  height: 24px;
+  box-sizing: border-box;
   border-radius: var(--radius-pill);
   background: var(--bg-secondary);
   border: 1px solid var(--border);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .health-master-pill:hover {
@@ -221,12 +223,11 @@
   transition: transform 0.2s ease;
 }
 
-/* Health Popover Glass Dialog */
+/* Health Popover Glass Dialog (Right Aligned) */
 .health-popover-dialog {
   position: absolute;
-  top: calc(100% + 10px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: calc(100% + 8px);
+  right: 0;
   width: 320px;
   background: var(--bg-card-solid);
   border: 1px solid var(--border-light);

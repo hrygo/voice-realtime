@@ -39,6 +39,10 @@ class ClearContextCommand(CommandBase):
     cmd: Literal["clear_context"]
 
 
+class ClearSubtitlesCommand(CommandBase):
+    cmd: Literal["clear_subtitles"]
+
+
 class StopSessionCommand(CommandBase):
     cmd: Literal["stop_session"]
 
@@ -98,6 +102,7 @@ class StopActiveModeCommand(CommandBase):
 
 ControlCommand = Annotated[
     ClearContextCommand
+    | ClearSubtitlesCommand
     | StopSessionCommand
     | RestartCommand
     | SetPersonaCommand

@@ -105,6 +105,12 @@ export const useSubtitleStore = create<SubtitleState>((set) => ({
     }),
 }));
 
+/** 格式化说话人展示名：将未聚类/初始负数统一归一化为说话人 0，避免出现未知的混淆。 */
+export function formatSpeaker(speaker: number): string {
+  const normalized = speaker >= 0 ? speaker : 0;
+  return `说话人 ${normalized}`;
+}
+
 /** 说话人配色：对齐 wlk 官方 UI（按 speaker 取色，超过 8 轮换）。 */
 export function speakerColor(speaker: number): string {
   const palette = [
@@ -117,7 +123,8 @@ export function speakerColor(speaker: number): string {
     "#65a30d",
     "#475569",
   ];
-  return palette[Math.abs(speaker) % palette.length];
+  const normalized = speaker >= 0 ? speaker : 0;
+  return palette[normalized % palette.length];
 }
 
 /** 生成 SRT 文件内容（索引 + 时间戳 + 文本 + 空行）。 */
@@ -144,9 +151,9 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
   });
   const timeStr = now.toLocaleTimeString("zh-CN", { hour12: false });
 
-  const uniqueSpeakers = Array.from(new Set(lines.map((l) => l.speaker))).sort(
-    (a, b) => a - b,
-  );
+  const uniqueSpeakers = Array.from(
+    new Set(lines.map((l) => (l.speaker >= 0 ? l.speaker : 0))),
+  ).sort((a, b) => a - b);
   const totalDuration =
     lines.length > 0
       ? `${lines[0]?.start ?? "00:00:00"} ~ ${lines.at(-1)?.end ?? lines.at(-1)?.start ?? "00:00:00"}`
@@ -167,7 +174,8 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
     md += `## ⭐ 重点发言与结论速览\n\n`;
     lines.forEach((line, idx) => {
       if (starred.has(idx)) {
-        md += `- **[${line.start}] 说话人 ${line.speaker}**：${line.text}\n`;
+        const spk = line.speaker >= 0 ? line.speaker : 0;
+        md += `- **[${line.start}] 说话人 ${spk}**：${line.text}\n`;
         if (line.translation) {
           md += `  > 译文：${line.translation}\n`;
         }
@@ -183,10 +191,11 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
   lines.forEach((line, idx) => {
     const isStarred = starred.has(idx);
     const starTag = isStarred ? " ⭐" : "";
+    const spk = line.speaker >= 0 ? line.speaker : 0;
 
-    if (line.speaker !== currentSpeaker) {
-      currentSpeaker = line.speaker;
-      md += `\n### 👤 说话人 ${line.speaker} (\`${line.start}\`)\n\n`;
+    if (spk !== currentSpeaker) {
+      currentSpeaker = spk;
+      md += `\n### 👤 说话人 ${spk} (\`${line.start}\`)\n\n`;
     }
 
     md += `- \`[${line.start} - ${line.end || line.start}]\` ${line.text}${starTag}\n`;

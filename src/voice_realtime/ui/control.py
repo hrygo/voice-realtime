@@ -13,6 +13,7 @@ from voice_realtime.config import BridgeSettings
 from voice_realtime.network import local_async_client
 from voice_realtime.ui.protocol import (
     ClearContextCommand,
+    ClearSubtitlesCommand,
     CommandResponse,
     ControlCommand,
     DuplexMode,
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 _COMMAND_NAMES = frozenset(
     {
         "clear_context",
+        "clear_subtitles",
         "stop_session",
         "restart",
         "set_persona",
@@ -54,6 +56,7 @@ _COMMAND_NAMES = frozenset(
 
 class ControlRuntime(Protocol):
     async def clear_context(self) -> None: ...
+    async def clear_subtitles(self) -> None: ...
     async def stop_session(self) -> None: ...
     async def restart_pipeline(self) -> None: ...
     async def set_mic_muted(self, muted: bool) -> None: ...
@@ -135,6 +138,8 @@ class ControlBridge:
     async def _dispatch(self, command: ControlCommand) -> None:
         if isinstance(command, ClearContextCommand):
             await self._runtime.clear_context()
+        elif isinstance(command, ClearSubtitlesCommand):
+            await self._runtime.clear_subtitles()
         elif isinstance(command, StopSessionCommand):
             await self._runtime.stop_session()
         elif isinstance(command, RestartCommand):

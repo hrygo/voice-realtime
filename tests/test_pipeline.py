@@ -235,6 +235,27 @@ class TestBuildPipeline:
         assert echo._barge_in_gain == 3.0  # type: ignore[attr-defined]
         assert echo._barge_in_frames == 4  # type: ignore[attr-defined]
 
+    def test_user_mute_strategy_uses_l1_unlock_state(
+        self,
+        settings: InteractionSettings,
+        mock_transport: MagicMock,
+        mock_services: list[MagicMock],
+    ) -> None:
+        with patch(
+            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+        ):
+            pipeline = build_pipeline(settings, transport=mock_transport)
+
+        echo = pipeline.processors[2]
+        user_aggregator = pipeline.processors[5]
+        strategy = user_aggregator._params.user_mute_strategies[0]  # type: ignore[attr-defined]
+        assert isinstance(echo, EchoSuppressionProcessor)
+        assert isinstance(strategy, HangoverUserMuteStrategy)
+
+        echo.echo_state.on_bot_speaking_started()
+        echo._barge_in_active = True  # type: ignore[attr-defined]
+        assert not asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
+
     def test_self_echo_chain_installed(
         self,
         settings: InteractionSettings,
@@ -669,6 +690,22 @@ class TestHangoverUserMuteStrategy:
 
         # 模拟时间超过 hangover
         state.last_speaking_stop_time = time.monotonic() - 0.6
+        assert not asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
+
+    def test_l1_barge_in_unlock_releases_user_mute(self) -> None:
+        state = EchoState()
+        l1_suppressing = True
+        strategy = HangoverUserMuteStrategy(
+            tail_hangover_secs=0.5,
+            echo_state=state,
+            suppression_checker=lambda: l1_suppressing,
+        )
+
+        state.on_bot_speaking_started()
+        assert asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
+
+        # L1 已确认真人插话；即使机器人仍在播报，用户帧也必须交给 VAD/LLM。
+        l1_suppressing = False
         assert not asyncio.run(strategy.process_frame(InputAudioRawFrame(b"", 16000, 1)))
 
 
