@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { MeetingStatus, MeetingSummary } from "../../contracts/meetingContract";
+import { formatElapsed } from "./MeetingRecordingView";
 import { MeetingDeleteModal } from "./MeetingDeleteModal";
 
 export function formatMeetingDate(dateStr: string | null): string {
@@ -37,9 +38,15 @@ interface MeetingHistorySidebarProps {
   historyList: readonly MeetingSummary[];
   selectedMeetingId: string | null;
   activeMeetingId: string | null;
+  activeMeetingTitle?: string | null;
+  activeStatus?: MeetingStatus | "idle";
+  activeStartedAt?: string | null;
+  activeSegmentsCount?: number;
+  micMuted?: boolean;
   nextCursor: string | null;
   isLoading: boolean;
   onSelectMeeting: (id: string | null) => void;
+  onReturnToActive: () => void;
   onNewMeeting: () => void;
   onLoadMore: () => void;
   onDeleteMeeting: (id: string) => Promise<void>;
@@ -49,9 +56,15 @@ export function MeetingHistorySidebar({
   historyList,
   selectedMeetingId,
   activeMeetingId,
+  activeMeetingTitle,
+  activeStatus = "idle",
+  activeStartedAt,
+  activeSegmentsCount = 0,
+  micMuted = false,
   nextCursor,
   isLoading,
   onSelectMeeting,
+  onReturnToActive,
   onNewMeeting,
   onLoadMore,
   onDeleteMeeting,
@@ -59,6 +72,25 @@ export function MeetingHistorySidebar({
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "recording" | "completed">("all");
+
+  const isMeetingActive = activeStatus === "recording" || activeStatus === "finalizing";
+
+  // Live timer for active recording
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!isMeetingActive || !activeStartedAt) {
+      setElapsed(0);
+      return;
+    }
+    const startMs = Date.parse(activeStartedAt);
+    const update = () => {
+      const diffSec = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      setElapsed(diffSec);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [isMeetingActive, activeStartedAt]);
 
   const filteredList = historyList.filter((m) => {
     if (statusFilter === "recording" && m.status !== "recording") return false;
@@ -73,15 +105,37 @@ export function MeetingHistorySidebar({
           <span>📁</span>
           <span>历史会议</span>
         </h2>
-        <button
-          type="button"
-          className="btn-new-meeting"
-          onClick={onNewMeeting}
-          title="发起新会议"
-        >
-          <span>+</span>
-          <span>新会议</span>
-        </button>
+        {isMeetingActive ? (
+          selectedMeetingId ? (
+            <button
+              type="button"
+              className="btn-new-meeting btn-return-active-header"
+              onClick={onReturnToActive}
+              title="返回正在进行的会议工作台"
+            >
+              <span className="btn-recording-pulse-dot" />
+              <span>返回当前会议</span>
+            </button>
+          ) : (
+            <div
+              className="btn-new-meeting btn-recording-indicator"
+              title="会议录制进行中"
+            >
+              <span className="btn-recording-pulse-dot" />
+              <span>录制中</span>
+            </div>
+          )
+        ) : (
+          <button
+            type="button"
+            className="btn-new-meeting"
+            onClick={onNewMeeting}
+            title="发起新会议"
+          >
+            <span>+</span>
+            <span>新会议</span>
+          </button>
+        )}
       </div>
 
       <div className="history-search-wrap">
@@ -153,8 +207,47 @@ export function MeetingHistorySidebar({
         </button>
       </div>
 
+      {/* 置顶正在进行的会议专属动态卡片 */}
+      {isMeetingActive && (
+        <div
+          className={`pinned-active-meeting ${!selectedMeetingId ? "is-current-view" : "is-background"}`}
+          onClick={onReturnToActive}
+          title={selectedMeetingId ? "点击返回正在进行的实时会议工作台" : "当前正处于实时会议视图"}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onReturnToActive();
+            }
+          }}
+        >
+          <div className="pinned-active-badge-row">
+            <span className="pinned-live-dot" />
+            <span className="pinned-live-tag">
+              {activeStatus === "recording" ? "进行中" : "封存中"}
+            </span>
+            <span className="pinned-live-timer">{formatElapsed(elapsed)}</span>
+            {micMuted && (
+              <span className="pinned-muted-badge" title="麦克风已静音">
+                🔇 静音
+              </span>
+            )}
+          </div>
+          <div className="pinned-active-title">
+            {activeMeetingTitle || "当前会议"}
+          </div>
+          <div className="pinned-active-footer">
+            <span className="pinned-segments-count">{activeSegmentsCount} 个转录段落</span>
+            <span className="pinned-return-hint">
+              {selectedMeetingId ? "返回实时 ↗" : "实时视图 ●"}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="history-list">
-        {filteredList.length === 0 && !isLoading && (
+        {filteredList.length === 0 && !isLoading && !isMeetingActive && (
           <div className="history-empty">
             {searchQuery ? `未找到包含 "${searchQuery}" 的会议` : "暂无会议记录"}
           </div>
@@ -162,14 +255,21 @@ export function MeetingHistorySidebar({
 
         {filteredList.map((m) => {
           const isSelected = selectedMeetingId === m.id;
-          const isActiveRecording = activeMeetingId === m.id;
+          const isActiveRecording = activeMeetingId === m.id && isMeetingActive;
           const statusInfo = getStatusLabel(m.status);
 
           return (
             <div
               key={m.id}
-              className={`history-item ${isSelected ? "active" : ""}`}
-              onClick={() => onSelectMeeting(m.id)}
+              className={`history-item ${isSelected ? "active" : ""} ${isActiveRecording ? "is-live-item" : ""}`}
+              onClick={() => {
+                if (isActiveRecording) {
+                  onReturnToActive();
+                } else {
+                  onSelectMeeting(m.id);
+                }
+              }}
+              title={isActiveRecording ? "点击返回正在录制的实时工作台" : undefined}
             >
               <div className="history-item-top">
                 <span className="history-item-title" title={m.title}>
@@ -182,7 +282,7 @@ export function MeetingHistorySidebar({
 
               <div className="history-item-meta">
                 <span>{formatMeetingDate(m.started_at || m.created_at)}</span>
-                {m.status !== "recording" && (
+                {!isActiveRecording && m.status !== "recording" && (
                   <button
                     type="button"
                     className="status-icon-btn"
@@ -199,6 +299,9 @@ export function MeetingHistorySidebar({
                   >
                     🗑️
                   </button>
+                )}
+                {isActiveRecording && (
+                  <span className="active-item-hint">点击返回 ↗</span>
                 )}
               </div>
             </div>

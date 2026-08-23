@@ -23,6 +23,9 @@ interface MeetingDetailViewProps {
   onRenameSpeaker: (speakerKey: string, currentName: string) => void;
   onRegenerateMinutes: () => Promise<void>;
   onDeleteMeeting: () => Promise<void> | void;
+  isMeetingActive?: boolean;
+  activeMeetingTitle?: string | null;
+  onReturnToActive?: () => void;
 }
 
 export function MeetingDetailView({
@@ -36,6 +39,9 @@ export function MeetingDetailView({
   onRenameSpeaker,
   onRegenerateMinutes,
   onDeleteMeeting,
+  isMeetingActive = false,
+  activeMeetingTitle,
+  onReturnToActive,
 }: MeetingDetailViewProps) {
   const [title, setTitle] = useState(meeting.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -203,6 +209,34 @@ export function MeetingDetailView({
 
   return (
     <div className="meeting-detail-view">
+      {/* 顶部多级返回导航 */}
+      <div className="detail-top-nav">
+        <button
+          type="button"
+          className={`detail-back-btn ${isMeetingActive ? "is-live-return" : ""}`}
+          onClick={onReturnToActive}
+          title={isMeetingActive ? "返回正在进行的会议录制工作台 (按 Esc)" : "返回会议发起页 (按 Esc)"}
+        >
+          <span className="back-arrow">‹</span>
+          {isMeetingActive ? (
+            <>
+              <span className="btn-recording-pulse-dot" />
+              <span>返回正在进行的会议{activeMeetingTitle ? `（${activeMeetingTitle}）` : ""}</span>
+              <kbd className="nav-kbd">Esc</kbd>
+            </>
+          ) : (
+            <>
+              <span>返回发起新会议</span>
+              <kbd className="nav-kbd">Esc</kbd>
+            </>
+          )}
+        </button>
+
+        <div className="detail-nav-hint">
+          <span>当前查看：历史会议详情</span>
+        </div>
+      </div>
+
       <div className="detail-header">
         <div className="detail-title-group">
           <input

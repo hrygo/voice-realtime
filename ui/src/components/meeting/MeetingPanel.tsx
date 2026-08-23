@@ -4,7 +4,7 @@ import { useUISettingsStore } from "../../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../../hooks/useCommandSocket";
 import { MeetingHistorySidebar } from "./MeetingHistorySidebar";
 import { MeetingIdleView } from "./MeetingIdleView";
-import { MeetingRecordingView } from "./MeetingRecordingView";
+import { formatElapsed, MeetingRecordingView } from "./MeetingRecordingView";
 import { MeetingFinalizingView } from "./MeetingFinalizingView";
 import { MeetingDetailView } from "./MeetingDetailView";
 import { MeetingSpeakerModal } from "./MeetingSpeakerModal";
@@ -22,6 +22,8 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   const [isStarting, setIsStarting] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
 
+  const isMeetingActive = store.status === "recording" || store.status === "finalizing";
+
   // Speaker modal
   const [speakerModalOpen, setSpeakerModalOpen] = useState(false);
   const [speakerModalTarget, setSpeakerModalTarget] = useState<{
@@ -33,6 +35,39 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deleteTargetTitle, setDeleteTargetTitle] = useState("");
+
+  // Live timer for active recording in background
+  const [liveElapsed, setLiveElapsed] = useState(0);
+  useEffect(() => {
+    if (!isMeetingActive || !store.sessionStartedAt) {
+      setLiveElapsed(0);
+      return;
+    }
+    const startMs = Date.parse(store.sessionStartedAt);
+    const tick = () => {
+      const diff = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+      setLiveElapsed(diff);
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [isMeetingActive, store.sessionStartedAt]);
+
+  // Global Esc shortcut to return to active recording / workspace when browsing history
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if (e.key === "Escape" && store.selectedMeetingId) {
+        e.preventDefault();
+        store.returnToActiveMeeting();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [store.selectedMeetingId, store.returnToActiveMeeting]);
 
   // Load history on mount
   useEffect(() => {
@@ -53,11 +88,29 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         contract_version: "1",
       });
       if (resp.active_meeting_id) {
-        useMeetingStore.setState({ activeMeetingId: resp.active_meeting_id });
+        useMeetingStore.setState({
+          activeMeetingId: resp.active_meeting_id,
+          activeMeeting: {
+            id: resp.active_meeting_id,
+            title,
+            status: "recording",
+            language: "Chinese",
+            audio_source: "microphone",
+            started_at: new Date().toISOString(),
+            ended_at: null,
+            transcript_revision: 0,
+            content_revision: 0,
+            interruption_reason: null,
+            speakers: {},
+            latest_minutes: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        });
       }
       showToast("已成功开启会议模式", "success");
       // Deselect history to focus on live recording
-      await store.selectMeeting(null);
+      store.returnToActiveMeeting();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "开始会议失败", "error");
     } finally {
@@ -154,10 +207,16 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         historyList={store.historyList}
         selectedMeetingId={store.selectedMeetingId}
         activeMeetingId={store.activeMeetingId}
+        activeMeetingTitle={store.activeMeeting?.title || "当前会议"}
+        activeStatus={store.status}
+        activeStartedAt={store.sessionStartedAt}
+        activeSegmentsCount={store.segments.length}
+        micMuted={store.health.mic_muted}
         nextCursor={store.nextCursor}
         isLoading={store.isLoadingHistory}
         onSelectMeeting={(id) => void store.selectMeeting(id)}
-        onNewMeeting={() => void store.selectMeeting(null)}
+        onReturnToActive={() => store.returnToActiveMeeting()}
+        onNewMeeting={() => store.returnToActiveMeeting()}
         onLoadMore={() => void store.fetchHistory(store.nextCursor)}
         onDeleteMeeting={(id) => {
           const item = store.historyList.find((m) => m.id === id);
@@ -168,8 +227,61 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
 
       {/* 主工作区内容 */}
       <main className="meeting-main-content">
-        {/* 1. 如果选中了历史会议，展示历史详情视图 */}
+        {/* 1. 如果在浏览历史会议，且后台有正在录制/封存的会议，显示常驻悬浮控制条 */}
+        {store.selectedMeetingId && store.selectedMeeting && isMeetingActive && (
+          <div className="meeting-live-banner">
+            <div className="live-banner-info">
+              <span className="live-banner-pulse-dot" />
+              <span className="live-banner-tag">
+                {store.status === "recording" ? "后台录制中" : "后台封存中"}
+              </span>
+              <span className="live-banner-title" title={store.activeMeeting?.title || "当前会议"}>
+                {store.activeMeeting?.title || "当前会议"}
+              </span>
+              <span className="live-banner-timer">⏱️ {formatElapsed(liveElapsed)}</span>
+              <span className="live-banner-segments">🎙️ {store.segments.length} 段已记录</span>
+            </div>
+
+            <div className="live-banner-actions">
+              <button
+                type="button"
+                className={`btn-live-banner-mic ${store.health.mic_muted ? "muted" : ""}`}
+                onClick={() => {
+                  void commandSocket.sendCommand({
+                    cmd: "set_mic_muted",
+                    muted: !store.health.mic_muted,
+                  });
+                }}
+                title={store.health.mic_muted ? "点击解除麦克风静音" : "点击将麦克风静音"}
+              >
+                {store.health.mic_muted ? "🔇 解除静音" : "🎤 静音"}
+              </button>
+              <button
+                type="button"
+                className="btn-live-banner-end"
+                onClick={handleEndMeeting}
+                disabled={isEnding}
+                title="结束当前正在录制的会议"
+              >
+                <span>⏹️</span>
+                <span>{isEnding ? "封存中..." : "结束会议"}</span>
+              </button>
+              <button
+                type="button"
+                className="btn-live-banner-return"
+                onClick={() => store.returnToActiveMeeting()}
+                title="返回实时录制工作台 (快捷键 Esc)"
+              >
+                <span>返回实时工作台 ↗</span>
+                <kbd className="banner-kbd">Esc</kbd>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 视图分发 */}
         {store.selectedMeetingId && store.selectedMeeting ? (
+          /* 1. 历史详情视图 */
           <MeetingDetailView
             meeting={store.selectedMeeting}
             segments={store.selectedSegments}
@@ -197,6 +309,9 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
                 store.selectedMeeting?.title || "会议",
               )
             }
+            isMeetingActive={isMeetingActive}
+            activeMeetingTitle={store.activeMeeting?.title}
+            onReturnToActive={() => store.returnToActiveMeeting()}
           />
         ) : store.status === "recording" ? (
           /* 2. 录制中视图 */
@@ -246,6 +361,8 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
                 activeMeetingDetail.title,
               )
             }
+            isMeetingActive={false}
+            onReturnToActive={() => store.returnToActiveMeeting()}
           />
         ) : (
           /* 5. 准备/闲置视图 */

@@ -92,6 +92,8 @@ export interface MeetingStoreState {
   readonly resetActiveSession: () => void;
   readonly syncBaselineTranscript: (meetingId: string) => Promise<void>;
 
+  readonly returnToActiveMeeting: () => void;
+
   // History Actions
   readonly fetchHistory: (cursor?: string | null) => Promise<void>;
   readonly selectMeeting: (id: string | null) => Promise<void>;
@@ -433,6 +435,18 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     }
   },
 
+  returnToActiveMeeting: () => {
+    set({
+      selectedMeetingId: null,
+      selectedMeeting: null,
+      selectedSegments: [],
+      selectedMinutes: null,
+      selectedMinutesVersion: null,
+      selectedMinutesList: [],
+      isLoadingSelected: false,
+    });
+  },
+
   // 历史会议列表加载
   fetchHistory: async (cursor = null) => {
     set({ isLoadingHistory: true });
@@ -450,15 +464,14 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
 
   // 选中历史会议详情
   selectMeeting: async (id) => {
-    if (!id) {
-      set({
-        selectedMeetingId: null,
-        selectedMeeting: null,
-        selectedSegments: [],
-        selectedMinutes: null,
-        selectedMinutesVersion: null,
-        selectedMinutesList: [],
-      });
+    const state = get();
+    const isActiveMeeting =
+      Boolean(id) &&
+      id === state.activeMeetingId &&
+      (state.status === "recording" || state.status === "finalizing");
+
+    if (!id || isActiveMeeting) {
+      get().returnToActiveMeeting();
       return;
     }
 

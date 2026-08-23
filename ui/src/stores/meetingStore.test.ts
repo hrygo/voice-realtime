@@ -251,5 +251,43 @@ describe("meetingStore", () => {
       expect(state.selectedMinutesList).toHaveLength(1);
     });
   });
+
+  describe("returnToActiveMeeting & selectMeeting Navigation UX", () => {
+    it("returnToActiveMeeting clears selected meeting history state", () => {
+      useMeetingStore.setState({
+        selectedMeetingId: "m-history-1",
+        selectedSegments: [...mockSegments],
+        selectedMinutes: mockMinutesCompleted,
+        selectedMinutesVersion: 1,
+        selectedMinutesList: [mockMinutesCompleted],
+      });
+
+      useMeetingStore.getState().returnToActiveMeeting();
+
+      const state = useMeetingStore.getState();
+      expect(state.selectedMeetingId).toBeNull();
+      expect(state.selectedMeeting).toBeNull();
+      expect(state.selectedSegments).toHaveLength(0);
+      expect(state.selectedMinutes).toBeNull();
+      expect(state.selectedMinutesList).toHaveLength(0);
+    });
+
+    it("selectMeeting redirects to returnToActiveMeeting when selecting currently active recording", async () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-active-live",
+        status: "recording",
+        selectedMeetingId: "m-old-history",
+      });
+
+      await useMeetingStore.getState().selectMeeting("m-active-live");
+
+      const state = useMeetingStore.getState();
+      // Should clear selectedMeetingId rather than loading static snapshot
+      expect(state.selectedMeetingId).toBeNull();
+      expect(state.activeMeetingId).toBe("m-active-live");
+      expect(state.status).toBe("recording");
+    });
+  });
 });
+
 

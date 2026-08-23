@@ -7,7 +7,9 @@ import { formatMeetingDate, getStatusLabel, MeetingHistorySidebar } from "./Meet
 import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
 import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingIdleView } from "./MeetingIdleView";
+import { MeetingDetailView } from "./MeetingDetailView";
 import {
+  mockMeetingDetailCompleted,
   mockMeetingSummaryCompleted,
   mockMeetingSummaryRecording,
   mockMinutesCompleted,
@@ -79,6 +81,7 @@ describe("Meeting React Components DOM Rendering", () => {
 
   it("renders MeetingHistorySidebar with list of meetings and badges", () => {
     const handleSelect = vi.fn();
+    const handleReturnToActive = vi.fn();
     const handleNew = vi.fn();
     const handleLoadMore = vi.fn();
     const handleDelete = vi.fn().mockResolvedValue(undefined);
@@ -89,9 +92,14 @@ describe("Meeting React Components DOM Rendering", () => {
           historyList={[mockMeetingSummaryCompleted, mockMeetingSummaryRecording]}
           selectedMeetingId={mockMeetingSummaryCompleted.id}
           activeMeetingId={mockMeetingSummaryRecording.id}
+          activeMeetingTitle="当前正在进行的评审会"
+          activeStatus="recording"
+          activeStartedAt="2026-08-21T10:00:00Z"
+          activeSegmentsCount={5}
           nextCursor="cursor_next"
           isLoading={false}
           onSelectMeeting={handleSelect}
+          onReturnToActive={handleReturnToActive}
           onNewMeeting={handleNew}
           onLoadMore={handleLoadMore}
           onDeleteMeeting={handleDelete}
@@ -100,10 +108,28 @@ describe("Meeting React Components DOM Rendering", () => {
     });
 
     expect(container.textContent).toContain("历史会议");
+    expect(container.textContent).toContain("返回当前会议");
+    expect(container.textContent).toContain("当前正在进行的评审会");
+    expect(container.textContent).toContain("5 个转录段落");
     expect(container.textContent).toContain("实时语音与字幕产品评审");
     expect(container.textContent).toContain("已完成");
-    expect(container.textContent).toContain("录制中");
     expect(container.textContent).toContain("加载更多历史");
+
+    // Click pinned active card
+    const pinnedCard = container.querySelector(".pinned-active-meeting") as HTMLDivElement;
+    expect(pinnedCard).not.toBeNull();
+    act(() => {
+      pinnedCard.click();
+    });
+    expect(handleReturnToActive).toHaveBeenCalledTimes(1);
+
+    // Click header return button
+    const returnHeaderBtn = container.querySelector(".btn-return-active-header") as HTMLButtonElement;
+    expect(returnHeaderBtn).not.toBeNull();
+    act(() => {
+      returnHeaderBtn.click();
+    });
+    expect(handleReturnToActive).toHaveBeenCalledTimes(2);
   });
 
   it("renders MeetingIdleView with readiness checklist and triggers start", () => {
@@ -296,4 +322,45 @@ describe("Meeting React Components DOM Rendering", () => {
     });
     expect(handleRegenerate).toHaveBeenCalledTimes(1);
   });
+
+  it("renders MeetingDetailView top navigation breadcrumb and supports return to active meeting", () => {
+    const handleReturnToActive = vi.fn();
+    const handleUpdateTitle = vi.fn().mockResolvedValue(undefined);
+    const handleRenameSpeaker = vi.fn();
+    const handleRegenerate = vi.fn().mockResolvedValue(undefined);
+    const handleDelete = vi.fn().mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(
+        <MeetingDetailView
+          meeting={mockMeetingDetailCompleted}
+          segments={mockSegments}
+          minutes={mockMinutesCompleted}
+          minutesList={[mockMinutesCompleted]}
+          selectedMinutesVersion={1}
+          onSelectMinutesVersion={vi.fn()}
+          onUpdateTitle={handleUpdateTitle}
+          onRenameSpeaker={handleRenameSpeaker}
+          onRegenerateMinutes={handleRegenerate}
+          onDeleteMeeting={handleDelete}
+          isMeetingActive={true}
+          activeMeetingTitle="进行中的架构评审"
+          onReturnToActive={handleReturnToActive}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("返回正在进行的会议（进行中的架构评审）");
+    expect(container.textContent).toContain("当前查看：历史会议详情");
+
+    const backBtn = container.querySelector(".detail-back-btn.is-live-return") as HTMLButtonElement;
+    expect(backBtn).not.toBeNull();
+
+    act(() => {
+      backBtn.click();
+    });
+
+    expect(handleReturnToActive).toHaveBeenCalledTimes(1);
+  });
 });
+
