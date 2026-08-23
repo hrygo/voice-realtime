@@ -152,3 +152,19 @@ def test_meeting_settings_rejects_unsafe_schema_name() -> None:
 def test_interaction_rejects_non_loopback_service_urls(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         InteractionSettings(**{field: value})
+
+
+def test_interaction_smart_turn_and_tts_fast_clause_defaults() -> None:
+    settings = InteractionSettings()
+    assert settings.smart_turn_enabled is True
+    assert settings.smart_turn_stop_secs == 0.45
+    assert settings.tts_fast_first_clause is True
+    assert settings.tts_first_clause_min_chars == 8
+
+
+def test_meeting_diarization_smoothing_defaults() -> None:
+    settings = MeetingSettings()
+    assert settings.diarization_smoothing_enabled is True
+    assert settings.diarization_min_duration_ms == 350
+    assert settings.diarization_hangover_gap_ms == 800
+

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
+from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.models import (
     MeetingRecord,
     MeetingStatus,
@@ -44,9 +45,10 @@ class MeetingSession:
         subtitle_proxy: Any | None = None,
         language: str = "Chinese",
         audio_source: str = "microphone",
-        finalization_timeout_secs: float = 30.0,
+        finalization_timeout_secs: float = 8.0,
         recovery_journal: Any | None = None,
         event_publisher: EventPublisher | None = None,
+        diarization_smoother: DiarizationSmoother | None = None,
     ) -> None:
         if gateway is None:
             gateway = subtitle_proxy
@@ -62,6 +64,7 @@ class MeetingSession:
         self.finalization_timeout_secs = finalization_timeout_secs
         self.recovery_journal = recovery_journal
         self.event_publisher = event_publisher
+        self.diarization_smoother = diarization_smoother
         self._lock = asyncio.Lock()
         self._active_meeting_id: UUID | None = None
         self._record: MeetingRecord | None = None
@@ -247,6 +250,8 @@ class MeetingSession:
         meeting_id = self._active_meeting_id
         if meeting_id is None:
             return
+        if self.diarization_smoother is not None:
+            window = self.diarization_smoother.smooth_window(window)
         if window.partial:
             await self._emit(
                 "transcript_partial",

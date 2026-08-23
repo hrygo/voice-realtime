@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from time import perf_counter
 from typing import Any
 
 from voice_realtime.config import SubtitleSettings
@@ -268,13 +269,23 @@ class SubtitleProxy:
             raise RuntimeError("没有活动的会议采集租约")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
+        start_time = perf_counter()
+        logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
         self._capture_accept_audio = False
         try:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._audio_buffer.join(), timeout=timeout_secs)
             await self._stream.send_audio(b"")
             await asyncio.wait_for(self._capture_ready_to_stop.wait(), timeout=timeout_secs)
+            elapsed_ms = (perf_counter() - start_time) * 1000
+            logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
         except TimeoutError as exc:
+            elapsed_ms = (perf_counter() - start_time) * 1000
+            logger.warning(
+                "会议 ASR 优雅冲刷超时 (%.1f ms > %.1fs)，执行强制截断封存",
+                elapsed_ms,
+                timeout_secs,
+            )
             last_window = self._capture_last_window
             await self._close_capture()
             raise FinalizationTimeoutError(last_window) from exc

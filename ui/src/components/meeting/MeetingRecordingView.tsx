@@ -120,11 +120,15 @@ export function MeetingRecordingView({
 
         <button
           type="button"
-          className="btn-end-meeting"
+          className={`btn-end-meeting ${isEnding ? "is-ending" : ""}`}
           onClick={() => void onEndMeeting()}
           disabled={isEnding}
         >
-          <span>⏹️</span>
+          {isEnding ? (
+            <span className="btn-spinner-sm" />
+          ) : (
+            <span>⏹️</span>
+          )}
           <span>{isEnding ? "正在冲刷并封存..." : "结束会议并生成纪要"}</span>
         </button>
       </div>

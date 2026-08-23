@@ -27,6 +27,8 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -59,6 +61,8 @@ from pipecat.services.funasr.stt import FunASRSTTService, FunASRSTTSettings
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
+from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.config import (
@@ -680,6 +684,8 @@ def build_pipeline(
         api_key="local",
         base_url=settings.tts_bridge_url,
         sample_rate=TTS_OUTPUT_SAMPLE_RATE,
+        fast_first_clause=settings.tts_fast_first_clause,
+        first_clause_min_chars=settings.tts_first_clause_min_chars,
         settings=LocalBridgeTTSService.Settings(voice=TTS_ENGINE_DEFAULT_VOICE),
     )
 
@@ -708,7 +714,21 @@ def build_pipeline(
     bot_text_recorder = BotTextRecorder(echo_buffer)
     tts_monitor = TTSStateObserver(echo_state)
 
-    # 1.7 组装：VAD 分析与 HangoverUserMuteStrategy 集成进 LLMUserAggregatorParams，
+    user_turn_strategies = (
+        UserTurnStrategies(
+            stop=[
+                TurnAnalyzerUserTurnStopStrategy(
+                    turn_analyzer=LocalSmartTurnAnalyzerV3(
+                        params=SmartTurnParams(stop_secs=settings.smart_turn_stop_secs)
+                    )
+                )
+            ]
+        )
+        if settings.smart_turn_enabled
+        else None
+    )
+
+    # 1.7 组装：VAD 分析、SmartTurn 与 HangoverUserMuteStrategy 集成进 LLMUserAggregatorParams，
     # LLM 之后直连 TTS（TTS 直接消费 LLMTextFrame 流），assistant 聚合器在管道末尾回写上下文。
     pair = LLMContextAggregatorPair(
         context,
@@ -722,6 +742,7 @@ def build_pipeline(
                     min_volume=settings.vad_min_volume,
                 ),
             ),
+            user_turn_strategies=user_turn_strategies,
             user_mute_strategies=[
                 HangoverUserMuteStrategy(
                     tail_hangover_secs=settings.echo_tail_hangover_secs,

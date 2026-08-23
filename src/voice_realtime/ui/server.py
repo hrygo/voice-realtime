@@ -28,6 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from voice_realtime.config import Settings, get_settings
 from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
+from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
 from voice_realtime.meeting.migrations import run_migrations
 from voice_realtime.meeting.recovery import RecoveryJournal
@@ -214,6 +215,11 @@ async def _initialize_meeting_backend(
             cfg.meeting,
             event_publisher=broadcaster.publish_event,
         )
+        smoother = DiarizationSmoother(
+            enabled=cfg.meeting.diarization_smoothing_enabled,
+            min_duration_ms=cfg.meeting.diarization_min_duration_ms,
+            hangover_gap_ms=cfg.meeting.diarization_hangover_gap_ms,
+        )
         meeting_session = MeetingSession(
             repository,
             runtime.subtitle_proxy,
@@ -221,6 +227,7 @@ async def _initialize_meeting_backend(
             finalization_timeout_secs=cfg.meeting.finalization_timeout_secs,
             recovery_journal=journal,
             event_publisher=broadcaster.publish_event,
+            diarization_smoother=smoother,
         )
         runtime.configure_meeting(meeting_session)
         app.state.meeting_repository = repository

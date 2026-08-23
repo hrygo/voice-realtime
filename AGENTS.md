@@ -9,8 +9,9 @@
 
 | 文档 / 契约 | 说明与范围 |
 |---|---|
+| `docs/全链路语音交互与会议助手-技术方案与实施方案.md` | **完整技术方案与实施路径**：架构、断句/分人/对账、前沿调研、ROI 与阶段落地 |
 | `docs/实时语音交互与字幕-方案与最佳实践.md` | 语音交互与字幕完整技术方案；含 §7 实测验收回填数据 |
-| `docs/架构图与流程图.md` | 权威拓扑、模块架构与交互/字幕/会议/控制端到端时序（Mermaid 流程图） |
+| `docs/系统总体架构与详细设计方案.md` | **系统总体架构与详细设计方案**：权威拓扑、分层架构、交互/字幕/会议/控制端到端时序与详细设计 |
 | `docs/会议助手后端运行与前后端联调.md` | 会议助手运行手册、接口定义与前后端联调规范 |
 | `docs/Voice-Studio-UI-设计方案.md` | 前端控制台、组件状态机与交互设计方案 |
 | `contracts/meeting-assistant/v1/` | OpenAPI / AsyncAPI / JSON Schema / Fixtures 规范契约 |
@@ -109,16 +110,16 @@
 ## 🛡️ 质量门禁（提交前必须全绿）
 
 ```bash
-# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 ~84%）
+# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 580 passed，覆盖率 ~84%）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
-# 2. Python 类型检查（strict，42 source files 全绿）
+# 2. Python 类型检查（strict，46 source files 全绿）
 uv run mypy src/
 
 # 3. Python 代码风格与 Lint 检查
 uv run ruff check src/ tests/
 
-# 4. 前端测试（52 passed / 11 test files）
+# 4. 前端测试（55 passed / 11 test files）
 cd ui && npm test -- --run
 
 # 5. 前端类型检查与生产构建

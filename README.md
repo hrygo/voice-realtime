@@ -120,5 +120,5 @@ cd ui && npm audit --audit-level=high
 
 - [`docs/实时语音交互与字幕-方案与最佳实践.md`](docs/实时语音交互与字幕-方案与最佳实践.md)
 - [`docs/Voice-Studio-UI-设计方案.md`](docs/Voice-Studio-UI-设计方案.md)
-- [`docs/架构图与流程图.md`](docs/架构图与流程图.md)
+- [`docs/系统总体架构与详细设计方案.md`](docs/系统总体架构与详细设计方案.md)
 - [`docs/decisions/0001-single-owner-interaction-runtime.md`](docs/decisions/0001-single-owner-interaction-runtime.md)

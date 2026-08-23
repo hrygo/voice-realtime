@@ -225,6 +225,26 @@ class InteractionSettings(BaseSettings):
         ge=0,
         description="单次会话上限 (秒)；0 表示随 UI 服务持续运行",
     )
+    smart_turn_enabled: bool = Field(
+        default=True,
+        description="是否启用 LocalSmartTurn 进行语义端点判定",
+    )
+    smart_turn_stop_secs: float = Field(
+        default=0.45,
+        ge=0.1,
+        le=3.0,
+        description="Smart Turn 判定静音窗口（秒）",
+    )
+    tts_fast_first_clause: bool = Field(
+        default=True,
+        description="TTS 是否启用中文首句弱标点/连词加速以降低首字发音延迟 (TTFA)",
+    )
+    tts_first_clause_min_chars: int = Field(
+        default=8,
+        ge=2,
+        le=50,
+        description="首句弱标点加速所需的最小字符数门槛",
+    )
 
     @field_validator("stt_language")
     @classmethod
@@ -380,9 +400,25 @@ class MeetingSettings(BaseSettings):
     summary_timeout_secs: float = Field(
         default=60.0, ge=5.0, le=600.0, description="纪要生成 LLM 请求超时（秒）"
     )
-    finalization_timeout_secs: float = Field(default=30.0, ge=1.0, le=300.0)
+    finalization_timeout_secs: float = Field(default=8.0, ge=1.0, le=300.0)
     recovery_dir: Path = Field(default=Path("runtime/meetings/recovery"))
     summary_concurrency: int = Field(default=1, ge=1, le=8)
+    diarization_smoothing_enabled: bool = Field(
+        default=True,
+        description="是否启用会议说话人时序平滑与短片段杂音滤波",
+    )
+    diarization_min_duration_ms: int = Field(
+        default=350,
+        ge=50,
+        le=2000,
+        description="短片段过滤最小有效时长（毫秒）",
+    )
+    diarization_hangover_gap_ms: int = Field(
+        default=800,
+        ge=100,
+        le=5000,
+        description="同一说话人相邻段落合并最大时间间隙（毫秒）",
+    )
     allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:8100",

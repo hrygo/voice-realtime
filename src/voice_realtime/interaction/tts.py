@@ -6,15 +6,28 @@ from typing import Any
 
 from pipecat.services.openai.tts import OpenAITTSService
 
+from voice_realtime.interaction.fast_clause_aggregator import ChineseClauseTextAggregator
 from voice_realtime.network import local_async_client
 
 
 class LocalBridgeTTSService(OpenAITTSService):
-    """不走系统代理，并在管道清理时释放自有 HTTP 客户端。"""
+    """不走系统代理，支持中文首句极速分词弱标点加速，并在管道清理时释放自有 HTTP 客户端。"""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        fast_first_clause: bool = True,
+        first_clause_min_chars: int = 8,
+        **kwargs: Any,
+    ) -> None:
         self._local_http_client = local_async_client()
         super().__init__(http_client=self._local_http_client, **kwargs)
+        if fast_first_clause:
+            self._text_aggregator = ChineseClauseTextAggregator(
+                aggregation_type=self._text_aggregation_mode,
+                fast_first_clause=fast_first_clause,
+                first_clause_min_chars=first_clause_min_chars,
+            )
 
     async def cleanup(self) -> None:
         try:
