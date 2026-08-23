@@ -288,6 +288,143 @@ describe("meetingStore", () => {
       expect(state.status).toBe("recording");
     });
   });
+
+  describe("Real-time History Synchronization", () => {
+    it("updateMeetingState synchronizes status and times in historyList", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-live-1",
+        status: "recording",
+        historyList: [
+          {
+            id: "m-live-1",
+            title: "现场架构研讨会",
+            status: "recording",
+            language: "Chinese",
+            started_at: "2026-08-23T10:00:00Z",
+            ended_at: null,
+            transcript_revision: 1,
+            content_revision: 1,
+            created_at: "2026-08-23T10:00:00Z",
+          },
+        ],
+      });
+
+      useMeetingStore.getState().updateMeetingState(
+        "completed",
+        "2026-08-23T10:00:00Z",
+        "2026-08-23T10:45:00Z",
+        null,
+        "m-live-1",
+      );
+
+      const state = useMeetingStore.getState();
+      expect(state.status).toBe("completed");
+      expect(state.historyList[0]?.status).toBe("completed");
+      expect(state.historyList[0]?.ended_at).toBe("2026-08-23T10:45:00Z");
+    });
+
+    it("setMinutesState synchronizes minutes in active and selected states", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-live-2",
+        selectedMeetingId: "m-live-2",
+        selectedMeeting: {
+          id: "m-live-2",
+          title: "产品评审会",
+          status: "completed",
+          language: "Chinese",
+          audio_source: "microphone",
+          started_at: "2026-08-23T11:00:00Z",
+          ended_at: "2026-08-23T11:30:00Z",
+          transcript_revision: 5,
+          content_revision: 5,
+          speakers: {},
+          latest_minutes: null,
+          created_at: "2026-08-23T11:00:00Z",
+          updated_at: "2026-08-23T11:30:00Z",
+        },
+      });
+
+      useMeetingStore.getState().setMinutesState(
+        1,
+        "completed",
+        null,
+        null,
+        mockMinutesCompleted,
+        "m-live-2",
+        "min-123",
+      );
+
+      const state = useMeetingStore.getState();
+      expect(state.minutes?.status).toBe("completed");
+      expect(state.selectedMeeting?.latest_minutes?.status).toBe("completed");
+      expect(state.selectedMinutes?.version).toBe(1);
+    });
+
+    it("updateMeetingState prepends newly created meeting if not present in historyList", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-brand-new",
+        activeMeeting: {
+          id: "m-brand-new",
+          title: "战略规划研讨会",
+          status: "recording",
+          language: "Chinese",
+          audio_source: "microphone",
+          started_at: "2026-08-23T12:00:00Z",
+          ended_at: null,
+          transcript_revision: 0,
+          content_revision: 0,
+          speakers: {},
+          created_at: "2026-08-23T12:00:00Z",
+          updated_at: "2026-08-23T12:00:00Z",
+        },
+        historyList: [],
+      });
+
+      useMeetingStore.getState().updateMeetingState(
+        "recording",
+        "2026-08-23T12:00:00Z",
+        null,
+        null,
+        "m-brand-new",
+      );
+
+      const state = useMeetingStore.getState();
+      expect(state.historyList).toHaveLength(1);
+      expect(state.historyList[0]?.id).toBe("m-brand-new");
+      expect(state.historyList[0]?.title).toBe("战略规划研讨会");
+    });
+
+    it("resetActiveSession completely clears active and selected state for pristine new meeting view", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-old-completed",
+        status: "completed",
+        selectedMeetingId: "m-old-completed",
+        selectedMeeting: {
+          id: "m-old-completed",
+          title: "旧会议",
+          status: "completed",
+          language: "Chinese",
+          audio_source: "microphone",
+          started_at: "2026-08-23T10:00:00Z",
+          ended_at: "2026-08-23T10:30:00Z",
+          transcript_revision: 5,
+          content_revision: 5,
+          speakers: {},
+          created_at: "2026-08-23T10:00:00Z",
+          updated_at: "2026-08-23T10:30:00Z",
+        },
+      });
+
+      useMeetingStore.getState().resetActiveSession();
+
+      const state = useMeetingStore.getState();
+      expect(state.activeMeetingId).toBeNull();
+      expect(state.activeMeeting).toBeNull();
+      expect(state.status).toBe("idle");
+      expect(state.selectedMeetingId).toBeNull();
+      expect(state.selectedMeeting).toBeNull();
+    });
+  });
 });
 
 

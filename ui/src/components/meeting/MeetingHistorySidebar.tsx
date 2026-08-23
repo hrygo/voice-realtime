@@ -48,6 +48,7 @@ interface MeetingHistorySidebarProps {
   onSelectMeeting: (id: string | null) => void;
   onReturnToActive: () => void;
   onNewMeeting: () => void;
+  onRefresh?: () => void;
   onLoadMore: () => void;
   onDeleteMeeting: (id: string) => Promise<void>;
 }
@@ -66,6 +67,7 @@ export function MeetingHistorySidebar({
   onSelectMeeting,
   onReturnToActive,
   onNewMeeting,
+  onRefresh,
   onLoadMore,
   onDeleteMeeting,
 }: MeetingHistorySidebarProps) {
@@ -105,37 +107,50 @@ export function MeetingHistorySidebar({
           <span>📁</span>
           <span>历史会议</span>
         </h2>
-        {isMeetingActive ? (
-          selectedMeetingId ? (
+        <div className="sidebar-header-actions">
+          {onRefresh && (
             <button
               type="button"
-              className="btn-new-meeting btn-return-active-header"
-              onClick={onReturnToActive}
-              title="返回正在进行的会议工作台"
+              className="btn-refresh-history"
+              onClick={onRefresh}
+              disabled={isLoading}
+              title="刷新历史会议列表"
             >
-              <span className="btn-recording-pulse-dot" />
-              <span>返回当前会议</span>
+              <span className={isLoading ? "spin-icon" : ""}>🔄</span>
             </button>
+          )}
+          {isMeetingActive ? (
+            selectedMeetingId ? (
+              <button
+                type="button"
+                className="btn-new-meeting btn-return-active-header"
+                onClick={onReturnToActive}
+                title="返回正在进行的会议工作台"
+              >
+                <span className="btn-recording-pulse-dot" />
+                <span>返回当前会议</span>
+              </button>
+            ) : (
+              <div
+                className="btn-new-meeting btn-recording-indicator"
+                title="会议录制进行中"
+              >
+                <span className="btn-recording-pulse-dot" />
+                <span>录制中</span>
+              </div>
+            )
           ) : (
-            <div
-              className="btn-new-meeting btn-recording-indicator"
-              title="会议录制进行中"
+            <button
+              type="button"
+              className="btn-new-meeting"
+              onClick={onNewMeeting}
+              title="发起新会议"
             >
-              <span className="btn-recording-pulse-dot" />
-              <span>录制中</span>
-            </div>
-          )
-        ) : (
-          <button
-            type="button"
-            className="btn-new-meeting"
-            onClick={onNewMeeting}
-            title="发起新会议"
-          >
-            <span>+</span>
-            <span>新会议</span>
-          </button>
-        )}
+              <span>+</span>
+              <span>新会议</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="history-search-wrap">
@@ -254,7 +269,9 @@ export function MeetingHistorySidebar({
         )}
 
         {filteredList.map((m) => {
-          const isSelected = selectedMeetingId === m.id;
+          const isSelected =
+            selectedMeetingId === m.id ||
+            (!selectedMeetingId && activeMeetingId === m.id && !isMeetingActive);
           const isActiveRecording = activeMeetingId === m.id && isMeetingActive;
           const statusInfo = getStatusLabel(m.status);
 

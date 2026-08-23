@@ -214,17 +214,56 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   },
 
   updateMeetingState: (status, startedAt, endedAt, reason, meetingId) => {
-    set((state) => ({
-      status,
-      activeMeetingId:
+    set((state) => {
+      const effectiveMeetingId =
         meetingId !== undefined && meetingId !== null && meetingId !== ""
           ? meetingId
-          : state.activeMeetingId,
-      isFinalizing: status === "finalizing",
-      sessionStartedAt: startedAt !== undefined ? startedAt : state.sessionStartedAt,
-      sessionEndedAt: endedAt !== undefined ? endedAt : state.sessionEndedAt,
-      interruptionReason: reason !== undefined ? reason : state.interruptionReason,
-    }));
+          : state.activeMeetingId;
+
+      const exists = state.historyList.some((m) => m.id === effectiveMeetingId);
+      let updatedHistoryList = state.historyList;
+      if (effectiveMeetingId) {
+        if (exists) {
+          updatedHistoryList = state.historyList.map((m) =>
+            m.id === effectiveMeetingId
+              ? {
+                  ...m,
+                  status,
+                  started_at: startedAt !== undefined && startedAt !== null ? startedAt : m.started_at,
+                  ended_at: endedAt !== undefined ? endedAt : m.ended_at,
+                  interruption_reason: reason !== undefined ? reason : m.interruption_reason,
+                }
+              : m,
+          );
+        } else if (state.activeMeeting || status === "recording" || status === "completed") {
+          updatedHistoryList = [
+            {
+              id: effectiveMeetingId,
+              title: state.activeMeeting?.title || "新会议",
+              status,
+              language: state.activeMeeting?.language || "Chinese",
+              started_at: startedAt || state.sessionStartedAt || new Date().toISOString(),
+              ended_at: endedAt || null,
+              transcript_revision: state.transcriptRevision,
+              content_revision: state.contentRevision,
+              interruption_reason: reason || null,
+              created_at: startedAt || state.sessionStartedAt || new Date().toISOString(),
+            },
+            ...state.historyList,
+          ];
+        }
+      }
+
+      return {
+        status,
+        activeMeetingId: effectiveMeetingId,
+        isFinalizing: status === "finalizing",
+        sessionStartedAt: startedAt !== undefined ? startedAt : state.sessionStartedAt,
+        sessionEndedAt: endedAt !== undefined ? endedAt : state.sessionEndedAt,
+        interruptionReason: reason !== undefined ? reason : state.interruptionReason,
+        historyList: updatedHistoryList,
+      };
+    });
   },
 
   setSpeaker: (speakerKey, displayName, contentRevision) => {
@@ -342,6 +381,14 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
         nextSelectedList = updatedSelectedList;
       }
 
+      const nextSelectedMeeting =
+        state.selectedMeeting && state.selectedMeeting.id === (meetingId || state.selectedMeetingId)
+          ? {
+              ...state.selectedMeeting,
+              latest_minutes: nextSelectedMinutes || state.selectedMeeting.latest_minutes,
+            }
+          : state.selectedMeeting;
+
       return {
         minutes: nextMinutes,
         activeMinutesVersion: nextActiveVersion,
@@ -349,6 +396,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
         selectedMinutes: nextSelectedMinutes,
         selectedMinutesVersion: nextSelectedVersion,
         selectedMinutesList: nextSelectedList,
+        selectedMeeting: nextSelectedMeeting,
       };
     });
   },
@@ -400,6 +448,13 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
       sessionEndedAt: null,
       interruptionReason: null,
       errorMessage: null,
+      selectedMeetingId: null,
+      selectedMeeting: null,
+      selectedSegments: [],
+      selectedMinutes: null,
+      selectedMinutesVersion: null,
+      selectedMinutesList: [],
+      isLoadingSelected: false,
     });
   },
 
@@ -503,6 +558,10 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
         state.selectedMeeting?.id === id
           ? { ...state.selectedMeeting, title: updated.title }
           : state.selectedMeeting,
+      activeMeeting:
+        state.activeMeeting?.id === id
+          ? { ...state.activeMeeting, title: updated.title }
+          : state.activeMeeting,
       historyList: state.historyList.map((m) =>
         m.id === id ? { ...m, title: updated.title } : m,
       ),

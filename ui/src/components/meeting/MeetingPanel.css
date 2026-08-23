@@ -51,6 +51,51 @@
   gap: 6px;
 }
 
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-refresh-history {
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-refresh-history:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--color-accent);
+}
+
+.btn-refresh-history:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spin-icon {
+  display: inline-block;
+  animation: spin-refresh 1s linear infinite;
+}
+
+@keyframes spin-refresh {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .btn-new-meeting {
   padding: 5px 10px;
   font-size: 0.75rem;

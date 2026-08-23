@@ -50,6 +50,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
           if (meeting_id && meeting_id.trim() !== "" && meeting_id !== "null") {
             void store.syncBaselineTranscript(meeting_id);
           }
+          void store.fetchHistory();
           break;
         }
 
@@ -62,6 +63,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
             p.interruption_reason,
             meeting_id,
           );
+          void store.fetchHistory();
           break;
         }
 
@@ -108,6 +110,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
             meeting_id,
             p.minutes_id,
           );
+          void store.fetchHistory();
           break;
         }
 
@@ -132,6 +135,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
           if (meeting_id && meeting_id.trim() !== "") {
             void store.syncBaselineTranscript(meeting_id);
           }
+          void store.fetchHistory();
           break;
         }
       }

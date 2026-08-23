@@ -86,6 +86,8 @@ describe("Meeting React Components DOM Rendering", () => {
     const handleLoadMore = vi.fn();
     const handleDelete = vi.fn().mockResolvedValue(undefined);
 
+    const handleRefresh = vi.fn();
+
     act(() => {
       root.render(
         <MeetingHistorySidebar
@@ -101,6 +103,7 @@ describe("Meeting React Components DOM Rendering", () => {
           onSelectMeeting={handleSelect}
           onReturnToActive={handleReturnToActive}
           onNewMeeting={handleNew}
+          onRefresh={handleRefresh}
           onLoadMore={handleLoadMore}
           onDeleteMeeting={handleDelete}
         />,
@@ -114,6 +117,14 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("实时语音与字幕产品评审");
     expect(container.textContent).toContain("已完成");
     expect(container.textContent).toContain("加载更多历史");
+
+    // Click refresh button
+    const refreshBtn = container.querySelector(".btn-refresh-history") as HTMLButtonElement;
+    expect(refreshBtn).not.toBeNull();
+    act(() => {
+      refreshBtn.click();
+    });
+    expect(handleRefresh).toHaveBeenCalledTimes(1);
 
     // Click pinned active card
     const pinnedCard = container.querySelector(".pinned-active-meeting") as HTMLDivElement;

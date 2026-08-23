@@ -53,21 +53,29 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
     return () => clearInterval(interval);
   }, [isMeetingActive, store.sessionStartedAt]);
 
-  // Global Esc shortcut to return to active recording / workspace when browsing history
+  const handleNewMeeting = () => {
+    store.resetActiveSession();
+  };
+
+  // Global Esc shortcut to return to active recording / new meeting view
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
-      if (e.key === "Escape" && store.selectedMeetingId) {
+      if (e.key === "Escape") {
         e.preventDefault();
-        store.returnToActiveMeeting();
+        if (isMeetingActive) {
+          store.returnToActiveMeeting();
+        } else {
+          handleNewMeeting();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [store.selectedMeetingId, store.returnToActiveMeeting]);
+  }, [isMeetingActive, store.returnToActiveMeeting, handleNewMeeting]);
 
   // Load history on mount
   useEffect(() => {
@@ -106,7 +114,17 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
+          status: "recording",
+          selectedMeetingId: null,
+          selectedMeeting: null,
+          sessionStartedAt: new Date().toISOString(),
+          sessionEndedAt: null,
+          segments: [],
+          gaps: [],
+          minutes: null,
+          minutesHistory: [],
         });
+        void store.fetchHistory();
       }
       showToast("已成功开启会议模式", "success");
       // Deselect history to focus on live recording
@@ -140,6 +158,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
           contract_version: "1",
         });
       }
+      void store.fetchHistory();
       showToast("会议已结束，正在冲刷转录并排队生成 AI 纪要", "info");
     } catch (err) {
       showToast(err instanceof Error ? err.message : "结束会议失败", "error");
@@ -202,7 +221,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
 
   return (
     <div className="meeting-workspace">
-      {/* 历史侧栏 */}
+      {/* 历史会议侧边栏 */}
       <MeetingHistorySidebar
         historyList={store.historyList}
         selectedMeetingId={store.selectedMeetingId}
@@ -215,8 +234,9 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         nextCursor={store.nextCursor}
         isLoading={store.isLoadingHistory}
         onSelectMeeting={(id) => void store.selectMeeting(id)}
-        onReturnToActive={() => store.returnToActiveMeeting()}
-        onNewMeeting={() => store.returnToActiveMeeting()}
+        onReturnToActive={isMeetingActive ? () => store.returnToActiveMeeting() : handleNewMeeting}
+        onNewMeeting={handleNewMeeting}
+        onRefresh={() => void store.fetchHistory()}
         onLoadMore={() => void store.fetchHistory(store.nextCursor)}
         onDeleteMeeting={(id) => {
           const item = store.historyList.find((m) => m.id === id);
@@ -311,7 +331,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             }
             isMeetingActive={isMeetingActive}
             activeMeetingTitle={store.activeMeeting?.title}
-            onReturnToActive={() => store.returnToActiveMeeting()}
+            onReturnToActive={isMeetingActive ? store.returnToActiveMeeting : handleNewMeeting}
           />
         ) : store.status === "recording" ? (
           /* 2. 录制中视图 */
@@ -362,7 +382,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
               )
             }
             isMeetingActive={false}
-            onReturnToActive={() => store.returnToActiveMeeting()}
+            onReturnToActive={handleNewMeeting}
           />
         ) : (
           /* 5. 准备/闲置视图 */
