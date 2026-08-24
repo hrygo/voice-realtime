@@ -147,6 +147,23 @@ def test_blind_input_manifest_round_trip_contains_no_reference(tmp_path: Path) -
         CorpusInputManifest.model_validate(payload)
 
 
+def test_negative_input_sample_may_have_no_speaker() -> None:
+    sample = CorpusInputSample(
+        sample_id="silence-001",
+        audio_path="pcm/silence-001.pcm",
+        source_sha256="a" * 64,
+        audio_sha256="b" * 64,
+        duration_ms=3000,
+        session_id="negative-session",
+        scenario="silence-negative",
+        language="zh",
+        license_or_consent="generated digital silence",
+        tags=("negative", "silence"),
+    )
+
+    assert sample.speakers == ()
+
+
 def test_reference_manifest_binds_input_hash_and_rejects_duplicate_ids() -> None:
     reference = CorpusReference(
         sample_id="blind-001",

@@ -208,7 +208,7 @@ class CorpusInputSample(_FrozenModel):
     scenario: str = Field(min_length=1, max_length=200)
     language: str = Field(min_length=1, max_length=64)
     license_or_consent: str = Field(min_length=1, max_length=500)
-    speakers: tuple[str, ...] = Field(min_length=1)
+    speakers: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     hotwords: tuple[str, ...] = ()
 

@@ -72,7 +72,7 @@ class CorpusSourceSample(_FrozenModel):
     language: str = Field(min_length=1, max_length=64)
     reference_raw: str = Field(max_length=500_000)
     license_or_consent: str = Field(min_length=1, max_length=500)
-    speakers: tuple[str, ...] = Field(min_length=1)
+    speakers: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     hotwords: tuple[str, ...] = ()
 
