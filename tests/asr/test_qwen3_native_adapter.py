@@ -19,6 +19,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+import voice_realtime.asr.adapters.qwen3_native as qwen3_native_module
 from voice_realtime.asr.adapters.qwen3_native import (
     Qwen3NativeOfflineAdapter,
     Qwen3NativeProtocolError,
@@ -198,9 +199,23 @@ def _snapshot(tmp_path: Path) -> tuple[Path, Path, Path]:
     model_dir.mkdir(parents=True)
     python.parent.mkdir(parents=True)
     python.write_bytes(b"fake isolated interpreter")
+    python.chmod(0o755)
     for name in _MODEL_FILES:
         (model_dir / name).write_bytes(b"not loaded by unit tests")
     return repo_root, model_dir, python
+
+
+def test_worker_rejects_non_executable_python(tmp_path: Path) -> None:
+    repo_root, model_dir, python = _snapshot(tmp_path)
+    python.chmod(0o644)
+
+    with pytest.raises(ValueError, match="executable"):
+        Qwen3NativeWorkerConfig(
+            repo_root=repo_root,
+            python_executable=python,
+            model_dir=model_dir,
+            device="mps",
+        )
 
 
 def _worker(
@@ -263,6 +278,7 @@ def test_worker_command_uses_isolated_interpreter_and_external_snapshot(
     assert command[command.index("-m") + 1] == config.worker_module
     assert command[command.index("--model-dir") + 1] == str(model_dir)
     assert command[command.index("--device") + 1] == "mps"
+    assert command[command.index("--max-new-tokens") + 1] == "512"
     assert "Qwen/Qwen3-ASR-1.7B" not in command
     assert not any(value.startswith(("http://", "https://")) for value in command)
     assert model_dir.is_absolute()
@@ -380,6 +396,19 @@ async def test_one_worker_process_is_reused_and_model_loads_once_per_run(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_concurrent_start_creates_only_one_worker_process(tmp_path: Path) -> None:
+    process = FakeProcess([_ready()])
+    worker, factory, _config = _worker(tmp_path, process)
+
+    first, second = await asyncio.gather(worker.start(), worker.start())
+
+    assert first == second
+    assert len(factory.calls) == 1
+    frames = _frames(b"".join(process.stdin.writes))
+    assert [frame["type"] for frame in frames].count("start") == 1
+
+
+@pytest.mark.asyncio
 async def test_request_and_response_frames_validate_length_prefix_and_request_id(
     tmp_path: Path,
 ) -> None:
@@ -416,6 +445,18 @@ async def test_invalid_json_worker_frame_is_a_stable_protocol_error(tmp_path: Pa
 
     with pytest.raises(Qwen3NativeProtocolError, match="QWEN3_WORKER_INVALID_JSON"):
         await worker.start()
+
+
+@pytest.mark.asyncio
+async def test_failed_start_terminates_spawned_worker(tmp_path: Path) -> None:
+    process = FakeProcess([struct.pack(">I", 9) + b"not-json!"])
+    worker, _factory, _config = _worker(tmp_path, process)
+
+    with pytest.raises(Qwen3NativeProtocolError, match="QWEN3_WORKER_INVALID_JSON"):
+        await worker.start()
+
+    assert process.terminated or process.killed
+    assert process.wait_calls == 1
 
 
 @pytest.mark.asyncio
@@ -471,6 +512,15 @@ async def test_mps_request_rejects_worker_cpu_fallback(tmp_path: Path) -> None:
     worker, _factory, _config = _worker(tmp_path, process, device="mps")
 
     with pytest.raises(Qwen3NativeProtocolError, match=r"QWEN3_DEVICE_MISMATCH|MPS"):
+        await worker.start()
+
+
+@pytest.mark.asyncio
+async def test_mps_request_rejects_worker_dtype_mismatch(tmp_path: Path) -> None:
+    process = FakeProcess([_ready(device="mps", dtype="float32")])
+    worker, _factory, _config = _worker(tmp_path, process, device="mps")
+
+    with pytest.raises(Qwen3NativeProtocolError, match="QWEN3_DTYPE_MISMATCH"):
         await worker.start()
 
 
@@ -537,6 +587,36 @@ async def test_empty_pcm_finishes_empty_without_invoking_model(tmp_path: Path) -
     assert final.segments == ()
     frames = _frames(b"".join(process.stdin.writes))
     assert not any(frame["type"] == "transcribe" for frame in frames)
+
+
+@pytest.mark.asyncio
+async def test_adapter_rejects_pcm_over_limit_before_buffer_growth(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(qwen3_native_module, "_MAX_PCM_BYTES", 4)
+    process = FakeProcess([_ready()])
+    worker, _factory, _config = _worker(tmp_path, process)
+    adapter = _adapter(worker)
+    await adapter.connect()
+
+    with pytest.raises(ValueError, match="TOO_LARGE"):
+        await adapter.send_audio(b"\x00\x00\x00\x00\x00\x00")
+
+    assert adapter._pcm == bytearray()
+
+
+@pytest.mark.asyncio
+async def test_final_segment_uses_worker_detected_language(tmp_path: Path) -> None:
+    process = FakeProcess([_ready(), _result(text="hello", language="English")])
+    worker, _factory, _config = _worker(tmp_path, process)
+    adapter = _adapter(worker, language="zh")
+    await adapter.connect()
+    await adapter.send_audio(b"\x00\x00")
+
+    window = await adapter.finish()
+
+    assert window.segments[0].detected_language == "English"
 
 
 @pytest.mark.asyncio

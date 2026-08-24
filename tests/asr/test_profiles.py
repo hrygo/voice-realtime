@@ -9,6 +9,8 @@ from voice_realtime.asr.profiles import (
     ASRProfile,
     FunASRNanoPyTorchProfile,
     FunASRNanoWSProfile,
+    Qwen3NativeProfile,
+    SenseVoiceNativeProfile,
     WLKAutoProfile,
     WLKQwen3Profile,
     WLKSenseVoiceProfile,
@@ -136,3 +138,51 @@ def test_funasr_nano_pytorch_profile_rejects_relative_model_path() -> None:
             language="中文",
             device="mps",
         )
+
+
+def test_qwen3_native_profile_freezes_isolated_runtime_identity() -> None:
+    profile = TypeAdapter(ASRProfile).validate_python(
+        {
+            "kind": "qwen3-asr-native",
+            "model_dir": "/model-cache/Qwen--Qwen3-ASR-1.7B/snapshots/master",
+            "python_executable": "/opt/whisperlivekit/.venv/bin/python",
+            "language": "Chinese",
+            "language_source": "corpus",
+            "device": "mps",
+            "context": "术语：Voice Studio",
+            "max_new_tokens": 512,
+            "timeout_secs": 120.0,
+        }
+    )
+
+    assert isinstance(profile, Qwen3NativeProfile)
+    assert profile.model_dir.is_absolute()
+    assert profile.python_executable.is_absolute()
+    assert profile.device == "mps"
+    assert profile.language_source == "corpus"
+    assert profile.max_new_tokens == 512
+    assert "host" not in profile.model_dump()
+
+
+@pytest.mark.parametrize("field", ["model_dir", "python_executable"])
+def test_qwen3_native_profile_rejects_relative_runtime_paths(field: str) -> None:
+    values = {
+        "model_dir": "/model-cache/Qwen--Qwen3-ASR-1.7B/snapshots/master",
+        "python_executable": "/opt/whisperlivekit/.venv/bin/python",
+        "language": "Chinese",
+        "device": "mps",
+    }
+    values[field] = "runtime/local"
+
+    with pytest.raises(ValidationError, match="绝对路径"):
+        Qwen3NativeProfile(**values)  # type: ignore[arg-type]
+
+
+def test_sensevoice_native_profile_defaults_to_corpus_language_and_cpu() -> None:
+    profile = SenseVoiceNativeProfile(
+        model_dir="/model-cache/iic--SenseVoiceSmall/snapshots/master",
+        language="zh",
+    )
+
+    assert profile.language_source == "corpus"
+    assert profile.device == "cpu"

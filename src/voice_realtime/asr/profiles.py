@@ -159,12 +159,49 @@ class SenseVoiceNativeProfile(BaseModel):
         return stripped
 
 
+class Qwen3NativeProfile(BaseModel):
+    """Qwen3-ASR 原生隔离 worker 离线实验臂。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["qwen3-asr-native"] = "qwen3-asr-native"
+    model_dir: Path
+    python_executable: Path
+    language: str = Field(min_length=1, max_length=64)
+    language_source: Literal["profile", "corpus"] = "corpus"
+    device: Literal["mps", "cpu"]
+    context: str = Field(default="", max_length=2_000)
+    max_new_tokens: int = Field(default=512, ge=32, le=2_048)
+    timeout_secs: float = Field(default=120.0, gt=0.0, le=1_800.0)
+
+    @field_validator("model_dir", "python_executable")
+    @classmethod
+    def _require_absolute_runtime_path(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("Qwen3 model_dir/python_executable 必须是绝对路径")
+        return value
+
+    @field_validator("language")
+    @classmethod
+    def _strip_language(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("字段不能为空")
+        return stripped
+
+    @field_validator("context")
+    @classmethod
+    def _strip_context(cls, value: str) -> str:
+        return value.strip()
+
+
 ASRProfile = Annotated[
     WLKQwen3Profile
     | WLKSenseVoiceProfile
     | WLKAutoProfile
     | FunASRNanoWSProfile
     | FunASRNanoPyTorchProfile
-    | SenseVoiceNativeProfile,
+    | SenseVoiceNativeProfile
+    | Qwen3NativeProfile,
     Field(discriminator="kind"),
 ]

@@ -22,6 +22,7 @@ _SAMPLE_RATE = 16_000
 _SAMPLE_WIDTH_BYTES = 2
 _MAX_FRAME_BYTES = 64 * 1024 * 1024
 _MAX_PCM_BYTES = 40 * 1024 * 1024
+_MAX_TRANSCRIPT_CHARS = 100_000
 _MODEL_FILES = (
     "config.json",
     "generation_config.json",
@@ -83,6 +84,7 @@ class _WorkerProcess(Protocol):
 
 
 ProcessFactory = Callable[..., _WorkerProcess | Awaitable[_WorkerProcess]]
+Qwen3NativeRawEventSink = Callable[[Mapping[str, object]], None]
 
 
 class Qwen3NativeProtocolError(RuntimeError):
@@ -96,6 +98,7 @@ class Qwen3NativeWorkerConfig:
     model_dir: Path
     device: Literal["mps", "cpu"]
     worker_module: str = "voice_realtime.asr.workers.qwen3_native_worker"
+    max_new_tokens: int = 512
     timeout_secs: float = 120.0
 
     def __post_init__(self) -> None:
@@ -104,8 +107,14 @@ class Qwen3NativeWorkerConfig:
         model_dir = Path(self.model_dir).expanduser()
         if not repo_root.is_absolute():
             raise ValueError("repo_root must be absolute")
-        if not python_executable.is_absolute() or not python_executable.is_file():
-            raise ValueError("isolated Python executable must be an absolute local file")
+        if (
+            not python_executable.is_absolute()
+            or not python_executable.is_file()
+            or not os.access(python_executable, os.X_OK)
+        ):
+            raise ValueError(
+                "isolated Python executable must be an executable absolute local file"
+            )
         if not model_dir.is_absolute():
             raise ValueError("Qwen3 model snapshot must be an absolute local path")
         resolved_repo = repo_root.resolve(strict=True)
@@ -116,6 +125,8 @@ class Qwen3NativeWorkerConfig:
             raise ValueError("Qwen3 model snapshot is incomplete")
         if not self.worker_module.strip():
             raise ValueError("worker_module cannot be empty")
+        if not 32 <= self.max_new_tokens <= 2_048:
+            raise ValueError("max_new_tokens must be between 32 and 2048")
         if self.timeout_secs <= 0:
             raise ValueError("timeout_secs must be positive")
         object.__setattr__(self, "repo_root", resolved_repo)
@@ -147,6 +158,8 @@ def build_qwen3_worker_command(config: Qwen3NativeWorkerConfig) -> list[str]:
         str(config.model_dir),
         "--device",
         config.device,
+        "--max-new-tokens",
+        str(config.max_new_tokens),
     ]
 
 
@@ -181,7 +194,10 @@ class Qwen3NativeWorker:
         self._process: _WorkerProcess | None = None
         self._identity: Qwen3WorkerIdentity | None = None
         self._request_id = 0
+        self._start_lock = asyncio.Lock()
         self._io_lock = asyncio.Lock()
+        self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_tail = bytearray()
         self._closed = False
 
     @property
@@ -191,63 +207,79 @@ class Qwen3NativeWorker:
         return self._identity
 
     async def start(self) -> Qwen3WorkerIdentity:
-        if self._closed:
-            raise RuntimeError("QWEN3_CLOSED: worker is closed")
-        if self._identity is not None:
-            return self._identity
-        command = build_qwen3_worker_command(self.config)
-        worker_env = {
-            name: value
-            for name in ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL")
-            if (value := os.environ.get(name)) is not None
-        }
-        worker_env.update(
-            {
-                "PYTHONPATH": str(self.config.repo_root / "src"),
-                "HF_HUB_OFFLINE": "1",
-                "TRANSFORMERS_OFFLINE": "1",
-                "HF_DATASETS_OFFLINE": "1",
-                "PYTORCH_ENABLE_MPS_FALLBACK": "0",
-                "TOKENIZERS_PARALLELISM": "false",
+        async with self._start_lock:
+            if self._closed:
+                raise RuntimeError("QWEN3_CLOSED: worker is closed")
+            if self._identity is not None:
+                return self._identity
+            command = build_qwen3_worker_command(self.config)
+            worker_env = {
+                name: value
+                for name in ("HOME", "PATH", "TMPDIR", "LANG", "LC_ALL")
+                if (value := os.environ.get(name)) is not None
             }
-        )
-        created = self._process_factory(
-            command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self.config.repo_root),
-            env=worker_env,
-        )
-        process = await created if inspect.isawaitable(created) else created
-        self._process = process
-        await self._write(
-            {
-                "type": "start",
-                "backend_id": _BACKEND_ID,
-                "model_dir": str(self.config.model_dir),
-                "device": self.config.device,
-            }
-        )
-        ready = await self._read_frame()
-        if ready.get("type") == "error":
-            code = ready.get("code")
-            safe_code = code if isinstance(code, str) else "QWEN3_WORKER_ERROR"
-            raise Qwen3NativeProtocolError(safe_code)
-        if ready.get("type") != "ready" or ready.get("backend_id") != _BACKEND_ID:
-            raise Qwen3NativeProtocolError("QWEN3_WORKER_PROTOCOL: invalid ready frame")
-        if ready.get("model_loaded") is not True:
-            raise Qwen3NativeProtocolError("QWEN3_WORKER_MODEL_NOT_LOADED")
-        device = ready.get("device")
-        dtype = ready.get("dtype")
-        if not isinstance(device, str) or not isinstance(dtype, str):
-            raise Qwen3NativeProtocolError("QWEN3_WORKER_IDENTITY: device/dtype missing")
-        if device != self.config.device:
-            raise Qwen3NativeProtocolError(
-                "QWEN3_DEVICE_MISMATCH: MPS request must not fall back to CPU"
+            worker_env.update(
+                {
+                    "PYTHONPATH": str(self.config.repo_root / "src"),
+                    "HF_HUB_OFFLINE": "1",
+                    "TRANSFORMERS_OFFLINE": "1",
+                    "HF_DATASETS_OFFLINE": "1",
+                    "PYTORCH_ENABLE_MPS_FALLBACK": "0",
+                    "TOKENIZERS_PARALLELISM": "false",
+                }
             )
-        self._identity = Qwen3WorkerIdentity(device=device, dtype=dtype)
-        return self._identity
+            created = self._process_factory(
+                command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self.config.repo_root),
+                env=worker_env,
+            )
+            process = await created if inspect.isawaitable(created) else created
+            self._process = process
+            self._stderr_tail.clear()
+            self._stderr_task = asyncio.create_task(self._drain_stderr(process))
+            try:
+                await self._write(
+                    {
+                        "type": "start",
+                        "backend_id": _BACKEND_ID,
+                        "model_dir": str(self.config.model_dir),
+                        "device": self.config.device,
+                    }
+                )
+                ready = await self._read_frame()
+                if ready.get("type") == "error":
+                    code = ready.get("code")
+                    safe_code = code if isinstance(code, str) else "QWEN3_WORKER_ERROR"
+                    raise Qwen3NativeProtocolError(safe_code)
+                if ready.get("type") != "ready" or ready.get("backend_id") != _BACKEND_ID:
+                    raise Qwen3NativeProtocolError(
+                        "QWEN3_WORKER_PROTOCOL: invalid ready frame"
+                    )
+                if ready.get("model_loaded") is not True:
+                    raise Qwen3NativeProtocolError("QWEN3_WORKER_MODEL_NOT_LOADED")
+                device = ready.get("device")
+                dtype = ready.get("dtype")
+                if not isinstance(device, str) or not isinstance(dtype, str):
+                    raise Qwen3NativeProtocolError(
+                        "QWEN3_WORKER_IDENTITY: device/dtype missing"
+                    )
+                if device != self.config.device:
+                    raise Qwen3NativeProtocolError(
+                        "QWEN3_DEVICE_MISMATCH: MPS request must not fall back to CPU"
+                    )
+                expected_dtype = "float16" if device == "mps" else "float32"
+                if dtype != expected_dtype:
+                    raise Qwen3NativeProtocolError(
+                        "QWEN3_DTYPE_MISMATCH: worker dtype does not match profile"
+                    )
+                self._identity = Qwen3WorkerIdentity(device=device, dtype=dtype)
+                return self._identity
+            except BaseException:
+                await self._abort_process()
+                raise
 
     async def transcribe(
         self,
@@ -261,19 +293,23 @@ class Qwen3NativeWorker:
         async with self._io_lock:
             self._request_id += 1
             request_id = self._request_id
-            await self._write(
-                {
-                    "type": "transcribe",
-                    "request_id": request_id,
-                    "sample_rate": _SAMPLE_RATE,
-                    "channels": 1,
-                    "sample_width_bytes": _SAMPLE_WIDTH_BYTES,
-                    "language": language,
-                    "context": context,
-                    "pcm_b64": base64.b64encode(pcm).decode("ascii"),
-                }
-            )
-            response = await self._read_frame()
+            try:
+                await self._write(
+                    {
+                        "type": "transcribe",
+                        "request_id": request_id,
+                        "sample_rate": _SAMPLE_RATE,
+                        "channels": 1,
+                        "sample_width_bytes": _SAMPLE_WIDTH_BYTES,
+                        "language": language,
+                        "context": context,
+                        "pcm_b64": base64.b64encode(pcm).decode("ascii"),
+                    }
+                )
+                response = await self._read_frame()
+            except BaseException:
+                await self._abort_process()
+                raise
         if response.get("type") == "error":
             code = response.get("code")
             safe_code = code if isinstance(code, str) else "QWEN3_WORKER_ERROR"
@@ -288,6 +324,8 @@ class Qwen3NativeWorker:
         dtype = response.get("dtype")
         if not all(isinstance(value, str) for value in (text, result_language, device, dtype)):
             raise Qwen3NativeProtocolError("QWEN3_WORKER_RESULT_INVALID")
+        if len(str(text)) > _MAX_TRANSCRIPT_CHARS:
+            raise Qwen3NativeProtocolError("QWEN3_WORKER_TRANSCRIPT_TOO_LARGE")
         identity = self.identity
         if device != identity.device or dtype != identity.dtype:
             raise Qwen3NativeProtocolError("QWEN3_DEVICE_MISMATCH: result identity changed")
@@ -323,7 +361,13 @@ class Qwen3NativeWorker:
         if self._process is None:
             raise RuntimeError("QWEN3_NOT_STARTED")
         self._process.stdin.write(_encode_frame(payload))
-        await self._process.stdin.drain()
+        try:
+            await asyncio.wait_for(
+                self._process.stdin.drain(),
+                timeout=self.config.timeout_secs,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError("QWEN3_WORKER_TIMEOUT: stdin drain timed out") from exc
 
     async def _read_frame(self) -> dict[str, object]:
         if self._process is None:
@@ -343,8 +387,8 @@ class Qwen3NativeWorker:
         except TimeoutError as exc:
             raise TimeoutError("QWEN3_WORKER_TIMEOUT") from exc
         except asyncio.IncompleteReadError as exc:
-            stderr = await self._bounded_stderr()
-            if stderr:
+            await asyncio.sleep(0)
+            if self._stderr_tail:
                 raise Qwen3NativeProtocolError(
                     "QWEN3_WORKER_STDERR: worker failed without exposing diagnostics"
                 ) from exc
@@ -357,34 +401,41 @@ class Qwen3NativeWorker:
             raise Qwen3NativeProtocolError("QWEN3_WORKER_INVALID_JSON")
         return {str(key): value for key, value in decoded.items()}
 
-    async def _bounded_stderr(self) -> bytes:
-        if self._process is None:
-            return b""
+    async def _drain_stderr(self, process: _WorkerProcess) -> None:
         try:
-            return await asyncio.wait_for(
-                self._process.stderr.read(4096),
-                timeout=min(self.config.timeout_secs, 0.1),
-            )
-        except TimeoutError:
-            return b""
-
-    async def close(self) -> None:
-        if self._closed:
+            while chunk := await process.stderr.read(4096):
+                self._stderr_tail.extend(chunk)
+                if len(self._stderr_tail) > 32 * 1024:
+                    del self._stderr_tail[: len(self._stderr_tail) - 32 * 1024]
+        except (OSError, RuntimeError):
             return
-        self._closed = True
+
+    async def _abort_process(self) -> None:
         process = self._process
+        stderr_task = self._stderr_task
         self._process = None
         self._identity = None
-        if process is None:
-            return
-        process.stdin.close()
-        if process.returncode is None:
-            process.terminate()
-        try:
-            await asyncio.wait_for(process.wait(), timeout=2.0)
-        except TimeoutError:
-            process.kill()
-            await process.wait()
+        self._stderr_task = None
+        if process is not None:
+            process.stdin.close()
+            if process.returncode is None:
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+        if stderr_task is not None and not stderr_task.done():
+            stderr_task.cancel()
+        if stderr_task is not None:
+            await asyncio.gather(stderr_task, return_exceptions=True)
+
+    async def close(self) -> None:
+        async with self._start_lock, self._io_lock:
+            if self._closed:
+                return
+            self._closed = True
+            await self._abort_process()
 
 
 class Qwen3NativeOfflineAdapter:
@@ -399,6 +450,8 @@ class Qwen3NativeOfflineAdapter:
         language: str,
         context: str,
         session_context: ASRSessionContext,
+        owns_worker: bool = True,
+        raw_event_sink: Qwen3NativeRawEventSink | None = None,
     ) -> None:
         normalized = language.strip()
         canonical = _LANGUAGES.get(normalized.lower()) or _LANGUAGES.get(normalized)
@@ -408,6 +461,8 @@ class Qwen3NativeOfflineAdapter:
         self._language = canonical
         self._prompt_context = context.strip()
         self._context = session_context
+        self._owns_worker = owns_worker
+        self._raw_event_sink = raw_event_sink
         self._pcm = bytearray()
         self._connected = False
         self._closed = False
@@ -415,7 +470,7 @@ class Qwen3NativeOfflineAdapter:
         self._event_queue: asyncio.Queue[ASREvent | None] = asyncio.Queue()
         self._finish_task: asyncio.Task[TranscriptWindow] | None = None
         self.capabilities = ASRCapabilities(
-            languages=frozenset(_LANGUAGES),
+            languages=frozenset(_LANGUAGES) | frozenset(_LANGUAGES.values()),
             supports_partial=False,
             supports_segment_timestamps=False,
             supports_word_timestamps=False,
@@ -458,6 +513,8 @@ class Qwen3NativeOfflineAdapter:
             raise TypeError("Qwen3 PCM chunk 必须是 bytes")
         if len(chunk) % _SAMPLE_WIDTH_BYTES:
             raise ValueError("QWEN3_PCM_INVALID: PCM 必须是偶数字节")
+        if len(self._pcm) + len(chunk) > _MAX_PCM_BYTES:
+            raise ValueError("QWEN3_PCM_TOO_LARGE: audio exceeds worker limit")
         self._pcm.extend(chunk)
 
     def events(self) -> AsyncIterator[ASREvent]:
@@ -499,9 +556,11 @@ class Qwen3NativeOfflineAdapter:
                     language=self._language,
                     context=self._prompt_context,
                 )
+                self._audit(result)
                 window = self._build_window(
                     result.text,
                     len(self._pcm) // _SAMPLE_WIDTH_BYTES,
+                    result.language,
                 )
             self._event_queue.put_nowait(
                 ASREvent(
@@ -523,7 +582,29 @@ class Qwen3NativeOfflineAdapter:
             )
             raise RuntimeError("QWEN3_ENGINE_ERROR: offline inference failed") from exc
 
-    def _build_window(self, text: str, sample_count: int) -> TranscriptWindow:
+    def _audit(self, result: Qwen3WorkerResult) -> None:
+        if self._raw_event_sink is None:
+            return
+        text = result.text[:4_096]
+        payload: dict[str, object] = {
+            "event": "inference",
+            "language": result.language,
+            "device": result.device,
+            "dtype": result.dtype,
+            "text": text,
+            "text_truncated": len(result.text) > len(text),
+        }
+        try:
+            self._raw_event_sink(payload)
+        except Exception:
+            return
+
+    def _build_window(
+        self,
+        text: str,
+        sample_count: int,
+        detected_language: str,
+    ) -> TranscriptWindow:
         if not text:
             return TranscriptWindow(source_epoch=self._context.source_epoch)
         duration_ms = round(sample_count * 1000 / _SAMPLE_RATE)
@@ -538,7 +619,7 @@ class Qwen3NativeOfflineAdapter:
             start_ms=start_ms,
             end_ms=end_ms,
             text=text,
-            detected_language=self._language,
+            detected_language=detected_language,
         )
         return TranscriptWindow(source_epoch=self._context.source_epoch, segments=(segment,))
 
@@ -549,4 +630,5 @@ class Qwen3NativeOfflineAdapter:
         self._connected = False
         self._pcm.clear()
         self._event_queue.put_nowait(None)
-        await self._worker.close()
+        if self._owns_worker:
+            await self._worker.close()

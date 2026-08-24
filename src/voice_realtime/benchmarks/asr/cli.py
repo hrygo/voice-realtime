@@ -12,7 +12,6 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from voice_realtime.asr.adapters.funasr_nano_pytorch import (
-    FunASRNanoPyTorchEngine,
     FunASRNanoPyTorchInference,
 )
 from voice_realtime.asr.contracts import ASRSessionContext, StreamingTranscriber
@@ -27,6 +26,12 @@ from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
+from voice_realtime.benchmarks.asr.backend_factory import (
+    build_backend_runtime,
+    require_compatible_mode,
+    sample_profile,
+    verify_profile_identity,
+)
 from voice_realtime.benchmarks.asr.manifest import (
     CorpusSample,
     load_corpus_manifest,
@@ -36,6 +41,7 @@ from voice_realtime.benchmarks.asr.manifest import (
     verify_git_checkout,
 )
 from voice_realtime.benchmarks.asr.replay import (
+    BenchmarkRunResult,
     ReplayMode,
     compare_hypotheses,
     load_hypotheses,
@@ -90,8 +96,7 @@ def _build_streaming_registry(
 
 def _require_compatible_mode(profile: ASRProfile, mode: str) -> None:
     """阻止把原生离线推理的缓冲时间误报为实时流式指标。"""
-    if isinstance(profile, FunASRNanoPyTorchProfile) and mode != ReplayMode.OFFLINE.value:
-        raise ValueError("Fun-ASR PyTorch profile requires --mode offline")
+    require_compatible_mode(profile, mode)
 
 
 def _verify_pytorch_run_identity(
@@ -117,9 +122,7 @@ def _verify_pytorch_run_identity(
 
 def _sample_profile(profile: ASRProfile, sample: CorpusSample) -> ASRProfile:
     """仅对显式 corpus 策略应用冻结样本的语言提示。"""
-    if isinstance(profile, FunASRNanoPyTorchProfile) and profile.language_source == "corpus":
-        return profile.model_copy(update={"language": sample.language})
-    return profile
+    return sample_profile(profile, sample)
 
 
 def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
@@ -185,35 +188,24 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     verify_file_hashes(model_dir, manifest.model_files_sha256)
     mode = ReplayMode(str(args.mode))
     _require_compatible_mode(profile, mode.value)
-    service_url: str | None = None
-    pytorch_engine: FunASRNanoPyTorchInference | None = None
-    if isinstance(profile, FunASRNanoPyTorchProfile):
-        _verify_pytorch_run_identity(
-            profile,
-            device=manifest.device,
-            parameters=manifest.parameters,
-        )
-        pytorch_engine = FunASRNanoPyTorchEngine(
-            model_dir=model_dir,
-            device=profile.device,
-            ncpu=profile.ncpu,
-        )
-    else:
-        service_url = _loopback_service_url(profile.host, profile.port)
+    verify_profile_identity(
+        profile,
+        device=manifest.device,
+        dtype=manifest.dtype,
+        parameters=manifest.parameters,
+    )
+    runtime = build_backend_runtime(
+        profile,
+        repo_root=repo_root.resolve(strict=True),
+        model_dir=model_dir,
+    )
 
     def transcriber_factory(
         sample: CorpusSample,
         context: ASRSessionContext,
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber:
-        effective_profile = _sample_profile(profile, sample)
-        registry = _build_streaming_registry(
-            effective_profile,
-            service_url,
-            vendor_event_sink,
-            pytorch_engine=pytorch_engine,
-        )
-        return registry.create_streaming(effective_profile, context)
+        return runtime.create_transcriber(sample, context, vendor_event_sink)
 
     output_value = args.output_dir
     output_dir = (
@@ -221,18 +213,22 @@ def _run_command_locked(args: argparse.Namespace) -> int:
         if output_value
         else Path("runtime") / "benchmarks" / "asr" / manifest.run_id
     )
-    result = asyncio.run(
-        run_benchmark(
-            manifest=manifest,
-            corpus=corpus,
-            corpus_root=Path(str(args.corpus_root)),
-            output_dir=output_dir,
-            transcriber_factory=transcriber_factory,
-            mode=mode,
-            chunk_ms=int(args.chunk_ms),
-            final_timeout_secs=float(args.final_timeout_secs),
-        )
-    )
+    async def run_with_cleanup() -> BenchmarkRunResult:
+        try:
+            return await run_benchmark(
+                manifest=manifest,
+                corpus=corpus,
+                corpus_root=Path(str(args.corpus_root)),
+                output_dir=output_dir,
+                transcriber_factory=transcriber_factory,
+                mode=mode,
+                chunk_ms=int(args.chunk_ms),
+                final_timeout_secs=float(args.final_timeout_secs),
+            )
+        finally:
+            await runtime.close()
+
+    result = asyncio.run(run_with_cleanup())
     return 0 if result.failed_samples == 0 else 1
 
 

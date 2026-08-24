@@ -151,13 +151,14 @@ class SenseVoiceNativeEngine:
         language: str,
         use_itn: bool,
     ) -> object:
+        normalized_language = _normalize_language(language)
         model = self._ensure_model()
         try:
             return model.generate(
                 input=audio,
                 cache={},
                 batch_size=1,
-                language=_normalize_language(language),
+                language=normalized_language,
                 use_itn=use_itn,
             )
         except Exception as exc:
@@ -227,7 +228,7 @@ class SenseVoiceNativeAdapter:
         self._event_queue: asyncio.Queue[ASREvent | None] = asyncio.Queue()
         self._finish_task: asyncio.Task[TranscriptWindow] | None = None
         self.capabilities = ASRCapabilities(
-            languages=frozenset({"auto", "zh", "en", "yue", "ja", "ko"}),
+            languages=frozenset(_LANGUAGES) | frozenset(_LANGUAGES.values()),
             supports_partial=False,
             supports_segment_timestamps=False,
             supports_word_timestamps=False,

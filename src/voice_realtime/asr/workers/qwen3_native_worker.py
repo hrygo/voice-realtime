@@ -17,6 +17,18 @@ from typing import BinaryIO, Literal, Protocol
 _BACKEND_ID = "qwen3-asr-native"
 _MAX_FRAME_BYTES = 64 * 1024 * 1024
 _MAX_PCM_BYTES = 40 * 1024 * 1024
+_MODEL_FILES = (
+    "config.json",
+    "generation_config.json",
+    "preprocessor_config.json",
+    "tokenizer_config.json",
+    "chat_template.json",
+    "merges.txt",
+    "vocab.json",
+    "model.safetensors.index.json",
+    "model-00001-of-00002.safetensors",
+    "model-00002-of-00002.safetensors",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +144,13 @@ def serve(
         _write_frame(output_stream, {"type": "error", "code": "QWEN3_WORKER_LOAD_ERROR"})
         return
     identity = engine.identity
+    expected_dtype = "float16" if device == "mps" else "float32"
+    if identity.device != device or identity.dtype != expected_dtype:
+        _write_frame(
+            output_stream,
+            {"type": "error", "code": "QWEN3_WORKER_IDENTITY_MISMATCH"},
+        )
+        return
     _write_frame(
         output_stream,
         {
@@ -206,9 +225,17 @@ def serve(
 class Qwen3ASREngine:
     """仅在隔离环境导入 qwen-asr/Transformers 的真实 engine。"""
 
-    def __init__(self, model_dir: Path, device: Literal["mps", "cpu"]) -> None:
+    def __init__(
+        self,
+        model_dir: Path,
+        device: Literal["mps", "cpu"],
+        *,
+        max_new_tokens: int = 512,
+    ) -> None:
         if not model_dir.is_absolute() or not model_dir.is_dir():
             raise ValueError("model_dir must be an absolute local directory")
+        if any(not (model_dir / name).is_file() for name in _MODEL_FILES):
+            raise ValueError("model snapshot is incomplete")
         import torch
         from qwen_asr import Qwen3ASRModel  # type: ignore[import-not-found]
 
@@ -224,7 +251,7 @@ class Qwen3ASREngine:
             str(model_dir),
             dtype=dtype,
             max_inference_batch_size=1,
-            max_new_tokens=512,
+            max_new_tokens=max_new_tokens,
             local_files_only=True,
         )
         model.model.to(torch.device(device), dtype=dtype).eval()
@@ -268,11 +295,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Qwen3-ASR isolated benchmark worker")
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--device", choices=("mps", "cpu"), required=True)
+    parser.add_argument("--max-new-tokens", type=int, default=512)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "0"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     model_dir = Path(str(args.model_dir)).expanduser().resolve(strict=True)
     protocol_fd = os.dup(sys.stdout.fileno())
     protocol_output = os.fdopen(protocol_fd, "wb", buffering=0)
@@ -286,6 +319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             engine_factory=lambda path, device: Qwen3ASREngine(
                 path,
                 device=device,  # type: ignore[arg-type]
+                max_new_tokens=int(args.max_new_tokens),
             ),
         )
     finally:

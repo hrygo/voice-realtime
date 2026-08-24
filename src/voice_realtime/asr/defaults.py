@@ -12,6 +12,16 @@ from voice_realtime.asr.adapters.funasr_nano_ws import (
     FunASRNanoWSConnectFactory,
     FunASRNanoWSRawEventSink,
 )
+from voice_realtime.asr.adapters.qwen3_native import (
+    Qwen3NativeOfflineAdapter,
+    Qwen3NativeRawEventSink,
+    Qwen3NativeWorker,
+)
+from voice_realtime.asr.adapters.sensevoice_native import (
+    SenseVoiceNativeAdapter,
+    SenseVoiceNativeInference,
+    SenseVoiceNativeRawEventSink,
+)
 from voice_realtime.asr.adapters.wlk import (
     WLKRawEventSink,
     WLKStreamFactory,
@@ -22,6 +32,7 @@ from voice_realtime.asr.profiles import (
     ASRProfile,
     FunASRNanoPyTorchProfile,
     FunASRNanoWSProfile,
+    Qwen3NativeProfile,
     SenseVoiceNativeProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
@@ -39,9 +50,14 @@ def build_wlk_registry(
     def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
         if isinstance(
             profile,
-            (FunASRNanoWSProfile, FunASRNanoPyTorchProfile, SenseVoiceNativeProfile),
+            (
+                FunASRNanoWSProfile,
+                FunASRNanoPyTorchProfile,
+                Qwen3NativeProfile,
+                SenseVoiceNativeProfile,
+            ),
         ):
-            raise TypeError("Fun-ASR profile cannot be constructed by the WLK registry")
+            raise TypeError("non-WLK profile cannot be constructed by the WLK registry")
         if stream_factory is None:
             return WLKStreamingAdapter(
                 url=service_url,
@@ -114,4 +130,51 @@ def build_funasr_nano_pytorch_registry(
         )
 
     registry.register_streaming("funasr-nano-pytorch", create)
+    return registry
+
+
+def build_sensevoice_native_registry(
+    engine: SenseVoiceNativeInference,
+    *,
+    raw_event_sink: SenseVoiceNativeRawEventSink | None = None,
+) -> ASRBackendRegistry:
+    """注册复用同一个 engine 的 SenseVoice 原生 CPU 实验臂。"""
+    registry = ASRBackendRegistry()
+
+    def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
+        if not isinstance(profile, SenseVoiceNativeProfile):
+            raise TypeError("non-SenseVoice profile cannot use the native registry")
+        return SenseVoiceNativeAdapter(
+            engine=engine,
+            language=profile.language,
+            context=context,
+            use_itn=profile.use_itn,
+            raw_event_sink=raw_event_sink,
+        )
+
+    registry.register_streaming("sensevoice-native", create)
+    return registry
+
+
+def build_qwen3_native_registry(
+    worker: Qwen3NativeWorker,
+    *,
+    raw_event_sink: Qwen3NativeRawEventSink | None = None,
+) -> ASRBackendRegistry:
+    """注册 run 级共享 Qwen3 隔离 worker；样本 adapter 不拥有 worker。"""
+    registry = ASRBackendRegistry()
+
+    def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
+        if not isinstance(profile, Qwen3NativeProfile):
+            raise TypeError("non-Qwen3 profile cannot use the native registry")
+        return Qwen3NativeOfflineAdapter(
+            worker=worker,
+            language=profile.language,
+            context=profile.context,
+            session_context=context,
+            owns_worker=False,
+            raw_event_sink=raw_event_sink,
+        )
+
+    registry.register_streaming("qwen3-asr-native", create)
     return registry
