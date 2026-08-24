@@ -400,13 +400,13 @@ git commit -m "docs(asr): 冻结Stage1盲测分析计划"
 - Create: `docs/benchmarks/asr/stage1-v12-20260825/blind-summary.csv`
 - Modify: `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
 
-- [ ] **Step 1: 写报告门禁 RED 测试**
+- [x] **Step 1: 写报告门禁 RED 测试**
 
 覆盖配对样本缺失、失败率、macro/micro/分层、Core 99%/final 96% CI、每 look Holm、固定候选集合、
 conditional power、两 manifest 并集、look 之外停止拒绝，以及 `Advance-Early/Reject-Hard/
 Reject-Futility/Continue/Finalist/Experimental` 分类。
 
-- [ ] **Step 2: 实现并验证确定性报告器**
+- [x] **Step 2: 实现并验证确定性报告器**
 
 Run: `uv run pytest tests/benchmarks/test_asr_report.py tests/benchmarks/test_asr_metrics.py -q --no-cov`
 

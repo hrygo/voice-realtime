@@ -948,7 +948,25 @@ uv run vr-asr-benchmark compare \
   --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
   --output runtime/benchmarks/asr/comparisons/<comparison-id>.json \
   --bootstrap-iterations 10000 \
-  --seed 20260824
+  --seed <analysis-plan-core-seed>
+
+# 4. Final look 必须合并 Core+Reserve，禁止只比较 Reserve
+uv run vr-asr-benchmark compare \
+  --baseline runtime/benchmarks/asr/<baseline-core-run-id> \
+  --additional-baseline runtime/benchmarks/asr/<baseline-reserve-run-id> \
+  --candidate runtime/benchmarks/asr/<candidate-core-run-id> \
+  --additional-candidate runtime/benchmarks/asr/<candidate-reserve-run-id> \
+  --corpus manifests/blind-core.json \
+  --additional-corpus manifests/blind-reserve.json \
+  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
+  --output runtime/benchmarks/asr/comparisons/<final-comparison-id>.json
+
+# 5. 汇齐每个 family 的质量比较与预注册非劣门禁后，程序化决策
+uv run vr-asr-benchmark decide \
+  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
+  --look core \
+  --evidence runtime/benchmarks/asr/comparisons/core-family-evidence.json \
+  --output runtime/benchmarks/asr/comparisons/core-decision.json
 ```
 
 > [!CAUTION]
@@ -957,6 +975,10 @@ uv run vr-asr-benchmark compare \
 > hash 匹配的 `--analysis-plan` 才标记为 `formal`，否则标记为 `cluster_calibration`。只有明确传入
 > `--exploratory-sample-bootstrap` 才允许 sample-level 重采样，输出标记为 `exploratory`。后两者均不得
 > 进入 Stage 1 晋级决策。
+> Formal compare 自动使用 analysis plan 的 Core 99% / Final 96% CI、10,000 次 bootstrap 和对应 seed，
+> 同时输出 cluster sign-flip 双侧 p-value、bootstrap standard error 与 Core conditional power；显式参数
+> 不匹配时拒绝运行。`decide` 的 evidence 还必须包含固定 family/baseline/candidate、完整配对数、当前
+> look cluster 集和所有预注册 non-inferiority gate 状态，报告不可覆盖且权限为 `0600`。
 
 ---
 
