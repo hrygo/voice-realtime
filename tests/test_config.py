@@ -71,14 +71,31 @@ def test_bridge_rejects_non_native_sample_rate(sample_rate: int) -> None:
 
 
 @pytest.mark.parametrize("settings_type", [BridgeSettings, UISettings, SubtitleSettings])
-def test_server_settings_reject_non_loopback_host(settings_type: type[object]) -> None:
+def test_server_settings_reject_invalid_host(settings_type: type[object]) -> None:
     with pytest.raises(ValidationError):
-        settings_type(host="0.0.0.0")
+        settings_type(host="invalid host name with spaces")
 
 
-@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1"])
-def test_server_settings_accept_loopback_host(host: str) -> None:
+@pytest.mark.parametrize(
+    "host", ["localhost", "127.0.0.1", "0.0.0.0", "192.168.1.100", "10.0.0.1", "::1", "::"]
+)
+def test_server_settings_accept_loopback_and_lan_hosts(host: str) -> None:
     assert UISettings(host=host).host == host
+    assert BridgeSettings(host=host).host == host
+    assert SubtitleSettings(host=host).host == host
+
+
+def test_server_settings_default_to_localhost() -> None:
+    assert UISettings().host == "127.0.0.1"
+    assert BridgeSettings().host == "127.0.0.1"
+    assert SubtitleSettings().host == "127.0.0.1"
+
+
+def test_server_settings_resolve_lan_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("voice_realtime.network.get_lan_ip", lambda: "192.168.1.123")
+    assert UISettings(host="lan").host == "192.168.1.123"
+    assert BridgeSettings(host="LAN").host == "192.168.1.123"
+    assert SubtitleSettings(host="lan_ip").host == "192.168.1.123"
 
 
 def test_removed_configuration_knobs_are_not_model_fields() -> None:
@@ -132,9 +149,9 @@ def test_subtitle_context_is_bounded_and_stripped() -> None:
         SubtitleSettings(context="词" * 2001)
 
 
-def test_meeting_settings_reject_non_loopback_database_url() -> None:
+def test_meeting_settings_reject_invalid_database_url() -> None:
     with pytest.raises(ValidationError):
-        MeetingSettings(database_url="postgresql://db.example.com/knowledge")
+        MeetingSettings(database_url="mysql://localhost/knowledge")
 
 
 def test_meeting_settings_rejects_unsafe_schema_name() -> None:
@@ -145,11 +162,22 @@ def test_meeting_settings_rejects_unsafe_schema_name() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("llm_base_url", "https://example.com/v1"),
+        ("llm_base_url", "http://192.168.1.20:1234/v1"),
         ("tts_bridge_url", "http://192.168.1.20:8765/v1"),
     ],
 )
-def test_interaction_rejects_non_loopback_service_urls(field: str, value: str) -> None:
+def test_interaction_accepts_lan_service_urls(field: str, value: str) -> None:
+    assert getattr(InteractionSettings(**{field: value}), field) == value.rstrip("/")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("llm_base_url", "ftp://127.0.0.1:1234/v1"),
+        ("tts_bridge_url", "http://[invalid host]:8765/v1"),
+    ],
+)
+def test_interaction_rejects_invalid_service_urls(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         InteractionSettings(**{field: value})
 

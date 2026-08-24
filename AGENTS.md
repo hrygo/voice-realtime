@@ -14,6 +14,7 @@
 | `docs/系统总体架构与详细设计方案.md` | **系统总体架构与详细设计方案**：权威拓扑、分层架构、交互/字幕/会议/控制端到端时序与详细设计 |
 | `docs/会议助手后端运行与前后端联调.md` | 会议助手运行手册、接口定义与前后端联调规范 |
 | `docs/Voice-Studio-UI-设计方案.md` | 前端控制台、组件状态机与交互设计方案 |
+| `docs/Qwen3-ASR-实时语音转文字开发对接手册.md` | **Qwen3-ASR 实时语音转文字开发对接手册**：WebSocket / REST 音频流式与文件转写对接指南 |
 | `contracts/meeting-assistant/v1/` | OpenAPI / AsyncAPI / JSON Schema / Fixtures 规范契约 |
 
 ---
@@ -140,12 +141,22 @@ scripts/install-nltk-data.sh                        # 幂等安装 NLTK punkt_ta
 
 ### 服务运行
 ```bash
+scripts/run-all.sh                                  # 一键启动全套服务（默认 127.0.0.1，含 ui + bridge + subtitles）
+VR_BIND_HOST=lan scripts/run-all.sh                 # 局域网绑定模式启动全套服务（自动探测 LAN IP）
+VR_BIND_HOST=0.0.0.0 scripts/run-all.sh             # 全网卡绑定模式启动全套服务
+
+# 独立服务启动（也可直接使用对应 scripts/run-*.sh）
 uv run vr-ui                                        # 默认入口：Voice Studio UI + AudioHub + 会议/交互/字幕 (8100)
 uv run vr-bridge                                    # TTS 桥（默认 8765，也可运行 scripts/run-bridge.sh）
 uv run vr-subtitles                                 # 字幕服务：启动 WhisperLiveKit（8001，含 Sortformer 分离）
 uv run vr-interact                                  # Headless 命令行交互替代入口（必须先停止 vr-ui）
 uv run vr-subtitle-events                           # 字幕事件消费者（--url ws://127.0.0.1:8001 --language Chinese）
 ```
+
+> 🌐 **网络绑定配置**：
+> - 默认绑定 `127.0.0.1`（`localhost`，仅限本机访问）；
+> - 支持全局环境变量 `VR_BIND_HOST`（或 `VR_HOST`），可选 `localhost` / `0.0.0.0` / `lan`；
+> - 支持服务级环境变量覆盖：`VR_UI_HOST`（UI 8100）、`VR_BRIDGE_HOST`（TTS 8765）、`VR_SUBTITLE_HOST`（字幕 8001）。
 
 > 📦 **依赖组说明**：
 > - `tts`：`mlx-audio[tts]` + `misaki[zh]`（重型依赖）

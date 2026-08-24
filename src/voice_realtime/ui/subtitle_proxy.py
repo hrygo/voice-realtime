@@ -131,6 +131,11 @@ class SubtitleProxy:
     def capture_epoch(self) -> int:
         return self._capture_epoch
 
+    @property
+    def _service_url(self) -> str:
+        host = "127.0.0.1" if self._settings.host in {"0.0.0.0", "::"} else self._settings.host
+        return f"ws://{host}:{self._settings.port}"
+
     def add_event_listener(self, listener: CaptureListener) -> None:
         if listener not in self._event_listeners:
             self._event_listeners.append(listener)
@@ -247,7 +252,7 @@ class SubtitleProxy:
         self._state = SubtitleProxyState.CONNECTING
         try:
             stream = self._stream_factory(
-                url=f"ws://{self._settings.host}:{self._settings.port}",
+                url=self._service_url,
                 language=self._settings.language,
             )
             self._stream = stream
@@ -401,7 +406,7 @@ class SubtitleProxy:
                 return None
             try:
                 stream = self._stream_factory(
-                    url=f"ws://{self._settings.host}:{self._settings.port}",
+                    url=self._service_url,
                     language=self._settings.language,
                 )
                 await stream.connect()
@@ -440,7 +445,7 @@ class SubtitleProxy:
             stream: SubtitleStream | None = None
             try:
                 stream = self._stream_factory(
-                    url=f"ws://{self._settings.host}:{self._settings.port}",
+                    url=self._service_url,
                     language=self._settings.language,
                 )
                 self._stream = stream

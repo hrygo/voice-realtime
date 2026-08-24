@@ -31,25 +31,32 @@ TTS_ENGINE_DEFAULT_VOICE = "alloy"
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
-def _validate_loopback_host(value: str) -> str:
-    """只允许本机回环监听，避免未配置鉴权的服务暴露到局域网。"""
+def _validate_listen_host(value: str) -> str:
+    """校验并解析监听地址（支持 0.0.0.0、localhost、lan 别名、私网 IP 及合法主机名）。"""
     host = value.strip().removeprefix("[").removesuffix("]")
-    if host.lower() == "localhost":
+    lower = host.lower()
+    if lower in {"lan", "lan_ip", "local_network"}:
+        from voice_realtime.network import get_lan_ip
+
+        return get_lan_ip()
+    if lower in {"localhost", "local", "loopback"}:
         return host
     try:
-        address = ip_address(host)
-    except ValueError as exc:
-        raise ValueError(f"监听地址必须是回环地址: {value}") from exc
-    if not address.is_loopback:
-        raise ValueError(f"监听地址必须是回环地址: {value}")
-    return host
+        ip_address(host)
+        return host
+    except ValueError:
+        import re
+
+        if re.fullmatch(r"[a-zA-Z0-9.\-_]+", host):
+            return host
+        raise ValueError(f"监听地址无效: {value}") from None
 
 
-def _validate_loopback_url(value: str) -> str:
+def _validate_service_url(value: str) -> str:
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
-        raise ValueError(f"本地服务 URL 无效: {value}")
-    _validate_loopback_host(parsed.hostname)
+        raise ValueError(f"服务 URL 无效: {value}")
+    _validate_listen_host(parsed.hostname)
     return value.rstrip("/")
 
 
@@ -77,7 +84,7 @@ class BridgeSettings(BaseSettings):
             raise ValueError(f"TTS 原生输出仅支持 {TTS_OUTPUT_SAMPLE_RATE}Hz: {v}")
         return v
 
-    _validate_host = field_validator("host")(_validate_loopback_host)
+    _validate_host = field_validator("host")(_validate_listen_host)
 
 
 class InteractionSettings(BaseSettings):
@@ -287,7 +294,7 @@ class InteractionSettings(BaseSettings):
         )
 
     _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(
-        _validate_loopback_url
+        _validate_service_url
     )
 
 
@@ -301,7 +308,7 @@ class UISettings(BaseSettings):
     static_dir: Path = Field(default=Path("ui/dist"), description="React 构建产物目录（静态托管）")
     api_timeout: float = Field(default=3.0, description="服务探活超时 (秒)")
 
-    _validate_host = field_validator("host")(_validate_loopback_host)
+    _validate_host = field_validator("host")(_validate_listen_host)
 
 
 class SubtitleSettings(BaseSettings):
@@ -371,7 +378,7 @@ class SubtitleSettings(BaseSettings):
     def _strip_context(cls, value: str) -> str:
         return value.strip()
 
-    _validate_host = field_validator("host")(_validate_loopback_host)
+    _validate_host = field_validator("host")(_validate_listen_host)
 
 
 class MeetingSettings(BaseSettings):
@@ -435,7 +442,7 @@ class MeetingSettings(BaseSettings):
         if parsed.scheme not in {"postgresql", "postgres"}:
             raise ValueError("会议数据库必须使用 PostgreSQL URL")
         if parsed.hostname is not None:
-            _validate_loopback_host(parsed.hostname)
+            _validate_listen_host(parsed.hostname)
         elif not parsed.path.lstrip("/"):
             raise ValueError("PostgreSQL URL 必须指定数据库")
         return value
@@ -459,7 +466,7 @@ class MeetingSettings(BaseSettings):
     @field_validator("allowed_origins")
     @classmethod
     def _validate_origins(cls, values: list[str]) -> list[str]:
-        return [_validate_loopback_url(value) for value in values]
+        return [_validate_service_url(value) for value in values]
 
 
 class Settings(BaseSettings):
