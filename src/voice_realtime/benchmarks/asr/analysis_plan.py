@@ -77,6 +77,7 @@ class AnalysisPlanDesign(BaseModel):
     schema_version: Literal["1.0"] = "1.0"
     candidate_ids: tuple[str, ...] = Field(min_length=2)
     bootstrap_seeds: tuple[int, int]
+    bootstrap_iterations: Literal[10000] = 10_000
     pilot_baseline_cer: float = Field(gt=0, le=1)
     primary_endpoints: tuple[str, ...] = Field(min_length=1)
     normalization_version: str = Field(min_length=1)
@@ -137,6 +138,7 @@ class AnalysisPlan(BaseModel):
     decision_confidence: tuple[float, float] = (0.99, 0.96)
     conditional_power_futility: float = 0.20
     bootstrap_seeds: tuple[int, int]
+    bootstrap_iterations: Literal[10000] = 10_000
     pilot_baseline_cer: float = Field(gt=0, le=1)
     relative_mde: float = 0.05
     decision_families: tuple[DecisionFamily, ...] = ()
@@ -485,6 +487,7 @@ def freeze_formal_analysis_plan(
         normalization_version=design.normalization_version,
         filtering_rules=design.filtering_rules,
         bootstrap_seeds=design.bootstrap_seeds,
+        bootstrap_iterations=design.bootstrap_iterations,
         pilot_baseline_cer=design.pilot_baseline_cer,
         decision_families=design.decision_families,
     )

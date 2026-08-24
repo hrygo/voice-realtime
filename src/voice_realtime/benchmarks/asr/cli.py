@@ -8,6 +8,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from ipaddress import ip_address
 from pathlib import Path
+from typing import cast
 
 from pydantic import TypeAdapter
 
@@ -49,6 +50,7 @@ from voice_realtime.benchmarks.asr.manifest import (
     verify_file_hashes,
     verify_git_checkout,
 )
+from voice_realtime.benchmarks.asr.metrics import conditional_power_from_interim
 from voice_realtime.benchmarks.asr.preflight import run_blind_preflight
 from voice_realtime.benchmarks.asr.replay import (
     BenchmarkRunResult,
@@ -61,6 +63,12 @@ from voice_realtime.benchmarks.asr.replay import (
     score_hypotheses,
     write_json,
     write_scored_hypotheses,
+)
+from voice_realtime.benchmarks.asr.report import (
+    Look,
+    evaluate_stage1_look,
+    load_family_look_evidence,
+    write_stage1_decision_report,
 )
 from voice_realtime.benchmarks.resource_lock import exclusive_resource_lock
 
@@ -237,12 +245,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     compare_parser = subparsers.add_parser("compare", help="按 sample_id 配对比较两个实验臂")
     compare_parser.add_argument("--baseline", required=True)
+    compare_parser.add_argument("--additional-baseline", action="append", default=[])
     compare_parser.add_argument("--candidate", required=True)
+    compare_parser.add_argument("--additional-candidate", action="append", default=[])
     resampling_group = compare_parser.add_mutually_exclusive_group()
     resampling_group.add_argument(
         "--corpus",
         help="冻结输入 manifest；提供后按 content_group_id/session_id 做 cluster bootstrap",
     )
+    compare_parser.add_argument("--additional-corpus", action="append", default=[])
     compare_parser.add_argument(
         "--analysis-plan",
         help="绑定 formal analysis plan；省略时 cluster 结果仅为 calibration",
@@ -254,7 +265,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare_parser.add_argument("--output", required=True)
     compare_parser.add_argument("--bootstrap-iterations", type=int, default=10_000)
-    compare_parser.add_argument("--seed", type=int, default=0)
+    compare_parser.add_argument("--seed", type=int)
+
+    decide_parser = subparsers.add_parser(
+        "decide",
+        help="按 formal analysis plan 生成 Stage 1 Core/Final 决策",
+    )
+    decide_parser.add_argument("--analysis-plan", required=True)
+    decide_parser.add_argument("--look", choices=("core", "final"), required=True)
+    decide_parser.add_argument("--evidence", required=True)
+    decide_parser.add_argument("--output", required=True)
     return parser
 
 
@@ -355,73 +375,160 @@ def _score_command(args: argparse.Namespace) -> int:
 
 
 def _compare_command(args: argparse.Namespace) -> int:
-    baseline = Path(str(args.baseline))
-    candidate = Path(str(args.candidate))
-    corpus_path = Path(str(args.corpus)) if args.corpus is not None else None
-    if corpus_path is None and not bool(args.exploratory_sample_bootstrap):
+    output_path = Path(str(args.output))
+    if output_path.exists():
+        raise FileExistsError(f"comparison output already exists: {output_path}")
+    baseline_paths = (
+        Path(str(args.baseline)),
+        *(Path(str(path)) for path in args.additional_baseline),
+    )
+    candidate_paths = (
+        Path(str(args.candidate)),
+        *(Path(str(path)) for path in args.additional_candidate),
+    )
+    if len(baseline_paths) != len(candidate_paths):
+        raise ValueError("baseline and candidate run counts must match")
+    corpus_paths = (
+        ()
+        if args.corpus is None
+        else (
+            Path(str(args.corpus)),
+            *(Path(str(path)) for path in args.additional_corpus),
+        )
+    )
+    if not corpus_paths and not bool(args.exploratory_sample_bootstrap):
         raise ValueError(
             "formal comparison requires --corpus for cluster bootstrap; "
             "sample bootstrap is exploratory only"
         )
+    if corpus_paths and len(corpus_paths) != len(baseline_paths):
+        raise ValueError("each run pair requires exactly one corpus manifest")
+    if not corpus_paths and len(baseline_paths) != 1:
+        raise ValueError("exploratory sample bootstrap accepts one run pair")
     analysis_plan_path = (
         Path(str(args.analysis_plan)) if args.analysis_plan is not None else None
     )
-    if analysis_plan_path is not None and corpus_path is None:
+    if analysis_plan_path is not None and not corpus_paths:
         raise ValueError("--analysis-plan requires --corpus")
     cluster_by_sample: dict[str, str] | None = None
-    corpus = None
-    if corpus_path is not None:
-        corpus = load_corpus_input_manifest(corpus_path)
-        cluster_by_sample = {
-            sample.sample_id: (
-                sample.analysis_cluster_id
-                or sample.content_group_id
-                or sample.session_id
-            )
-            for sample in corpus.samples
+    corpora = tuple(load_corpus_input_manifest(path) for path in corpus_paths)
+    if corpora:
+        cluster_by_sample = {}
+        for corpus in corpora:
+            for sample in corpus.samples:
+                if sample.sample_id in cluster_by_sample:
+                    raise ValueError("corpus manifests contain duplicate sample IDs")
+                cluster_by_sample[sample.sample_id] = (
+                    sample.analysis_cluster_id
+                    or sample.content_group_id
+                    or sample.session_id
+                )
+
+    confidence = 0.95
+    seed = int(args.seed) if args.seed is not None else 0
+    look: str | None = None
+    plan = None
+    if analysis_plan_path is not None:
+        plan = load_analysis_plan(analysis_plan_path)
+        if plan.evidence_tier != "formal":
+            raise ValueError("comparison analysis plan must be formal")
+        by_split = {
+            corpus.split: (path, corpus)
+            for path, corpus in zip(corpus_paths, corpora, strict=True)
         }
+        if len(by_split) != len(corpora):
+            raise ValueError("formal comparison corpus splits must be unique")
+        if set(by_split) == {"blind-core"}:
+            look = "core"
+            look_index = 0
+        elif set(by_split) == {"blind-core", "blind-reserve"}:
+            look = "final"
+            look_index = 1
+        else:
+            raise ValueError("formal comparison requires Core or Core+Reserve union")
+        expected_by_split = {
+            "blind-core": (
+                plan.core_manifest_sha256,
+                plan.core_analysis_cluster_ids,
+            ),
+            "blind-reserve": (
+                plan.reserve_manifest_sha256,
+                plan.reserve_analysis_cluster_ids,
+            ),
+        }
+        for split, (path, corpus) in by_split.items():
+            expected_hash, expected_clusters = expected_by_split[split]
+            observed_clusters = tuple(
+                sorted({sample.analysis_cluster_id or "" for sample in corpus.samples})
+            )
+            if sha256_file(path) != expected_hash or observed_clusters != expected_clusters:
+                raise ValueError("corpus does not match formal analysis plan identity")
+        if int(args.bootstrap_iterations) != plan.bootstrap_iterations:
+            raise ValueError("formal comparison bootstrap iterations do not match analysis plan")
+        if args.seed is not None and int(args.seed) != plan.bootstrap_seeds[look_index]:
+            raise ValueError("formal comparison seed does not match analysis plan")
+        confidence = plan.decision_confidence[look_index]
+        seed = plan.bootstrap_seeds[look_index]
+
+    baseline_rows = tuple(
+        row
+        for path in baseline_paths
+        for row in load_hypotheses(path / "scored-hypotheses.jsonl")
+    )
+    candidate_rows = tuple(
+        row
+        for path in candidate_paths
+        for row in load_hypotheses(path / "scored-hypotheses.jsonl")
+    )
     comparison = compare_hypotheses(
-        load_hypotheses(baseline / "scored-hypotheses.jsonl"),
-        load_hypotheses(candidate / "scored-hypotheses.jsonl"),
+        baseline_rows,
+        candidate_rows,
         iterations=int(args.bootstrap_iterations),
-        seed=int(args.seed),
+        seed=seed,
+        confidence=confidence,
         cluster_by_sample=cluster_by_sample,
     )
-    comparison["baseline"] = str(baseline)
-    comparison["candidate"] = str(candidate)
-    if corpus_path is not None:
-        corpus_hash = sha256_file(corpus_path)
-        comparison["corpus_manifest_sha256"] = corpus_hash
+    comparison["baseline"] = str(baseline_paths[0])
+    comparison["candidate"] = str(candidate_paths[0])
+    comparison["baseline_runs"] = [str(path) for path in baseline_paths]
+    comparison["candidate_runs"] = [str(path) for path in candidate_paths]
+    if corpus_paths:
+        corpus_hashes = [sha256_file(path) for path in corpus_paths]
+        comparison["corpus_manifest_sha256"] = corpus_hashes[0]
+        comparison["corpus_manifest_sha256s"] = corpus_hashes
         comparison["evidence_tier"] = "cluster_calibration"
-        if analysis_plan_path is not None:
-            plan = load_analysis_plan(analysis_plan_path)
-            if plan.evidence_tier != "formal":
-                raise ValueError("comparison analysis plan must be formal")
-            if corpus is None:
-                raise RuntimeError("corpus must be loaded before formal comparison")
-            if corpus.split == "blind-core":
-                expected_hash = plan.core_manifest_sha256
-                expected_clusters = plan.core_analysis_cluster_ids
-            elif corpus.split == "blind-reserve":
-                expected_hash = plan.reserve_manifest_sha256
-                expected_clusters = plan.reserve_analysis_cluster_ids
-            else:
-                raise ValueError("formal comparison requires a blind Core/Reserve corpus")
-            observed_clusters = tuple(
-                sorted(
-                    {
-                        sample.analysis_cluster_id or ""
-                        for sample in corpus.samples
-                    }
-                )
-            )
-            if corpus_hash != expected_hash or observed_clusters != expected_clusters:
-                raise ValueError("corpus does not match formal analysis plan identity")
+        comparison["analysis_cluster_ids"] = (
+            sorted(set(cluster_by_sample.values())) if cluster_by_sample else []
+        )
+        if analysis_plan_path is not None and plan is not None:
             comparison["evidence_tier"] = "formal"
             comparison["analysis_plan_sha256"] = sha256_file(analysis_plan_path)
+            comparison["look"] = look
+            if look == "core":
+                standard_error_value = comparison["bootstrap_standard_error"]
+                mean_difference_value = comparison["mean_cer_difference"]
+                if not isinstance(standard_error_value, int | float) or not isinstance(
+                    mean_difference_value, int | float
+                ):
+                    raise RuntimeError("comparison statistics must be numeric")
+                core_duration_ms = plan.core_duration_ms
+                reserve_duration_ms = plan.reserve_duration_ms
+                if core_duration_ms is None or reserve_duration_ms is None:
+                    raise RuntimeError("formal plan durations must be frozen")
+                comparison["conditional_power"] = conditional_power_from_interim(
+                    mean_difference=float(mean_difference_value),
+                    standard_error=float(standard_error_value),
+                    information_fraction=(
+                        core_duration_ms
+                        / (core_duration_ms + reserve_duration_ms)
+                    ),
+                    final_alpha=plan.look_alpha[1],
+                )
+            else:
+                comparison["conditional_power"] = None
     else:
         comparison["evidence_tier"] = "exploratory"
-    write_json(Path(str(args.output)), comparison)
+    write_json(output_path, comparison)
     return 0
 
 
@@ -481,6 +588,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _score_command(args)
         if args.command == "compare":
             return _compare_command(args)
+        if args.command == "decide":
+            analysis_plan_path = Path(str(args.analysis_plan))
+            look = cast(Look, str(args.look))
+            report = evaluate_stage1_look(
+                load_analysis_plan(analysis_plan_path),
+                look=look,
+                evidence=load_family_look_evidence(
+                    Path(str(args.evidence)),
+                    expected_plan_sha256=sha256_file(analysis_plan_path),
+                    expected_look=look,
+                ),
+            )
+            write_stage1_decision_report(Path(str(args.output)), report)
+            return 0
     except (OSError, ValueError) as exc:
         print(f"vr-asr-benchmark: {exc}", file=sys.stderr)
         return 2

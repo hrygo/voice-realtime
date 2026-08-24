@@ -425,20 +425,19 @@ def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:
     _write_hypotheses(baseline, [("a", 0.3), ("b", 0.4)])
     _write_hypotheses(candidate, [("a", 0.2), ("b", 0.3)])
 
-    exit_code = main(
-        [
-            "compare",
-            "--baseline",
-            str(baseline),
-            "--candidate",
-            str(candidate),
-            "--output",
-            str(output),
-            "--bootstrap-iterations",
-            "100",
-            "--exploratory-sample-bootstrap",
-        ]
-    )
+    argv = [
+        "compare",
+        "--baseline",
+        str(baseline),
+        "--candidate",
+        str(candidate),
+        "--output",
+        str(output),
+        "--bootstrap-iterations",
+        "100",
+        "--exploratory-sample-bootstrap",
+    ]
+    exit_code = main(argv)
 
     comparison = json.loads(output.read_text())
     assert exit_code == 0
@@ -446,6 +445,7 @@ def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:
     assert comparison["mean_cer_difference"] == -0.1
     assert comparison["resampling_unit"] == "sample"
     assert comparison["evidence_tier"] == "exploratory"
+    assert main(argv) == 2
 
 
 def test_compare_command_requires_cluster_manifest_for_formal_evidence(
@@ -533,7 +533,9 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
     baseline = tmp_path / "baseline"
     candidate = tmp_path / "candidate"
     output = tmp_path / "comparison.json"
+    final_output = tmp_path / "final-comparison.json"
     corpus_path = tmp_path / "corpus.json"
+    reserve_corpus_path = tmp_path / "reserve-corpus.json"
     plan_path = tmp_path / "analysis-plan.json"
     _write_hypotheses(baseline, [("a", 0.3), ("b", 0.4)])
     _write_hypotheses(candidate, [("a", 0.2), ("b", 0.3)])
@@ -558,6 +560,30 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
         ),
     )
     write_corpus_input_manifest(corpus_path, corpus)
+    reserve_baseline = tmp_path / "reserve-baseline"
+    reserve_candidate = tmp_path / "reserve-candidate"
+    _write_hypotheses(reserve_baseline, [("reserve-a", 0.3)])
+    _write_hypotheses(reserve_candidate, [("reserve-a", 0.2)])
+    reserve_corpus = CorpusInputManifest(
+        corpus_version="target-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="blind-reserve",
+        samples=(
+            CorpusInputSample(
+                sample_id="reserve-a",
+                audio_path="pcm/reserve-a.pcm",
+                source_sha256="a" * 64,
+                audio_sha256="b" * 64,
+                duration_ms=1_000,
+                session_id="session-reserve-a",
+                analysis_cluster_id="cluster:reserve",
+                scenario="near-field",
+                language="zh",
+                license_or_consent="test",
+            ),
+        ),
+    )
+    write_corpus_input_manifest(reserve_corpus_path, reserve_corpus)
     plan = AnalysisPlan(
         evidence_tier="formal",
         candidate_ids=("qwen", "sense", "fun"),
@@ -566,7 +592,7 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
             "e" * 64,
         ),
         core_manifest_sha256=sha256_file(corpus_path),
-        reserve_manifest_sha256="c" * 64,
+        reserve_manifest_sha256=sha256_file(reserve_corpus_path),
         core_reference_sha256="d" * 64,
         reserve_reference_sha256="f" * 64,
         preflight_report_sha256="1" * 64,
@@ -607,8 +633,6 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
             str(plan_path),
             "--output",
             str(output),
-            "--bootstrap-iterations",
-            "100",
         ]
     )
 
@@ -616,6 +640,40 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
     assert exit_code == 0
     assert comparison["evidence_tier"] == "formal"
     assert comparison["analysis_plan_sha256"] == sha256_file(plan_path)
+    assert comparison["look"] == "core"
+    assert comparison["decision_confidence"] == 0.99
+    assert comparison["seed"] == 1
+    assert comparison["conditional_power"] == 1.0
+
+    final_exit_code = main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--additional-baseline",
+            str(reserve_baseline),
+            "--candidate",
+            str(candidate),
+            "--additional-candidate",
+            str(reserve_candidate),
+            "--corpus",
+            str(corpus_path),
+            "--additional-corpus",
+            str(reserve_corpus_path),
+            "--analysis-plan",
+            str(plan_path),
+            "--output",
+            str(final_output),
+        ]
+    )
+
+    final_comparison = json.loads(final_output.read_text())
+    assert final_exit_code == 0
+    assert final_comparison["look"] == "final"
+    assert final_comparison["paired_samples"] == 3
+    assert final_comparison["decision_confidence"] == 0.96
+    assert final_comparison["seed"] == 2
+    assert final_comparison["conditional_power"] is None
 
 
 def test_compare_rejects_selective_sample_intersection(tmp_path: Path) -> None:

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -21,6 +24,7 @@ DecisionStatus = Literal[
     "Reject",
     "Experimental / No decision",
 ]
+_MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 
 
 class FamilyLookEvidence(BaseModel):
@@ -44,6 +48,7 @@ class FamilyLookEvidence(BaseModel):
     paired_clusters: int = Field(gt=0)
     decision_confidence: float = Field(gt=0, lt=1)
     bootstrap_seed: int
+    bootstrap_iterations: int = Field(gt=0)
     analysis_cluster_ids: tuple[str, ...] = Field(min_length=1)
     test_direction: Literal["two_sided_superiority"]
 
@@ -109,6 +114,74 @@ class Stage1DecisionReport(BaseModel):
     confidence: float
     stopped_at: Literal["core", "reserve", "completed"] | None
     decisions: tuple[FamilyLookDecision, ...]
+
+
+class Stage1EvidenceBundle(BaseModel):
+    """把 family comparisons 绑定到唯一 analysis plan 与 look。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = "1.0"
+    analysis_plan_sha256: str
+    look: Look
+    comparisons: tuple[FamilyLookEvidence, ...] = Field(min_length=1)
+
+    @field_validator("analysis_plan_sha256")
+    @classmethod
+    def _plan_hash(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("analysis plan SHA-256 must be 64 hexadecimal characters")
+        return normalized
+
+
+def load_family_look_evidence(
+    path: Path,
+    *,
+    expected_plan_sha256: str,
+    expected_look: Look,
+) -> tuple[FamilyLookEvidence, ...]:
+    """有界读取严格 evidence 数组。"""
+    if path.stat().st_size > _MAX_EVIDENCE_BYTES:
+        raise ValueError("Stage 1 evidence exceeds 16 MiB")
+    bundle = Stage1EvidenceBundle.model_validate_json(path.read_text(encoding="utf-8"))
+    if (
+        bundle.analysis_plan_sha256 != expected_plan_sha256
+        or bundle.look != expected_look
+    ):
+        raise ValueError("Stage 1 evidence bundle does not match analysis plan/look")
+    return bundle.comparisons
+
+
+def write_stage1_decision_report(
+    output: Path,
+    report: Stage1DecisionReport,
+) -> None:
+    """原子写入不可覆盖的 0600 决策报告。"""
+    if output.exists():
+        raise FileExistsError(f"Stage 1 decision report already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    output.parent.chmod(0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output.parent,
+        prefix=f".{output.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(report.model_dump_json(indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(output)
+        output.chmod(0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _holm_adjust(raw_p_values: Sequence[float]) -> tuple[float, ...]:
@@ -289,6 +362,7 @@ def evaluate_stage1_look(
         if (
             item.decision_confidence != plan.decision_confidence[look_index]
             or item.bootstrap_seed != plan.bootstrap_seeds[look_index]
+            or item.bootstrap_iterations != plan.bootstrap_iterations
             or item.analysis_cluster_ids != expected_clusters
             or item.paired_clusters != len(expected_clusters)
         ):

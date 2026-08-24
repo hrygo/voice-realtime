@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from voice_realtime.benchmarks.asr.analysis_plan import AnalysisPlan, DecisionFamily
+from voice_realtime.benchmarks.asr.cli import main
 from voice_realtime.benchmarks.asr.report import (
     FamilyLookEvidence,
     evaluate_stage1_look,
@@ -94,6 +99,7 @@ def _evidence(
         paired_clusters=len(cluster_ids or expected_clusters),
         decision_confidence=confidence or (0.99 if is_core else 0.96),
         bootstrap_seed=bootstrap_seed or (2026082501 if is_core else 2026082502),
+        bootstrap_iterations=10_000,
         analysis_cluster_ids=cluster_ids or expected_clusters,
         test_direction="two_sided_superiority",
     )
@@ -324,3 +330,69 @@ def test_analysis_plan_rejects_family_identity_outside_candidate_set() -> None:
                 ),
             ),
         )
+
+
+def test_decide_cli_writes_immutable_stage1_report(tmp_path: Path) -> None:
+    plan_path = tmp_path / "analysis-plan.json"
+    evidence_path = tmp_path / "evidence.json"
+    output = tmp_path / "decision.json"
+    plan_path.write_text(
+        _plan().model_dump_json(exclude_computed_fields=True),
+        encoding="utf-8",
+    )
+    evidence = (
+        _evidence(
+            "meeting",
+            "qwen",
+            "fun",
+            gates={"latency": "passed", "failure_rate": "passed"},
+        ),
+        _evidence(
+            "interaction",
+            "sense",
+            "fun",
+            gates={"echo_safety": "passed", "failure_rate": "passed"},
+        ),
+    )
+    evidence_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "analysis_plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+                "look": "core",
+                "comparisons": [item.model_dump(mode="json") for item in evidence],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "decide",
+            "--analysis-plan",
+            str(plan_path),
+            "--look",
+            "core",
+            "--evidence",
+            str(evidence_path),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["look"] == "core"
+    assert output.stat().st_mode & 0o777 == 0o600
+    assert main(
+        [
+            "decide",
+            "--analysis-plan",
+            str(plan_path),
+            "--look",
+            "core",
+            "--evidence",
+            str(evidence_path),
+            "--output",
+            str(output),
+        ]
+    ) == 2
