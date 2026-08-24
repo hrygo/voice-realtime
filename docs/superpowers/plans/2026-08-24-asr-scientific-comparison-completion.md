@@ -17,8 +17,8 @@
 **Execution status (2026-08-24):** Task 1 已按 TDD 完成并提交（`4a73bd9`、`ffbf810`）；Task 2/3 的
 Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交（`e8a23b2`）；Task 2–4 的
 运行级资源复用、离线 profile 调度、冻结身份核验和 runner 接线已提交（`7d3e241`）。ASR/benchmark
-专项 175 tests、strict mypy 与 ruff 已通过。2026-08-25 已批准 v1.2 时间优化；Qwen/Sense Stage 0
-尚未启动，Fun Stage 0 历史证据待身份核验后直接复用，模型和服务保持停止。
+专项测试、strict mypy 与 ruff 已通过。2026-08-25 已批准 v1.2 时间优化；Qwen/Sense/Fun MPS Stage 0
+已按同一协议串行完成，Fun CPU 保留历史兼容证据。三个 primary 臂均为 `feasible`，模型和服务已停止。
 
 ## Global Constraints
 
@@ -51,7 +51,7 @@ Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交�
 | Stage 4 | 每臂 5 轮 Screen，通过后延长至总计 10–15 轮 | baseline/finalist 同一冻结话术与 session |
 | Stage 5 | 每决策方向最多 1×60m | 会议与 Stage 3 共用 candidate 连续会话；交互 finalist 另跑 |
 | 生产收敛 | 3–5 轮增量 smoke | 身份不变时不重复 Stage 3/4/5 或固定 30 轮 |
-| 全实验机器墙钟 | 典型约 5.4–6.1h；最坏约 6.3–7.0h | 以未实测 Qwen RTF=1 作排程假设；Stage 0 后必须重算 |
+| 全实验机器墙钟 | Core 早决策约 4.4–5.1h；Reserve 全开约 4.5–5.3h | 以 Stage 0 三臂实测 warm RTF 排程；实时长跑为主体 |
 
 ---
 
@@ -295,7 +295,7 @@ Expected: corpus/analysis_plan 模块不存在而失败。
 20 名全局唯一说话人。Reliability Set 固定为 1×60m canonical cursor，不与 2×30m 重复执行。
 目标域只纳入已授权录音；不足配额时明确缺口，禁止用合成音频冒充 blind。
 
-- [ ] **Step 5: 运行 GREEN 并提交工具与文档**
+- [x] **Step 5: 运行 GREEN 并提交工具与文档**
 
 Run: `uv run pytest tests/benchmarks/test_asr_corpus.py tests/benchmarks/test_asr_analysis_plan.py tests/benchmarks/test_asr_manifest.py -q --no-cov`
 
@@ -311,29 +311,30 @@ git commit -m "feat(asr): 增加语料制备与盲测冻结工具"
 - Create: `docs/benchmarks/asr/stage0-v12-20260825/report.md`
 - Create: `docs/benchmarks/asr/stage0-v12-20260825/summary.csv`
 
-- [ ] **Step 1: 确认独占环境**
+- [x] **Step 1: 确认独占环境**
 
 确认 8100/8765/8001/10095 无监听，主机实验锁可独占取得，网络下载关闭，模型位于项目外且 hash 与
-manifest 一致。先核验既有 Fun MPS/CPU Stage 0 的 commit、profile、模型 hash 与产物；身份未漂移则
-标记 `reused`，不得为形式一致而重跑。不得同时运行任何其他模型或全量测试。
+manifest 一致。先核验既有 Fun MPS/CPU Stage 0 的 commit、profile、模型 hash 与产物。因 runner 超时
+收敛修复改变 Fun MPS 执行身份，最终统一重跑 Fun MPS；Fun CPU 仍标记 `reused`。不得同时运行任何
+其他模型或全量测试。
 
-- [ ] **Step 2: 冻结 Qwen3 与 SenseVoice Stage 0 manifests**
+- [x] **Step 2: 冻结 Qwen3 与 SenseVoice Stage 0 manifests**
 
 使用与既有 Fun-ASR Stage 0 相同 10 条门禁语料、PCM bytes、分段和逐样本 language；分别固定 Qwen3
-MPS、SenseVoice CPU 的模型文件全量 hash 和 profile 参数。Stage 0 只要求普通话、英文、静音、
+MPS、SenseVoice CPU、Fun-ASR MPS 的模型文件全量 hash 和 profile 参数。Stage 0 只要求普通话、英文、静音、
 结构、真实 device 和资源释放，不得扩展成准确率实验。
 
-- [ ] **Step 3: 依次运行，不并行**
+- [x] **Step 3: 依次运行，不并行**
 
-顺序执行 Qwen3 MPS → SenseVoice CPU；随后只读取核验既有 Fun-ASR MPS/CPU 结果。每臂进程退出且
-锁释放后才开始下一臂。Fun MPS 可行时，Fun CPU 保留设备兼容证据但不进入 Stage 1 正式排名。
+顺序执行 Qwen3 MPS → SenseVoice CPU → Fun-ASR MPS；随后只读取核验既有 Fun-ASR CPU 结果。每臂
+进程退出且锁释放后才开始下一臂。Fun MPS 可行时，Fun CPU 保留设备兼容证据但不进入 Stage 1 正式排名。
 
-- [ ] **Step 4: 汇总可行性而不宣称质量**
+- [x] **Step 4: 汇总可行性而不宣称质量**
 
 报告新运行的加载时间、warm RTF、峰值 RSS、失败和输出一致性，并明确区分 `executed` 与 `reused`；
 模型自带/合成样例不进入正式准确率结论。Qwen 实测 RTF 回填后重算 v1.2 全实验墙钟。
 
-- [ ] **Step 5: 验证并提交聚合报告**
+- [x] **Step 5: 验证并提交聚合报告**
 
 Run: `uv run pytest tests/benchmarks tests/asr -q --no-cov`
 

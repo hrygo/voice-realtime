@@ -1,0 +1,5 @@
+arm,status,evidence_scope,samples,failures,cold_first_wall_ms,warm_rtf_p50,warm_rtf_p95,warm_wall_p50_ms,warm_wall_p95_ms,macro_cer_gate_only,micro_cer_gate_only,peak_rss_bytes,peak_rss_scope,run_git_commit
+qwen3-asr-1.7b-mps,feasible,current-v1.2,10,0,3747.162,0.061875,0.078318,265.635,422.298,0.097120,0.087209,,unsupported-child-process,75e7c48532328b82d534343e7950d246f32b0942
+sensevoice-small-cpu,feasible,current-v1.2,10,0,3350.970,0.107983,0.148122,478.148,504.976,0.162016,0.183140,3335749632,parent-process,75e7c48532328b82d534343e7950d246f32b0942
+fun-asr-nano-2512-mps,feasible,current-v1.2,10,0,10850.309,0.057319,0.071019,241.978,388.490,0.069918,0.119186,7425671168,parent-process,75e7c48532328b82d534343e7950d246f32b0942
+fun-asr-nano-2512-cpu,reused,historical-stage0-only,10,0,12859.000,0.592400,0.756100,2623.000,2930.000,0.069918,0.119186,,historical-approximation,379ad7e6124db46f549504422b7e60dc3b9a6bb6

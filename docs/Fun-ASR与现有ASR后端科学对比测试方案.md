@@ -6,8 +6,8 @@
 > **状态**：**执行中（v1.2 设计已批准；须在 blind 开封前冻结 manifests 与 `analysis-plan.json`）**
 
 > **v1.2 修订摘要**：v1.1 的 105 分钟完整 Blind Set 保留为最大证据集，但拆为预冻结的 60 分钟
-> Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；已完成的 Fun-ASR
-> Stage 0 不重跑；Stage 2/4 先 screen、finalist 再 confirm；Stage 3 候选的前 30 分钟与 60 分钟
+> Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；三个 primary
+> 实验臂已完成统一 Stage 0；Stage 2/4 先 screen、finalist 再 confirm；Stage 3 候选的前 30 分钟与 60 分钟
 > reliability 长跑共用同一连续会话；Stage 5 只由每个决策方向的最终候选执行；生产收敛不重复已有
 > Stage 3/4/5 主测量。决策理由见 [ADR-004](decisions/0004-asr-sequential-evaluation.md)。
 
@@ -29,6 +29,7 @@
    - 3.3 [Stage 0 可行性门禁](#33-stage-0-可行性门禁)
    - 3.4 [Stage 0 初步探测记录（2026-08-24 22:21-22:23 CST）](#34-stage-0-初步探测记录2026-08-24-2221-2223-cst)
    - 3.5 [Stage 0 runner 门禁结果（2026-08-24 22:47-22:48 CST）](#35-stage-0-runner-门禁结果2026-08-24-2247-2248-cst)
+   - 3.6 [Stage 0 v1.2 三模型统一门禁结果（2026-08-25）](#36-stage-0-v12-三模型统一门禁结果2026-08-25)
 4. [语料设计（轻量化与正交多标签）](#4-语料设计轻量化与正交多标签)
    - 4.1 [精简三层语料体系](#41-精简三层语料体系)
    - 4.2 [目标域序贯正交配额（60 min Core + 45 min Reserve）](#42-目标域序贯正交配额60-min-core--45-min-reserve)
@@ -100,7 +101,7 @@
   - Fun-ASR-Nano-2512 已迁移至项目外的 ModelScope cache。`modelscope scan-cache` 能正确识别该 `FunAudioLLM/Fun-ASR-Nano-2512@master` 快照（21 个文件，约 2.0 GiB）；20 个非隐藏远端文件已通过 `modelscope cache verify`。校验器虽报告 `.gitattributes` 缺失，但文件实测存在，系工具对隐藏文件覆盖差异，快照完整性确认无误。
   - 当前 Qwen3-ASR 1.7B 已迁移至 ModelScope cache，Sortformer 已迁移至 Hugging Face cache 的固定 revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。
   - 上游完整性核验失败的非默认 Qwen3-ASR 0.6B ModelScope 旧快照已删除，不作为实验臂或回退来源。
-- **阶段门禁状态**：尚未启动固定官方 WebSocket 服务、开封 blind set 或产生任何选型结论。checkpoint 已完成 MPS/CPU Stage 0 本机功能门禁，但这不等于正式准确率比较或实时链路已通过。
+- **阶段门禁状态**：三个 primary 离线实验臂已完成 Stage 0 本机功能门禁；尚未启动固定官方 WebSocket 服务、开封 blind set 或产生任何选型结论。Stage 0 通过不等于正式准确率比较或实时链路已通过。
 
 > [!NOTE]
 > Runner 的 `--mode offline` 只表示“不等待 wall-clock 的 PCM 回放时序”：
@@ -122,7 +123,7 @@
 
 ```mermaid
 flowchart TD
-    A[核验既有 Fun Stage 0<br/>只补 Qwen/Sense] --> B[冻结 Dev + Core + Reserve<br/>分析计划与两个 look]
+    A[Stage 0 三个 primary 臂已完成] --> B[冻结 Dev + Core + Reserve<br/>分析计划与两个 look]
     B --> C[Stage 1A: 三 primary 臂各 60m Core]
     C --> D{Advance / Reject / Continue?}
     D -- Continue --> E[Stage 1B: 对应 family +45m Reserve]
@@ -233,9 +234,8 @@ SHA-256、文件清单和运行时识别结果。GGUF 在 v1.2 不下载、不�
 每个候选先用 10 个公开或自有短样本完成以下门禁检查：
 
 > [!IMPORTANT]
-> v1.2 执行时，Fun-ASR MPS/CPU 已有 §3.5 的 10 样本证据。只要模型 hash、profile、adapter 契约和
-> 运行身份未漂移，就标记 `reused` 而不重跑；本轮只补 Qwen MPS 与 SenseVoice CPU。Stage 0 因此是
-> 三模型、四实验臂的证据汇总，不是四臂都重新执行。
+> v1.2 最终为排除修复后身份差异，统一重跑 Qwen MPS、SenseVoice CPU 与 Fun-ASR MPS；Fun-ASR CPU
+> 仍复用历史 10 样本设备兼容证据。Stage 0 是三模型、四实验臂的可行性证据汇总，不是质量比较。
 
 1. **离线加载与网络隔离**：从项目外已校验 snapshot 本地离线加载，网络禁用时不尝试下载。
 2. **禁止静默 Fallback**：`FA-PT-MPS` 必须显式使用 MPS 并检查 profiler/log；任何 CPU fallback 都判该臂 `infeasible`，不得把 fallback 结果记为 MPS。
@@ -283,6 +283,27 @@ SHA-256、文件清单和运行时识别结果。GGUF 在 v1.2 不下载、不�
 - **设备与权限审计**：MPS run 设置 `PYTORCH_ENABLE_MPS_FALLBACK=0`，engine 强制检查模型参数全部位于 `mps:0`；两个 run 都关闭 hub 更新和网络访问，模型只加载一次，输出目录及所有逐字稿/事件文件权限分别为 `0700` 和 `0600`。
 - **一致性与置信区间**：MPS/CPU 的 9 条可计分输出逐字一致，10,000 次配对 bootstrap 的 CER 差 CI 为 `[0, 0]`；静音不进入 CER 分母。
 - **门禁结论**：本轮 CER 只反映门禁语料：模型自带样例存在来源偏倚，本机合成数字句又受到 ITN 表达差异影响，不得引用 `macro CER=0.0699` 作为模型质量结论。Stage 0 的唯一结论是 `FA-PT-MPS` 与 `FA-PT-CPU` 均为 `feasible`；MPS 在本轮 warm RTF 上明显更快，因此作为 Stage 1 主要 Fun-ASR 实验臂，CPU 保留为设备对照，不因此删除当前 Qwen3/SenseVoice 基线。
+
+### 3.6 Stage 0 v1.2 三模型统一门禁结果（2026-08-25）
+
+在 commit `75e7c48532328b82d534343e7950d246f32b0942` 上，以同一 10 条 PCM、20ms 分块、逐样本语言、
+120s final timeout 和相同盲测/显式评分协议，严格串行完成 Qwen3-ASR MPS、SenseVoice CPU 与
+Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `feasible`；Fun-ASR CPU 继续只保留
+历史 Stage 0 兼容证据。
+
+| 门禁指标 | Qwen3-ASR MPS | SenseVoice CPU | Fun-ASR MPS |
+|:---|---:|---:|---:|
+| 完成 / 失败样本数 | 10 / 0 | 10 / 0 | 10 / 0 |
+| 首条冷启动 wall | 3.747s | 3.351s | 10.850s |
+| Warm RTF P50 | 0.0619 | 0.1080 | 0.0573 |
+| Warm RTF P95 | 0.0783 | 0.1481 | 0.0710 |
+| Warm wall P50 | 266ms | 478ms | 242ms |
+| Warm wall P95 | 422ms | 505ms | 388ms |
+| 峰值 RSS | 不可比（隔离子进程未采样） | 3.11 GiB | 6.92 GiB |
+
+- **统计边界**：Warm 指标从原始运行顺序排除第一条计算；首条 wall 同时包含模型加载、首次编译和推理，不能当作纯加载时间。Qwen 当前资源记录只覆盖父进程，Stage 1 前必须补齐子进程树 RSS。
+- **已修复故障**：修复 Qwen venv 解释器入口被错误解析、SenseVoice 不完整旧 snapshot 被误选，以及 Fun-ASR MPS 超时后残留推理与下一样本重叠导致的 SIGSEGV。失败 run 单独保留，未混入最终结果。
+- **门禁结论**：三个 primary 臂均可进入独立 blind 质量比较；本轮 gate-only CER 仍受模型自带/合成样例偏倚，严禁作为选型依据。完整聚合证据见 [`docs/benchmarks/asr/stage0-v12-20260825/report.md`](benchmarks/asr/stage0-v12-20260825/report.md)。
 
 ---
 
@@ -570,7 +591,7 @@ Stage 1 的 60/45 分钟是音频覆盖，不是 wall-clock；离线墙钟按每
 
 | 阶段 | 所有可行臂 / Screen | Finalist / Winner 追加 | 时间压缩规则 |
 |:---|---:|---:|:---|
-| Stage 0 | 只补 Qwen MPS、Sense CPU 最小门禁 | Fun MPS/CPU 复用既有 10 样本证据 | snapshot/profile/hash 未变时不重跑历史门禁 |
+| Stage 0 | Qwen MPS、Sense CPU、Fun MPS 已完成统一门禁 | Fun CPU 复用既有 10 样本证据 | 三个 primary 臂均已判定 `feasible` |
 | Stage 1A | 60m Core，按各臂 RTF | — | Fun MPS 输出同时服务两个决策；Fun CPU 不进入正式排名 |
 | Stage 1B | 仅 `Continue` family 追加 45m | — | 只在预注册 final look 开封 Reserve |
 | Stage 2 | 每臂先跑 8–10m Screen | 通过后原 run 延长至总计 15–20m | baseline 与 finalist 使用同一冻结 block |
@@ -579,17 +600,17 @@ Stage 1 的 60/45 分钟是音频覆盖，不是 wall-clock；离线墙钟按每
 | Stage 5 | 不对所有晋级臂长跑 | 每个决策方向最多一个 finalist 运行 1×60m | 会议 candidate 与 Stage 3 共用同一 60m 连续会话 |
 | 生产收敛 | 3–5 轮增量 smoke | 配置身份变化才重跑受影响链路 | 不重复 Stage 3/4/5 和固定 30 轮 |
 
-当前可验证的规划输入为 SenseVoice RTF $\approx0.17$、Fun-ASR MPS warm P50 RTF $0.0618$；Qwen
-Stage 0 尚未实测，以 $q$ 表示其 RTF。仅 Stage 1 blind 的机器预算为：
+当前实测 warm P50 RTF 为 Qwen $0.0619$、SenseVoice $0.1080$、Fun-ASR MPS $0.0573$。仅 Stage 1
+blind 的机器预算为：
 
-$$T_{Core}=60(q+0.17+0.0618),\qquad T_{Full}=105(q+0.17+0.0618)\text{ min}$$
+$$T_{Core}=60(0.0619+0.1080+0.0573)\approx13.6\text{ min}$$
 
-若仅用于排程而暂取未验证假设 $q=1.0$，Core 约 73.9 分钟，完整 105 分钟约 129.3 分钟。加上
-Stage 2–5、锁/进程切换和温控恢复，在 Fun 同时进入两个决策 finalist 的保守场景中：典型路径约
-5.4–6.1 小时，Reserve 全开的最坏路径约 6.3–7.0 小时；Fun 在 Stage 1 被拒时约 2–3 小时结束。
-这些是排程估算，不是性能结论，Qwen Stage 0 后必须用实测 $q$ 重算。相对 v1.1 严格解释的约
-13–15 小时路径，预计减少约 45%–55% 机器墙钟。完整 reference 仍须在 Core 前冻结，10–15 人工工时
-不因机器早停自动减少。
+$$T_{Full}=105(0.0619+0.1080+0.0573)\approx23.9\text{ min}$$
+
+相较原先以 Qwen RTF=1 的排程假设，Core 与完整回放分别减少约 60 与 105 分钟。加上 Stage 2–5、
+锁/进程切换和温控恢复，当前估算 Core 早决策路径约 4.4–5.1 小时，Reserve 全开路径约 4.5–5.3 小时；
+其中实时链路与可靠性长跑已成为机器墙钟主体。这些仍是排程估算，不是质量或实时性能结论。完整
+reference 仍须在 Core 前冻结，10–15 人工工时不因离线回放加速而自动减少。
 
 ```mermaid
 flowchart TD
@@ -917,8 +938,8 @@ uv run vr-asr-benchmark compare \
 
 ## 11. 执行顺序与停止规则
 
-1. **补齐 Stage 0**：复用已完成且身份未漂移的 Fun-ASR MPS/CPU 历史门禁，只依次补跑 Qwen3 MPS、
-   SenseVoice CPU；这是三模型四实验臂的门禁，但 Fun CPU 后续默认不排名。
+1. **Stage 0 已完成**：Qwen3 MPS、SenseVoice CPU 与 Fun-ASR MPS 已按同一 v1.2 协议串行完成；
+   Fun-ASR CPU 复用历史设备兼容证据，后续不排名。
 2. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、Core、Reserve、两个
    manifest hash、分析 cluster、候选集合、MDE、alpha spending、模型 revision 和 primary profile。
 3. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
