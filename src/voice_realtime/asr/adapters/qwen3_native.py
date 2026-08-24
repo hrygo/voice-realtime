@@ -130,7 +130,9 @@ class Qwen3NativeWorkerConfig:
         if self.timeout_secs <= 0:
             raise ValueError("timeout_secs must be positive")
         object.__setattr__(self, "repo_root", resolved_repo)
-        object.__setattr__(self, "python_executable", python_executable.resolve(strict=True))
+        # venv/bin/python 通常是 symlink；解析到基础解释器会绕过 pyvenv.cfg，
+        # 从而丢失隔离环境的 site-packages。入口已在上方校验为本机可执行文件。
+        object.__setattr__(self, "python_executable", python_executable.absolute())
         object.__setattr__(self, "model_dir", resolved_model)
 
 

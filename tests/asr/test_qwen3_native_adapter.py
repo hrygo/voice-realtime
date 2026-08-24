@@ -218,6 +218,26 @@ def test_worker_rejects_non_executable_python(tmp_path: Path) -> None:
         )
 
 
+def test_worker_preserves_virtualenv_python_symlink(tmp_path: Path) -> None:
+    repo_root, model_dir, python = _snapshot(tmp_path)
+    base_python = tmp_path / "base-python"
+    base_python.write_bytes(b"base interpreter")
+    base_python.chmod(0o755)
+    python.unlink()
+    python.symlink_to(base_python)
+
+    config = Qwen3NativeWorkerConfig(
+        repo_root=repo_root,
+        python_executable=python,
+        model_dir=model_dir,
+        device="mps",
+    )
+
+    assert config.python_executable == python.absolute()
+    assert config.python_executable != base_python.resolve()
+    assert build_qwen3_worker_command(config)[0] == str(python.absolute())
+
+
 def _worker(
     tmp_path: Path,
     process: FakeProcess,
