@@ -43,6 +43,7 @@ from voice_realtime.benchmarks.asr.replay import (
     score_hypotheses,
     write_json,
 )
+from voice_realtime.benchmarks.resource_lock import exclusive_resource_lock
 
 _PROFILE_ADAPTER: TypeAdapter[ASRProfile] = TypeAdapter(ASRProfile)
 
@@ -149,6 +150,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--chunk-ms", type=int, default=20)
     run_parser.add_argument("--final-timeout-secs", type=float, default=8.0)
+    run_parser.add_argument(
+        "--resource-lock",
+        help="主机级实验排他锁路径；默认使用项目外的用户 cache",
+    )
+    run_parser.add_argument("--lock-timeout-secs", type=float, default=0.0)
 
     score_parser = subparsers.add_parser("score", help="从 hypotheses.jsonl 重新生成汇总")
     score_parser.add_argument("--run-dir", required=True)
@@ -162,7 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_command(args: argparse.Namespace) -> int:
+def _run_command_locked(args: argparse.Namespace) -> int:
     manifest_path = Path(str(args.manifest))
     corpus_path = Path(str(args.corpus))
     profile_path = Path(str(args.profile))
@@ -228,6 +234,18 @@ def _run_command(args: argparse.Namespace) -> int:
         )
     )
     return 0 if result.failed_samples == 0 else 1
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    """在验证、加载模型和封存产物的完整生命周期内持有排他锁。"""
+    lock_value = args.resource_lock
+    lock_path = Path(str(lock_value)) if lock_value else None
+    with exclusive_resource_lock(
+        lock_path,
+        timeout_secs=float(args.lock_timeout_secs),
+        run_id=Path(str(args.manifest)).stem,
+    ):
+        return _run_command_locked(args)
 
 
 def _score_command(args: argparse.Namespace) -> int:

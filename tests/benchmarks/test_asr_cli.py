@@ -63,6 +63,31 @@ def test_parser_exposes_run_score_compare_subcommands() -> None:
     ).command == "compare"
 
 
+def test_run_parser_exposes_resource_lock_controls() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(
+        [
+            "run",
+            "--manifest",
+            "run.json",
+            "--corpus",
+            "corpus.json",
+            "--corpus-root",
+            "corpus",
+            "--profile",
+            "profile.json",
+            "--resource-lock",
+            "/tmp/asr-test.lock",
+            "--lock-timeout-secs",
+            "1.5",
+        ]
+    )
+
+    assert args.resource_lock == "/tmp/asr-test.lock"
+    assert args.lock_timeout_secs == 1.5
+
+
 def test_run_target_must_be_loopback() -> None:
     assert _loopback_service_url("127.0.0.1", 8001) == "ws://127.0.0.1:8001"
     assert _loopback_service_url("::1", 8001) == "ws://[::1]:8001"
