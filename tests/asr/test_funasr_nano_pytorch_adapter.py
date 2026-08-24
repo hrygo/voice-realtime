@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -199,6 +200,39 @@ async def test_close_is_idempotent_and_unblocks_single_event_consumer() -> None:
         await asyncio.wait_for(_next_event(events), timeout=0.2)
     with pytest.raises(RuntimeError, match="FUNASR_CLOSED"):
         await adapter.finish()
+
+
+async def test_close_waits_for_timed_out_thread_inference() -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingEngine:
+        def __call__(
+            self,
+            audio: object,
+            *,
+            language: str,
+            hotwords: Sequence[str],
+            itn: bool,
+        ) -> object:
+            del audio, language, hotwords, itn
+            started.set()
+            assert release.wait(timeout=2.0)
+            return "完成"
+
+    adapter = _adapter(BlockingEngine())
+    await adapter.connect()
+    await adapter.send_audio(np.zeros(160, dtype=np.int16).tobytes())
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(adapter.finish(), timeout=0.01)
+    assert started.is_set()
+    close_task = asyncio.create_task(adapter.close())
+    await asyncio.sleep(0.01)
+    assert not close_task.done()
+
+    release.set()
+    await asyncio.wait_for(close_task, timeout=1.0)
 
 
 async def test_events_allows_only_one_consumer() -> None:

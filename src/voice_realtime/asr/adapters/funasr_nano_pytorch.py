@@ -489,6 +489,16 @@ class FunASRNanoPyTorchAdapter:
 
         if self._closed:
             return
+        if self._finish_task is not None and not self._finish_task.done():
+            try:
+                # asyncio.to_thread 无法被取消；必须等底层推理退出，避免下一个
+                # 样本与残留 MPS kernel 并发并触发进程级崩溃。
+                await asyncio.shield(self._finish_task)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # finish() 已负责把稳定错误写入事件流；close 只做资源收敛。
+                pass
         self._closed = True
         self._connected = False
         self._pcm.clear()
