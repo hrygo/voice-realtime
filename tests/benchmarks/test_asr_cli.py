@@ -17,6 +17,7 @@ from voice_realtime.asr.profiles import FunASRNanoPyTorchProfile, FunASRNanoWSPr
 from voice_realtime.benchmarks.asr.cli import (
     _build_streaming_registry,
     _loopback_service_url,
+    _open_reference_manifest,
     _require_compatible_mode,
     _require_external_model_dir,
     _run_command,
@@ -373,6 +374,13 @@ def test_score_command_writes_summary(tmp_path: Path) -> None:
     assert summary["macro_cer"] == 0.25
     assert (run_dir / "scored-hypotheses.jsonl").exists()
     assert "reference_raw" not in blind_rows[0]
+
+    opened_hash, opened = _open_reference_manifest(reference_path)
+    assert opened_hash == reference_hash
+    assert opened.input_manifest_sha256 == input_hash
+    reference_path.chmod(0o644)
+    with pytest.raises(ValueError, match="sealed 000 or opened 0600"):
+        _open_reference_manifest(reference_path)
 
 
 def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:

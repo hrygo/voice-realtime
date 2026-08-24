@@ -40,6 +40,7 @@ from voice_realtime.benchmarks.asr.backend_factory import (
 from voice_realtime.benchmarks.asr.corpus import load_preparation_spec, prepare_corpus
 from voice_realtime.benchmarks.asr.manifest import (
     BenchmarkSample,
+    CorpusReferenceManifest,
     load_corpus_input_manifest,
     load_reference_manifest,
     load_run_manifest,
@@ -155,6 +156,19 @@ def _verify_replay_identity(
         raise ValueError("ASR chunk_ms does not match run manifest")
     if parameters.get("final_timeout_secs") != final_timeout_secs:
         raise ValueError("ASR final_timeout_secs does not match run manifest")
+
+
+def _open_reference_manifest(path: Path) -> tuple[str, CorpusReferenceManifest]:
+    """首次从 000 开盲；同一 look 后续只接受 0600 已开封制品。"""
+    mode = path.stat().st_mode & 0o777
+    if mode == 0:
+        artifact_hash = sealed_sha256(path)
+        path.chmod(0o600)
+    elif mode == 0o600:
+        artifact_hash = sha256_file(path)
+    else:
+        raise ValueError("reference manifest must be sealed 000 or opened 0600")
+    return artifact_hash, load_reference_manifest(path)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -299,10 +313,9 @@ def _score_command(args: argparse.Namespace) -> int:
     run_dir = Path(str(args.run_dir))
     manifest = load_run_manifest(run_dir / "manifest.json")
     reference_path = Path(str(args.references))
-    if sealed_sha256(reference_path) != manifest.reference_manifest_sha256:
+    reference_hash, references = _open_reference_manifest(reference_path)
+    if reference_hash != manifest.reference_manifest_sha256:
         raise ValueError("reference manifest SHA-256 does not match run manifest")
-    reference_path.chmod(0o600)
-    references = load_reference_manifest(reference_path)
     if references.input_manifest_sha256 != manifest.corpus_manifest_sha256:
         raise ValueError("reference manifest is not bound to this corpus input")
     scored = score_blind_hypotheses(
