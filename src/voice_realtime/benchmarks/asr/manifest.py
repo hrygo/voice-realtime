@@ -205,6 +205,12 @@ class CorpusInputSample(_FrozenModel):
     audio_sha256: str
     duration_ms: int = Field(gt=0)
     session_id: str = Field(min_length=1, max_length=200)
+    source_id: str | None = Field(default=None, min_length=1, max_length=300)
+    content_group_id: str | None = Field(default=None, min_length=1, max_length=300)
+    source_sample_rate_hz: Literal[16000] | None = None
+    start_frame: int | None = Field(default=None, ge=0)
+    end_frame: int | None = Field(default=None, gt=0)
+    channel_index: int | None = Field(default=None, ge=0, le=63)
     scenario: str = Field(min_length=1, max_length=200)
     language: str = Field(min_length=1, max_length=64)
     license_or_consent: str = Field(min_length=1, max_length=500)
@@ -244,6 +250,23 @@ class CorpusInputSample(_FrozenModel):
         if len(normalized) != len(set(normalized)):
             raise ValueError("文本标签必须唯一")
         return normalized
+
+    @field_validator("source_id", "content_group_id")
+    @classmethod
+    def _strip_optional_identity(cls, value: str | None) -> str | None:
+        return None if value is None else value.strip()
+
+    @model_validator(mode="after")
+    def _validate_source_segment(self) -> Self:
+        if (self.start_frame is None) != (self.end_frame is None):
+            raise ValueError("source segment requires both start_frame and end_frame")
+        if (
+            self.start_frame is not None
+            and self.end_frame is not None
+            and self.end_frame <= self.start_frame
+        ):
+            raise ValueError("source segment end must be greater than start")
+        return self
 
 
 class CorpusInputManifest(_FrozenModel):

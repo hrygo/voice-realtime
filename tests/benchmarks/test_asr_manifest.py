@@ -127,6 +127,11 @@ def test_blind_input_manifest_round_trip_contains_no_reference(tmp_path: Path) -
         language="zh",
         license_or_consent="consent-001",
         speakers=("speaker-001",),
+        source_id="source-001",
+        content_group_id="content-001",
+        start_frame=16_000,
+        end_frame=16_320,
+        channel_index=0,
     )
     manifest = CorpusInputManifest(
         corpus_version="blind-core-v1",
@@ -139,6 +144,7 @@ def test_blind_input_manifest_round_trip_contains_no_reference(tmp_path: Path) -
     write_corpus_input_manifest(path, manifest)
 
     assert load_corpus_input_manifest(path) == manifest
+    assert manifest.samples[0].content_group_id == "content-001"
     assert "reference" not in path.read_text(encoding="utf-8")
 
     payload = manifest.model_dump(mode="json")

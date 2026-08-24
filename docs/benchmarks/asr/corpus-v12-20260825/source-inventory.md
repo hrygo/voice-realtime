@@ -5,9 +5,9 @@
 
 ## 结论
 
-采用 AliMeeting Eval、ASCEND 与 HI-MIA-CW 的最小组合，不再下载 MagicData-RAMC 与 MUSAN。当前下载量约 4.97 GiB，已覆盖会议/近讲/室内噪声、普通话-英语 code-switch、香港地区口音和中文混淆词负样本；与原组合相比减少约 26 GiB 下载，并避开 MagicData 的 `CC BY-NC-ND 4.0` 限制。
+采用 AliMeeting Eval、ASCEND 与 HI-MIA-CW 的最小组合，不再下载 MagicData-RAMC 与 MUSAN。当前下载量约 4.97 GiB，提供会议/近讲、普通话-英语 code-switch、潜在噪声/口音候选和中文混淆词负样本；与原组合相比减少约 26 GiB 下载，并避开 MagicData 的 `CC BY-NC-ND 4.0` 限制。`noise` 必须补测 SNR/混响，`accent` 必须人工审听，不能仅由 far-field 或香港来源自动贴标签。
 
-这些数据作为“本项目用途相近的公共代理 blind”，不是本产品用户真实录音。若最终模型差异的 CI 跨越门槛，结论必须降级为 `Experimental`，并补充已授权的真实产品域语料，不能把公共代理结果夸大为生产域确定性结论。本轮未扫描或读取个人录音目录。
+这些数据作为“本项目用途相近的公共代理集”，不是本产品用户真实录音，也可能已进入候选模型训练。它只用于转换/封存管线验收、Dev/标注校准、延迟资源和公开代理证据，不与正式 Core/Reserve 合并，不能声称是未见数据或据此完成生产选型。正式选型仍需在任何模型输出可见前冻结已授权目标域 blind；缺少该语料时结论保持 `Experimental`。本轮未扫描或读取个人录音目录。
 
 ## 来源、许可与制品
 
@@ -44,18 +44,18 @@ ModelScope 优先策略已实测执行：
 | Split | Sessions | Speakers | 主要用途 |
 |:---|:---|---:|:---|
 | Dev | `R8007_M8010` | 4 | 高重叠校准，不进入 blind |
-| Core | `R8001_M8004`、`R8003_M8001`、`R8008_M8013` | 11 | near-field、meeting、noise、entity |
-| Reserve | `R8007_M8011`、`R8009_M8018`、`R8009_M8019`、`R8009_M8020` | 10 | near-field、meeting、noise、entity |
+| Proxy Core | `R8001_M8004`、`R8003_M8001`、`R8008_M8013` | 11 | near-field、meeting、noise/entity 候选 |
+| Proxy Reserve | `R8007_M8011`、`R8009_M8018`、`R8009_M8019`、`R8009_M8020` | 10 | near-field、meeting、noise/entity 候选 |
 
-远场抽样固定使用同一阵列通道，不对 8 通道做平均混音；Stage 1 CER 只采用无跨 speaker overlap 的标注区间。含 overlap 的连续会议留给 Stage 2/3 流式与系统链路，不混入单一文本 CER 主指标。
+远场抽样固定使用同一阵列通道，不对 8 通道做平均混音；单流 CER 只采用无跨 speaker overlap 的完整标注区间。含 overlap 的连续会议保留为 secondary stress set，使用多说话人/时间轴指标，不混入单一文本 CER 主指标。near/far 同一会议必须绑定同一 split，并以 `content_group_id` 防止跨 split 泄漏。
 
 ### ASCEND
 
 | Split | Rows | 实测时长 | Speakers | 用途 |
 |:---|---:|---:|---:|:---|
 | train | 9,869 | 31,589,400ms | 18 | Dev / Public 候选池 |
-| validation | 1,130 | 3,323,603ms | 3 | Reserve code-switch / accent |
-| test | 1,315 | 3,302,971ms | 2 | Core code-switch / accent |
+| validation | 1,130 | 3,323,603ms | 3 | Proxy Reserve code-switch / accent 候选 |
+| test | 1,315 | 3,302,971ms | 2 | Proxy Core code-switch / accent 候选 |
 
 三个 split 的 speaker 集合实测互斥。`session_id` 数字在不同 split 中重复，因此冻结 ID 必须使用 `ascend:<split>:<session_id>` 命名空间，禁止按裸整数判断 session 隔离。
 
@@ -71,5 +71,6 @@ ModelScope 优先策略已实测执行：
 - [x] 三个 blind 来源许可均按上游 `CC BY-SA 4.0` 记录。
 - [ ] 采用固定 seed `asr-v1.2-20260825` 生成确定性候选顺序。
 - [ ] 主场景配额严格等于 Core 9/17/9/11/6/6/2 分钟和 Reserve 6/13/6/9/4/4/3 分钟。
-- [ ] AliMeeting entity 标签逐条人工复核，不能仅凭普通中文文本自动推断。
-- [ ] Core/Reserve reference、manifest、cluster 与 `analysis-plan.json` 在任何 blind 输出产生前同时封存。
+- [ ] `noise` 具有实测 SNR/混响或明确环境证据，`accent` 经人工审听，`entity` 经冻结词典与人工复核。
+- [ ] 公共代理输入/reference 与正式目标域 blind 使用不同 corpus version 和目录，指标不得合并。
+- [ ] 正式 Core/Reserve reference、manifest、cluster、provenance 与 `analysis-plan.json` 在任何 blind 输出产生前同时封存。

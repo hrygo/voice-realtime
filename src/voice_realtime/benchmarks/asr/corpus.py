@@ -93,6 +93,12 @@ class CorpusSourceSample(_FrozenModel):
     source_path: str = Field(min_length=1, max_length=1000)
     expected_duration_ms: int = Field(gt=0)
     session_id: str = Field(min_length=1, max_length=200)
+    source_id: str = Field(min_length=1, max_length=300)
+    content_group_id: str = Field(min_length=1, max_length=300)
+    source_sample_rate_hz: Literal[16000] = 16000
+    start_frame: int | None = Field(default=None, ge=0)
+    end_frame: int | None = Field(default=None, gt=0)
+    channel_index: int | None = Field(default=None, ge=0, le=63)
     scenario: str = Field(min_length=1, max_length=200)
     language: str = Field(min_length=1, max_length=64)
     reference_raw: str = Field(max_length=500_000)
@@ -104,6 +110,8 @@ class CorpusSourceSample(_FrozenModel):
     @field_validator(
         "sample_id",
         "session_id",
+        "source_id",
+        "content_group_id",
         "scenario",
         "language",
         "license_or_consent",
@@ -130,6 +138,22 @@ class CorpusSourceSample(_FrozenModel):
         if len(normalized) != len(set(normalized)):
             raise ValueError("speaker/tag/hotword 必须唯一")
         return normalized
+
+    @model_validator(mode="after")
+    def _validate_frame_segment(self) -> Self:
+        if (self.start_frame is None) != (self.end_frame is None):
+            raise ValueError("frame segment requires both start_frame and end_frame")
+        if self.start_frame is None or self.end_frame is None:
+            return self
+        if self.end_frame <= self.start_frame:
+            raise ValueError("frame segment end must be greater than start")
+        frames_per_millisecond = self.source_sample_rate_hz // 1000
+        frame_count = self.end_frame - self.start_frame
+        if frame_count % frames_per_millisecond or (
+            frame_count // frames_per_millisecond != self.expected_duration_ms
+        ):
+            raise ValueError("frame segment must exactly match expected_duration_ms")
+        return self
 
 
 class CorpusPreparationSpec(_FrozenModel):
@@ -188,6 +212,21 @@ class CorpusPreparationSpec(_FrozenModel):
         reserve_speakers = {speaker for sample in reserve for speaker in sample.speakers}
         if core_speakers & reserve_speakers:
             raise ValueError("Core/Reserve speaker 不得重叠")
+        core_content_groups = {sample.content_group_id for sample in core}
+        reserve_content_groups = {sample.content_group_id for sample in reserve}
+        if core_content_groups & reserve_content_groups:
+            raise ValueError("Core/Reserve content group 不得重叠")
+        source_segments = [
+            (
+                sample.source_id,
+                sample.start_frame,
+                sample.end_frame,
+                sample.channel_index,
+            )
+            for sample in self.samples
+        ]
+        if len(source_segments) != len(set(source_segments)):
+            raise ValueError("source frame segment must be globally unique")
         if len(core_speakers) < self.minimum_speakers_per_look or len(
             reserve_speakers
         ) < self.minimum_speakers_per_look:
@@ -257,12 +296,19 @@ def _require_external_new_root(output_root: Path, repository_root: Path) -> None
         raise FileExistsError(f"frozen corpus output already exists: {output_root}")
 
 
-def _convert_to_pcm(source: Path, destination: Path, *, ffmpeg: str) -> None:
+def _convert_to_pcm(
+    source: Path,
+    destination: Path,
+    *,
+    ffmpeg: str,
+    start_frame: int | None,
+    end_frame: int | None,
+    channel_index: int | None,
+) -> None:
     if source.stat().st_size > _MAX_SOURCE_BYTES:
         raise ValueError("source audio exceeds 8 GiB")
     destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    subprocess.run(
-        [
+    argv = [
             ffmpeg,
             "-nostdin",
             "-hide_banner",
@@ -273,6 +319,19 @@ def _convert_to_pcm(source: Path, destination: Path, *, ffmpeg: str) -> None:
             "-map_metadata",
             "-1",
             "-vn",
+    ]
+    filters: list[str] = []
+    if channel_index is not None:
+        filters.append(f"pan=mono|c0=c{channel_index}")
+    if start_frame is not None and end_frame is not None:
+        filters.append(
+            f"atrim=start_sample={start_frame}:end_sample={end_frame}"
+        )
+        filters.append("asetpts=PTS-STARTPTS")
+    if filters:
+        argv.extend(("-af", ",".join(filters)))
+    argv.extend(
+        (
             "-ac",
             "1",
             "-ar",
@@ -282,7 +341,10 @@ def _convert_to_pcm(source: Path, destination: Path, *, ffmpeg: str) -> None:
             "-f",
             "s16le",
             str(destination),
-        ],
+        )
+    )
+    subprocess.run(
+        argv,
         check=True,
         capture_output=True,
         timeout=_FFMPEG_TIMEOUT_SECS,
@@ -388,7 +450,14 @@ def prepare_corpus(
             source = resolve_relative_file(resolved_source_root, source_sample.source_path)
             relative_pcm = f"pcm/{source_sample.sample_id}.pcm"
             pcm = staging_root / relative_pcm
-            _convert_to_pcm(source, pcm, ffmpeg=ffmpeg)
+            _convert_to_pcm(
+                source,
+                pcm,
+                ffmpeg=ffmpeg,
+                start_frame=source_sample.start_frame,
+                end_frame=source_sample.end_frame,
+                channel_index=source_sample.channel_index,
+            )
             pcm_size = pcm.stat().st_size
             if pcm_size == 0 or pcm_size % _PCM_BYTES_PER_MILLISECOND:
                 raise ValueError(f"invalid s16le PCM length: {source_sample.sample_id}")
@@ -405,6 +474,12 @@ def prepare_corpus(
                     audio_sha256=sha256_file(pcm),
                     duration_ms=duration_ms,
                     session_id=source_sample.session_id,
+                    source_id=source_sample.source_id,
+                    content_group_id=source_sample.content_group_id,
+                    source_sample_rate_hz=source_sample.source_sample_rate_hz,
+                    start_frame=source_sample.start_frame,
+                    end_frame=source_sample.end_frame,
+                    channel_index=source_sample.channel_index,
                     scenario=source_sample.scenario,
                     language=source_sample.language,
                     license_or_consent=source_sample.license_or_consent,

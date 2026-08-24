@@ -327,8 +327,9 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 截至 2026-08-25，已获取并校验最小公共代理候选池：AliMeeting Eval、ASCEND 与 HI-MIA-CW，原始制品
 均位于项目外；来源、许可冲突处理、SHA-256、speaker/session 实测与预分配见
 [`source-inventory.md`](benchmarks/asr/corpus-v12-20260825/source-inventory.md)。该组合用于与本项目用途相近
-的公共代理 blind，不冒充真实用户域；若结果未达到预注册显著性与非劣边界，必须补授权目标域语料并
-将当前结论保持为 `Experimental`。
+的公共代理集，只用于管线验收、Dev/标注校准、资源与公开代理证据，不冒充未见数据或真实用户域，
+也不与正式 Core/Reserve 指标合并。生产选型仍须补充并预冻结已授权目标域 blind；在此之前结论保持
+`Experimental`。
 
 ---
 

@@ -32,6 +32,11 @@ def _sample(
     speakers: tuple[str, ...] = (),
     tags: tuple[str, ...] = ("near-field", "entity"),
     license_or_consent: str = "consent-001",
+    source_id: str | None = None,
+    content_group_id: str | None = None,
+    start_frame: int | None = None,
+    end_frame: int | None = None,
+    channel_index: int | None = None,
 ) -> CorpusSourceSample:
     return CorpusSourceSample.model_validate(
         {
@@ -44,6 +49,11 @@ def _sample(
             "language": "zh",
             "reference_raw": "你好，开放时间。",
             "license_or_consent": license_or_consent,
+            "source_id": source_id or f"source-{sample_id}",
+            "content_group_id": content_group_id or f"content-{sample_id}",
+            "start_frame": start_frame,
+            "end_frame": end_frame,
+            "channel_index": channel_index,
             "speakers": speakers or (f"speaker-{sample_id}",),
             "tags": tags,
         }
@@ -114,6 +124,39 @@ def test_spec_rejects_duplicate_sample_ids_and_cross_look_cluster_leakage() -> N
     )
     with pytest.raises(ValidationError, match="speaker"):
         _spec((core, reserve))
+
+    reserve = reserve.model_copy(
+        update={
+            "session_id": "reserve-session",
+            "speakers": ("reserve-speaker",),
+            "content_group_id": core.content_group_id,
+        }
+    )
+    with pytest.raises(ValidationError, match="content group"):
+        _spec((core, reserve))
+
+
+def test_source_sample_requires_frame_exact_segment_boundaries() -> None:
+    segmented = _sample(
+        "segment",
+        split="dev",
+        duration_ms=2_000,
+        start_frame=16_000,
+        end_frame=48_000,
+        channel_index=3,
+    )
+
+    assert segmented.start_frame == 16_000
+    assert segmented.end_frame == 48_000
+
+    with pytest.raises(ValidationError, match="frame segment"):
+        _sample(
+            "mismatch",
+            split="dev",
+            duration_ms=2_001,
+            start_frame=16_000,
+            end_frame=48_000,
+        )
 
 
 def test_quota_summary_counts_unique_audio_once_across_orthogonal_tags() -> None:
@@ -227,6 +270,55 @@ def test_prepare_corpus_converts_once_and_freezes_separate_blind_references(
         output_root / "blind-reserve.json"
     )
     assert bundle.core_manifest_sha256 != bundle.reserve_manifest_sha256
+
+
+def test_prepare_corpus_uses_fixed_frame_and_channel_filter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "sources"
+    (source_root / "audio").mkdir(parents=True)
+    (source_root / "audio" / "core.wav").write_bytes(b"RIFF-source")
+    (source_root / "audio" / "reserve.wav").write_bytes(b"RIFF-source")
+    core = _sample(
+        "core",
+        split="blind-core",
+        duration_ms=60_000,
+        start_frame=160_000,
+        end_frame=1_120_000,
+        channel_index=2,
+    )
+    reserve = _sample("reserve", split="blind-reserve", duration_ms=45_000)
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **_kwargs: object) -> CompletedProcess[bytes]:
+        calls.append(argv)
+        expected_ms = (
+            60_000
+            if any(
+                "atrim=start_sample=160000:end_sample=1120000" in item
+                for item in argv
+            )
+            else 45_000
+        )
+        Path(argv[-1]).write_bytes(b"\x00\x00" * 16 * expected_ms)
+        return CompletedProcess(argv, 0, b"", b"")
+
+    monkeypatch.setattr("voice_realtime.benchmarks.asr.corpus.subprocess.run", fake_run)
+
+    prepare_corpus(
+        spec=_spec((core, reserve)),
+        source_root=source_root,
+        output_root=tmp_path / "out",
+        repository_root=tmp_path / "repo",
+    )
+
+    assert "-af" in calls[0]
+    audio_filter = calls[0][calls[0].index("-af") + 1]
+    assert audio_filter == (
+        "pan=mono|c0=c2,atrim=start_sample=160000:end_sample=1120000,"
+        "asetpts=PTS-STARTPTS"
+    )
 
 
 def test_prepare_corpus_rejects_symlink_escape_existing_output_and_repo_output(
