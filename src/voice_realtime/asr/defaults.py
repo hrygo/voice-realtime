@@ -22,6 +22,7 @@ from voice_realtime.asr.profiles import (
     ASRProfile,
     FunASRNanoPyTorchProfile,
     FunASRNanoWSProfile,
+    SenseVoiceNativeProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
 
@@ -36,7 +37,10 @@ def build_wlk_registry(
     registry = ASRBackendRegistry()
 
     def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
-        if isinstance(profile, (FunASRNanoWSProfile, FunASRNanoPyTorchProfile)):
+        if isinstance(
+            profile,
+            (FunASRNanoWSProfile, FunASRNanoPyTorchProfile, SenseVoiceNativeProfile),
+        ):
             raise TypeError("Fun-ASR profile cannot be constructed by the WLK registry")
         if stream_factory is None:
             return WLKStreamingAdapter(

@@ -130,11 +130,41 @@ class FunASRNanoPyTorchProfile(BaseModel):
         return normalized
 
 
+class SenseVoiceNativeProfile(BaseModel):
+    """SenseVoiceSmall 原生 CPU 离线实验臂。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["sensevoice-native"] = "sensevoice-native"
+    model_dir: Path
+    language: str = Field(min_length=1, max_length=64)
+    language_source: Literal["profile", "corpus"] = "corpus"
+    device: Literal["cpu"] = "cpu"
+    use_itn: bool = True
+    ncpu: int = Field(default=4, ge=1, le=32)
+
+    @field_validator("model_dir")
+    @classmethod
+    def _require_external_model_path(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("SenseVoice model_dir 必须是项目外模型缓存的绝对路径")
+        return value
+
+    @field_validator("language")
+    @classmethod
+    def _strip_language(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("字段不能为空")
+        return stripped
+
+
 ASRProfile = Annotated[
     WLKQwen3Profile
     | WLKSenseVoiceProfile
     | WLKAutoProfile
     | FunASRNanoWSProfile
-    | FunASRNanoPyTorchProfile,
+    | FunASRNanoPyTorchProfile
+    | SenseVoiceNativeProfile,
     Field(discriminator="kind"),
 ]
