@@ -94,4 +94,7 @@ Proxy Core 三臂串行回放、评分与 cluster bootstrap 已完成，汇总�
 - [x] 公共代理配额精确等于 Core 30/10/20 分钟和 Reserve 20/8/17 分钟。
 - [ ] `noise` 具有实测 SNR/混响或明确环境证据，`accent` 经人工审听，`entity` 经冻结词典与人工复核。
 - [x] 公共代理输入/reference 使用独立 corpus version 和目录；正式目标域 blind 将使用另一身份，指标不得合并。
+- [x] metadata-only `preflight-corpus`、项目外 source/output 边界、显式 `analysis_cluster_id` 与 formal
+  `freeze-analysis` 语义绑定工具已实现；操作契约见
+  [`../target-domain-preflight-v1/README.md`](../target-domain-preflight-v1/README.md)。
 - [ ] 正式 Core/Reserve reference、manifest、cluster、provenance 与 `analysis-plan.json` 在任何 blind 输出产生前同时封存。

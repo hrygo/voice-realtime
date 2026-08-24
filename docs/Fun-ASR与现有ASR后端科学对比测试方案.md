@@ -518,6 +518,8 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 - **EOF 完整率**：reference 尾部最后 1 秒内容被 final 保留的会话比例。
 - **Confirmed 单调性**：同 epoch 已确认内容被删除或时间倒退的次数。
 - **重连覆盖率**：注入断线前后，除明确 gap 外的音频是否全部有唯一归属。
+  `SubtitleProxy` 已使用 canonical 输入游标记录 backoff 期间实际收到但未送入 ASR 的区间；新 epoch
+  从 gap 结束位置开始，无丢音时不再产生零长度 gap。正式 Stage 3/5 仍须用固定 fault cursor 实测。
 - **Exactly-Once 持久化**：重复 full snapshot/重连/EOF 后 PostgreSQL 无重复 segment。
 - **隐私与存储安全**：项目运行目录和数据库中绝对不存在音频 payload；journal 仅含允许的 confirmed 文本操作。
 
@@ -831,11 +833,14 @@ docs/benchmarks/asr/<experiment-family>/
 > [!IMPORTANT]
 > `runtime/` 产物不入库；入库报告只包含聚合数据、失败样本匿名 ID 和可复现元数据，严格不含音频或敏感逐字稿。
 
-`analysis-plan.json` 至少增加：`core_manifest_sha256`、`reserve_manifest_sha256`、
-`core_duration_ms`、`reserve_duration_ms`、`analysis_cluster_ids`、`look_alpha=[0.01,0.04]`、
-`conditional_power_futility=0.20`、`core_bootstrap_seed`、`final_bootstrap_seed`、固定候选集合，以及
-`stopped_at=core|reserve|completed`。Core/Reserve hypotheses 分目录保存，final 分析使用两段的并集，
-不得覆盖 Core 产物。
+`analysis-plan.json` 至少增加：`evidence_tier=formal`、`core_manifest_sha256`、
+`reserve_manifest_sha256`、`preflight_report_sha256`、`candidate_profile_sha256`、
+`core_duration_ms`、`reserve_duration_ms`、显式 Core/Reserve `analysis_cluster_ids`、sample-order hash、
+主终点、归一化与过滤规则、
+`look_alpha=[0.01,0.04]`、`conditional_power_futility=0.20`、两个 bootstrap seed、固定 Holm family
+与 `allowed_stopping_states=[core,reserve,completed]`。实际 `stopped_at` 写入每次 look 的独立决策报告，
+不回写已冻结的 analysis plan。Core/Reserve hypotheses 分目录保存，final 分析使用两段的并集，不得覆盖
+Core 产物。
 
 ---
 
@@ -845,11 +850,15 @@ docs/benchmarks/asr/<experiment-family>/
 `analysis-plan.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与模型均位于项目目录外；
 runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只使用相对于各自根目录的文件路径。
 
-截至 2026-08-25，`prepare-corpus` 与 `freeze-analysis` 已实现：WAV/FLAC 只经固定 `ffmpeg` argv 转换
-一次为 16 kHz mono s16le，记录 source/PCM SHA-256 与实际时长；Core/Reserve 输入清单不含参考，
-两份 reference manifest 同时以 mode `000` 封存。`freeze-analysis` 仅在两份 reference 均已封存、
-四个制品 hash 全匹配时写入 `analysis-plan.json`。mode `000` 是本机流程门禁，不等价于跨账户加密；
-正式执行仍须保持 runner 账户无 reference 访问能力，并只由显式 scorer 开盲。
+截至 2026-08-25，`preflight-corpus`、`prepare-corpus` 与正式 `freeze-analysis` 已实现：metadata-only
+预检不读取音频或逐字稿，只核验匿名 token、授权/脱敏/人工复核状态、配额、跨 look 隔离和 reference
+制品状态；WAV/FLAC 只经固定 `ffmpeg` argv 转换一次为 16 kHz mono s16le，记录 source/PCM SHA-256
+与实际时长，且 source/output root 均必须在项目外；Core/Reserve 输入清单不含参考，两份 reference
+manifest 同时以 mode `000` 封存。`freeze-analysis` 仅在两份 reference 均已封存、preflight 为
+`metadata_ready`、reference 与 input 的 split/version/hash/sample set 全部一致、显式 cluster 与时长
+匹配、所有候选 profile hash 完整时，才原子写入不可覆盖的 `formal` analysis plan。mode `000` 是本机
+流程门禁，不等价于跨账户加密；正式执行仍须保持 runner 账户无 reference 访问能力，并只由显式
+scorer 开盲。
 
 #### Profile 配置示例
 
@@ -896,6 +905,27 @@ runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只�
 #### CLI 执行命令
 
 ```bash
+VR_ASR_EXTERNAL_ROOT=/path/to/external/voice-realtime/asr/<corpus-version>
+
+# 0. 不读取音频的目标域 metadata 预检
+uv run vr-asr-benchmark preflight-corpus \
+  --metadata "$VR_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
+  --output-report "$VR_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
+  --repo-root .
+
+# 0.1 Core/Reserve 与 reference 同时封存后，冻结正式分析计划
+uv run vr-asr-benchmark freeze-analysis \
+  --design manifests/analysis-design.json \
+  --core-manifest "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --reserve-manifest "$VR_ASR_EXTERNAL_ROOT/blind-reserve.json" \
+  --core-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-core.references.json" \
+  --reserve-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-reserve.references.json" \
+  --preflight-report "$VR_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
+  --profile qwen=manifests/qwen.profile.json \
+  --profile sense=manifests/sense.profile.json \
+  --profile fun=manifests/fun.profile.json \
+  --output docs/benchmarks/asr/<experiment-family>/analysis-plan.json
+
 # 1. 运行基准评测
 uv run vr-asr-benchmark run \
   --manifest manifests/run.json \
@@ -915,6 +945,7 @@ uv run vr-asr-benchmark compare \
   --baseline runtime/benchmarks/asr/<baseline-run-id> \
   --candidate runtime/benchmarks/asr/<candidate-run-id> \
   --corpus manifests/corpus.json \
+  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
   --output runtime/benchmarks/asr/comparisons/<comparison-id>.json \
   --bootstrap-iterations 10000 \
   --seed 20260824
@@ -922,6 +953,10 @@ uv run vr-asr-benchmark compare \
 
 > [!CAUTION]
 > `run` 拒绝覆盖已有产物；任一样本失败仍写入 `failures.jsonl` 和带显式 `error_status` 的 `hypotheses.jsonl`，不删除失败样本，也不把 `unsupported`、`missing` 或 `infeasible` 填成 0。
+> `compare` 默认要求 `--corpus` 并使用显式 `analysis_cluster_id` 做 cluster bootstrap；只有同时绑定
+> hash 匹配的 `--analysis-plan` 才标记为 `formal`，否则标记为 `cluster_calibration`。只有明确传入
+> `--exploratory-sample-bootstrap` 才允许 sample-level 重采样，输出标记为 `exploratory`。后两者均不得
+> 进入 Stage 1 晋级决策。
 
 ---
 

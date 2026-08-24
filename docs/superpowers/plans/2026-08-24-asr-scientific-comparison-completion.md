@@ -389,6 +389,10 @@ git commit -m "docs(asr): 冻结Stage1盲测分析计划"
 
 ### Task 8: 执行 Stage 1 Core/Reserve 并做序贯晋级决策
 
+> 2026-08-25 前置实现已完成：确定性 `report.py`、Holm family、Core/Final 状态机、formal/exploratory
+> 隔离、正式 cluster 门禁、metadata-only preflight 与 formal freeze 语义绑定均已有测试。正式 Core/Reserve
+> 尚未执行；必须等待获授权目标域音频、双人标注/裁决和两段 reference 同时封存。
+
 **Files:**
 - Create: `src/voice_realtime/benchmarks/asr/report.py`
 - Create: `tests/benchmarks/test_asr_report.py`
@@ -472,6 +476,10 @@ git commit -m "feat(asr): 增加Fun-ASR本机流式候选服务"
 ```
 
 ### Task 10: 串行执行 Stage 2 流式 Screen 与 Confirm
+
+> 2026-08-25 共用前置契约已完成：`stage_contracts.py` 冻结 Screen→Confirm 顺序、schedule/fault/config
+> hash、Stage 5 固定故障预算和 artifact index，并禁止 Stage 2–4 输出 `Promote`；SubtitleProxy 的重连
+> gap 已改为 canonical 输入游标的真实非零区间。候选专用 harness 仍严格等待 Stage 1 finalist。
 
 **Files:**
 - Create: `docs/benchmarks/asr/stage2-v12-20260825/report.md`
