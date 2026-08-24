@@ -95,6 +95,7 @@ class CorpusSourceSample(_FrozenModel):
     session_id: str = Field(min_length=1, max_length=200)
     source_id: str = Field(min_length=1, max_length=300)
     content_group_id: str = Field(min_length=1, max_length=300)
+    analysis_cluster_id: str | None = Field(default=None, min_length=1, max_length=300)
     source_sample_rate_hz: Literal[16000] = 16000
     start_frame: int | None = Field(default=None, ge=0)
     end_frame: int | None = Field(default=None, gt=0)
@@ -119,6 +120,11 @@ class CorpusSourceSample(_FrozenModel):
     @classmethod
     def _strip_required_text(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("analysis_cluster_id")
+    @classmethod
+    def _strip_optional_cluster(cls, value: str | None) -> str | None:
+        return None if value is None else value.strip()
 
     @field_validator("source_path")
     @classmethod
@@ -216,6 +222,14 @@ class CorpusPreparationSpec(_FrozenModel):
         reserve_content_groups = {sample.content_group_id for sample in reserve}
         if core_content_groups & reserve_content_groups:
             raise ValueError("Core/Reserve content group 不得重叠")
+        core_analysis_clusters = {
+            sample.analysis_cluster_id or sample.content_group_id for sample in core
+        }
+        reserve_analysis_clusters = {
+            sample.analysis_cluster_id or sample.content_group_id for sample in reserve
+        }
+        if core_analysis_clusters & reserve_analysis_clusters:
+            raise ValueError("Core/Reserve analysis cluster 不得重叠")
         source_segments = [
             (
                 sample.source_id,
@@ -294,6 +308,14 @@ def _require_external_new_root(output_root: Path, repository_root: Path) -> None
         raise ValueError("corpus output_root must be outside the repository")
     if output_root.exists():
         raise FileExistsError(f"frozen corpus output already exists: {output_root}")
+
+
+def _require_external_source_root(source_root: Path, repository_root: Path) -> Path:
+    resolved_source = source_root.resolve(strict=True)
+    resolved_repository = repository_root.resolve(strict=False)
+    if resolved_source.is_relative_to(resolved_repository):
+        raise ValueError("corpus source_root must be outside the repository")
+    return resolved_source
 
 
 def _convert_to_pcm(
@@ -436,7 +458,7 @@ def prepare_corpus(
 ) -> PreparedCorpusBundle:
     """一次转码并原子冻结清单、参考和 checksum；拒绝覆盖。"""
     _require_external_new_root(output_root, repository_root)
-    resolved_source_root = source_root.resolve(strict=True)
+    resolved_source_root = _require_external_source_root(source_root, repository_root)
     output_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     staging_root = Path(
         tempfile.mkdtemp(prefix=f".{output_root.name}.", dir=output_root.parent)
@@ -476,6 +498,10 @@ def prepare_corpus(
                     session_id=source_sample.session_id,
                     source_id=source_sample.source_id,
                     content_group_id=source_sample.content_group_id,
+                    analysis_cluster_id=(
+                        source_sample.analysis_cluster_id
+                        or source_sample.content_group_id
+                    ),
                     source_sample_rate_hz=source_sample.source_sample_rate_hz,
                     start_frame=source_sample.start_frame,
                     end_frame=source_sample.end_frame,

@@ -207,6 +207,7 @@ class CorpusInputSample(_FrozenModel):
     session_id: str = Field(min_length=1, max_length=200)
     source_id: str | None = Field(default=None, min_length=1, max_length=300)
     content_group_id: str | None = Field(default=None, min_length=1, max_length=300)
+    analysis_cluster_id: str | None = Field(default=None, min_length=1, max_length=300)
     source_sample_rate_hz: Literal[16000] | None = None
     start_frame: int | None = Field(default=None, ge=0)
     end_frame: int | None = Field(default=None, gt=0)
@@ -251,7 +252,7 @@ class CorpusInputSample(_FrozenModel):
             raise ValueError("文本标签必须唯一")
         return normalized
 
-    @field_validator("source_id", "content_group_id")
+    @field_validator("source_id", "content_group_id", "analysis_cluster_id")
     @classmethod
     def _strip_optional_identity(cls, value: str | None) -> str | None:
         return None if value is None else value.strip()

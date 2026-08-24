@@ -34,6 +34,7 @@ def _sample(
     license_or_consent: str = "consent-001",
     source_id: str | None = None,
     content_group_id: str | None = None,
+    analysis_cluster_id: str | None = None,
     start_frame: int | None = None,
     end_frame: int | None = None,
     channel_index: int | None = None,
@@ -51,6 +52,7 @@ def _sample(
             "license_or_consent": license_or_consent,
             "source_id": source_id or f"source-{sample_id}",
             "content_group_id": content_group_id or f"content-{sample_id}",
+            "analysis_cluster_id": analysis_cluster_id,
             "start_frame": start_frame,
             "end_frame": end_frame,
             "channel_index": channel_index,
@@ -133,6 +135,16 @@ def test_spec_rejects_duplicate_sample_ids_and_cross_look_cluster_leakage() -> N
         }
     )
     with pytest.raises(ValidationError, match="content group"):
+        _spec((core, reserve))
+
+    reserve = reserve.model_copy(
+        update={
+            "content_group_id": "reserve-content",
+            "analysis_cluster_id": "shared-analysis-cluster",
+        }
+    )
+    core = core.model_copy(update={"analysis_cluster_id": "shared-analysis-cluster"})
+    with pytest.raises(ValidationError, match="analysis cluster"):
         _spec((core, reserve))
 
 
@@ -354,6 +366,16 @@ def test_prepare_corpus_rejects_symlink_escape_existing_output_and_repo_output(
             spec=spec,
             source_root=source_root,
             output_root=output,
+            repository_root=repository,
+        )
+
+    repository_source = repository / "sources"
+    repository_source.mkdir()
+    with pytest.raises(ValueError, match="source_root must be outside"):
+        prepare_corpus(
+            spec=spec,
+            source_root=repository_source,
+            output_root=tmp_path / "external-output",
             repository_root=repository,
         )
 
