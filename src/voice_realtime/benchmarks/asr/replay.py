@@ -7,6 +7,7 @@ import csv
 import json
 import os
 import resource
+import subprocess
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -118,6 +119,8 @@ class BenchmarkTranscriberFactory(Protocol):
 MonotonicClock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
 SendAudio = Callable[[bytes], Awaitable[None]]
+ProcessTreeRSSSampler = Callable[[tuple[int, ...]], int]
+_RESOURCE_RSS_SAMPLE_INTERVAL_SECS = 5.0
 
 
 def build_chunk_schedule(
@@ -258,6 +261,33 @@ def _max_rss_bytes() -> int:
     return int(usage if __import__("sys").platform == "darwin" else usage * 1024)
 
 
+def _resource_process_ids(transcriber: StreamingTranscriber) -> tuple[int, ...]:
+    candidate = getattr(transcriber, "resource_process_ids", ())
+    if not isinstance(candidate, tuple) or any(
+        not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0
+        for pid in candidate
+    ):
+        raise ValueError("resource_process_ids must be a tuple of positive process IDs")
+    return tuple(dict.fromkeys((os.getpid(), *candidate)))
+
+
+def _process_tree_rss_bytes(process_ids: tuple[int, ...]) -> int:
+    """读取当前进程集合 RSS；单进程保持既有无子进程开销路径。"""
+    if process_ids == (os.getpid(),):
+        return _max_rss_bytes()
+    completed = subprocess.run(
+        ["/bin/ps", "-o", "rss=", "-p", ",".join(str(pid) for pid in process_ids)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=2.0,
+    )
+    rss_kib = [int(value) for value in completed.stdout.split()]
+    if len(rss_kib) != len(process_ids):
+        raise RuntimeError("resource process exited before RSS sampling completed")
+    return sum(rss_kib) * 1024
+
+
 async def _run_sample(
     *,
     sample: BenchmarkSample,
@@ -272,6 +302,7 @@ async def _run_sample(
     expected_backend_id: str,
     event_sink: Callable[[Mapping[str, object]], None],
     vendor_sink: Callable[[Mapping[str, object]], None],
+    process_tree_rss_sampler: ProcessTreeRSSSampler,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     try:
         audio_path = resolve_relative_file(corpus_root, sample.audio_path)
@@ -323,6 +354,11 @@ async def _run_sample(
     finalization_completed_at = sample_started_at
     final_window: TranscriptWindow | None = None
     replay_result: ReplayResult | None = None
+    resource_process_ids: tuple[int, ...] = (os.getpid(),)
+    process_tree_rss_bytes = _max_rss_bytes()
+    process_tree_rss_peak_bytes = process_tree_rss_bytes
+    process_tree_rss_sampled_at = sample_started_at
+    final_process_tree_rss_bytes: int | None = None
     try:
         if transcriber.backend_id != expected_backend_id:
             raise BenchmarkSampleError(
@@ -330,6 +366,10 @@ async def _run_sample(
                 f"backend identity mismatch: {sample.sample_id}",
             )
         await transcriber.connect()
+        resource_process_ids = _resource_process_ids(transcriber)
+        process_tree_rss_bytes = process_tree_rss_sampler(resource_process_ids)
+        process_tree_rss_peak_bytes = process_tree_rss_bytes
+        process_tree_rss_sampled_at = monotonic()
         event_task = asyncio.create_task(
             _collect_events(
                 transcriber=transcriber,
@@ -342,12 +382,26 @@ async def _run_sample(
         )
 
         async def send_audio(payload: bytes) -> None:
-            nonlocal next_resource_cursor_ms
+            nonlocal next_resource_cursor_ms, process_tree_rss_bytes
+            nonlocal process_tree_rss_peak_bytes, process_tree_rss_sampled_at
             await transcriber.send_audio(payload)
             audio_cursor[0] += round(
                 len(payload) * 1000 / (PCMFormat().bytes_per_frame * PCMFormat().sample_rate)
             )
             if audio_cursor[0] >= next_resource_cursor_ms:
+                sampled_at = monotonic()
+                if (
+                    sampled_at - process_tree_rss_sampled_at
+                    >= _RESOURCE_RSS_SAMPLE_INTERVAL_SECS
+                ):
+                    process_tree_rss_bytes = process_tree_rss_sampler(
+                        resource_process_ids
+                    )
+                    process_tree_rss_peak_bytes = max(
+                        process_tree_rss_peak_bytes,
+                        process_tree_rss_bytes,
+                    )
+                    process_tree_rss_sampled_at = sampled_at
                 resource_rows.append(
                     {
                         "sample_id": sample.sample_id,
@@ -357,7 +411,11 @@ async def _run_sample(
                             (monotonic() - run_started_at) * 1000,
                         ),
                         "process_cpu_seconds": time.process_time(),
-                        "max_rss_bytes": _max_rss_bytes(),
+                        "max_rss_bytes": max(
+                            _max_rss_bytes(), process_tree_rss_peak_bytes
+                        ),
+                        "process_tree_rss_bytes": process_tree_rss_bytes,
+                        "resource_process_count": len(resource_process_ids),
                     }
                 )
                 next_resource_cursor_ms = audio_cursor[0] + 1000
@@ -372,6 +430,11 @@ async def _run_sample(
         async with asyncio.timeout(final_timeout_secs):
             final_window = await transcriber.finish()
         finalization_completed_at = monotonic()
+        final_process_tree_rss_bytes = process_tree_rss_sampler(resource_process_ids)
+        process_tree_rss_peak_bytes = max(
+            process_tree_rss_peak_bytes,
+            final_process_tree_rss_bytes,
+        )
     finally:
         await transcriber.close()
         if event_task is not None:
@@ -406,14 +469,29 @@ async def _run_sample(
         "error_status": None,
     }
     if not resource_rows or resource_rows[-1]["audio_cursor_ms"] != sample.duration_ms:
+        process_tree_rss_bytes = (
+            final_process_tree_rss_bytes
+            if final_process_tree_rss_bytes is not None
+            else process_tree_rss_sampler(resource_process_ids)
+        )
         resource_rows.append(
             {
                 "sample_id": sample.sample_id,
                 "audio_cursor_ms": sample.duration_ms,
                 "arrival_monotonic_ms": max(0.0, (monotonic() - run_started_at) * 1000),
                 "process_cpu_seconds": time.process_time(),
-                "max_rss_bytes": _max_rss_bytes(),
+                "max_rss_bytes": max(
+                    _max_rss_bytes(), process_tree_rss_peak_bytes
+                ),
+                "process_tree_rss_bytes": process_tree_rss_bytes,
+                "resource_process_count": len(resource_process_ids),
             }
+        )
+    elif final_process_tree_rss_bytes is not None:
+        resource_rows[-1]["process_tree_rss_bytes"] = final_process_tree_rss_bytes
+        resource_rows[-1]["max_rss_bytes"] = max(
+            cast(int, resource_rows[-1]["max_rss_bytes"]),
+            process_tree_rss_peak_bytes,
         )
     return hypothesis, resource_rows
 
@@ -681,6 +759,8 @@ def _prepare_output_dir(output_dir: Path, artifact_names: Sequence[str]) -> None
                 "arrival_monotonic_ms",
                 "process_cpu_seconds",
                 "max_rss_bytes",
+                "process_tree_rss_bytes",
+                "resource_process_count",
             ),
         )
         writer.writeheader()
@@ -717,6 +797,7 @@ async def run_benchmark(
     chunk_ms: int = 20,
     final_timeout_secs: float = 8.0,
     monotonic: MonotonicClock = time.monotonic,
+    process_tree_rss_sampler: ProcessTreeRSSSampler = _process_tree_rss_bytes,
 ) -> BenchmarkRunResult:
     """顺序执行一个实验臂，并产生可审计且不含音频副本的文件集。"""
     if manifest.status != "planned":
@@ -772,6 +853,7 @@ async def run_benchmark(
                     expected_backend_id=manifest.backend_id,
                     event_sink=event_sink,
                     vendor_sink=vendor_sink,
+                    process_tree_rss_sampler=process_tree_rss_sampler,
                 )
             except BenchmarkSampleError as exc:
                 failed += 1

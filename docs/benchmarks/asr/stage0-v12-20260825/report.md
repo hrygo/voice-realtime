@@ -27,7 +27,8 @@ Qwen3-ASR-1.7B MPS、SenseVoiceSmall CPU 与 Fun-ASR-Nano-2512 MPS 均完成 10/
 | Fun-ASR-Nano-2512 MPS | feasible | 10 / 0 | 10.850s | 0.0573 / 0.0710 | 242 / 388ms | 0.0699 / 0.1192 | 6.92 GiB |
 | Fun-ASR-Nano-2512 CPU | reused / Stage 0-only | 10 / 0 | 12.859s² | 0.5924 / 0.7561² | 2623 / 2930ms² | 0.0699 / 0.1192² | 约 6.91 GiB² |
 
-¹ Qwen 模型运行在隔离子进程，当前 runner 的 `resources.csv` 只采样父进程，记录的约 43 MiB 不能代表模型内存，故不参与资源比较。Stage 1 前必须补齐子进程树 RSS 采样。  
+¹ Qwen 模型运行在隔离子进程，Stage 0 产物的 `resources.csv` 只采样父进程，记录的约 43 MiB 不能代表模型内存，故不参与资源比较。后续 runner 已增加子进程树 RSS 采样；Stage 1 必须产生新资源证据，不得回填或改写本轮历史结果。
+
 ² 来自 commit `379ad7e6124db46f549504422b7e60dc3b9a6bb6` 的历史兼容门禁，只作复用证据；未按本轮 runner 身份重跑。
 
 “首条冷启动 wall”包含模型加载、首次编译/预热和首条推理，不等同于纯模型加载时间。Warm 指标严格按原始 `hypotheses.jsonl` 的执行顺序排除第一条后计算；不能从按 sample ID 排序的评分文件推断执行顺序。
@@ -59,4 +60,4 @@ $$T_{Full}=105\times(0.0619+0.1080+0.0573)\approx23.9\text{ min}$$
 - [x] 盲输出不含 reference、CER、S/D/I/N；评分显式开盲后生成独立文件。
 - [x] 三臂严格串行，结束后模型进程、端口和 LM Studio 均为空闲。
 - [x] Stage 0 只判定可行性，没有生成质量选型结论。
-- [ ] Qwen 隔离子进程树 RSS 采样在 Stage 1 前补齐。
+- [x] Runner 已在 Stage 1 前支持 Qwen 隔离子进程树 RSS；实际数值随 Stage 1 新 run 采集。

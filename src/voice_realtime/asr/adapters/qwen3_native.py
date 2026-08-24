@@ -75,6 +75,7 @@ class _WorkerProcess(Protocol):
     stdout: _PipeReader
     stderr: _PipeReader
     returncode: int | None
+    pid: int
 
     def terminate(self) -> None: ...
 
@@ -207,6 +208,13 @@ class Qwen3NativeWorker:
         if self._identity is None:
             raise RuntimeError("QWEN3_NOT_STARTED: worker has not started")
         return self._identity
+
+    @property
+    def process_id(self) -> int | None:
+        process = self._process
+        if process is None or process.returncode is not None:
+            return None
+        return process.pid if process.pid > 0 else None
 
     async def start(self) -> Qwen3WorkerIdentity:
         async with self._start_lock:
@@ -485,6 +493,11 @@ class Qwen3NativeOfflineAdapter:
     @property
     def uri(self) -> str:
         return "offline://qwen3-asr-native"
+
+    @property
+    def resource_process_ids(self) -> tuple[int, ...]:
+        process_id = self._worker.process_id
+        return () if process_id is None else (process_id,)
 
     async def connect(self) -> None:
         if self._closed:

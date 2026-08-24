@@ -127,6 +127,7 @@ class FakeProcess:
         self.terminated = False
         self.killed = False
         self.wait_calls = 0
+        self.pid = 4242
 
     def terminate(self) -> None:
         self.terminated = True
@@ -271,6 +272,20 @@ def _adapter(
         context=context,
         session_context=session_context or _context(),
     )
+
+
+@pytest.mark.asyncio
+async def test_adapter_exposes_started_worker_pid_for_resource_sampling(
+    tmp_path: Path,
+) -> None:
+    worker, _, _ = _worker(tmp_path, FakeProcess((_ready(),)))
+    adapter = _adapter(worker)
+
+    assert adapter.resource_process_ids == ()
+    await adapter.connect()
+    assert adapter.resource_process_ids == (4242,)
+
+    await adapter.close()
 
 
 async def _next_event(events: AsyncIterator[ASREvent]) -> ASREvent:

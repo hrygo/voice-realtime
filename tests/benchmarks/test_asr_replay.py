@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import subprocess
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
+from voice_realtime.benchmarks.asr import replay as replay_module
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
     CorpusInputManifest,
@@ -66,6 +69,23 @@ def test_schedule_uses_exact_20ms_s16le_chunks_and_audio_cursor() -> None:
 def test_schedule_rejects_misaligned_pcm() -> None:
     with pytest.raises(ValueError, match="sample width"):
         build_chunk_schedule(b"\x00", pcm_format=PCMFormat(), chunk_ms=20)
+
+
+def test_process_tree_rss_uses_fixed_ps_argv_and_sums_kib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="100\n200\n", stderr="")
+
+    monkeypatch.setattr(replay_module.subprocess, "run", fake_run)
+
+    result = replay_module._process_tree_rss_bytes((111, 222))
+
+    assert result == 300 * 1024
+    assert calls == [["/bin/ps", "-o", "rss=", "-p", "111,222"]]
 
 
 @pytest.mark.asyncio
@@ -128,6 +148,7 @@ class FakeTranscriber:
         self.closed = False
         self._queue: list[ASREvent] = []
         self._finished = False
+        self.resource_process_ids: tuple[int, ...] = ()
 
     @property
     def uri(self) -> str:
@@ -273,6 +294,44 @@ async def test_runner_writes_complete_auditable_artifact_set(tmp_path: Path) -> 
     assert vendor_event["vendor_payload"] == {"type": "started"}
     assert output_dir.stat().st_mode & 0o777 == 0o700
     assert all(path.stat().st_mode & 0o777 == 0o600 for path in output_dir.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_runner_samples_optional_transcriber_process_tree(tmp_path: Path) -> None:
+    manifest, corpus, corpus_root = _benchmark_inputs(tmp_path)
+    output_dir = tmp_path / "output"
+    sampled_process_ids: list[tuple[int, ...]] = []
+
+    def factory(
+        _sample: CorpusSample,
+        context: ASRSessionContext,
+        vendor_event_sink: Callable[[dict[str, object]], None],
+    ) -> FakeTranscriber:
+        transcriber = FakeTranscriber(context, vendor_event_sink)
+        transcriber.resource_process_ids = (4242,)
+        return transcriber
+
+    def sample_rss(process_ids: tuple[int, ...]) -> int:
+        sampled_process_ids.append(process_ids)
+        return 600_000_000
+
+    await run_benchmark(
+        manifest=manifest,
+        corpus=corpus,
+        corpus_root=corpus_root,
+        output_dir=output_dir,
+        transcriber_factory=factory,
+        mode=ReplayMode.OFFLINE,
+        process_tree_rss_sampler=sample_rss,
+    )
+
+    with (output_dir / "resources.csv").open(newline="", encoding="utf-8") as stream:
+        resource_rows = list(csv.DictReader(stream))
+    assert sampled_process_ids
+    assert all(process_ids == (os.getpid(), 4242) for process_ids in sampled_process_ids)
+    assert {row["process_tree_rss_bytes"] for row in resource_rows} == {"600000000"}
+    assert {row["resource_process_count"] for row in resource_rows} == {"2"}
+    assert {row["max_rss_bytes"] for row in resource_rows} == {"600000000"}
 
 
 @pytest.mark.asyncio

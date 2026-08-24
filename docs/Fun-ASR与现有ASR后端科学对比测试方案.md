@@ -301,7 +301,7 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 | Warm wall P95 | 422ms | 505ms | 388ms |
 | 峰值 RSS | 不可比（隔离子进程未采样） | 3.11 GiB | 6.92 GiB |
 
-- **统计边界**：Warm 指标从原始运行顺序排除第一条计算；首条 wall 同时包含模型加载、首次编译和推理，不能当作纯加载时间。Qwen 当前资源记录只覆盖父进程，Stage 1 前必须补齐子进程树 RSS。
+- **统计边界**：Warm 指标从原始运行顺序排除第一条计算；首条 wall 同时包含模型加载、首次编译和推理，不能当作纯加载时间。Stage 0 的 Qwen 旧产物只覆盖父进程；runner 已在 Stage 1 前增加隔离子进程树 RSS 采样，后续结果不得复用旧 RSS。
 - **已修复故障**：修复 Qwen venv 解释器入口被错误解析、SenseVoice 不完整旧 snapshot 被误选，以及 Fun-ASR MPS 超时后残留推理与下一样本重叠导致的 SIGSEGV。失败 run 单独保留，未混入最终结果。
 - **门禁结论**：三个 primary 臂均可进入独立 blind 质量比较；本轮 gate-only CER 仍受模型自带/合成样例偏倚，严禁作为选型依据。完整聚合证据见 [`docs/benchmarks/asr/stage0-v12-20260825/report.md`](benchmarks/asr/stage0-v12-20260825/report.md)。
 
@@ -802,7 +802,7 @@ runtime/benchmarks/asr/<run_id>/
 ├── scored-summary.json        # 显式开盲后的聚合指标，不覆盖运行摘要
 ├── events.jsonl               # 标准化流式事件流
 ├── vendor-events.jsonl        # 原始 vendor 事件（脱敏）
-├── resources.csv              # 1秒精度的 CPU/MPS/RSS 采样
+├── resources.csv              # 每音频秒资源行；子进程树 RSS 按墙钟 5s 采样并在结束前强制采样
 ├── failures.jsonl             # 失败与异常样本堆栈
 └── summary.json               # 本次 run 聚合指标摘要
 
