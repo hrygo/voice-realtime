@@ -13,9 +13,9 @@
 **Spec Revision:** v1.1（105 分钟正交 Blind Set、3 次性能采样、阶梯式 90–120 分钟/晋级臂预算）。
 
 **Execution status (2026-08-24):** Task 1 已按 TDD 完成并提交（`4a73bd9`、`ffbf810`）；Task 2/3 的
-Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已按 TDD 提交（`e8a23b2`），ASR
-专项 107 tests、mypy 与 ruff 通过。runner factory/profile 身份核验接线和真实 Stage 0 仍待执行；
-模型和服务保持停止。
+Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交（`e8a23b2`）；Task 2–4 的
+运行级资源复用、离线 profile 调度、冻结身份核验和 runner 接线已提交（`7d3e241`）。ASR/benchmark
+专项 175 tests、strict mypy 与 ruff 已通过。真实 Stage 0 尚未启动，模型和服务保持停止。
 
 ## Global Constraints
 
@@ -112,26 +112,26 @@ git commit -m "feat(asr): 增加实验主机资源排他锁"
   `Qwen3NativeAdapter`，backend ID `qwen3-asr-native`。
 - Consumes: 项目外固定 Qwen3-ASR-1.7B snapshot、WhisperLiveKit 隔离解释器、内存 16kHz mono float32/PCM、冻结 language/context。
 
-- [ ] **Step 1: 写 vendor 行为与 adapter RED 测试**
+- [x] **Step 1: 写 vendor 行为与 adapter RED 测试**
 
 以 fake processor/model 覆盖：模型一次加载、多样本复用；PCM 合并只发生在 adapter 内存；中文、英文
 与 auto 语言；context 长度边界；空白输出；vendor 异常映射；最终窗口边界；MPS 参数 device 检查；
 非 `offline` mode 拒绝。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/asr/test_qwen3_native_adapter.py tests/asr/test_profiles.py tests/benchmarks/test_asr_cli.py -q --no-cov`
 
 Expected: 新 profile 和 adapter import 失败。
 
-- [ ] **Step 3: 实现最小原生离线边界**
+- [x] **Step 3: 实现最小原生离线边界**
 
 主项目 adapter 启动一个持久隔离 worker，并用有界二进制帧传输元数据和 PCM；worker 按当前本机
 `qwen-asr` 真实签名加载本地 snapshot，分别对 model/processor 强制本地路径和离线边界。输入统一为
 16kHz；只接受结构合法且包含实际 device/dtype 的结果。profile 冻结隔离解释器、device、dtype、
 language_source、context 和 decoder 参数，manifest 逐字段核对；任何 CPU fallback 都失败。
 
-- [ ] **Step 4: 运行 GREEN 与类型检查**
+- [x] **Step 4: 运行 GREEN 与类型检查**
 
 Run:
 
@@ -142,7 +142,7 @@ uv run mypy src/voice_realtime/asr/adapters/qwen3_native.py src/voice_realtime/a
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md
@@ -167,24 +167,24 @@ git commit -m "feat(asr): 增加Qwen3原生离线实验臂"
   `SenseVoiceNativeAdapter`，backend ID `sensevoice-native`。
 - Preserves: 与生产 Pipecat 基线一致的 `device="cpu"`、`use_itn=True` 和本地 snapshot 解析。
 
-- [ ] **Step 1: 写 vendor 行为与 adapter RED 测试**
+- [x] **Step 1: 写 vendor 行为与 adapter RED 测试**
 
 覆盖 `AutoModel.generate()` 的真实参数形状、模型一次加载、逐样本 language、ITN、空输出、tag 清理、
 异常映射、CPU-only profile、外部绝对模型路径与非离线 mode 拒绝。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/asr/test_sensevoice_native_adapter.py tests/asr/test_profiles.py tests/benchmarks/test_asr_cli.py -q --no-cov`
 
 Expected: 新 profile 和 adapter import 失败。
 
-- [ ] **Step 3: 实现最小原生离线边界**
+- [x] **Step 3: 实现最小原生离线边界**
 
 复用当前 `resolve_stt_model()` 的离线快照规则，以 FunASR 本机源码的真实输入类型调用 SenseVoice；
 禁止 hub 更新和下载。输出在 adapter 边界清理 SenseVoice emotion/event/language tags，但原始 vendor
 结果仍进入受限事件文件。
 
-- [ ] **Step 4: 运行 GREEN 与生产等价回归**
+- [x] **Step 4: 运行 GREEN 与生产等价回归**
 
 Run:
 
@@ -195,7 +195,7 @@ uv run mypy src/voice_realtime/asr/adapters/sensevoice_native.py
 
 Expected: PASS，生产 `PipecatSenseVoiceFactory` 默认参数不变。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py
@@ -216,29 +216,29 @@ git commit -m "feat(asr): 增加SenseVoice原生离线实验臂"
 - Preserves: 三个原生 engine 每个 run 只加载一次，WS profile 仍走 loopback，所有原生 profile 只接受
   `--mode offline`。
 
-- [ ] **Step 1: 写判别调度 RED 测试**
+- [x] **Step 1: 写判别调度 RED 测试**
 
 覆盖五种现有 profile 与两种新 profile、未知 profile、device/dtype/parameters 不一致、逐样本语言复制、
 模型目录逃逸和原生 profile 错用 realtime。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/benchmarks/test_asr_backend_factory.py tests/benchmarks/test_asr_cli.py -q --no-cov`
 
 Expected: factory 模块不存在而失败。
 
-- [ ] **Step 3: 从 CLI 抽离构建职责**
+- [x] **Step 3: 从 CLI 抽离构建职责**
 
 CLI 只负责解析、验证和持锁；factory 拥有 profile → engine/registry 映射与 manifest 身份核对，避免后续
 增加实验臂时继续扩大条件分支。
 
-- [ ] **Step 4: 运行 GREEN**
+- [x] **Step 4: 运行 GREEN**
 
 Run: `uv run pytest tests/benchmarks tests/asr -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/voice_realtime/benchmarks/asr tests/benchmarks src/voice_realtime/asr/profiles.py tests/asr/test_profiles.py
