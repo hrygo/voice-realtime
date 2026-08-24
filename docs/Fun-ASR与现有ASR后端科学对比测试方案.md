@@ -331,6 +331,12 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 也不与正式 Core/Reserve 指标合并。生产选型仍须补充并预冻结已授权目标域 blind；在此之前结论保持
 `Experimental`。
 
+公共代理执行集 `public-proxy-v1-20260825` 已在项目外冻结：Core 60 分钟（1,185 条）与 Reserve
+45 分钟（859 条）逐毫秒命中配额，两个 split 的 `content_group_id` 零交叉。为减少执行时间且避免
+公共数据污染正式序贯判断，本轮只让三个 primary 臂串行回放 Proxy Core，用于验证 adapter、资源采样、
+评分和报告管线；Proxy Reserve 保持封存，只有 Core 暴露管线异常时才使用。该结果单列为 Public Proxy，
+不触发 Stage 1 的 `Advance/Continue/Reject`，也不替代 §4.2 的目标域 blind。
+
 ---
 
 ### 4.2 目标域序贯正交配额（60 min Core + 45 min Reserve）
@@ -947,19 +953,21 @@ uv run vr-asr-benchmark compare \
 
 1. **Stage 0 已完成**：Qwen3 MPS、SenseVoice CPU 与 Fun-ASR MPS 已按同一 v1.2 协议串行完成；
    Fun-ASR CPU 复用历史设备兼容证据，后续不排名。
-2. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、Core、Reserve、两个
+2. **Public Proxy Core 校准**：三个 primary 臂依次回放同一 60 分钟公共代理 Core；只验证管线、
+   资源与公开代理质量，Reserve 默认不开封，不产生生产选型状态。
+3. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、目标域 Core、Reserve、两个
    manifest hash、分析 cluster、候选集合、MDE、alpha spending、模型 revision 和 primary profile。
-3. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
-4. **Stage 1A Core**：依次运行 Qwen、SenseVoice、Fun MPS 的 60 分钟 Core；Fun 输出复用到两个 family。
-5. **Stage 1B Reserve**：只对 `Continue` family 追加 45 分钟；禁止在两个固定 look 之外查看并停止。
-6. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
+4. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
+5. **Stage 1A Core**：依次运行 Qwen、SenseVoice、Fun MPS 的 60 分钟目标域 Core；Fun 输出复用到两个 family。
+6. **Stage 1B Reserve**：只对 `Continue` family 追加 45 分钟；禁止在两个固定 look 之外查看并停止。
+7. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
    8–10 分钟是 Screen，通过后原 run 继续到 Confirm 总时长。
-7. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
+8. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
    Stage 3 主会议和 Stage 5 可靠性。
-8. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
+9. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
    通过后原 session 继续到 Confirm 总轮数；只有交互 finalist 再运行 1×60 分钟可靠性。
-9. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时 Public；不阻塞生产选型。
-10. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
+10. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时额外 Public；不阻塞生产选型。
+11. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
     EOF/外放恢复抽查；随后固定唯一后端并清理落选模型与专用接入。
 
 > [!WARNING]

@@ -98,9 +98,17 @@ def select_scenario_quotas(
     selected: dict[str, tuple[SelectionCandidate, ...]] = {}
     for scenario, target_duration_ms in sorted(quotas_ms.items()):
         pool = tuple(candidate for candidate in candidates if candidate.scenario == scenario)
-        selected[scenario] = select_exact_duration(
-            pool,
-            target_duration_ms=target_duration_ms,
-            seed=f"{seed}:{scenario}",
-        )
+        try:
+            selected[scenario] = select_exact_duration(
+                pool,
+                target_duration_ms=target_duration_ms,
+                seed=f"{seed}:{scenario}",
+            )
+        except ValueError as exc:
+            total_duration_ms = sum(candidate.duration_ms for candidate in pool)
+            raise ValueError(
+                f"{scenario} exact duration quota is unreachable: "
+                f"target={target_duration_ms}, candidates={len(pool)}, "
+                f"available={total_duration_ms}"
+            ) from exc
     return selected

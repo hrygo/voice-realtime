@@ -1,11 +1,11 @@
 # ASR v1.2 公共代理语料来源与完整性清单
 
 **核验时间：** 2026-08-25（Asia/Shanghai）  
-**状态：** 来源获取与归档校验完成；确定性候选提取、实体标签人工复核和 blind 冻结尚未完成。
+**状态：** 公共代理候选提取与 105 分钟封存已完成；正式目标域 blind、实体标签人工复核尚未完成。
 
 ## 结论
 
-采用 AliMeeting Eval、ASCEND 与 HI-MIA-CW 的最小组合，不再下载 MagicData-RAMC 与 MUSAN。当前下载量约 4.97 GiB，提供会议/近讲、普通话-英语 code-switch、潜在噪声/口音候选和中文混淆词负样本；与原组合相比减少约 26 GiB 下载，并避开 MagicData 的 `CC BY-NC-ND 4.0` 限制。`noise` 必须补测 SNR/混响，`accent` 必须人工审听，不能仅由 far-field 或香港来源自动贴标签。
+采用 AliMeeting Eval、ASCEND 与 HI-MIA-CW 的最小候选组合，不再下载 MagicData-RAMC 与 MUSAN。当前下载量约 4.97 GiB，提供会议/近讲、普通话-英语 code-switch、潜在噪声/口音候选和中文混淆词负样本；与原组合相比减少约 26 GiB 下载，并避开 MagicData 的 `CC BY-NC-ND 4.0` 限制。首版公共代理集只使用 AliMeeting 与 ASCEND；`noise` 必须补测 SNR/混响，`accent` 必须人工审听，不能仅由 far-field 或香港来源自动贴标签。
 
 这些数据作为“本项目用途相近的公共代理集”，不是本产品用户真实录音，也可能已进入候选模型训练。它只用于转换/封存管线验收、Dev/标注校准、延迟资源和公开代理证据，不与正式 Core/Reserve 合并，不能声称是未见数据或据此完成生产选型。正式选型仍需在任何模型输出可见前冻结已授权目标域 blind；缺少该语料时结论保持 `Experimental`。本轮未扫描或读取个人录音目录。
 
@@ -44,8 +44,8 @@ ModelScope 优先策略已实测执行：
 | Split | Sessions | Speakers | 主要用途 |
 |:---|:---|---:|:---|
 | Dev | `R8007_M8010` | 4 | 高重叠校准，不进入 blind |
-| Proxy Core | `R8001_M8004`、`R8003_M8001`、`R8008_M8013` | 11 | near-field、meeting、noise/entity 候选 |
-| Proxy Reserve | `R8007_M8011`、`R8009_M8018`、`R8009_M8019`、`R8009_M8020` | 10 | near-field、meeting、noise/entity 候选 |
+| Proxy Core | `R8001_M8004`、`R8003_M8001`、`R8008_M8013`、`R8009_M8019` | 13 | far-field、meeting 候选 |
+| Proxy Reserve | `R8007_M8011`、`R8009_M8018`、`R8009_M8020` | 8 | far-field、meeting 候选 |
 
 远场抽样固定使用同一阵列通道，不对 8 通道做平均混音；单流 CER 只采用无跨 speaker overlap 的完整标注区间。含 overlap 的连续会议保留为 secondary stress set，使用多说话人/时间轴指标，不混入单一文本 CER 主指标。near/far 同一会议必须绑定同一 split，并以 `content_group_id` 防止跨 split 泄漏。
 
@@ -61,16 +61,33 @@ ModelScope 优先策略已实测执行：
 
 ### HI-MIA-CW
 
-16,343 条 16kHz WAV，35 个 speaker，均有逐文件 transcription；内容是“Hi, Mia”中文混淆词，适合作为 non-target speech negative。Core、Reserve、Dev 必须使用不相交 speaker 集，且负样本只检验误触发/幻觉，不进入正文本 CER 分母。
+16,343 条 16kHz WAV，35 个 speaker，均有逐文件 transcription；内容是“Hi, Mia”中文混淆词，适合作为 non-target speech negative。实测绝大多数文件的 frame 数不能整除 16，无法在不裁剪、不补齐的前提下得到当前 manifest 所要求的整数毫秒时长，因此不进入 `public-proxy-v1-20260825`。它保留为独立的误触发/幻觉专项候选，后续应以 frame 级 negative 协议单独冻结，不进入正文本 CER 分母。
+
+## 已冻结公共代理集
+
+`public-proxy-v1-20260825` 已于 2026-08-25 在项目外目录确定性生成和封存。seed 固定为
+`asr-public-proxy-v1-20260825`，只选择 1–20 秒的完整 utterance 或无跨 speaker overlap 的完整
+AliMeeting turn；没有补音频、裁剪、跨片段拼接或 8 通道平均混音。
+
+| Split | 样本数 | 精确时长 | 场景配额 | Speaker |
+|:---|---:|---:|:---|---:|
+| Proxy Core | 1,185 | 3,600,000ms | meeting 30m、code-switch 10m、clean 20m | 14 |
+| Proxy Reserve | 859 | 2,700,000ms | meeting 20m、code-switch 8m、clean 17m | 11 |
+
+Core/Reserve 的 `content_group_id` 交集为空；PCM、manifest、references 和 provenance 均位于
+`~/.cache/voice-realtime/benchmarks/asr/corpora/` 下，项目仓库不保存模型、音频或逐字稿。公开代理
+manifest SHA-256 分别为 Core `5fc2a7a10599140090b0e71a3dfd9b564bd55439d01fa21139dc153b1fb9e357`
+和 Reserve `04385bd2dbff9b011b0c0792cad468711a2bf3ac5c7b00867628407df12c1695`；references 保持 `000`
+封存权限，直到显式评分阶段才开封。
 
 ## 冻结前验收条件
 
 - [x] 所有原始归档/固定 parquet 位于项目外目录。
 - [x] 原始制品大小、SHA-256、归档安全与关键 schema 已验证。
 - [x] Core/Reserve 可分配到互斥 AliMeeting session/speaker；ASCEND split speaker 互斥。
-- [x] 三个 blind 来源许可均按上游 `CC BY-SA 4.0` 记录。
-- [ ] 采用固定 seed `asr-v1.2-20260825` 生成确定性候选顺序。
-- [ ] 主场景配额严格等于 Core 9/17/9/11/6/6/2 分钟和 Reserve 6/13/6/9/4/4/3 分钟。
+- [x] 三个公共候选来源许可均按上游 `CC BY-SA 4.0` 记录。
+- [x] 采用固定 seed `asr-public-proxy-v1-20260825` 生成公共代理候选顺序。
+- [x] 公共代理配额精确等于 Core 30/10/20 分钟和 Reserve 20/8/17 分钟。
 - [ ] `noise` 具有实测 SNR/混响或明确环境证据，`accent` 经人工审听，`entity` 经冻结词典与人工复核。
-- [ ] 公共代理输入/reference 与正式目标域 blind 使用不同 corpus version 和目录，指标不得合并。
+- [x] 公共代理输入/reference 使用独立 corpus version 和目录；正式目标域 blind 将使用另一身份，指标不得合并。
 - [ ] 正式 Core/Reserve reference、manifest、cluster、provenance 与 `analysis-plan.json` 在任何 blind 输出产生前同时封存。
