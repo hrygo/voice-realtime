@@ -331,11 +331,12 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 也不与正式 Core/Reserve 指标合并。生产选型仍须补充并预冻结已授权目标域 blind；在此之前结论保持
 `Experimental`。
 
-公共代理执行集 `public-proxy-v1-20260825` 已在项目外冻结：Core 60 分钟（1,185 条）与 Reserve
-45 分钟（859 条）逐毫秒命中配额，两个 split 的 `content_group_id` 零交叉。为减少执行时间且避免
-公共数据污染正式序贯判断，本轮只让三个 primary 臂串行回放 Proxy Core，用于验证 adapter、资源采样、
-评分和报告管线；Proxy Reserve 保持封存，只有 Core 暴露管线异常时才使用。该结果单列为 Public Proxy，
-不触发 Stage 1 的 `Advance/Continue/Reject`，也不替代 §4.2 的目标域 blind。
+公共代理执行集 `public-proxy-v1-20260825` 已完成三臂串行 Core 回放：Qwen、SenseVoice、Fun-ASR
+均为 1,185/1,185、0 失败；macro CER 分别为 10.11%、13.69%、13.34%。Fun-ASR 相对 Qwen 的
+配对 cluster-bootstrap CER 差为 +3.23pp，95% CI [+2.31pp, +3.85pp]；相对 SenseVoice 为
+-0.36pp，95% CI [-1.60pp, +0.63pp]。完整结果与污染边界见
+[`public-proxy-v1-20260825/report.md`](benchmarks/asr/public-proxy-v1-20260825/report.md)。Proxy Reserve
+保持封存。该结果不触发 Stage 1 的 `Advance/Continue/Reject`，也不替代 §4.2 的目标域 blind。
 
 ---
 
@@ -526,7 +527,8 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 ### 7.1 分析单位
 
-- **准确率**：以“录音/会议会话（Session/Utterance）”为配对和 bootstrap cluster，严禁把每个字符当独立样本。
+- **准确率**：以冻结 `content_group_id`（缺失时 `session_id`）为配对和 bootstrap cluster；同源
+  near/far、同一会议和同一内容组不得拆为独立样本，严禁按字符或短切片伪增样本量。
 - **性能**：以“录音 $\times$ 重复轮次”为单位，冷启动和 warm run 分开统计。
 - **分层评估**：方言/口音层至少逐组报告样本数和 CI；样本不足时标记探索性，不做总体推广。
 
@@ -905,12 +907,14 @@ uv run vr-asr-benchmark run \
 
 # 2. 生成计分统计
 uv run vr-asr-benchmark score \
-  --run-dir runtime/benchmarks/asr/<run_id>
+  --run-dir runtime/benchmarks/asr/<run_id> \
+  --references corpus-root/sealed/<split>.references.json
 
 # 3. 配对横向对比与 Bootstrap 检验
 uv run vr-asr-benchmark compare \
   --baseline runtime/benchmarks/asr/<baseline-run-id> \
   --candidate runtime/benchmarks/asr/<candidate-run-id> \
+  --corpus manifests/corpus.json \
   --output runtime/benchmarks/asr/comparisons/<comparison-id>.json \
   --bootstrap-iterations 10000 \
   --seed 20260824
@@ -958,8 +962,8 @@ uv run vr-asr-benchmark compare \
 
 1. **Stage 0 已完成**：Qwen3 MPS、SenseVoice CPU 与 Fun-ASR MPS 已按同一 v1.2 协议串行完成；
    Fun-ASR CPU 复用历史设备兼容证据，后续不排名。
-2. **Public Proxy Core 校准**：三个 primary 臂依次回放同一 60 分钟公共代理 Core；只验证管线、
-   资源与公开代理质量，Reserve 默认不开封，不产生生产选型状态。
+2. **Public Proxy Core 校准已完成**：三个 primary 臂依次回放同一 60 分钟公共代理 Core；只验证
+   管线、资源与公开代理质量，Reserve 保持封存，不产生生产选型状态。
 3. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、目标域 Core、Reserve、两个
    manifest hash、分析 cluster、候选集合、MDE、alpha spending、模型 revision 和 primary profile。
 4. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。

@@ -77,8 +77,12 @@ AliMeeting turn；没有补音频、裁剪、跨片段拼接或 8 通道平均�
 Core/Reserve 的 `content_group_id` 交集为空；PCM、manifest、references 和 provenance 均位于
 `~/.cache/voice-realtime/benchmarks/asr/corpora/` 下，项目仓库不保存模型、音频或逐字稿。公开代理
 manifest SHA-256 分别为 Core `5fc2a7a10599140090b0e71a3dfd9b564bd55439d01fa21139dc153b1fb9e357`
-和 Reserve `04385bd2dbff9b011b0c0792cad468711a2bf3ac5c7b00867628407df12c1695`；references 保持 `000`
-封存权限，直到显式评分阶段才开封。
+和 Reserve `04385bd2dbff9b011b0c0792cad468711a2bf3ac5c7b00867628407df12c1695`；references 在显式评分前
+保持 `000` 封存权限。
+
+Proxy Core 三臂串行回放、评分与 cluster bootstrap 已完成，汇总见
+[`../public-proxy-v1-20260825/report.md`](../public-proxy-v1-20260825/report.md)。Core references 已按
+评分协议打开为 `0600`；Reserve references 仍为 `000`，未运行、未开封。
 
 ## 冻结前验收条件
 
