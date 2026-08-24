@@ -10,6 +10,7 @@ from voice_realtime.benchmarks.asr.metrics import (
     character_error_rate,
     cluster_bootstrap_difference,
     commit_latency,
+    conditional_power_from_interim,
     hotword_scores,
     normalize_primary_text,
     percentile,
@@ -205,3 +206,66 @@ def test_comparison_uses_declared_cluster_ids_for_bootstrap() -> None:
     assert comparison["mean_cer_difference"] == pytest.approx(0.5)
     assert comparison["ci_low"] == pytest.approx(0.0)
     assert comparison["ci_high"] == pytest.approx(1.0)
+
+
+def test_formal_bootstrap_uses_registered_confidence_and_reports_p_value() -> None:
+    baseline = [
+        {
+            "sample_id": f"sample-{index}",
+            "scenario": "meeting",
+            "cer_status": "supported",
+            "cer": 0.20,
+        }
+        for index in range(12)
+    ]
+    candidate = [
+        {
+            "sample_id": f"sample-{index}",
+            "scenario": "meeting",
+            "cer_status": "supported",
+            "cer": 0.10 + index * 0.001,
+        }
+        for index in range(12)
+    ]
+    clusters = {f"sample-{index}": f"cluster-{index}" for index in range(12)}
+
+    comparison_95 = compare_hypotheses(
+        baseline,
+        candidate,
+        iterations=2_000,
+        seed=7,
+        confidence=0.95,
+        cluster_by_sample=clusters,
+    )
+    comparison_99 = compare_hypotheses(
+        baseline,
+        candidate,
+        iterations=2_000,
+        seed=7,
+        confidence=0.99,
+        cluster_by_sample=clusters,
+    )
+
+    assert comparison_99["decision_confidence"] == 0.99
+    assert comparison_99["ci_low"] <= comparison_95["ci_low"]
+    assert comparison_99["ci_high"] >= comparison_95["ci_high"]
+    assert 0 <= comparison_99["raw_p_value"] <= 1
+    assert comparison_99["bootstrap_standard_error"] > 0
+
+
+def test_conditional_power_uses_information_fraction_and_direction() -> None:
+    strong_improvement = conditional_power_from_interim(
+        mean_difference=-0.02,
+        standard_error=0.004,
+        information_fraction=60 / 105,
+        final_alpha=0.04,
+    )
+    no_improvement = conditional_power_from_interim(
+        mean_difference=0.01,
+        standard_error=0.004,
+        information_fraction=60 / 105,
+        final_alpha=0.04,
+    )
+
+    assert strong_improvement > 0.95
+    assert no_improvement < 0.20

@@ -676,6 +676,7 @@ def compare_hypotheses(
     *,
     iterations: int = 10_000,
     seed: int = 0,
+    confidence: float = 0.95,
     cluster_by_sample: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """按 sample_id 对齐并比较候选减基线 CER。"""
@@ -731,6 +732,7 @@ def compare_hypotheses(
             differences_by_scenario,
             iterations=iterations,
             seed=seed,
+            confidence=confidence,
         )
         resampling_unit = "sample"
         paired_clusters: int | None = None
@@ -740,6 +742,7 @@ def compare_hypotheses(
             differences_by_scenario_cluster,
             iterations=iterations,
             seed=seed,
+            confidence=confidence,
         )
         resampling_unit = "cluster"
         paired_clusters = len(paired_cluster_ids)
@@ -760,6 +763,9 @@ def compare_hypotheses(
         ),
         "ci_low": comparison.ci_low,
         "ci_high": comparison.ci_high,
+        "decision_confidence": comparison.confidence,
+        "bootstrap_standard_error": comparison.bootstrap_standard_error,
+        "raw_p_value": comparison.raw_p_value,
         "bootstrap_iterations": iterations,
         "seed": seed,
     }

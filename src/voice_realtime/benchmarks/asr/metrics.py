@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from itertools import pairwise
+from statistics import NormalDist, stdev
 
 PRIMARY_NORMALIZATION_VERSION = "nfkc-casefold-punct-space-v1"
 
@@ -66,6 +67,89 @@ class BootstrapDifference:
     mean_difference: float
     ci_low: float
     ci_high: float
+    confidence: float
+    bootstrap_standard_error: float
+    raw_p_value: float
+
+
+def _bootstrap_summary(
+    values: Sequence[float],
+    *,
+    confidence: float,
+) -> tuple[float, float, float]:
+    if not 0 < confidence < 1:
+        raise ValueError("confidence 必须位于 0..1")
+    tail = (1 - confidence) * 50
+    low = percentile(values, tail).value
+    high = percentile(values, 100 - tail).value
+    if low is None or high is None:  # pragma: no cover - callers provide finite values
+        raise RuntimeError("bootstrap percentile calculation failed")
+    standard_error = stdev(values) if len(values) > 1 else 0.0
+    return low, high, standard_error
+
+
+def _stratified_sign_flip_p_value(
+    groups: Mapping[str, Mapping[str, Sequence[float]]],
+    *,
+    iterations: int,
+    seed: int,
+) -> float:
+    def macro_average(
+        source: Mapping[str, Mapping[str, Sequence[float]]],
+        signs: Mapping[tuple[str, str], int] | None = None,
+    ) -> float:
+        stratum_means: list[float] = []
+        for stratum, clusters in source.items():
+            values = [
+                value * (1 if signs is None else signs[(stratum, cluster_id)])
+                for cluster_id, cluster_values in clusters.items()
+                for value in cluster_values
+            ]
+            stratum_means.append(sum(values) / len(values))
+        return sum(stratum_means) / len(stratum_means)
+
+    observed = abs(macro_average(groups))
+    identities = tuple(
+        (stratum, cluster_id)
+        for stratum, clusters in sorted(groups.items())
+        for cluster_id in sorted(clusters)
+    )
+    random_generator = random.Random(seed ^ 0x5A17_2026)
+    as_or_more_extreme = 0
+    for _ in range(iterations):
+        signs = {
+            identity: random_generator.choice((-1, 1)) for identity in identities
+        }
+        if abs(macro_average(groups, signs)) >= observed - 1e-15:
+            as_or_more_extreme += 1
+    return (as_or_more_extreme + 1) / (iterations + 1)
+
+
+def conditional_power_from_interim(
+    *,
+    mean_difference: float,
+    standard_error: float,
+    information_fraction: float,
+    final_alpha: float,
+) -> float:
+    """按独立增量正态近似计算负向改善在 final look 过界的条件功效。"""
+    if not math.isfinite(mean_difference) or not math.isfinite(standard_error):
+        raise ValueError("conditional power inputs must be finite")
+    if standard_error < 0:
+        raise ValueError("standard_error must be non-negative")
+    if not 0 < information_fraction <= 1:
+        raise ValueError("information_fraction must be in (0, 1]")
+    if not 0 < final_alpha < 1:
+        raise ValueError("final_alpha must be in (0, 1)")
+    if standard_error == 0:
+        return float(mean_difference < 0)
+    z_interim = mean_difference / standard_error
+    final_boundary = -NormalDist().inv_cdf(1 - final_alpha / 2)
+    if information_fraction == 1:
+        return float(z_interim <= final_boundary)
+    conditional_mean = z_interim / math.sqrt(information_fraction)
+    conditional_sd = math.sqrt(1 - information_fraction)
+    return NormalDist().cdf((final_boundary - conditional_mean) / conditional_sd)
 
 
 def _edit_counts(reference: Sequence[str], hypothesis: Sequence[str]) -> tuple[int, int, int]:
@@ -249,6 +333,7 @@ def cluster_bootstrap_difference(
     *,
     iterations: int = 10_000,
     seed: int = 0,
+    confidence: float = 0.95,
 ) -> BootstrapDifference:
     """对共享会话 ID 做候选减基线的配对 cluster bootstrap。"""
     if iterations <= 0:
@@ -264,15 +349,28 @@ def cluster_bootstrap_difference(
         sum(random_generator.choice(differences) for _ in differences) / len(differences)
         for _ in range(iterations)
     ]
-    low = percentile(bootstrapped, 2.5).value
-    high = percentile(bootstrapped, 97.5).value
-    if low is None or high is None:  # pragma: no cover - finite non-empty input guarantees values
-        raise RuntimeError("bootstrap percentile calculation failed")
+    low, high, standard_error = _bootstrap_summary(
+        bootstrapped,
+        confidence=confidence,
+    )
+    p_value = _stratified_sign_flip_p_value(
+        {
+            "all": {
+                sample_id: (difference,)
+                for sample_id, difference in zip(sample_ids, differences, strict=True)
+            }
+        },
+        iterations=iterations,
+        seed=seed,
+    )
     return BootstrapDifference(
         paired_samples=len(sample_ids),
         mean_difference=sum(differences) / len(differences),
         ci_low=low,
         ci_high=high,
+        confidence=confidence,
+        bootstrap_standard_error=standard_error,
+        raw_p_value=p_value,
     )
 
 
@@ -281,6 +379,7 @@ def stratified_cluster_bootstrap_difference(
     *,
     iterations: int = 10_000,
     seed: int = 0,
+    confidence: float = 0.95,
 ) -> BootstrapDifference:
     """在层内重采样独立样本；仅用于未提供 cluster 身份的敏感性分析。"""
     if iterations <= 0:
@@ -308,15 +407,30 @@ def stratified_cluster_bootstrap_difference(
             for stratum, values in groups.items()
         }
         bootstrapped.append(macro_average(sampled))
-    low = percentile(bootstrapped, 2.5).value
-    high = percentile(bootstrapped, 97.5).value
-    if low is None or high is None:  # pragma: no cover - validated input guarantees values
-        raise RuntimeError("bootstrap percentile calculation failed")
+    low, high, standard_error = _bootstrap_summary(
+        bootstrapped,
+        confidence=confidence,
+    )
+    sign_flip_groups = {
+        stratum: {
+            f"sample-{index}": (value,)
+            for index, value in enumerate(values)
+        }
+        for stratum, values in groups.items()
+    }
+    p_value = _stratified_sign_flip_p_value(
+        sign_flip_groups,
+        iterations=iterations,
+        seed=seed,
+    )
     return BootstrapDifference(
         paired_samples=len(all_values),
         mean_difference=macro_average(groups),
         ci_low=low,
         ci_high=high,
+        confidence=confidence,
+        bootstrap_standard_error=standard_error,
+        raw_p_value=p_value,
     )
 
 
@@ -325,6 +439,7 @@ def stratified_grouped_cluster_bootstrap_difference(
     *,
     iterations: int = 10_000,
     seed: int = 0,
+    confidence: float = 0.95,
 ) -> BootstrapDifference:
     """在场景内重采样完整 cluster，再对场景样本均值等权汇总。"""
     if iterations <= 0:
@@ -375,13 +490,21 @@ def stratified_grouped_cluster_bootstrap_difference(
                 value for values in selected for value in values
             )
         bootstrapped.append(macro_average(sampled))
-    low = percentile(bootstrapped, 2.5).value
-    high = percentile(bootstrapped, 97.5).value
-    if low is None or high is None:  # pragma: no cover - validated input guarantees values
-        raise RuntimeError("bootstrap percentile calculation failed")
+    low, high, standard_error = _bootstrap_summary(
+        bootstrapped,
+        confidence=confidence,
+    )
+    p_value = _stratified_sign_flip_p_value(
+        groups,
+        iterations=iterations,
+        seed=seed,
+    )
     return BootstrapDifference(
         paired_samples=len(all_values),
         mean_difference=macro_average(observed),
         ci_low=low,
         ci_high=high,
+        confidence=confidence,
+        bootstrap_standard_error=standard_error,
+        raw_p_value=p_value,
     )
