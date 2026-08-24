@@ -155,6 +155,21 @@ def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
     return resolved_model_dir
 
 
+def _require_external_artifact_path(
+    path: Path,
+    repo_root: Path,
+    *,
+    label: str,
+    must_exist: bool,
+) -> Path:
+    """拒绝把语料、逐字稿或 benchmark 结果留在 Git 工作树内。"""
+    resolved = path.resolve(strict=must_exist)
+    resolved_repo_root = repo_root.resolve(strict=True)
+    if resolved.is_relative_to(resolved_repo_root):
+        raise ValueError(f"{label} must be outside the repository")
+    return resolved
+
+
 def _verify_replay_identity(
     parameters: Mapping[str, object],
     *,
@@ -212,20 +227,44 @@ def build_parser() -> argparse.ArgumentParser:
     freeze_parser.add_argument("--design", required=True)
     freeze_parser.add_argument("--preflight-report", required=True)
     freeze_parser.add_argument(
+        "--preflight-metadata",
+        required=True,
+        help="生成 preflight report 的原始 metadata 制品；freeze 会重新核验 SHA-256",
+    )
+    freeze_parser.add_argument(
+        "--corpus-root",
+        required=True,
+        help="项目外已物化 PCM 根目录；freeze 会核验字节长度与 SHA-256",
+    )
+    freeze_parser.add_argument(
+        "--power-simulation",
+        required=True,
+        help="blind 开封前基于 dev/pilot 生成的 10,000 次功效模拟制品",
+    )
+    freeze_parser.add_argument(
         "--profile",
         action="append",
         required=True,
         help="固定候选 profile，格式 candidate_id=/path/to/profile.json",
     )
     freeze_parser.add_argument("--output", required=True)
+    freeze_parser.add_argument("--repo-root", default=".")
 
     run_parser = subparsers.add_parser("run", help="运行一个冻结实验臂")
     run_parser.add_argument("--manifest", required=True, help="预冻结 run manifest JSON")
     run_parser.add_argument("--corpus", required=True, help="冻结 corpus manifest JSON")
     run_parser.add_argument("--corpus-root", required=True, help="外部 PCM 语料根目录")
     run_parser.add_argument("--profile", required=True, help="ASR profile JSON")
+    run_parser.add_argument(
+        "--analysis-plan",
+        help="正式 Core/Reserve 运行必须提供并匹配 run manifest 中冻结的 analysis plan",
+    )
     run_parser.add_argument("--repo-root", default=".", help="用于核验 git commit 的仓库根目录")
-    run_parser.add_argument("--output-dir", help="输出目录；默认 runtime/benchmarks/asr/<run_id>")
+    run_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="项目外运行产物目录",
+    )
     run_parser.add_argument(
         "--mode",
         choices=tuple(mode.value for mode in ReplayMode),
@@ -242,6 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
     score_parser = subparsers.add_parser("score", help="显式开盲并生成独立评分产物")
     score_parser.add_argument("--run-dir", required=True)
     score_parser.add_argument("--references", required=True)
+    score_parser.add_argument("--repo-root", default=".")
 
     compare_parser = subparsers.add_parser("compare", help="按 sample_id 配对比较两个实验臂")
     compare_parser.add_argument("--baseline", required=True)
@@ -266,6 +306,7 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--output", required=True)
     compare_parser.add_argument("--bootstrap-iterations", type=int, default=10_000)
     compare_parser.add_argument("--seed", type=int)
+    compare_parser.add_argument("--repo-root", default=".")
 
     decide_parser = subparsers.add_parser(
         "decide",
@@ -274,7 +315,26 @@ def build_parser() -> argparse.ArgumentParser:
     decide_parser.add_argument("--analysis-plan", required=True)
     decide_parser.add_argument("--look", choices=("core", "final"), required=True)
     decide_parser.add_argument("--evidence", required=True)
+    decide_parser.add_argument(
+        "--comparison",
+        action="append",
+        required=True,
+        help="evidence 中每个 family/candidate 对应的不可变 formal comparison",
+    )
+    decide_parser.add_argument(
+        "--gate-metrics",
+        action="append",
+        required=True,
+        help="每个 family/candidate 的结构化非劣门禁指标制品",
+    )
+    decide_parser.add_argument(
+        "--gate-source",
+        action="append",
+        required=True,
+        help="门禁制品引用的源指标，格式 artifact_name=/path/to/artifact",
+    )
     decide_parser.add_argument("--output", required=True)
+    decide_parser.add_argument("--repo-root", default=".")
     return parser
 
 
@@ -287,8 +347,50 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     if sha256_file(corpus_path) != manifest.corpus_manifest_sha256:
         raise ValueError("corpus manifest SHA-256 does not match run manifest")
     repo_root = Path(str(args.repo_root))
+    _require_external_artifact_path(
+        corpus_path,
+        repo_root,
+        label="benchmark corpus manifest",
+        must_exist=True,
+    )
+    corpus_root = _require_external_artifact_path(
+        Path(str(args.corpus_root)),
+        repo_root,
+        label="benchmark corpus root",
+        must_exist=True,
+    )
     verify_git_checkout(repo_root, manifest.git_commit)
     profile = _PROFILE_ADAPTER.validate_json(profile_path.read_text(encoding="utf-8"))
+    if sha256_file(profile_path) != manifest.profile_sha256:
+        raise ValueError("ASR profile SHA-256 does not match run manifest")
+    analysis_plan_value = args.analysis_plan
+    if manifest.analysis_plan_sha256 is None:
+        if analysis_plan_value is not None:
+            raise ValueError("exploratory run manifest cannot attach an analysis plan")
+    else:
+        if analysis_plan_value is None:
+            raise ValueError("formal run manifest requires --analysis-plan")
+        analysis_plan_path = Path(str(analysis_plan_value))
+        if sha256_file(analysis_plan_path) != manifest.analysis_plan_sha256:
+            raise ValueError("analysis plan SHA-256 does not match run manifest")
+        analysis_plan = load_analysis_plan(analysis_plan_path)
+        expected_corpus_hash = (
+            analysis_plan.core_manifest_sha256
+            if manifest.analysis_split == "core"
+            else analysis_plan.reserve_manifest_sha256
+        )
+        expected_split = (
+            "blind-core" if manifest.analysis_split == "core" else "blind-reserve"
+        )
+        if (
+            analysis_plan.evidence_tier != "formal"
+            or manifest.candidate_id not in analysis_plan.candidate_ids
+            or manifest.profile_sha256
+            != analysis_plan.candidate_profile_sha256[manifest.candidate_id]
+            or manifest.corpus_manifest_sha256 != expected_corpus_hash
+            or corpus.split != expected_split
+        ):
+            raise ValueError("run manifest does not match formal analysis plan identity")
     if profile.kind != manifest.backend_id:
         raise ValueError("ASR profile backend_id does not match run manifest")
     model_dir = _require_external_model_dir(profile.model_dir, repo_root)
@@ -319,18 +421,19 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     ) -> StreamingTranscriber:
         return runtime.create_transcriber(sample, context, vendor_event_sink)
 
-    output_value = args.output_dir
-    output_dir = (
-        Path(str(output_value))
-        if output_value
-        else Path("runtime") / "benchmarks" / "asr" / manifest.run_id
+    output_dir = _require_external_artifact_path(
+        Path(str(args.output_dir)),
+        repo_root,
+        label="benchmark output directory",
+        must_exist=False,
     )
+
     async def run_with_cleanup() -> BenchmarkRunResult:
         try:
             return await run_benchmark(
                 manifest=manifest,
                 corpus=corpus,
-                corpus_root=Path(str(args.corpus_root)),
+                corpus_root=corpus_root,
                 output_dir=output_dir,
                 transcriber_factory=transcriber_factory,
                 mode=mode,
@@ -357,9 +460,21 @@ def _run_command(args: argparse.Namespace) -> int:
 
 
 def _score_command(args: argparse.Namespace) -> int:
-    run_dir = Path(str(args.run_dir))
+    repo_root = Path(str(args.repo_root))
+    run_dir = _require_external_artifact_path(
+        Path(str(args.run_dir)),
+        repo_root,
+        label="benchmark run directory",
+        must_exist=True,
+    )
     manifest = load_run_manifest(run_dir / "manifest.json")
     reference_path = Path(str(args.references))
+    _require_external_artifact_path(
+        reference_path,
+        repo_root,
+        label="reference manifest",
+        must_exist=True,
+    )
     reference_hash, references = _open_reference_manifest(reference_path)
     if reference_hash != manifest.reference_manifest_sha256:
         raise ValueError("reference manifest SHA-256 does not match run manifest")
@@ -410,6 +525,20 @@ def _compare_command(args: argparse.Namespace) -> int:
     )
     if analysis_plan_path is not None and not corpus_paths:
         raise ValueError("--analysis-plan requires --corpus")
+    repo_root = Path(str(args.repo_root))
+    _require_external_artifact_path(
+        output_path,
+        repo_root,
+        label="comparison output",
+        must_exist=False,
+    )
+    for path in (*baseline_paths, *candidate_paths, *corpus_paths):
+        _require_external_artifact_path(
+            path,
+            repo_root,
+            label="benchmark comparison input",
+            must_exist=True,
+        )
     cluster_by_sample: dict[str, str] | None = None
     corpora = tuple(load_corpus_input_manifest(path) for path in corpus_paths)
     if corpora:
@@ -432,6 +561,7 @@ def _compare_command(args: argparse.Namespace) -> int:
         plan = load_analysis_plan(analysis_plan_path)
         if plan.evidence_tier != "formal":
             raise ValueError("comparison analysis plan must be formal")
+        analysis_plan_hash = sha256_file(analysis_plan_path)
         by_split = {
             corpus.split: (path, corpus)
             for path, corpus in zip(corpus_paths, corpora, strict=True)
@@ -463,6 +593,83 @@ def _compare_command(args: argparse.Namespace) -> int:
             )
             if sha256_file(path) != expected_hash or observed_clusters != expected_clusters:
                 raise ValueError("corpus does not match formal analysis plan identity")
+        baseline_manifests = tuple(
+            load_run_manifest(path / "manifest.json") for path in baseline_paths
+        )
+        candidate_manifests = tuple(
+            load_run_manifest(path / "manifest.json") for path in candidate_paths
+        )
+        baseline_ids = {manifest.candidate_id for manifest in baseline_manifests}
+        candidate_ids = {manifest.candidate_id for manifest in candidate_manifests}
+        if len(baseline_ids) != 1 or len(candidate_ids) != 1:
+            raise ValueError("formal run identity must remain stable across looks")
+        stable_identity_fields = (
+            "git_commit",
+            "candidate_id",
+            "profile_sha256",
+            "backend_id",
+            "model_id",
+            "model_revision",
+            "model_files_sha256",
+            "runtime",
+            "device",
+            "dtype",
+            "parameters",
+            "environment",
+        )
+        for manifests in (baseline_manifests, candidate_manifests):
+            first = manifests[0]
+            if any(
+                any(
+                    getattr(manifest, field) != getattr(first, field)
+                    for field in stable_identity_fields
+                )
+                for manifest in manifests[1:]
+            ):
+                raise ValueError("formal run identity drifted across Core/Reserve")
+        baseline_id = next(iter(baseline_ids))
+        candidate_id = next(iter(candidate_ids))
+        matching_families = tuple(
+            family
+            for family in plan.decision_families
+            if family.baseline_id == baseline_id
+            and candidate_id in family.candidate_ids
+        )
+        if len(matching_families) != 1:
+            raise ValueError("formal run pair does not match exactly one decision family")
+        family = matching_families[0]
+        expected_reference_by_split = {
+            "blind-core": plan.core_reference_sha256,
+            "blind-reserve": plan.reserve_reference_sha256,
+        }
+        for index, corpus_path in enumerate(corpus_paths):
+            corpus = corpora[index]
+            corpus_hash = sha256_file(corpus_path)
+            expected_reference_hash = expected_reference_by_split[corpus.split]
+            expected_analysis_split = (
+                "core" if corpus.split == "blind-core" else "reserve"
+            )
+            for manifest, expected_candidate_id in (
+                (baseline_manifests[index], baseline_id),
+                (candidate_manifests[index], candidate_id),
+            ):
+                if manifest.status not in {"completed", "failed"}:
+                    raise ValueError("formal comparison requires a finished run manifest")
+                if (
+                    manifest.corpus_manifest_sha256 != corpus_hash
+                    or manifest.reference_manifest_sha256 != expected_reference_hash
+                    or manifest.analysis_plan_sha256 != analysis_plan_hash
+                    or manifest.analysis_split != expected_analysis_split
+                ):
+                    raise ValueError(
+                        "formal run manifest is not bound to the frozen corpus/reference"
+                    )
+                if (
+                    manifest.candidate_id != expected_candidate_id
+                    or manifest.profile_sha256
+                    != plan.candidate_profile_sha256[expected_candidate_id]
+                ):
+                    raise ValueError("formal run profile is not frozen in the analysis plan")
         if int(args.bootstrap_iterations) != plan.bootstrap_iterations:
             raise ValueError("formal comparison bootstrap iterations do not match analysis plan")
         if args.seed is not None and int(args.seed) != plan.bootstrap_seeds[look_index]:
@@ -488,10 +695,8 @@ def _compare_command(args: argparse.Namespace) -> int:
         confidence=confidence,
         cluster_by_sample=cluster_by_sample,
     )
-    comparison["baseline"] = str(baseline_paths[0])
-    comparison["candidate"] = str(candidate_paths[0])
-    comparison["baseline_runs"] = [str(path) for path in baseline_paths]
-    comparison["candidate_runs"] = [str(path) for path in candidate_paths]
+    comparison["baseline_run_ids"] = [path.name for path in baseline_paths]
+    comparison["candidate_run_ids"] = [path.name for path in candidate_paths]
     if corpus_paths:
         corpus_hashes = [sha256_file(path) for path in corpus_paths]
         comparison["corpus_manifest_sha256"] = corpus_hashes[0]
@@ -504,6 +709,27 @@ def _compare_command(args: argparse.Namespace) -> int:
             comparison["evidence_tier"] = "formal"
             comparison["analysis_plan_sha256"] = sha256_file(analysis_plan_path)
             comparison["look"] = look
+            comparison["family_id"] = family.family_id
+            comparison["baseline_id"] = baseline_id
+            comparison["candidate_id"] = candidate_id
+            comparison["run_manifest_sha256s"] = {
+                "baseline": [
+                    sha256_file(path / "manifest.json") for path in baseline_paths
+                ],
+                "candidate": [
+                    sha256_file(path / "manifest.json") for path in candidate_paths
+                ],
+            }
+            comparison["scored_hypotheses_sha256s"] = {
+                "baseline": [
+                    sha256_file(path / "scored-hypotheses.jsonl")
+                    for path in baseline_paths
+                ],
+                "candidate": [
+                    sha256_file(path / "scored-hypotheses.jsonl")
+                    for path in candidate_paths
+                ],
+            }
             if look == "core":
                 standard_error_value = comparison["bootstrap_standard_error"]
                 mean_difference_value = comparison["mean_cer_difference"]
@@ -522,10 +748,23 @@ def _compare_command(args: argparse.Namespace) -> int:
                         core_duration_ms
                         / (core_duration_ms + reserve_duration_ms)
                     ),
-                    final_alpha=plan.look_alpha[1],
+                    final_alpha=(
+                        plan.look_alpha[1] / len(family.candidate_ids)
+                    ),
+                    minimum_detectable_effect=family.minimum_detectable_effect,
+                )
+                comparison["conditional_power_method"] = (
+                    "normal-independent-increments-mde-holm-conservative-v1"
+                )
+                comparison["minimum_detectable_effect"] = (
+                    family.minimum_detectable_effect
                 )
             else:
                 comparison["conditional_power"] = None
+                comparison["conditional_power_method"] = None
+                comparison["minimum_detectable_effect"] = (
+                    family.minimum_detectable_effect
+                )
     else:
         comparison["evidence_tier"] = "exploratory"
     write_json(output_path, comparison)
@@ -544,6 +783,20 @@ def _parse_profile_paths(values: Sequence[str]) -> dict[str, Path]:
             raise ValueError(f"duplicate --profile candidate_id: {candidate_id}")
         profiles[candidate_id] = Path(raw_path)
     return profiles
+
+
+def _parse_gate_source_paths(values: Sequence[str]) -> dict[str, Path]:
+    sources: dict[str, Path] = {}
+    for value in values:
+        name, separator, raw_path = value.partition("=")
+        name = name.strip()
+        raw_path = raw_path.strip()
+        if not separator or not name or not raw_path:
+            raise ValueError("--gate-source must use artifact_name=/path/to/artifact")
+        if name in sources:
+            raise ValueError(f"duplicate --gate-source artifact_name: {name}")
+        sources[name] = Path(raw_path)
+    return sources
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -570,16 +823,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             reserve_manifest = Path(str(args.reserve_manifest))
             core_reference = Path(str(args.core_references))
             reserve_reference = Path(str(args.reserve_references))
+            freeze_repo_root = Path(str(args.repo_root))
+            preflight_report = Path(str(args.preflight_report))
+            preflight_metadata = Path(str(args.preflight_metadata))
+            corpus_root = Path(str(args.corpus_root))
+            power_simulation = Path(str(args.power_simulation))
+            output = Path(str(args.output))
+            for path, label, must_exist in (
+                (core_manifest, "Core manifest", True),
+                (reserve_manifest, "Reserve manifest", True),
+                (core_reference, "Core reference", True),
+                (reserve_reference, "Reserve reference", True),
+                (preflight_report, "preflight report", True),
+                (preflight_metadata, "preflight metadata", True),
+                (corpus_root, "corpus root", True),
+                (power_simulation, "power simulation", True),
+                (output, "analysis plan output", False),
+            ):
+                _require_external_artifact_path(
+                    path,
+                    freeze_repo_root,
+                    label=label,
+                    must_exist=must_exist,
+                )
             design = load_analysis_plan_design(Path(str(args.design)))
             freeze_formal_analysis_plan(
-                Path(str(args.output)),
+                output,
                 design,
                 core_manifest=core_manifest,
                 reserve_manifest=reserve_manifest,
                 core_reference=core_reference,
                 reserve_reference=reserve_reference,
-                preflight_report=Path(str(args.preflight_report)),
+                preflight_report=preflight_report,
                 profile_paths=_parse_profile_paths(tuple(args.profile)),
+                corpus_root=corpus_root,
+                power_simulation=power_simulation,
+                preflight_metadata=preflight_metadata,
             )
             return 0
         if args.command == "run":
@@ -590,15 +869,48 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _compare_command(args)
         if args.command == "decide":
             analysis_plan_path = Path(str(args.analysis_plan))
+            evidence_path = Path(str(args.evidence))
+            comparison_paths = tuple(Path(str(path)) for path in args.comparison)
+            gate_metrics_paths = tuple(Path(str(path)) for path in args.gate_metrics)
+            gate_source_paths = _parse_gate_source_paths(tuple(args.gate_source))
+            repo_root = Path(str(args.repo_root))
+            for path, label, must_exist in (
+                (evidence_path, "Stage 1 evidence", True),
+                *((path, "formal comparison", True) for path in comparison_paths),
+                *((path, "gate metrics", True) for path in gate_metrics_paths),
+                *((path, "gate source", True) for path in gate_source_paths.values()),
+                (Path(str(args.output)), "Stage 1 decision output", False),
+            ):
+                _require_external_artifact_path(
+                    path,
+                    repo_root,
+                    label=label,
+                    must_exist=must_exist,
+                )
             look = cast(Look, str(args.look))
             report = evaluate_stage1_look(
                 load_analysis_plan(analysis_plan_path),
                 look=look,
                 evidence=load_family_look_evidence(
-                    Path(str(args.evidence)),
+                    evidence_path,
                     expected_plan_sha256=sha256_file(analysis_plan_path),
                     expected_look=look,
+                    comparison_paths=comparison_paths,
+                    gate_metrics_paths=gate_metrics_paths,
+                    gate_source_paths=gate_source_paths,
                 ),
+            )
+            report = report.model_copy(
+                update={
+                    "analysis_plan_sha256": sha256_file(analysis_plan_path),
+                    "evidence_bundle_sha256": sha256_file(evidence_path),
+                    "comparison_sha256s": tuple(
+                        sha256_file(path) for path in comparison_paths
+                    ),
+                    "gate_metrics_sha256s": tuple(
+                        sha256_file(path) for path in gate_metrics_paths
+                    ),
+                }
             )
             write_stage1_decision_report(Path(str(args.output)), report)
             return 0

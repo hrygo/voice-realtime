@@ -204,8 +204,33 @@ def test_comparison_uses_declared_cluster_ids_for_bootstrap() -> None:
     assert comparison["paired_clusters"] == 2
     assert comparison["stratum_cluster_counts"] == {"meeting": 2}
     assert comparison["mean_cer_difference"] == pytest.approx(0.5)
-    assert comparison["ci_low"] == pytest.approx(0.0)
-    assert comparison["ci_high"] == pytest.approx(1.0)
+    assert comparison["resampling_method"] == (
+        "global-bayesian-cluster-weights-stratified-macro-v1"
+    )
+    assert 0 < comparison["ci_low"] < 0.1
+    assert 0.9 < comparison["ci_high"] < 1.0
+
+
+def test_cross_scenario_observations_share_one_cluster_sign_flip() -> None:
+    baseline = [
+        {"sample_id": "near", "scenario": "near", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "far", "scenario": "far", "cer_status": "supported", "cer": 0.0},
+    ]
+    candidate = [
+        {"sample_id": "near", "scenario": "near", "cer_status": "supported", "cer": 1.0},
+        {"sample_id": "far", "scenario": "far", "cer_status": "supported", "cer": 1.0},
+    ]
+
+    comparison = compare_hypotheses(
+        baseline,
+        candidate,
+        iterations=500,
+        seed=7,
+        cluster_by_sample={"near": "same-source", "far": "same-source"},
+    )
+
+    assert comparison["paired_clusters"] == 1
+    assert comparison["raw_p_value"] == 1.0
 
 
 def test_formal_bootstrap_uses_registered_confidence_and_reports_p_value() -> None:
@@ -259,12 +284,14 @@ def test_conditional_power_uses_information_fraction_and_direction() -> None:
         standard_error=0.004,
         information_fraction=60 / 105,
         final_alpha=0.04,
+        minimum_detectable_effect=0.005,
     )
     no_improvement = conditional_power_from_interim(
         mean_difference=0.01,
         standard_error=0.004,
         information_fraction=60 / 105,
         final_alpha=0.04,
+        minimum_detectable_effect=0.005,
     )
 
     assert strong_improvement > 0.95

@@ -16,6 +16,7 @@ from voice_realtime.benchmarks.asr.manifest import (
     CorpusReferenceManifest,
     load_corpus_input_manifest,
     load_reference_manifest,
+    resolve_relative_file,
     sha256_file,
 )
 from voice_realtime.benchmarks.asr.preflight import BlindPreflightReport
@@ -83,6 +84,22 @@ class AnalysisPlanDesign(BaseModel):
     normalization_version: str = Field(min_length=1)
     filtering_rules: tuple[str, ...] = Field(min_length=1)
     decision_families: tuple[DecisionFamily, ...] = Field(min_length=1)
+    power_simulation_sha256: str
+    power_simulation_iterations: Literal[10000] = 10_000
+    pilot_cluster_variance: float = Field(gt=0)
+    core_power: float = Field(ge=0, le=1)
+    final_power: float = Field(ge=0, le=1)
+    simulated_familywise_alpha: float = Field(ge=0, le=1)
+
+    @field_validator("power_simulation_sha256")
+    @classmethod
+    def _power_hash(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) != _SHA256_LENGTH or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("power simulation SHA-256 必须是 64 位十六进制")
+        return normalized
 
     @field_validator(
         "candidate_ids",
@@ -112,6 +129,19 @@ class AnalysisPlanDesign(BaseModel):
         return self
 
 
+class PowerSimulationArtifact(BaseModel):
+    """blind 开封前由 dev/pilot 生成的结构化功效模拟摘要。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = "1.0"
+    iterations: Literal[10000]
+    pilot_cluster_variance: float = Field(gt=0)
+    core_power: float = Field(ge=0, le=1)
+    final_power: float = Field(ge=0, le=1)
+    simulated_familywise_alpha: float = Field(ge=0, le=1)
+
+
 class AnalysisPlan(BaseModel):
     """在 Core 输出可见前冻结的候选、边界、MDE 与随机种子。"""
 
@@ -126,6 +156,15 @@ class AnalysisPlan(BaseModel):
     core_reference_sha256: str
     reserve_reference_sha256: str
     preflight_report_sha256: str | None = None
+    preflight_metadata_sha256: str | None = None
+    cluster_set_sha256: str | None = None
+    sample_order_sha256: str | None = None
+    power_simulation_sha256: str | None = None
+    power_simulation_iterations: Literal[10000] = 10_000
+    pilot_cluster_variance: float | None = Field(default=None, gt=0)
+    core_power: float | None = Field(default=None, ge=0, le=1)
+    final_power: float | None = Field(default=None, ge=0, le=1)
+    simulated_familywise_alpha: float | None = Field(default=None, ge=0, le=1)
     core_duration_ms: int | None = Field(default=None, gt=0)
     reserve_duration_ms: int | None = Field(default=None, gt=0)
     core_analysis_cluster_ids: tuple[str, ...] = ()
@@ -154,6 +193,10 @@ class AnalysisPlan(BaseModel):
         "core_reference_sha256",
         "reserve_reference_sha256",
         "preflight_report_sha256",
+        "preflight_metadata_sha256",
+        "cluster_set_sha256",
+        "sample_order_sha256",
+        "power_simulation_sha256",
     )
     @classmethod
     def _validate_hash(cls, value: str | None) -> str | None:
@@ -236,6 +279,13 @@ class AnalysisPlan(BaseModel):
         ):
             raise ValueError("candidate profile set 必须与 candidate_ids 完全一致")
         if self.evidence_tier == "formal":
+            if any(
+                not family.required_noninferiority_gates
+                for family in self.decision_families
+            ):
+                raise ValueError(
+                    "formal analysis plan requires non-inferiority gates for every family"
+                )
             cluster_partition_valid = (
                 bool(self.core_analysis_cluster_ids)
                 and bool(self.reserve_analysis_cluster_ids)
@@ -252,6 +302,14 @@ class AnalysisPlan(BaseModel):
             formal_fields_present = (
                 bool(self.candidate_profile_sha256)
                 and self.preflight_report_sha256 is not None
+                and self.preflight_metadata_sha256 is not None
+                and self.cluster_set_sha256 is not None
+                and self.sample_order_sha256 is not None
+                and self.power_simulation_sha256 is not None
+                and self.pilot_cluster_variance is not None
+                and self.core_power is not None
+                and self.final_power is not None
+                and self.simulated_familywise_alpha is not None
                 and self.core_duration_ms is not None
                 and self.reserve_duration_ms is not None
                 and bool(self.analysis_cluster_ids)
@@ -398,6 +456,50 @@ def _sample_order_sha256(sample_ids: tuple[str, ...]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _verify_materialized_pcm(
+    corpus_root: Path,
+    *manifests: CorpusInputManifest,
+) -> None:
+    root = corpus_root.resolve(strict=True)
+    for manifest in manifests:
+        for sample in manifest.samples:
+            audio_path = resolve_relative_file(root, sample.audio_path)
+            expected_size = sample.duration_ms * 32
+            if audio_path.stat().st_size != expected_size:
+                raise ValueError(f"PCM byte length does not match duration: {sample.sample_id}")
+            if sha256_file(audio_path) != sample.audio_sha256:
+                raise ValueError(f"PCM SHA-256 does not match manifest: {sample.sample_id}")
+
+
+def _verify_cross_look_isolation(
+    core: CorpusInputManifest,
+    reserve: CorpusInputManifest,
+) -> None:
+    def values(
+        manifest: CorpusInputManifest,
+        field: Literal["session", "content", "speaker", "cluster"],
+    ) -> set[str]:
+        if field == "session":
+            return {sample.session_id for sample in manifest.samples}
+        if field == "content":
+            return {
+                sample.content_group_id
+                for sample in manifest.samples
+                if sample.content_group_id is not None
+            }
+        if field == "speaker":
+            return {speaker for sample in manifest.samples for speaker in sample.speakers}
+        return {
+            sample.analysis_cluster_id
+            for sample in manifest.samples
+            if sample.analysis_cluster_id is not None
+        }
+
+    for field in ("session", "content", "speaker", "cluster"):
+        if values(core, field) & values(reserve, field):
+            raise ValueError(f"Core/Reserve {field} identities must not overlap")
+
+
 def freeze_formal_analysis_plan(
     output: Path,
     design: AnalysisPlanDesign,
@@ -408,12 +510,31 @@ def freeze_formal_analysis_plan(
     reserve_reference: Path,
     preflight_report: Path,
     profile_paths: Mapping[str, Path],
+    corpus_root: Path,
+    power_simulation: Path,
+    preflight_metadata: Path,
 ) -> AnalysisPlan:
     """语义核验 Core/Reserve、preflight 与 profiles 后冻结正式计划。"""
     if output.exists():
         raise FileExistsError(f"frozen analysis plan already exists: {output}")
     if set(profile_paths) != set(design.candidate_ids):
         raise ValueError("profile path set must match fixed candidate set")
+    if sha256_file(power_simulation) != design.power_simulation_sha256:
+        raise ValueError("power simulation SHA-256 does not match analysis design")
+    if power_simulation.stat().st_size > _MAX_ANALYSIS_ARTIFACT_BYTES:
+        raise ValueError("power simulation exceeds 16 MiB")
+    simulated = PowerSimulationArtifact.model_validate_json(
+        power_simulation.read_text(encoding="utf-8")
+    )
+    if (
+        simulated.iterations != design.power_simulation_iterations
+        or simulated.pilot_cluster_variance != design.pilot_cluster_variance
+        or simulated.core_power != design.core_power
+        or simulated.final_power != design.final_power
+        or simulated.simulated_familywise_alpha
+        != design.simulated_familywise_alpha
+    ):
+        raise ValueError("power simulation semantics do not match analysis design")
     core = load_corpus_input_manifest(core_manifest)
     reserve = load_corpus_input_manifest(reserve_manifest)
     if core.split != "blind-core" or reserve.split != "blind-reserve":
@@ -424,6 +545,8 @@ def freeze_formal_analysis_plan(
         raise ValueError("Core/Reserve normalization versions must match")
     if core.normalization_version != design.normalization_version:
         raise ValueError("analysis normalization does not match blind manifests")
+    _verify_materialized_pcm(corpus_root, core, reserve)
+    _verify_cross_look_isolation(core, reserve)
 
     core_reference_hash, core_references = _load_sealed_reference(core_reference)
     reserve_reference_hash, reserve_references = _load_sealed_reference(
@@ -451,6 +574,8 @@ def freeze_formal_analysis_plan(
     )
     if preflight.status != "metadata_ready" or preflight.blockers:
         raise ValueError("formal analysis requires metadata_ready preflight")
+    if sha256_file(preflight_metadata) != preflight.metadata_sha256:
+        raise ValueError("preflight metadata SHA-256 does not match report")
     core_duration_ms = sum(sample.duration_ms for sample in core.samples)
     reserve_duration_ms = sum(sample.duration_ms for sample in reserve.samples)
     if preflight.unique_duration_ms != {
@@ -478,6 +603,15 @@ def freeze_formal_analysis_plan(
         core_reference_sha256=core_reference_hash,
         reserve_reference_sha256=reserve_reference_hash,
         preflight_report_sha256=sha256_file(preflight_report),
+        preflight_metadata_sha256=preflight.metadata_sha256,
+        cluster_set_sha256=preflight.cluster_set_sha256,
+        sample_order_sha256=preflight.sample_order_sha256,
+        power_simulation_sha256=design.power_simulation_sha256,
+        power_simulation_iterations=design.power_simulation_iterations,
+        pilot_cluster_variance=design.pilot_cluster_variance,
+        core_power=design.core_power,
+        final_power=design.final_power,
+        simulated_familywise_alpha=design.simulated_familywise_alpha,
         core_duration_ms=core_duration_ms,
         reserve_duration_ms=reserve_duration_ms,
         analysis_cluster_ids=analysis_cluster_ids,

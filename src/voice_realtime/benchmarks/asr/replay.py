@@ -707,6 +707,8 @@ def compare_hypotheses(
     paired_ids = sorted(baseline)
     differences_by_scenario: dict[str, list[float]] = {}
     differences_by_scenario_cluster: dict[str, dict[str, list[float]]] = {}
+    baseline_by_scenario: dict[str, list[float]] = {}
+    candidate_by_scenario: dict[str, list[float]] = {}
     sample_differences: list[float] = []
     paired_cluster_ids: set[str] = set()
     if cluster_by_sample is not None and set(cluster_by_sample) != set(paired_ids):
@@ -718,6 +720,8 @@ def compare_hypotheses(
             raise ValueError(f"scenario mismatch for paired sample: {sample_id}")
         difference = candidate_value - baseline_value
         differences_by_scenario.setdefault(baseline_scenario, []).append(difference)
+        baseline_by_scenario.setdefault(baseline_scenario, []).append(baseline_value)
+        candidate_by_scenario.setdefault(baseline_scenario, []).append(candidate_value)
         if cluster_by_sample is not None:
             cluster_id = cluster_by_sample[sample_id].strip()
             if not cluster_id:
@@ -745,18 +749,35 @@ def compare_hypotheses(
             confidence=confidence,
         )
         resampling_unit = "cluster"
+        resampling_method = "global-bayesian-cluster-weights-stratified-macro-v1"
         paired_clusters = len(paired_cluster_ids)
         stratum_cluster_counts = {
             scenario: len(clusters)
             for scenario, clusters in sorted(differences_by_scenario_cluster.items())
         }
+    baseline_macro_cer = sum(
+        sum(values) / len(values) for values in baseline_by_scenario.values()
+    ) / len(baseline_by_scenario)
+    candidate_macro_cer = sum(
+        sum(values) / len(values) for values in candidate_by_scenario.values()
+    ) / len(candidate_by_scenario)
     result: dict[str, object] = {
         "schema_version": "1.0",
         "paired_samples": comparison.paired_samples,
         "resampling_unit": resampling_unit,
+        "resampling_method": (
+            resampling_method if cluster_by_sample is not None else "sample-bootstrap-v1"
+        ),
         "paired_clusters": paired_clusters,
         "stratum_cluster_counts": stratum_cluster_counts,
         "mean_cer_difference": round(comparison.mean_difference, 12),
+        "baseline_macro_cer": round(baseline_macro_cer, 12),
+        "candidate_macro_cer": round(candidate_macro_cer, 12),
+        "relative_cer_difference": (
+            round(comparison.mean_difference / baseline_macro_cer, 12)
+            if baseline_macro_cer > 0
+            else None
+        ),
         "sample_mean_cer_difference": round(
             sum(sample_differences) / len(sample_differences),
             12,
@@ -773,12 +794,32 @@ def compare_hypotheses(
 
 
 def write_json(path: Path, payload: Mapping[str, object]) -> None:
-    """写入稳定排序且带换行的 JSON。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    """原子写入不可覆盖、0600 的稳定 JSON。"""
+    if path.exists():
+        raise FileExistsError(f"JSON artifact already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
     )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(
+                json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n"
+            )
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        path.chmod(0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _prepare_output_dir(output_dir: Path, artifact_names: Sequence[str]) -> None:
@@ -804,10 +845,14 @@ def _prepare_output_dir(output_dir: Path, artifact_names: Sequence[str]) -> None
             ),
         )
         writer.writeheader()
-    for name in artifact_names:
-        if name != "manifest.json":
-            (output_dir / name).touch(exist_ok=True)
-            (output_dir / name).chmod(0o600)
+    for name in (
+        "events.jsonl",
+        "failures.jsonl",
+        "hypotheses.jsonl",
+        "resources.csv",
+        "vendor-events.jsonl",
+    ):
+        (output_dir / name).chmod(0o600)
 
 
 def _failure_hypothesis(sample: BenchmarkSample, error_code: str) -> dict[str, object]:

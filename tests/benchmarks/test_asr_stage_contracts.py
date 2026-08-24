@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from voice_realtime.benchmarks.asr.stage_contracts import (
+    PROMOTION_HARD_GATES,
     ArtifactIdentity,
     ArtifactIndex,
     FaultEvent,
@@ -114,9 +115,24 @@ def test_only_stage5_with_all_hard_gates_can_promote() -> None:
         "family_id": "meeting",
         "candidate_id": "fun",
         "run_manifest_sha256": _hash("a"),
-        "upstream_report_sha256": _hash("b"),
-        "required_hard_gates": ("failure_rate", "recovery"),
-        "hard_gates": {"failure_rate": "passed", "recovery": "passed"},
+        "upstream_report_sha256s": {
+            "stage1": _hash("b"),
+            "stage2": _hash("c"),
+            "stage3": _hash("d"),
+            "stage4": _hash("e"),
+        },
+        "required_hard_gates": PROMOTION_HARD_GATES,
+        "hard_gates": dict.fromkeys(PROMOTION_HARD_GATES, "passed"),
+        "actual_duration_ms": 3_600_000,
+        "executed_fault_counts": {
+            "disconnect": 3,
+            "asr_crash": 1,
+            "finalization_delay": 1,
+        },
+        "artifact_index_sha256": _hash("f"),
+        "metrics_sha256": _hash("0"),
+        "fault_execution_sha256": _hash("1"),
+        "unique_finalist": True,
     }
     with pytest.raises(ValidationError, match="only Stage 5"):
         StageDecisionReport(stage=2, status="Promote", **common)
@@ -126,21 +142,46 @@ def test_only_stage5_with_all_hard_gates_can_promote() -> None:
             status="Promote",
             **{
                 **common,
-                "hard_gates": {"failure_rate": "failed", "recovery": "passed"},
+                "hard_gates": {
+                    **common["hard_gates"],
+                    "long_run_stability": "failed",
+                },
             },
         )
-    with pytest.raises(ValidationError, match="fixed required set"):
+    with pytest.raises(ValidationError):
         StageDecisionReport(
             stage=5,
             status="Promote",
             **{
                 **common,
-                "hard_gates": {
-                    "failure_rate": "passed",
-                    "recovery": "passed",
-                    "unregistered": "passed",
+                "required_hard_gates": ("invented",),
+                "hard_gates": {"invented": "passed"},
+            },
+        )
+    with pytest.raises(ValidationError, match="60 minutes"):
+        StageDecisionReport(
+            stage=5,
+            status="Promote",
+            **{**common, "actual_duration_ms": 3_599_999},
+        )
+    with pytest.raises(ValidationError, match="fixed fault execution counts"):
+        StageDecisionReport(
+            stage=5,
+            status="Promote",
+            **{
+                **common,
+                "executed_fault_counts": {
+                    "disconnect": 2,
+                    "asr_crash": 1,
+                    "finalization_delay": 1,
                 },
             },
+        )
+    with pytest.raises(ValidationError, match="Stage 1-4 report chain"):
+        StageDecisionReport(
+            stage=5,
+            status="Promote",
+            **{**common, "upstream_report_sha256s": {"stage1": _hash("b")}},
         )
 
     report = StageDecisionReport(stage=5, status="Promote", **common)

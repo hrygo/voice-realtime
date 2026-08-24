@@ -221,6 +221,8 @@ def _benchmark_inputs(tmp_path: Path) -> tuple[ASRRunManifest, CorpusInputManife
         git_commit="a" * 40,
         corpus_manifest_sha256="c" * 64,
         reference_manifest_sha256="d" * 64,
+        candidate_id="qwen",
+        profile_sha256="e" * 64,
         backend_id="wlk-qwen3-streaming",
         model_id="test/model",
         model_revision="revision-1",

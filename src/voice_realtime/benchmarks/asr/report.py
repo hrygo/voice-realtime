@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import tempfile
@@ -12,6 +13,7 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from voice_realtime.benchmarks.asr.analysis_plan import AnalysisPlan, DecisionFamily
+from voice_realtime.benchmarks.asr.manifest import sha256_file
 
 Look = Literal["core", "final"]
 GateStatus = Literal["passed", "failed", "unsupported", "not_applicable"]
@@ -35,8 +37,14 @@ class FamilyLookEvidence(BaseModel):
     family_id: str = Field(min_length=1)
     baseline_id: str = Field(min_length=1)
     candidate_id: str = Field(min_length=1)
+    comparison_sha256: str
+    gate_metrics_sha256: str
     look: Look
     mean_cer_difference: float
+    baseline_macro_cer: float = Field(ge=0)
+    candidate_macro_cer: float = Field(ge=0)
+    relative_cer_difference: float | None
+    bootstrap_standard_error: float = Field(ge=0)
     ci_low: float
     ci_high: float
     raw_p_value: float = Field(ge=0, le=1)
@@ -52,9 +60,19 @@ class FamilyLookEvidence(BaseModel):
     analysis_cluster_ids: tuple[str, ...] = Field(min_length=1)
     test_direction: Literal["two_sided_superiority"]
 
-    @field_validator("mean_cer_difference", "ci_low", "ci_high")
+    @field_validator(
+        "mean_cer_difference",
+        "baseline_macro_cer",
+        "candidate_macro_cer",
+        "relative_cer_difference",
+        "bootstrap_standard_error",
+        "ci_low",
+        "ci_high",
+    )
     @classmethod
-    def _validate_finite(cls, value: float) -> float:
+    def _validate_finite(cls, value: float | None) -> float | None:
+        if value is None:
+            return None
         if not math.isfinite(value):
             raise ValueError("CER difference and confidence interval must be finite")
         return value
@@ -67,6 +85,16 @@ class FamilyLookEvidence(BaseModel):
             raise ValueError("analysis cluster ID cannot be empty")
         if len(normalized) != len(set(normalized)):
             raise ValueError("analysis cluster IDs must be unique")
+        return normalized
+
+    @field_validator("comparison_sha256", "gate_metrics_sha256")
+    @classmethod
+    def _validate_comparison_hash(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) != 64 or any(
+            character not in "0123456789abcdef" for character in normalized
+        ):
+            raise ValueError("comparison SHA-256 must be 64 hexadecimal characters")
         return normalized
 
     @model_validator(mode="after")
@@ -113,7 +141,31 @@ class Stage1DecisionReport(BaseModel):
     alpha: float
     confidence: float
     stopped_at: Literal["core", "reserve", "completed"] | None
+    analysis_plan_sha256: str | None = None
+    evidence_bundle_sha256: str | None = None
+    comparison_sha256s: tuple[str, ...] = ()
+    gate_metrics_sha256s: tuple[str, ...] = ()
     decisions: tuple[FamilyLookDecision, ...]
+
+    @field_validator(
+        "analysis_plan_sha256",
+        "evidence_bundle_sha256",
+    )
+    @classmethod
+    def _optional_provenance_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return FamilyLookEvidence._validate_comparison_hash(value)
+
+    @field_validator("comparison_sha256s", "gate_metrics_sha256s")
+    @classmethod
+    def _comparison_hashes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        validated = tuple(
+            FamilyLookEvidence._validate_comparison_hash(item) for item in value
+        )
+        if len(validated) != len(set(validated)):
+            raise ValueError("comparison SHA-256 values must be unique")
+        return validated
 
 
 class Stage1EvidenceBundle(BaseModel):
@@ -137,11 +189,48 @@ class Stage1EvidenceBundle(BaseModel):
         return normalized
 
 
+class FamilyGateMetricsArtifact(BaseModel):
+    """预注册非劣门禁的结构化来源，不允许在 decision evidence 内手填。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = "1.0"
+    analysis_plan_sha256: str
+    look: Look
+    family_id: str = Field(min_length=1)
+    baseline_id: str = Field(min_length=1)
+    candidate_id: str = Field(min_length=1)
+    noninferiority_gates: Mapping[str, GateStatus]
+    hard_failures: tuple[str, ...] = ()
+    source_artifact_sha256s: Mapping[str, str] = Field(min_length=1)
+
+    @field_validator("analysis_plan_sha256")
+    @classmethod
+    def _plan_hash(cls, value: str) -> str:
+        return FamilyLookEvidence._validate_comparison_hash(value)
+
+    @field_validator("source_artifact_sha256s")
+    @classmethod
+    def _source_hashes(cls, value: Mapping[str, str]) -> Mapping[str, str]:
+        if any(not name.strip() for name in value):
+            raise ValueError("gate metric source artifact name cannot be empty")
+        normalized = {
+            name.strip(): FamilyLookEvidence._validate_comparison_hash(artifact_hash)
+            for name, artifact_hash in value.items()
+        }
+        if len(normalized) != len(value):
+            raise ValueError("gate metric source artifact names must be unique")
+        return normalized
+
+
 def load_family_look_evidence(
     path: Path,
     *,
     expected_plan_sha256: str,
     expected_look: Look,
+    comparison_paths: Sequence[Path],
+    gate_metrics_paths: Sequence[Path],
+    gate_source_paths: Mapping[str, Path],
 ) -> tuple[FamilyLookEvidence, ...]:
     """有界读取严格 evidence 数组。"""
     if path.stat().st_size > _MAX_EVIDENCE_BYTES:
@@ -152,6 +241,127 @@ def load_family_look_evidence(
         or bundle.look != expected_look
     ):
         raise ValueError("Stage 1 evidence bundle does not match analysis plan/look")
+    if (
+        len(comparison_paths) != len(bundle.comparisons)
+        or len(gate_metrics_paths) != len(bundle.comparisons)
+    ):
+        raise ValueError(
+            "each Stage 1 evidence row requires one comparison and gate metrics artifact"
+        )
+    comparisons_by_identity: dict[tuple[str, str, str], tuple[str, Mapping[str, object]]] = {}
+    for comparison_path in comparison_paths:
+        if comparison_path.stat().st_size > _MAX_EVIDENCE_BYTES:
+            raise ValueError("formal comparison exceeds 16 MiB")
+        raw = json.loads(comparison_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("formal comparison must be a JSON object")
+        comparison_payload = raw
+        identity_values = tuple(
+            comparison_payload.get(field)
+            for field in ("family_id", "baseline_id", "candidate_id")
+        )
+        if not all(isinstance(value, str) and value for value in identity_values):
+            raise ValueError("formal comparison identity is incomplete")
+        identity = (
+            str(identity_values[0]),
+            str(identity_values[1]),
+            str(identity_values[2]),
+        )
+        if identity in comparisons_by_identity:
+            raise ValueError("formal comparison identity must be unique")
+        if (
+            comparison_payload.get("evidence_tier") != "formal"
+            or comparison_payload.get("analysis_plan_sha256") != expected_plan_sha256
+            or comparison_payload.get("look") != expected_look
+        ):
+            raise ValueError("comparison does not match formal analysis plan/look")
+        comparisons_by_identity[identity] = (
+            sha256_file(comparison_path),
+            comparison_payload,
+        )
+    gates_by_identity: dict[
+        tuple[str, str, str], tuple[str, FamilyGateMetricsArtifact]
+    ] = {}
+    for gate_metrics_path in gate_metrics_paths:
+        if gate_metrics_path.stat().st_size > _MAX_EVIDENCE_BYTES:
+            raise ValueError("gate metrics artifact exceeds 16 MiB")
+        gate_metrics = FamilyGateMetricsArtifact.model_validate_json(
+            gate_metrics_path.read_text(encoding="utf-8")
+        )
+        identity = (
+            gate_metrics.family_id,
+            gate_metrics.baseline_id,
+            gate_metrics.candidate_id,
+        )
+        if identity in gates_by_identity:
+            raise ValueError("gate metrics identity must be unique")
+        if (
+            gate_metrics.analysis_plan_sha256 != expected_plan_sha256
+            or gate_metrics.look != expected_look
+        ):
+            raise ValueError("gate metrics do not match formal analysis plan/look")
+        gates_by_identity[identity] = (sha256_file(gate_metrics_path), gate_metrics)
+    expected_gate_sources: dict[str, str] = {}
+    for _, gate_metrics in gates_by_identity.values():
+        for name, expected_hash in gate_metrics.source_artifact_sha256s.items():
+            previous = expected_gate_sources.setdefault(name, expected_hash)
+            if previous != expected_hash:
+                raise ValueError("gate source name maps to conflicting SHA-256 values")
+    if set(gate_source_paths) != set(expected_gate_sources):
+        raise ValueError("gate source paths must match the registered source artifact set")
+    for name, source_path in gate_source_paths.items():
+        if sha256_file(source_path) != expected_gate_sources[name]:
+            raise ValueError(f"gate source SHA-256 mismatch: {name}")
+    field_pairs = (
+        ("mean_cer_difference", "mean_cer_difference"),
+        ("baseline_macro_cer", "baseline_macro_cer"),
+        ("candidate_macro_cer", "candidate_macro_cer"),
+        ("relative_cer_difference", "relative_cer_difference"),
+        ("bootstrap_standard_error", "bootstrap_standard_error"),
+        ("ci_low", "ci_low"),
+        ("ci_high", "ci_high"),
+        ("raw_p_value", "raw_p_value"),
+        ("conditional_power", "conditional_power"),
+        ("paired_samples", "paired_samples"),
+        ("paired_clusters", "paired_clusters"),
+        ("decision_confidence", "decision_confidence"),
+        ("bootstrap_seed", "seed"),
+        ("bootstrap_iterations", "bootstrap_iterations"),
+        ("analysis_cluster_ids", "analysis_cluster_ids"),
+    )
+    for evidence in bundle.comparisons:
+        identity = (evidence.family_id, evidence.baseline_id, evidence.candidate_id)
+        source = comparisons_by_identity.get(identity)
+        if source is None:
+            raise ValueError("Stage 1 evidence has no matching formal comparison")
+        source_hash, source_comparison = source
+        if evidence.comparison_sha256 != source_hash:
+            raise ValueError("Stage 1 evidence comparison SHA-256 mismatch")
+        gate_source = gates_by_identity.get(identity)
+        if gate_source is None:
+            raise ValueError("Stage 1 evidence has no matching gate metrics artifact")
+        gate_source_hash, gate_metrics = gate_source
+        if evidence.gate_metrics_sha256 != gate_source_hash:
+            raise ValueError("Stage 1 evidence gate metrics SHA-256 mismatch")
+        if (
+            dict(evidence.noninferiority_gates)
+            != dict(gate_metrics.noninferiority_gates)
+            or evidence.hard_failures != gate_metrics.hard_failures
+        ):
+            raise ValueError("Stage 1 gates do not match the gate metrics artifact")
+        for evidence_field, comparison_field in field_pairs:
+            evidence_value = getattr(evidence, evidence_field)
+            comparison_value = source_comparison.get(comparison_field)
+            if evidence_field == "analysis_cluster_ids" and isinstance(
+                comparison_value, list
+            ):
+                comparison_value = tuple(comparison_value)
+            if evidence_value != comparison_value:
+                raise ValueError(
+                    f"Stage 1 evidence field does not match comparison: {evidence_field}"
+                )
+        if evidence.expected_paired_samples != evidence.paired_samples:
+            raise ValueError("formal evidence must include the complete paired sample set")
     return bundle.comparisons
 
 
@@ -160,6 +370,13 @@ def write_stage1_decision_report(
     report: Stage1DecisionReport,
 ) -> None:
     """原子写入不可覆盖的 0600 决策报告。"""
+    if (
+        report.analysis_plan_sha256 is None
+        or report.evidence_bundle_sha256 is None
+        or not report.comparison_sha256s
+        or not report.gate_metrics_sha256s
+    ):
+        raise ValueError("Stage 1 decision report requires complete provenance hashes")
     if output.exists():
         raise FileExistsError(f"Stage 1 decision report already exists: {output}")
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -391,6 +608,12 @@ def evaluate_stage1_look(
         family_evidence = tuple(
             by_candidate[candidate_id] for candidate_id in family.candidate_ids
         )
+        if any(
+            set(item.noninferiority_gates)
+            != set(family.required_noninferiority_gates)
+            for item in family_evidence
+        ):
+            raise ValueError("evidence gates do not match the registered family gates")
         candidate_decisions = _candidate_decisions(
             plan,
             family,
@@ -408,8 +631,38 @@ def evaluate_stage1_look(
                     alpha=plan.look_alpha[alpha_index],
                 )
             )
+    power_inadequate = (
+        plan.final_power is None
+        or plan.simulated_familywise_alpha is None
+        or plan.final_power <= 0.85
+        or plan.simulated_familywise_alpha > 0.05
+    )
+    if power_inadequate:
+        decisions = [
+            decision.model_copy(
+                update={
+                    "status": "Experimental / No decision",
+                    "selected_candidate_id": None,
+                    "candidates": tuple(
+                        candidate.model_copy(
+                            update={
+                                "advance_eligible": False,
+                                "reason_codes": (
+                                    *candidate.reason_codes,
+                                    "underpowered_design",
+                                ),
+                            }
+                        )
+                        for candidate in decision.candidates
+                    ),
+                }
+            )
+            for decision in decisions
+        ]
     stopped_at: Literal["core", "reserve", "completed"] | None
-    if look == "final":
+    if power_inadequate:
+        stopped_at = None
+    elif look == "final":
         stopped_at = "reserve"
     elif all(decision.status != "Continue" for decision in decisions):
         stopped_at = "core"

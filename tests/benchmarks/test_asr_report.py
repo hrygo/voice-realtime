@@ -17,7 +17,11 @@ from voice_realtime.benchmarks.asr.report import (
 )
 
 
-def _plan(*, meeting_candidates: tuple[str, ...] = ("fun",)) -> AnalysisPlan:
+def _plan(
+    *,
+    meeting_candidates: tuple[str, ...] = ("fun",),
+    final_power: float = 0.90,
+) -> AnalysisPlan:
     candidate_ids = ("qwen", "sense", *meeting_candidates)
     registered_ids = tuple(dict.fromkeys(candidate_ids))
     return AnalysisPlan(
@@ -29,6 +33,14 @@ def _plan(*, meeting_candidates: tuple[str, ...] = ("fun",)) -> AnalysisPlan:
         core_reference_sha256="c" * 64,
         reserve_reference_sha256="d" * 64,
         preflight_report_sha256="f" * 64,
+        preflight_metadata_sha256="1" * 64,
+        cluster_set_sha256="2" * 64,
+        sample_order_sha256="3" * 64,
+        power_simulation_sha256="0" * 64,
+        pilot_cluster_variance=0.002,
+        core_power=0.70,
+        final_power=final_power,
+        simulated_familywise_alpha=0.05,
         core_duration_ms=3_600_000,
         reserve_duration_ms=2_700_000,
         core_analysis_cluster_ids=("cluster:core",),
@@ -76,6 +88,9 @@ def _evidence(
     confidence: float | None = None,
     bootstrap_seed: int | None = None,
     cluster_ids: tuple[str, ...] | None = None,
+    comparison_sha256: str = "c" * 64,
+    gate_metrics_sha256: str = "d" * 64,
+    bootstrap_standard_error: float = 0.001,
 ) -> FamilyLookEvidence:
     is_core = look == "core"
     expected_clusters = ("cluster:core",) if is_core else (
@@ -86,8 +101,14 @@ def _evidence(
         family_id=family_id,
         baseline_id=baseline_id,
         candidate_id=candidate_id,
+        comparison_sha256=comparison_sha256,
+        gate_metrics_sha256=gate_metrics_sha256,
         look=look,
         mean_cer_difference=mean,
+        baseline_macro_cer=0.10,
+        candidate_macro_cer=0.10 + mean,
+        relative_cer_difference=mean / 0.10,
+        bootstrap_standard_error=bootstrap_standard_error,
         ci_low=ci_low,
         ci_high=ci_high,
         raw_p_value=raw_p_value,
@@ -145,6 +166,7 @@ def test_core_hard_failure_and_futility_are_explicit() -> None:
                 "qwen",
                 "fun",
                 hard_failures=("network_boundary",),
+                gates={"latency": "failed", "failure_rate": "passed"},
             ),
             _evidence(
                 "interaction",
@@ -155,6 +177,7 @@ def test_core_hard_failure_and_futility_are_explicit() -> None:
                 ci_high=0.003,
                 raw_p_value=0.8,
                 conditional_power=0.19,
+                gates={"echo_safety": "passed", "failure_rate": "passed"},
             ),
         ),
     )
@@ -211,6 +234,7 @@ def test_final_formal_disadvantage_is_reject() -> None:
                 ci_high=0.016,
                 raw_p_value=0.01,
                 conditional_power=None,
+                gates={"latency": "passed", "failure_rate": "passed"},
             ),
             _evidence(
                 "interaction",
@@ -219,11 +243,50 @@ def test_final_formal_disadvantage_is_reject() -> None:
                 look="final",
                 raw_p_value=0.20,
                 conditional_power=None,
+                gates={"echo_safety": "passed", "failure_rate": "passed"},
             ),
         ),
     )
 
     assert report.decisions[0].status == "Reject"
+
+
+def test_underpowered_frozen_design_cannot_emit_finalist() -> None:
+    evidence = (
+        _evidence(
+            "meeting",
+            "qwen",
+            "fun",
+            look="final",
+            confidence=0.96,
+            bootstrap_seed=2026082502,
+            cluster_ids=("cluster:core", "cluster:reserve"),
+            conditional_power=None,
+            gates={"latency": "passed", "failure_rate": "passed"},
+        ),
+        _evidence(
+            "interaction",
+            "sense",
+            "fun",
+            look="final",
+            confidence=0.96,
+            bootstrap_seed=2026082502,
+            cluster_ids=("cluster:core", "cluster:reserve"),
+            conditional_power=None,
+            gates={"echo_safety": "passed", "failure_rate": "passed"},
+        ),
+    )
+
+    report = evaluate_stage1_look(
+        _plan(final_power=0.80),
+        look="final",
+        evidence=evidence,
+    )
+
+    assert {decision.status for decision in report.decisions} == {
+        "Experimental / No decision"
+    }
+    assert report.stopped_at is None
 
 
 def test_family_holm_adjustment_prevents_unadjusted_core_advance() -> None:
@@ -246,7 +309,13 @@ def test_family_holm_adjustment_prevents_unadjusted_core_advance() -> None:
                 raw_p_value=0.02,
                 gates={"latency": "passed", "failure_rate": "passed"},
             ),
-            _evidence("interaction", "sense", "fun", raw_p_value=0.50),
+            _evidence(
+                "interaction",
+                "sense",
+                "fun",
+                raw_p_value=0.50,
+                gates={"echo_safety": "passed", "failure_rate": "passed"},
+            ),
         ),
     )
 
@@ -340,7 +409,18 @@ def test_decide_cli_writes_immutable_stage1_report(tmp_path: Path) -> None:
         _plan().model_dump_json(exclude_computed_fields=True),
         encoding="utf-8",
     )
-    evidence = (
+    comparison_paths = (
+        tmp_path / "meeting-comparison.json",
+        tmp_path / "interaction-comparison.json",
+    )
+    gate_metrics_paths = (
+        tmp_path / "meeting-gates.json",
+        tmp_path / "interaction-gates.json",
+    )
+    gate_source_path = tmp_path / "scored-summary.json"
+    gate_source_path.write_text("gate metric source", encoding="utf-8")
+    gate_source_sha256 = hashlib.sha256(gate_source_path.read_bytes()).hexdigest()
+    raw_evidence = (
         _evidence(
             "meeting",
             "qwen",
@@ -353,6 +433,77 @@ def test_decide_cli_writes_immutable_stage1_report(tmp_path: Path) -> None:
             "fun",
             gates={"echo_safety": "passed", "failure_rate": "passed"},
         ),
+    )
+    for path, item in zip(comparison_paths, raw_evidence, strict=True):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "evidence_tier": "formal",
+                    "analysis_plan_sha256": hashlib.sha256(
+                        plan_path.read_bytes()
+                    ).hexdigest(),
+                    "look": item.look,
+                    "family_id": item.family_id,
+                    "baseline_id": item.baseline_id,
+                    "candidate_id": item.candidate_id,
+                    "mean_cer_difference": item.mean_cer_difference,
+                    "baseline_macro_cer": item.baseline_macro_cer,
+                    "candidate_macro_cer": item.candidate_macro_cer,
+                    "relative_cer_difference": item.relative_cer_difference,
+                    "bootstrap_standard_error": item.bootstrap_standard_error,
+                    "ci_low": item.ci_low,
+                    "ci_high": item.ci_high,
+                    "raw_p_value": item.raw_p_value,
+                    "conditional_power": item.conditional_power,
+                    "paired_samples": item.paired_samples,
+                    "paired_clusters": item.paired_clusters,
+                    "decision_confidence": item.decision_confidence,
+                    "seed": item.bootstrap_seed,
+                    "bootstrap_iterations": item.bootstrap_iterations,
+                    "analysis_cluster_ids": list(item.analysis_cluster_ids),
+                }
+            ),
+            encoding="utf-8",
+        )
+    for path, item in zip(gate_metrics_paths, raw_evidence, strict=True):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "analysis_plan_sha256": hashlib.sha256(
+                        plan_path.read_bytes()
+                    ).hexdigest(),
+                    "look": item.look,
+                    "family_id": item.family_id,
+                    "baseline_id": item.baseline_id,
+                    "candidate_id": item.candidate_id,
+                    "noninferiority_gates": dict(item.noninferiority_gates),
+                    "hard_failures": list(item.hard_failures),
+                    "source_artifact_sha256s": {
+                        "scored-summary": gate_source_sha256
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+    evidence = tuple(
+        item.model_copy(
+            update={
+                "comparison_sha256": hashlib.sha256(
+                    comparison_path.read_bytes()
+                ).hexdigest(),
+                "gate_metrics_sha256": hashlib.sha256(
+                    gate_metrics_path.read_bytes()
+                ).hexdigest(),
+            }
+        )
+        for comparison_path, gate_metrics_path, item in zip(
+            comparison_paths,
+            gate_metrics_paths,
+            raw_evidence,
+            strict=True,
+        )
     )
     evidence_path.write_text(
         json.dumps(
@@ -375,14 +526,41 @@ def test_decide_cli_writes_immutable_stage1_report(tmp_path: Path) -> None:
             "core",
             "--evidence",
             str(evidence_path),
+            "--comparison",
+            str(comparison_paths[0]),
+            "--comparison",
+            str(comparison_paths[1]),
+            "--gate-metrics",
+            str(gate_metrics_paths[0]),
+            "--gate-metrics",
+            str(gate_metrics_paths[1]),
+            "--gate-source",
+            f"scored-summary={gate_source_path}",
             "--output",
             str(output),
         ]
     )
 
     assert exit_code == 0
-    assert json.loads(output.read_text(encoding="utf-8"))["look"] == "core"
+    decision_payload = json.loads(output.read_text(encoding="utf-8"))
+    assert decision_payload["look"] == "core"
+    assert decision_payload["analysis_plan_sha256"] == hashlib.sha256(
+        plan_path.read_bytes()
+    ).hexdigest()
+    assert decision_payload["evidence_bundle_sha256"] == hashlib.sha256(
+        evidence_path.read_bytes()
+    ).hexdigest()
+    assert decision_payload["comparison_sha256s"] == [
+        hashlib.sha256(path.read_bytes()).hexdigest() for path in comparison_paths
+    ]
+    assert decision_payload["gate_metrics_sha256s"] == [
+        hashlib.sha256(path.read_bytes()).hexdigest() for path in gate_metrics_paths
+    ]
     assert output.stat().st_mode & 0o777 == 0o600
+    comparison_paths[0].write_text(
+        comparison_paths[0].read_text(encoding="utf-8") + " ",
+        encoding="utf-8",
+    )
     assert main(
         [
             "decide",
@@ -392,6 +570,74 @@ def test_decide_cli_writes_immutable_stage1_report(tmp_path: Path) -> None:
             "core",
             "--evidence",
             str(evidence_path),
+            "--comparison",
+            str(comparison_paths[0]),
+            "--comparison",
+            str(comparison_paths[1]),
+            "--gate-metrics",
+            str(gate_metrics_paths[0]),
+            "--gate-metrics",
+            str(gate_metrics_paths[1]),
+            "--gate-source",
+            f"scored-summary={gate_source_path}",
+            "--output",
+            str(tmp_path / "tampered-decision.json"),
+        ]
+    ) == 2
+    comparison_paths[0].write_text(
+        comparison_paths[0].read_text(encoding="utf-8")[:-1],
+        encoding="utf-8",
+    )
+    gate_metrics_paths[0].write_text(
+        gate_metrics_paths[0].read_text(encoding="utf-8") + " ",
+        encoding="utf-8",
+    )
+    assert main(
+        [
+            "decide",
+            "--analysis-plan",
+            str(plan_path),
+            "--look",
+            "core",
+            "--evidence",
+            str(evidence_path),
+            "--comparison",
+            str(comparison_paths[0]),
+            "--comparison",
+            str(comparison_paths[1]),
+            "--gate-metrics",
+            str(gate_metrics_paths[0]),
+            "--gate-metrics",
+            str(gate_metrics_paths[1]),
+            "--gate-source",
+            f"scored-summary={gate_source_path}",
+            "--output",
+            str(tmp_path / "tampered-gates-decision.json"),
+        ]
+    ) == 2
+    gate_metrics_paths[0].write_text(
+        gate_metrics_paths[0].read_text(encoding="utf-8")[:-1],
+        encoding="utf-8",
+    )
+    assert main(
+        [
+            "decide",
+            "--analysis-plan",
+            str(plan_path),
+            "--look",
+            "core",
+            "--evidence",
+            str(evidence_path),
+            "--comparison",
+            str(comparison_paths[0]),
+            "--comparison",
+            str(comparison_paths[1]),
+            "--gate-metrics",
+            str(gate_metrics_paths[0]),
+            "--gate-metrics",
+            str(gate_metrics_paths[1]),
+            "--gate-source",
+            f"scored-summary={gate_source_path}",
             "--output",
             str(output),
         ]

@@ -391,7 +391,12 @@ git commit -m "docs(asr): 冻结Stage1盲测分析计划"
 
 > 2026-08-25 前置实现已完成：确定性 `report.py`、Holm family、Core/Final 状态机、formal/exploratory
 > 隔离、正式 cluster 门禁、metadata-only preflight 与 formal freeze 语义绑定均已有测试。正式 Core/Reserve
-> 尚未执行；必须等待获授权目标域音频、双人标注/裁决和两段 reference 同时封存。
+> 尚未执行；必须等待获授权目标域音频、双人标注/裁决和两段 reference 同时封存。正式证据链还会把
+> `candidate_id/profile_sha256` 写入 run manifest；`compare` 核验 corpus/reference/profile 并冻结 run 与
+> scored hypotheses hash；`decide` 重新核验每份 comparison hash 及统计字段，禁止手工 evidence 冒充结果。
+> Formal freeze 还会核验原始 preflight metadata、已物化 PCM、跨 look session/speaker/content/cluster、
+> pilot power simulation；power 不足或 FWER 超限时自动降级为 `Experimental / No decision`。Stage 5
+> `Promote` 已固定八项 gate、60 分钟、五个故障计数及 Stage 1–4/hash 证据链，不能用任意 gate 绕过。
 
 **Files:**
 - Create: `src/voice_realtime/benchmarks/asr/report.py`

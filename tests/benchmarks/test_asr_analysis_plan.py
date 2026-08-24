@@ -62,6 +62,14 @@ def test_formal_analysis_plan_requires_preflight_profiles_clusters_and_endpoints
             "e" * 64,
         ),
         preflight_report_sha256="f" * 64,
+        preflight_metadata_sha256="2" * 64,
+        cluster_set_sha256="3" * 64,
+        sample_order_sha256="4" * 64,
+        power_simulation_sha256="1" * 64,
+        pilot_cluster_variance=0.002,
+        core_power=0.70,
+        final_power=0.90,
+        simulated_familywise_alpha=0.05,
         core_duration_ms=3_600_000,
         reserve_duration_ms=2_700_000,
         core_analysis_cluster_ids=("cluster:core",),
@@ -76,6 +84,7 @@ def test_formal_analysis_plan_requires_preflight_profiles_clusters_and_endpoints
                 baseline_id="qwen3-mps",
                 candidate_ids=("funasr-mps",),
                 pilot_baseline_cer=0.20,
+                required_noninferiority_gates=("failure_rate",),
             ),
         ),
     )
@@ -177,6 +186,8 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
     reserve_manifest = tmp_path / "blind-reserve.json"
     core_reference = tmp_path / "blind-core.references.json"
     reserve_reference = tmp_path / "blind-reserve.references.json"
+    corpus_root = tmp_path / "corpus"
+    (corpus_root / "pcm").mkdir(parents=True)
 
     def write_split(
         manifest_path: Path,
@@ -187,6 +198,8 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
         cluster_id: str,
         duration_ms: int,
     ) -> None:
+        audio_path = corpus_root / "pcm" / f"{sample_id}.pcm"
+        audio_path.write_bytes(b"\x00" * (duration_ms * 32))
         manifest = CorpusInputManifest(
             corpus_version="target-v1",
             normalization_version="nfkc-casefold-punct-space-v1",
@@ -196,7 +209,7 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
                     sample_id=sample_id,
                     audio_path=f"pcm/{sample_id}.pcm",
                     source_sha256="1" * 64,
-                    audio_sha256="2" * 64,
+                    audio_sha256=sha256_file(audio_path),
                     duration_ms=duration_ms,
                     session_id=f"session:{sample_id}",
                     analysis_cluster_id=cluster_id,
@@ -245,10 +258,12 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
         b"cluster:core\ncluster:reserve"
     ).hexdigest()
     preflight_path = tmp_path / "preflight-report.json"
+    preflight_metadata_path = tmp_path / "blind-preflight.json"
+    preflight_metadata_path.write_text("metadata", encoding="utf-8")
     preflight_path.write_text(
         BlindPreflightReport(
             status="metadata_ready",
-            metadata_sha256="3" * 64,
+            metadata_sha256=sha256_file(preflight_metadata_path),
             blockers=(),
             sample_count={"blind-core": 1, "blind-reserve": 1},
             unique_duration_ms={"blind-core": 60_000, "blind-reserve": 45_000},
@@ -273,22 +288,62 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
         primary_endpoints=("macro_cer",),
         normalization_version="nfkc-casefold-punct-space-v1",
         filtering_rules=("retain_all_failures",),
+        power_simulation_sha256="4" * 64,
+        pilot_cluster_variance=0.002,
+        core_power=0.70,
+        final_power=0.90,
+        simulated_familywise_alpha=0.05,
         decision_families=(
             DecisionFamily(
                 family_id="meeting",
                 baseline_id="qwen",
                 candidate_ids=("fun",),
                 pilot_baseline_cer=0.10,
+                required_noninferiority_gates=("failure_rate",),
             ),
             DecisionFamily(
                 family_id="interaction",
                 baseline_id="sense",
                 candidate_ids=("fun",),
                 pilot_baseline_cer=0.12,
+                required_noninferiority_gates=("failure_rate",),
             ),
         ),
     )
     output = tmp_path / "analysis-plan-formal.json"
+    power_simulation_path = tmp_path / "power-simulation.json"
+    power_simulation_path.write_text(
+        """{
+          "schema_version": "1.0",
+          "iterations": 10000,
+          "pilot_cluster_variance": 0.002,
+          "core_power": 0.70,
+          "final_power": 0.90,
+          "simulated_familywise_alpha": 0.05
+        }""",
+        encoding="utf-8",
+    )
+    design = design.model_copy(
+        update={"power_simulation_sha256": sha256_file(power_simulation_path)}
+    )
+
+    core_audio = corpus_root / "pcm" / "core.pcm"
+    core_audio.write_bytes(core_audio.read_bytes() + b"\x00")
+    with pytest.raises(ValueError, match="PCM byte length"):
+        freeze_formal_analysis_plan(
+            output,
+            design,
+            core_manifest=core_manifest,
+            reserve_manifest=reserve_manifest,
+            core_reference=core_reference,
+            reserve_reference=reserve_reference,
+            preflight_report=preflight_path,
+            profile_paths=profiles,
+            corpus_root=corpus_root,
+            power_simulation=power_simulation_path,
+            preflight_metadata=preflight_metadata_path,
+        )
+    core_audio.write_bytes(b"\x00" * (60_000 * 32))
 
     plan = freeze_formal_analysis_plan(
         output,
@@ -299,6 +354,9 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
         reserve_reference=reserve_reference,
         preflight_report=preflight_path,
         profile_paths=profiles,
+        corpus_root=corpus_root,
+        power_simulation=power_simulation_path,
+        preflight_metadata=preflight_metadata_path,
     )
 
     assert plan.evidence_tier == "formal"
@@ -310,5 +368,7 @@ def test_freeze_formal_analysis_binds_preflight_profiles_duration_and_clusters(
     assert plan.candidate_profile_sha256 == {
         candidate_id: sha256_file(path) for candidate_id, path in profiles.items()
     }
+    assert plan.preflight_metadata_sha256 == sha256_file(preflight_metadata_path)
+    assert plan.sample_order_sha256 == hashlib.sha256(b"core\nreserve").hexdigest()
     assert output.exists()
     assert AnalysisPlan.model_validate_json(output.read_text(encoding="utf-8")) == plan

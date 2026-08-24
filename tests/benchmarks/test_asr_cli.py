@@ -36,6 +36,7 @@ from voice_realtime.benchmarks.asr.manifest import (
     CorpusReferenceManifest,
     EnvironmentIdentity,
     RuntimeIdentity,
+    load_run_manifest,
     sha256_file,
     write_corpus_input_manifest,
     write_reference_manifest,
@@ -72,6 +73,48 @@ def _write_hypotheses(run_dir: Path, values: list[tuple[str, float]]) -> None:
     payload = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
     (run_dir / "hypotheses.jsonl").write_text(payload, encoding="utf-8")
     (run_dir / "scored-hypotheses.jsonl").write_text(payload, encoding="utf-8")
+
+
+def _write_formal_run_manifest(
+    run_dir: Path,
+    *,
+    candidate_id: str,
+    profile_sha256: str,
+    corpus_sha256: str,
+    reference_sha256: str,
+    analysis_plan_sha256: str,
+    analysis_split: str,
+) -> None:
+    write_run_manifest(
+        run_dir / "manifest.json",
+        ASRRunManifest(
+            run_id=f"{candidate_id}-{run_dir.name}",
+            git_commit="1" * 40,
+            corpus_manifest_sha256=corpus_sha256,
+            reference_manifest_sha256=reference_sha256,
+            candidate_id=candidate_id,
+            profile_sha256=profile_sha256,
+            analysis_plan_sha256=analysis_plan_sha256,
+            analysis_split=analysis_split,
+            backend_id="test-backend",
+            model_id="test/model",
+            model_revision="revision",
+            model_files_sha256={"model.bin": "3" * 64},
+            runtime=RuntimeIdentity(name="test", revision="revision"),
+            device="cpu",
+            dtype="float32",
+            parameters={},
+            environment=EnvironmentIdentity(
+                host="test",
+                memory_bytes=1,
+                macos="test",
+                python="3.12",
+                torch="test",
+            ),
+            started_at=datetime(2026, 8, 25, tzinfo=UTC),
+            status="completed",
+        ),
+    )
 
 
 def test_parser_exposes_run_score_compare_subcommands() -> None:
@@ -119,6 +162,12 @@ def test_parser_exposes_run_score_compare_subcommands() -> None:
             "reserve.references.json",
             "--preflight-report",
             "preflight.json",
+            "--preflight-metadata",
+            "blind-preflight.json",
+            "--corpus-root",
+            "corpus",
+            "--power-simulation",
+            "power-simulation.json",
             "--profile",
             "qwen=qwen.json",
             "--output",
@@ -141,6 +190,8 @@ def test_run_parser_exposes_resource_lock_controls() -> None:
             "corpus",
             "--profile",
             "profile.json",
+            "--output-dir",
+            "/tmp/asr-output",
             "--resource-lock",
             "/tmp/asr-test.lock",
             "--lock-timeout-secs",
@@ -373,6 +424,8 @@ def test_score_command_writes_summary(tmp_path: Path) -> None:
             git_commit="1" * 40,
             corpus_manifest_sha256=input_hash,
             reference_manifest_sha256=reference_hash,
+            candidate_id="test-candidate",
+            profile_sha256="3" * 64,
             backend_id="test-backend",
             model_id="test/model",
             model_revision="revision",
@@ -596,6 +649,14 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
         core_reference_sha256="d" * 64,
         reserve_reference_sha256="f" * 64,
         preflight_report_sha256="1" * 64,
+        preflight_metadata_sha256="3" * 64,
+        cluster_set_sha256="4" * 64,
+        sample_order_sha256="5" * 64,
+        power_simulation_sha256="2" * 64,
+        pilot_cluster_variance=0.002,
+        core_power=0.70,
+        final_power=0.90,
+        simulated_familywise_alpha=0.05,
         core_duration_ms=2_000,
         reserve_duration_ms=1_000,
         core_analysis_cluster_ids=("cluster:core",),
@@ -612,12 +673,49 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
                 baseline_id="qwen",
                 candidate_ids=("fun",),
                 pilot_baseline_cer=0.10,
+                required_noninferiority_gates=("failure_rate",),
             ),
         ),
     )
     plan_path.write_text(
         plan.model_dump_json(exclude_computed_fields=True),
         encoding="utf-8",
+    )
+    _write_formal_run_manifest(
+        baseline,
+        candidate_id="qwen",
+        profile_sha256="e" * 64,
+        corpus_sha256=sha256_file(corpus_path),
+        reference_sha256="d" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="core",
+    )
+    _write_formal_run_manifest(
+        candidate,
+        candidate_id="fun",
+        profile_sha256="e" * 64,
+        corpus_sha256=sha256_file(corpus_path),
+        reference_sha256="d" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="core",
+    )
+    _write_formal_run_manifest(
+        reserve_baseline,
+        candidate_id="qwen",
+        profile_sha256="e" * 64,
+        corpus_sha256=sha256_file(reserve_corpus_path),
+        reference_sha256="f" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="reserve",
+    )
+    _write_formal_run_manifest(
+        reserve_candidate,
+        candidate_id="fun",
+        profile_sha256="e" * 64,
+        corpus_sha256=sha256_file(reserve_corpus_path),
+        reference_sha256="f" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="reserve",
     )
 
     exit_code = main(
@@ -644,6 +742,16 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
     assert comparison["decision_confidence"] == 0.99
     assert comparison["seed"] == 1
     assert comparison["conditional_power"] == 1.0
+    assert comparison["baseline_macro_cer"] == pytest.approx(0.35)
+    assert comparison["candidate_macro_cer"] == pytest.approx(0.25)
+    assert comparison["relative_cer_difference"] == pytest.approx(-0.1 / 0.35)
+    assert comparison["family_id"] == "meeting"
+    assert comparison["baseline_id"] == "qwen"
+    assert comparison["candidate_id"] == "fun"
+    assert comparison["run_manifest_sha256s"] == {
+        "baseline": [sha256_file(baseline / "manifest.json")],
+        "candidate": [sha256_file(candidate / "manifest.json")],
+    }
 
     final_exit_code = main(
         [
@@ -674,6 +782,139 @@ def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
     assert final_comparison["decision_confidence"] == 0.96
     assert final_comparison["seed"] == 2
     assert final_comparison["conditional_power"] is None
+
+    reserve_candidate_manifest = load_run_manifest(reserve_candidate / "manifest.json")
+    write_run_manifest(
+        reserve_candidate / "manifest.json",
+        reserve_candidate_manifest.model_copy(update={"device": "mps"}),
+    )
+    assert main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--additional-baseline",
+            str(reserve_baseline),
+            "--candidate",
+            str(candidate),
+            "--additional-candidate",
+            str(reserve_candidate),
+            "--corpus",
+            str(corpus_path),
+            "--additional-corpus",
+            str(reserve_corpus_path),
+            "--analysis-plan",
+            str(plan_path),
+            "--output",
+            str(tmp_path / "identity-drift.json"),
+        ]
+    ) == 2
+
+
+def test_formal_compare_rejects_run_profile_not_frozen_in_plan(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    corpus_path = tmp_path / "corpus.json"
+    plan_path = tmp_path / "analysis-plan.json"
+    _write_hypotheses(baseline, [("a", 0.3)])
+    _write_hypotheses(candidate, [("a", 0.2)])
+    corpus = CorpusInputManifest(
+        corpus_version="target-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="blind-core",
+        samples=(
+            CorpusInputSample(
+                sample_id="a",
+                audio_path="pcm/a.pcm",
+                source_sha256="a" * 64,
+                audio_sha256="b" * 64,
+                duration_ms=1_000,
+                session_id="session-a",
+                analysis_cluster_id="cluster:core",
+                scenario="near-field",
+                language="zh",
+                license_or_consent="test",
+            ),
+        ),
+    )
+    write_corpus_input_manifest(corpus_path, corpus)
+    plan = AnalysisPlan(
+        evidence_tier="formal",
+        candidate_ids=("qwen", "fun"),
+        candidate_profile_sha256={"qwen": "e" * 64, "fun": "f" * 64},
+        core_manifest_sha256=sha256_file(corpus_path),
+        reserve_manifest_sha256="a" * 64,
+        core_reference_sha256="b" * 64,
+        reserve_reference_sha256="c" * 64,
+        preflight_report_sha256="d" * 64,
+        preflight_metadata_sha256="f" * 64,
+        cluster_set_sha256="0" * 64,
+        sample_order_sha256="1" * 64,
+        power_simulation_sha256="e" * 64,
+        pilot_cluster_variance=0.002,
+        core_power=0.70,
+        final_power=0.90,
+        simulated_familywise_alpha=0.05,
+        core_duration_ms=1_000,
+        reserve_duration_ms=1_000,
+        core_analysis_cluster_ids=("cluster:core",),
+        reserve_analysis_cluster_ids=("cluster:reserve",),
+        analysis_cluster_ids=("cluster:core", "cluster:reserve"),
+        primary_endpoints=("macro_cer",),
+        normalization_version="nfkc-casefold-punct-space-v1",
+        filtering_rules=("retain_all_failures",),
+        bootstrap_seeds=(1, 2),
+        pilot_baseline_cer=0.10,
+        decision_families=(
+            DecisionFamily(
+                family_id="meeting",
+                baseline_id="qwen",
+                candidate_ids=("fun",),
+                pilot_baseline_cer=0.10,
+                required_noninferiority_gates=("failure_rate",),
+            ),
+        ),
+    )
+    plan_path.write_text(
+        plan.model_dump_json(exclude_computed_fields=True), encoding="utf-8"
+    )
+    _write_formal_run_manifest(
+        baseline,
+        candidate_id="qwen",
+        profile_sha256="e" * 64,
+        corpus_sha256=sha256_file(corpus_path),
+        reference_sha256="b" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="core",
+    )
+    _write_formal_run_manifest(
+        candidate,
+        candidate_id="fun",
+        profile_sha256="0" * 64,
+        corpus_sha256=sha256_file(corpus_path),
+        reference_sha256="b" * 64,
+        analysis_plan_sha256=sha256_file(plan_path),
+        analysis_split="core",
+    )
+
+    exit_code = main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--candidate",
+            str(candidate),
+            "--corpus",
+            str(corpus_path),
+            "--analysis-plan",
+            str(plan_path),
+            "--output",
+            str(tmp_path / "comparison.json"),
+        ]
+    )
+
+    assert exit_code == 2
+    assert not (tmp_path / "comparison.json").exists()
 
 
 def test_compare_rejects_selective_sample_intersection(tmp_path: Path) -> None:

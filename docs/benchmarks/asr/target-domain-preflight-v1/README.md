@@ -24,6 +24,10 @@
 │   ├── blind-core.references.json
 │   └── blind-reserve.references.json
 ├── pcm/
+├── pilot/power-simulation.json
+├── analysis-plan.json
+├── runs/
+├── comparisons/
 └── checksums.json
 ```
 
@@ -65,5 +69,8 @@ uv run vr-asr-benchmark preflight-corpus \
 3. 校验 reference 与 input 的 split/version/normalization/sample set/hash；
 4. Core/Reserve reference 同时设为 mode `000`；
 5. 绑定 preflight、显式 `analysis_cluster_id`、候选 profile 和 dev/pilot 统计设计，执行
-   `freeze-analysis`；
-6. 严格串行运行 Stage 1 Core，只有 `Continue` 才开 Reserve。
+   `freeze-analysis`；冻结时必须再次提供原始 metadata、已物化 PCM 根目录和 10,000 次 power
+   simulation，重新核验 hash/字节长度/跨 look 隔离；
+6. 为每个实验臂生成带 `candidate_id` 和冻结 `profile_sha256` 的 run manifest；
+7. 严格串行运行 Stage 1 Core，只有 `Continue` 才开 Reserve；正式 `compare/decide` 必须核验 run、
+   scored hypotheses 与 comparison 的完整 SHA-256 证据链。

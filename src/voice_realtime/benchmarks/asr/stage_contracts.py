@@ -10,6 +10,40 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validat
 
 StageNumber = Literal[2, 3, 4, 5]
 GateStatus = Literal["passed", "failed", "unsupported", "not_applicable"]
+PromotionGate = Literal[
+    "offline_network_safety",
+    "long_run_stability",
+    "timing_commit_correctness",
+    "zero_silence_hallucination",
+    "reconnect_data_integrity",
+    "storage_privacy_isolation",
+    "interaction_acoustic_safety",
+    "artifact_traceability",
+]
+FaultKind = Literal["disconnect", "asr_crash", "finalization_delay"]
+UpstreamStage = Literal["stage1", "stage2", "stage3", "stage4"]
+PROMOTION_HARD_GATES: tuple[PromotionGate, ...] = (
+    "offline_network_safety",
+    "long_run_stability",
+    "timing_commit_correctness",
+    "zero_silence_hallucination",
+    "reconnect_data_integrity",
+    "storage_privacy_isolation",
+    "interaction_acoustic_safety",
+    "artifact_traceability",
+)
+_PROMOTION_DURATION_MS = 3_600_000
+_PROMOTION_FAULT_COUNTS: dict[FaultKind, int] = {
+    "disconnect": 3,
+    "asr_crash": 1,
+    "finalization_delay": 1,
+}
+_PROMOTION_UPSTREAM_STAGES: set[UpstreamStage] = {
+    "stage1",
+    "stage2",
+    "stage3",
+    "stage4",
+}
 _SHA256_LENGTH = 64
 _GIT_SHA_LENGTH = 40
 
@@ -83,7 +117,7 @@ class FaultEvent(_FrozenModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
     )
     cursor_ms: int = Field(ge=0)
-    kind: Literal["disconnect", "asr_crash", "finalization_delay"]
+    kind: FaultKind
     duration_ms: int = Field(default=0, ge=0)
 
 
@@ -92,7 +126,7 @@ class FaultPlan(_FrozenModel):
 
     schema_version: Literal["1.0"] = "1.0"
     stage: Literal[5]
-    duration_ms: int = Field(gt=0)
+    duration_ms: Literal[3_600_000]
     events: tuple[FaultEvent, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -109,11 +143,7 @@ class FaultPlan(_FrozenModel):
             kind: sum(event.kind == kind for event in self.events)
             for kind in ("disconnect", "asr_crash", "finalization_delay")
         }
-        if counts != {
-            "disconnect": 3,
-            "asr_crash": 1,
-            "finalization_delay": 1,
-        }:
+        if counts != _PROMOTION_FAULT_COUNTS:
             raise ValueError("Stage 5 requires fixed fault counts: 3 disconnect, 1 crash, 1 delay")
         return self
 
@@ -236,24 +266,50 @@ class StageDecisionReport(_FrozenModel):
     candidate_id: str = Field(min_length=1, max_length=200)
     status: DecisionStatus
     run_manifest_sha256: str
-    upstream_report_sha256: str | None = None
-    required_hard_gates: tuple[str, ...] = Field(min_length=1)
-    hard_gates: dict[str, GateStatus] = Field(default_factory=dict)
+    upstream_report_sha256s: dict[UpstreamStage, str] = Field(default_factory=dict)
+    required_hard_gates: tuple[PromotionGate, ...] = PROMOTION_HARD_GATES
+    hard_gates: dict[PromotionGate, GateStatus] = Field(default_factory=dict)
+    actual_duration_ms: int | None = Field(default=None, gt=0)
+    executed_fault_counts: dict[FaultKind, int] = Field(default_factory=dict)
+    artifact_index_sha256: str | None = None
+    metrics_sha256: str | None = None
+    fault_execution_sha256: str | None = None
+    unique_finalist: bool = False
 
     @field_validator("required_hard_gates")
     @classmethod
-    def _required_gate_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(gate.strip() for gate in value)
-        if any(not gate for gate in normalized) or len(normalized) != len(set(normalized)):
-            raise ValueError("required hard gate names must be non-empty and unique")
-        return normalized
+    def _required_gate_names(
+        cls, value: tuple[PromotionGate, ...]
+    ) -> tuple[PromotionGate, ...]:
+        if value != PROMOTION_HARD_GATES:
+            raise ValueError("required hard gates must match the fixed promotion registry")
+        return value
 
-    @field_validator("run_manifest_sha256", "upstream_report_sha256")
+    @field_validator(
+        "run_manifest_sha256",
+        "artifact_index_sha256",
+        "metrics_sha256",
+        "fault_execution_sha256",
+    )
     @classmethod
     def _report_hash(cls, value: str | None) -> str | None:
         if value is None:
             return None
         return _validate_hex(value, length=_SHA256_LENGTH, label="report SHA-256")
+
+    @field_validator("upstream_report_sha256s")
+    @classmethod
+    def _upstream_report_hashes(
+        cls, value: dict[UpstreamStage, str]
+    ) -> dict[UpstreamStage, str]:
+        return {
+            stage: _validate_hex(
+                artifact_hash,
+                length=_SHA256_LENGTH,
+                label=f"{stage} report SHA-256",
+            )
+            for stage, artifact_hash in value.items()
+        }
 
     @model_validator(mode="after")
     def _protect_promotion_boundary(self) -> Self:
@@ -267,6 +323,21 @@ class StageDecisionReport(_FrozenModel):
             status != "passed" for status in self.hard_gates.values()
         ):
             raise ValueError("Promote requires all hard gates to pass")
-        if self.upstream_report_sha256 is None:
-            raise ValueError("Promote requires an upstream report")
+        if self.actual_duration_ms != _PROMOTION_DURATION_MS:
+            raise ValueError("Promote requires an actual continuous duration of 60 minutes")
+        if self.executed_fault_counts != _PROMOTION_FAULT_COUNTS:
+            raise ValueError("Promote requires the fixed fault execution counts")
+        if set(self.upstream_report_sha256s) != _PROMOTION_UPSTREAM_STAGES:
+            raise ValueError("Promote requires the complete Stage 1-4 report chain")
+        if any(
+            artifact_hash is None
+            for artifact_hash in (
+                self.artifact_index_sha256,
+                self.metrics_sha256,
+                self.fault_execution_sha256,
+            )
+        ):
+            raise ValueError("Promote requires artifact, metrics and fault evidence hashes")
+        if not self.unique_finalist:
+            raise ValueError("Promote requires a unique finalist identity")
         return self

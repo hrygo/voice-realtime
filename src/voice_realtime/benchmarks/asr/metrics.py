@@ -96,12 +96,12 @@ def _stratified_sign_flip_p_value(
 ) -> float:
     def macro_average(
         source: Mapping[str, Mapping[str, Sequence[float]]],
-        signs: Mapping[tuple[str, str], int] | None = None,
+        signs: Mapping[str, int] | None = None,
     ) -> float:
         stratum_means: list[float] = []
-        for stratum, clusters in source.items():
+        for clusters in source.values():
             values = [
-                value * (1 if signs is None else signs[(stratum, cluster_id)])
+                value * (1 if signs is None else signs[cluster_id])
                 for cluster_id, cluster_values in clusters.items()
                 for value in cluster_values
             ]
@@ -110,16 +110,18 @@ def _stratified_sign_flip_p_value(
 
     observed = abs(macro_average(groups))
     identities = tuple(
-        (stratum, cluster_id)
-        for stratum, clusters in sorted(groups.items())
-        for cluster_id in sorted(clusters)
+        sorted(
+            {
+                cluster_id
+                for clusters in groups.values()
+                for cluster_id in clusters
+            }
+        )
     )
     random_generator = random.Random(seed ^ 0x5A17_2026)
     as_or_more_extreme = 0
     for _ in range(iterations):
-        signs = {
-            identity: random_generator.choice((-1, 1)) for identity in identities
-        }
+        signs = {identity: random_generator.choice((-1, 1)) for identity in identities}
         if abs(macro_average(groups, signs)) >= observed - 1e-15:
             as_or_more_extreme += 1
     return (as_or_more_extreme + 1) / (iterations + 1)
@@ -131,8 +133,9 @@ def conditional_power_from_interim(
     standard_error: float,
     information_fraction: float,
     final_alpha: float,
+    minimum_detectable_effect: float,
 ) -> float:
-    """按独立增量正态近似计算负向改善在 final look 过界的条件功效。"""
+    """按独立增量正态近似计算达到预注册 MDE 的 final 条件功效。"""
     if not math.isfinite(mean_difference) or not math.isfinite(standard_error):
         raise ValueError("conditional power inputs must be finite")
     if standard_error < 0:
@@ -141,9 +144,11 @@ def conditional_power_from_interim(
         raise ValueError("information_fraction must be in (0, 1]")
     if not 0 < final_alpha < 1:
         raise ValueError("final_alpha must be in (0, 1)")
+    if not math.isfinite(minimum_detectable_effect) or minimum_detectable_effect < 0:
+        raise ValueError("minimum_detectable_effect must be finite and non-negative")
     if standard_error == 0:
-        return float(mean_difference < 0)
-    z_interim = mean_difference / standard_error
+        return float(mean_difference < -minimum_detectable_effect)
+    z_interim = (mean_difference + minimum_detectable_effect) / standard_error
     final_boundary = -NormalDist().inv_cdf(1 - final_alpha / 2)
     if information_fraction == 1:
         return float(z_interim <= final_boundary)
@@ -441,7 +446,7 @@ def stratified_grouped_cluster_bootstrap_difference(
     seed: int = 0,
     confidence: float = 0.95,
 ) -> BootstrapDifference:
-    """在场景内重采样完整 cluster，再对场景样本均值等权汇总。"""
+    """以全局 Bayesian cluster 权重保持跨场景观测的共同扰动。"""
     if iterations <= 0:
         raise ValueError("iterations 必须为正数")
     groups = {
@@ -476,20 +481,34 @@ def stratified_grouped_cluster_bootstrap_difference(
         )
         for stratum, clusters in groups.items()
     }
+    cluster_ids = tuple(
+        sorted(
+            {
+                cluster_id
+                for clusters in groups.values()
+                for cluster_id in clusters
+            }
+        )
+    )
     random_generator = random.Random(seed)
     bootstrapped: list[float] = []
     for _ in range(iterations):
-        sampled: dict[str, tuple[float, ...]] = {}
-        for stratum, clusters in groups.items():
-            cluster_values = tuple(clusters.values())
-            selected = tuple(
-                random_generator.choice(cluster_values)
-                for _ in cluster_values
+        weights = {
+            cluster_id: random_generator.expovariate(1.0)
+            for cluster_id in cluster_ids
+        }
+        stratum_means = []
+        for clusters in groups.values():
+            numerator = sum(
+                weights[cluster_id] * sum(values)
+                for cluster_id, values in clusters.items()
             )
-            sampled[stratum] = tuple(
-                value for values in selected for value in values
+            denominator = sum(
+                weights[cluster_id] * len(values)
+                for cluster_id, values in clusters.items()
             )
-        bootstrapped.append(macro_average(sampled))
+            stratum_means.append(numerator / denominator)
+        bootstrapped.append(sum(stratum_means) / len(stratum_means))
     low, high, standard_error = _bootstrap_summary(
         bootstrapped,
         confidence=confidence,

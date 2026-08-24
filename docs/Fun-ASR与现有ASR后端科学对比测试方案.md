@@ -538,8 +538,10 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 ### 7.2 置信区间与检验
 
-1. **Cluster Bootstrap**：对候选与基线的配对 CER 差、SA-CER 差和延迟差做 10,000 次 cluster
-   bootstrap；常规描述报告 95% CI，序贯停止另用 §7.4 的 99%/96% decision CI。
+1. **Cluster Bootstrap**：对候选与基线的配对 CER 差、SA-CER 差和延迟差做 10,000 次全局
+   Bayesian cluster-weight bootstrap；同一 cluster 的权重跨 scenario 共享，再对 scenario macro 等权
+   汇总，避免同源 near/far 被拆成独立重采样单元。常规描述报告 95% CI，序贯停止另用 §7.4 的
+   99%/96% decision CI。
 2. **多重比较校正**：主假设按字幕/会议和交互两个 family 分开；family 内多候选比较使用 Holm 校正。
 3. **效应量并列报告**：同时报绝对差、相对变化和置信区间；严禁只报 p-value。
 4. **单双侧检验方向**：预先固定方向：准确率做 superiority；延迟、DER、幻觉和可靠性做 non-inferiority。
@@ -727,6 +729,10 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 - **故障注入**：在固定音频 cursor 注入 3 次网络断开、1 次 ASR 子进程崩溃、1 次 finalization delay。
 - **指标审计**：检查内存斜率（MB/hour）、文件描述符、后台 task、端口、队列、gap、重复持久化和恢复后字幕。
 - **未长跑候选**：标记 `deferred/not_run`，不能错误写成 `Promote` 或 `Reject`。
+- **Promote 制品门禁**：固定使用 §10.1 八个 hard-gate key，禁止调用方自造 gate 名称；必须记录实际
+  连续 `3_600_000 ms`、`3 disconnect + 1 asr_crash + 1 finalization_delay` 的执行计数、Stage 1–4
+  report chain、artifact index/metrics/fault-execution hash，并确认每个方向唯一 finalist。缺一项均不能
+  构造 `Promote`。
 
 ---
 
@@ -741,6 +747,10 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
   "git_commit": "<40-hex>",
   "corpus_manifest_sha256": "<64-hex>",
   "reference_manifest_sha256": "<64-hex>",
+  "candidate_id": "qwen",
+  "profile_sha256": "<64-hex>",
+  "analysis_plan_sha256": "<64-hex>",
+  "analysis_split": "core",
   "backend_id": "wlk-qwen3-streaming",
   "model_id": "Qwen/Qwen3-ASR-1.7B",
   "model_revision": "<immutable revision>",
@@ -812,7 +822,7 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 ### 9.4 汇总产物
 
 ```text
-runtime/benchmarks/asr/<run_id>/
+<external-root>/voice-realtime/asr/<corpus-version>/runs/<run_id>/
 ├── manifest.json              # 运行元数据、环境与 SHA-256 指纹
 ├── hypotheses.jsonl           # 不含 reference/CER 的不可变盲转写
 ├── scored-hypotheses.jsonl    # 显式开盲后另写；运行阶段不存在
@@ -824,17 +834,18 @@ runtime/benchmarks/asr/<run_id>/
 └── summary.json               # 本次 run 聚合指标摘要
 
 docs/benchmarks/asr/<experiment-family>/
-├── analysis-plan.json         # 同时冻结 Core/Reserve、两 look 与停止边界
 ├── summary.csv                # 横向对比汇总表
 ├── report.md                  # 最终决策报告与分析
 └── plots/                     # 指标对比图与延迟分布图
 ```
 
 > [!IMPORTANT]
-> `runtime/` 产物不入库；入库报告只包含聚合数据、失败样本匿名 ID 和可复现元数据，严格不含音频或敏感逐字稿。
+> 所有原始运行、评分、comparison、decision 与 analysis plan 均保存到项目外；入库报告只包含聚合数据、
+> 失败样本匿名 ID 和可复现元数据，严格不含音频或敏感逐字稿。
 
 `analysis-plan.json` 至少增加：`evidence_tier=formal`、`core_manifest_sha256`、
 `reserve_manifest_sha256`、`preflight_report_sha256`、`candidate_profile_sha256`、
+`preflight_metadata_sha256`、`power_simulation_sha256`、pilot cluster variance、Core/Final power、模拟 FWER、
 `core_duration_ms`、`reserve_duration_ms`、显式 Core/Reserve `analysis_cluster_ids`、sample-order hash、
 主终点、归一化与过滤规则、
 `look_alpha=[0.01,0.04]`、`conditional_power_futility=0.20`、两个 bootstrap seed、固定 Holm family
@@ -849,6 +860,14 @@ Core 产物。
 正式运行前，`manifest.json`、不含 reference 的 `corpus.json`、独立 reference manifest、
 `analysis-plan.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与模型均位于项目目录外；
 runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只使用相对于各自根目录的文件路径。
+每份 run manifest 必须显式保存 analysis plan 中的 `candidate_id` 与对应 `profile_sha256`；`run` 会对
+实际传入的 profile 重新哈希，并通过 `analysis_plan_sha256 + analysis_split` 绑定 Core/Reserve，拒绝身份
+漂移。正式 `compare` 还会逐 split 核验 run manifest 的 corpus、
+reference、candidate、profile 与完成状态，并把 run manifest 和 scored hypotheses 的 SHA-256 写入
+不可覆盖 comparison，防止把其他实验臂或事后改写的评分产物冒充正式结果。
+正式冻结必须同时提供原始 preflight metadata、已物化 PCM 根目录和 dev/pilot 10,000 次 power simulation：
+程序重新核验 metadata/power hash、PCM 实际字节长度与 SHA-256，以及 session/speaker/content/cluster 的
+Core/Reserve 隔离。`metadata_ready` 本身不再足以冻结 formal plan。
 
 截至 2026-08-25，`preflight-corpus`、`prepare-corpus` 与正式 `freeze-analysis` 已实现：metadata-only
 预检不读取音频或逐字稿，只核验匿名 token、授权/脱敏/人工复核状态、配额、跨 look 隔离和 reference
@@ -920,53 +939,63 @@ uv run vr-asr-benchmark freeze-analysis \
   --reserve-manifest "$VR_ASR_EXTERNAL_ROOT/blind-reserve.json" \
   --core-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-core.references.json" \
   --reserve-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-reserve.references.json" \
+  --preflight-metadata "$VR_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
   --preflight-report "$VR_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
+  --corpus-root "$VR_ASR_EXTERNAL_ROOT" \
+  --power-simulation "$VR_ASR_EXTERNAL_ROOT/pilot/power-simulation.json" \
   --profile qwen=manifests/qwen.profile.json \
   --profile sense=manifests/sense.profile.json \
   --profile fun=manifests/fun.profile.json \
-  --output docs/benchmarks/asr/<experiment-family>/analysis-plan.json
+  --output "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json"
 
 # 1. 运行基准评测
 uv run vr-asr-benchmark run \
   --manifest manifests/run.json \
-  --corpus manifests/corpus.json \
-  --corpus-root corpus-root \
+  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --corpus-root "$VR_ASR_EXTERNAL_ROOT" \
   --profile manifests/profile.json \
+  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
   --repo-root . \
+  --output-dir "$VR_ASR_EXTERNAL_ROOT/runs/<run_id>" \
   --mode realtime-1x
 
 # 2. 生成计分统计
 uv run vr-asr-benchmark score \
-  --run-dir runtime/benchmarks/asr/<run_id> \
-  --references corpus-root/sealed/<split>.references.json
+  --run-dir "$VR_ASR_EXTERNAL_ROOT/runs/<run_id>" \
+  --references "$VR_ASR_EXTERNAL_ROOT/sealed/<split>.references.json"
 
 # 3. 配对横向对比与 Bootstrap 检验
 uv run vr-asr-benchmark compare \
-  --baseline runtime/benchmarks/asr/<baseline-run-id> \
-  --candidate runtime/benchmarks/asr/<candidate-run-id> \
-  --corpus manifests/corpus.json \
-  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
-  --output runtime/benchmarks/asr/comparisons/<comparison-id>.json \
+  --baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-run-id>" \
+  --candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-run-id>" \
+  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/<comparison-id>.json" \
   --bootstrap-iterations 10000 \
   --seed <analysis-plan-core-seed>
 
 # 4. Final look 必须合并 Core+Reserve，禁止只比较 Reserve
 uv run vr-asr-benchmark compare \
-  --baseline runtime/benchmarks/asr/<baseline-core-run-id> \
-  --additional-baseline runtime/benchmarks/asr/<baseline-reserve-run-id> \
-  --candidate runtime/benchmarks/asr/<candidate-core-run-id> \
-  --additional-candidate runtime/benchmarks/asr/<candidate-reserve-run-id> \
-  --corpus manifests/blind-core.json \
-  --additional-corpus manifests/blind-reserve.json \
-  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
-  --output runtime/benchmarks/asr/comparisons/<final-comparison-id>.json
+  --baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-core-run-id>" \
+  --additional-baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-reserve-run-id>" \
+  --candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-core-run-id>" \
+  --additional-candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-reserve-run-id>" \
+  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --additional-corpus "$VR_ASR_EXTERNAL_ROOT/blind-reserve.json" \
+  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/<final-comparison-id>.json"
 
 # 5. 汇齐每个 family 的质量比较与预注册非劣门禁后，程序化决策
 uv run vr-asr-benchmark decide \
-  --analysis-plan docs/benchmarks/asr/<experiment-family>/analysis-plan.json \
+  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
   --look core \
-  --evidence runtime/benchmarks/asr/comparisons/core-family-evidence.json \
-  --output runtime/benchmarks/asr/comparisons/core-decision.json
+  --evidence "$VR_ASR_EXTERNAL_ROOT/comparisons/core-family-evidence.json" \
+  --comparison "$VR_ASR_EXTERNAL_ROOT/comparisons/<meeting-comparison-id>.json" \
+  --comparison "$VR_ASR_EXTERNAL_ROOT/comparisons/<interaction-comparison-id>.json" \
+  --gate-metrics "$VR_ASR_EXTERNAL_ROOT/comparisons/<meeting-gates-id>.json" \
+  --gate-metrics "$VR_ASR_EXTERNAL_ROOT/comparisons/<interaction-gates-id>.json" \
+  --gate-source <opaque-artifact-name>="$VR_ASR_EXTERNAL_ROOT/<metrics-artifact>" \
+  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/core-decision.json"
 ```
 
 > [!CAUTION]
@@ -978,7 +1007,15 @@ uv run vr-asr-benchmark decide \
 > Formal compare 自动使用 analysis plan 的 Core 99% / Final 96% CI、10,000 次 bootstrap 和对应 seed，
 > 同时输出 cluster sign-flip 双侧 p-value、bootstrap standard error 与 Core conditional power；显式参数
 > 不匹配时拒绝运行。`decide` 的 evidence 还必须包含固定 family/baseline/candidate、完整配对数、当前
-> look cluster 集和所有预注册 non-inferiority gate 状态，报告不可覆盖且权限为 `0600`。
+> look cluster 集、每条 comparison 的 SHA-256 和所有预注册 non-inferiority gate 状态；`--comparison`
+> 必须逐条提供对应的 formal comparison，程序会重新核验 plan/look/identity/统计字段/hash。报告不可覆盖且
+> 权限为 `0600`。
+> 非劣门禁不得只在 evidence 内手填：每条 evidence 还必须通过 `--gate-metrics` 绑定独立结构化门禁制品，
+> 该制品记录其 source artifact hashes；程序重新核验 plan/look/family/candidate、gate 状态、hard failures
+> 与 SHA-256。所有被引用的源指标还必须通过 `--gate-source name=path` 提供，名称集合和实际文件 hash
+> 必须与门禁制品完全一致。
+> run、score、compare 与 decide 的敏感输入/输出必须位于项目外；comparison 不写绝对路径，只保存 opaque
+> run ID。所有 JSON 结果原子写入、拒绝覆盖并设为 `0600`。
 
 ---
 

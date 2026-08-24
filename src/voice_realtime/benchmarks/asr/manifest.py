@@ -77,6 +77,10 @@ class ASRRunManifest(_FrozenModel):
     git_commit: str
     corpus_manifest_sha256: str
     reference_manifest_sha256: str
+    candidate_id: str = Field(min_length=1, max_length=200)
+    profile_sha256: str
+    analysis_plan_sha256: str | None = None
+    analysis_split: Literal["core", "reserve"] | None = None
     backend_id: str = Field(min_length=1, max_length=200)
     model_id: str = Field(min_length=1, max_length=500)
     model_revision: str = Field(min_length=1, max_length=500)
@@ -94,16 +98,30 @@ class ASRRunManifest(_FrozenModel):
     def _validate_git_commit(cls, value: str) -> str:
         return _validate_hex(value, length=_GIT_SHA_LENGTH, field_name="git_commit")
 
-    @field_validator("corpus_manifest_sha256", "reference_manifest_sha256")
+    @field_validator(
+        "corpus_manifest_sha256",
+        "reference_manifest_sha256",
+        "profile_sha256",
+        "analysis_plan_sha256",
+    )
     @classmethod
-    def _validate_corpus_hash(cls, value: str) -> str:
+    def _validate_corpus_hash(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _validate_hex(
             value,
             length=_SHA256_LENGTH,
             field_name="corpus_manifest_sha256",
         )
 
-    @field_validator("backend_id", "model_id", "model_revision", "device", "dtype")
+    @field_validator(
+        "candidate_id",
+        "backend_id",
+        "model_id",
+        "model_revision",
+        "device",
+        "dtype",
+    )
     @classmethod
     def _strip_identity(cls, value: str) -> str:
         return value.strip()
@@ -129,6 +147,12 @@ class ASRRunManifest(_FrozenModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("started_at 必须包含时区")
         return value
+
+    @model_validator(mode="after")
+    def _bind_formal_analysis_identity(self) -> Self:
+        if (self.analysis_plan_sha256 is None) != (self.analysis_split is None):
+            raise ValueError("analysis plan SHA-256 and split must be provided together")
+        return self
 
 
 class CorpusSample(_FrozenModel):
