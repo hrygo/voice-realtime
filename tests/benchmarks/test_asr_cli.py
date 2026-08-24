@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import voice_realtime.benchmarks.asr.cli as cli_module
 from voice_realtime.asr.contracts import ASRSessionContext
 from voice_realtime.asr.profiles import FunASRNanoPyTorchProfile, FunASRNanoWSProfile
 from voice_realtime.benchmarks.asr.cli import (
@@ -15,6 +18,7 @@ from voice_realtime.benchmarks.asr.cli import (
     _loopback_service_url,
     _require_compatible_mode,
     _require_external_model_dir,
+    _run_command,
     _sample_profile,
     _verify_pytorch_run_identity,
     build_parser,
@@ -86,6 +90,44 @@ def test_run_parser_exposes_resource_lock_controls() -> None:
 
     assert args.resource_lock == "/tmp/asr-test.lock"
     assert args.lock_timeout_secs == 1.5
+
+
+def test_run_command_holds_resource_lock_around_full_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+    lock_path = tmp_path / "experiment.lock"
+
+    @contextmanager
+    def fake_lock(
+        path: Path | None,
+        *,
+        timeout_secs: float,
+        run_id: str | None,
+    ) -> Iterator[None]:
+        assert path == lock_path
+        assert timeout_secs == 2.5
+        assert run_id == "frozen-run"
+        events.append("lock-enter")
+        yield
+        events.append("lock-exit")
+
+    def fake_locked_run(args: object) -> int:
+        del args
+        events.append("run")
+        return 0
+
+    monkeypatch.setattr(cli_module, "exclusive_resource_lock", fake_lock)
+    monkeypatch.setattr(cli_module, "_run_command_locked", fake_locked_run)
+    args = SimpleNamespace(
+        resource_lock=str(lock_path),
+        lock_timeout_secs=2.5,
+        manifest="frozen-run.json",
+    )
+
+    assert _run_command(args) == 0
+    assert events == ["lock-enter", "run", "lock-exit"]
 
 
 def test_run_target_must_be_loopback() -> None:
