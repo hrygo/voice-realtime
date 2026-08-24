@@ -13,7 +13,10 @@ import pytest
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
-    CorpusManifest,
+    CorpusInputManifest,
+    CorpusInputSample,
+    CorpusReference,
+    CorpusReferenceManifest,
     CorpusSample,
     EnvironmentIdentity,
     RuntimeIdentity,
@@ -25,6 +28,7 @@ from voice_realtime.benchmarks.asr.replay import (
     build_chunk_schedule,
     replay_schedule,
     run_benchmark,
+    score_blind_hypotheses,
 )
 from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
 
@@ -168,31 +172,34 @@ class FakeTranscriber:
         self.closed = True
 
 
-def _benchmark_inputs(tmp_path: Path) -> tuple[ASRRunManifest, CorpusManifest, Path]:
+def _benchmark_inputs(tmp_path: Path) -> tuple[ASRRunManifest, CorpusInputManifest, Path]:
     corpus_root = tmp_path / "corpus"
     corpus_root.mkdir()
     audio_path = corpus_root / "sample.pcm"
     audio_path.write_bytes(bytes(range(128)) * 10)
-    sample = CorpusSample(
+    sample = CorpusInputSample(
         sample_id="sample-001",
         audio_path="sample.pcm",
+        source_sha256="e" * 64,
         audio_sha256="f01233826840f8e3b0ebce8b1a0e42bc7735848ecb149aca8e929c19d3140a29",
         duration_ms=40,
+        session_id="session-001",
         scenario="near-field",
         language="zh",
-        reference_raw="你好",
-        reference_normalized="你好",
         license_or_consent="public",
+        speakers=("speaker-001",),
     )
-    corpus = CorpusManifest(
+    corpus = CorpusInputManifest(
         corpus_version="test-v1",
         normalization_version="nfkc-casefold-punct-space-v1",
+        split="dev",
         samples=(sample,),
     )
     manifest = ASRRunManifest(
         run_id="test-run",
         git_commit="a" * 40,
         corpus_manifest_sha256="c" * 64,
+        reference_manifest_sha256="d" * 64,
         backend_id="wlk-qwen3-streaming",
         model_id="test/model",
         model_revision="revision-1",
@@ -256,7 +263,9 @@ async def test_runner_writes_complete_auditable_artifact_set(tmp_path: Path) -> 
     hypothesis = json.loads((output_dir / "hypotheses.jsonl").read_text())
     assert written_manifest["status"] == "completed"
     assert hypothesis["hypothesis_normalized"] == "你好"
-    assert hypothesis["S"] == hypothesis["D"] == hypothesis["I"] == 0
+    assert "reference_raw" not in hypothesis
+    assert "cer" not in hypothesis
+    assert json.loads((output_dir / "summary.json").read_text())["scoring_status"] == "withheld"
     with (output_dir / "resources.csv").open(newline="", encoding="utf-8") as stream:
         resource_rows = list(csv.DictReader(stream))
     assert [row["audio_cursor_ms"] for row in resource_rows] == ["20", "40"]
@@ -358,14 +367,12 @@ async def test_runner_rejects_backend_identity_mismatch(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_runner_rejects_asymmetric_reference_normalization(tmp_path: Path) -> None:
+async def test_reference_is_only_read_during_explicit_scoring(tmp_path: Path) -> None:
     manifest, corpus, corpus_root = _benchmark_inputs(tmp_path)
-    invalid_sample = corpus.samples[0].model_copy(update={"reference_normalized": "错误"})
     output_dir = tmp_path / "output"
-
-    result = await run_benchmark(
+    await run_benchmark(
         manifest=manifest,
-        corpus=corpus.model_copy(update={"samples": (invalid_sample,)}),
+        corpus=corpus,
         corpus_root=corpus_root,
         output_dir=output_dir,
         transcriber_factory=lambda sample, context, vendor_event_sink: FakeTranscriber(
@@ -373,7 +380,57 @@ async def test_runner_rejects_asymmetric_reference_normalization(tmp_path: Path)
         ),
         mode=ReplayMode.OFFLINE,
     )
+    blind = [json.loads((output_dir / "hypotheses.jsonl").read_text())]
+    references = CorpusReferenceManifest(
+        corpus_version="test-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="dev",
+        input_manifest_sha256="c" * 64,
+        samples=(
+            CorpusReference(
+                sample_id="sample-001",
+                reference_raw="你好",
+                reference_normalized="你好",
+            ),
+        ),
+    )
 
-    assert result.failed_samples == 1
-    failure = json.loads((output_dir / "failures.jsonl").read_text())
-    assert failure["error_code"] == "REFERENCE_NORMALIZATION_MISMATCH"
+    scored = score_blind_hypotheses(blind, references)
+
+    assert scored[0]["cer"] == 0.0
+    assert scored[0]["reference_raw"] == "你好"
+    assert "reference_raw" not in blind[0]
+
+
+def test_scoring_rejects_asymmetric_reference_normalization() -> None:
+    blind = [
+        {
+            "sample_id": "sample-001",
+            "scenario": "near-field",
+            "hypothesis_raw": "你好",
+            "hypothesis_normalized": "你好",
+            "language": "zh",
+            "duration_ms": 40,
+            "wall_time_ms": 10,
+            "rtf": 0.25,
+            "deadline_misses": 0,
+            "finalization_latency_ms": 1,
+            "error_status": None,
+        }
+    ]
+    references = CorpusReferenceManifest(
+        corpus_version="test-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="dev",
+        input_manifest_sha256="c" * 64,
+        samples=(
+            CorpusReference(
+                sample_id="sample-001",
+                reference_raw="你好",
+                reference_normalized="错误",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="normalization mismatch"):
+        score_blind_hypotheses(blind, references)

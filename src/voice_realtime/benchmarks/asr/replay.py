@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import os
 import resource
+import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -16,8 +18,10 @@ from typing import Protocol, cast
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
-    CorpusManifest,
-    CorpusSample,
+    BenchmarkSample,
+    BlindHypothesisRecord,
+    CorpusInputManifest,
+    CorpusReferenceManifest,
     HypothesisRecord,
     resolve_relative_file,
     sha256_file,
@@ -105,7 +109,7 @@ class BenchmarkTranscriberFactory(Protocol):
 
     def __call__(
         self,
-        sample: CorpusSample,
+        sample: BenchmarkSample,
         context: ASRSessionContext,
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber: ...
@@ -256,7 +260,7 @@ def _max_rss_bytes() -> int:
 
 async def _run_sample(
     *,
-    sample: CorpusSample,
+    sample: BenchmarkSample,
     source_epoch: int,
     corpus_root: Path,
     transcriber_factory: BenchmarkTranscriberFactory,
@@ -269,11 +273,6 @@ async def _run_sample(
     event_sink: Callable[[Mapping[str, object]], None],
     vendor_sink: Callable[[Mapping[str, object]], None],
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
-    if normalize_primary_text(sample.reference_raw) != sample.reference_normalized:
-        raise BenchmarkSampleError(
-            "REFERENCE_NORMALIZATION_MISMATCH",
-            f"reference normalization mismatch: {sample.sample_id}",
-        )
     try:
         audio_path = resolve_relative_file(corpus_root, sample.audio_path)
     except (FileNotFoundError, ValueError) as exc:
@@ -392,23 +391,14 @@ async def _run_sample(
     )
     hypothesis_raw = _window_text(final_window)
     hypothesis_normalized = normalize_primary_text(hypothesis_raw)
-    cer = character_error_rate(sample.reference_normalized, hypothesis_normalized)
     rtf = realtime_factor(wall_time_ms=wall_time_ms, audio_duration_ms=sample.duration_ms)
     hypothesis: dict[str, object] = {
         "sample_id": sample.sample_id,
         "scenario": sample.scenario,
-        "reference_raw": sample.reference_raw,
-        "reference_normalized": sample.reference_normalized,
         "hypothesis_raw": hypothesis_raw,
         "hypothesis_normalized": hypothesis_normalized,
         "language": sample.language,
         "duration_ms": sample.duration_ms,
-        "S": cer.substitutions,
-        "D": cer.deletions,
-        "I": cer.insertions,
-        "N": cer.reference_tokens,
-        "cer_status": cer.status.value,
-        "cer": cer.value,
         "wall_time_ms": wall_time_ms,
         "rtf": rtf.value,
         "deadline_misses": replay_result.deadline_misses,
@@ -428,8 +418,15 @@ async def _run_sample(
     return hypothesis, resource_rows
 
 
-def load_hypotheses(path: Path) -> list[dict[str, object]]:
-    """读取并做最小形状验证的 hypotheses JSONL。"""
+def load_blind_hypotheses(path: Path) -> list[dict[str, object]]:
+    """读取结构上不含 reference/CER 的盲推理输出。"""
+    return _load_hypothesis_records(path, BlindHypothesisRecord)
+
+
+def _load_hypothesis_records(
+    path: Path,
+    record_type: type[BlindHypothesisRecord] | type[HypothesisRecord],
+) -> list[dict[str, object]]:
     if path.stat().st_size > 256 * 1024 * 1024:
         raise ValueError("hypotheses JSONL exceeds 256 MiB")
     rows: list[dict[str, object]] = []
@@ -441,18 +438,105 @@ def load_hypotheses(path: Path) -> list[dict[str, object]]:
             value = json.loads(line)
             if not isinstance(value, dict):
                 raise ValueError(f"hypotheses line {line_number} must be an object")
-            raw_row = cast(dict[str, object], value)
             try:
-                record = HypothesisRecord.model_validate(raw_row)
+                record = record_type.model_validate(value)
             except ValueError as exc:
                 raise ValueError(f"invalid hypotheses line {line_number}: {exc}") from exc
             row = cast(dict[str, object], record.model_dump(mode="json", by_alias=True))
-            sample_id = record.sample_id
-            if sample_id in sample_ids:
-                raise ValueError(f"duplicate sample_id in hypotheses: {sample_id}")
-            sample_ids.add(sample_id)
+            if record.sample_id in sample_ids:
+                raise ValueError(f"duplicate sample_id in hypotheses: {record.sample_id}")
+            sample_ids.add(record.sample_id)
             rows.append(row)
     return rows
+
+
+def load_hypotheses(path: Path) -> list[dict[str, object]]:
+    """读取开盲后带 reference 与指标的评分输出。"""
+    return _load_hypothesis_records(path, HypothesisRecord)
+
+
+def score_blind_hypotheses(
+    blind_rows: Sequence[Mapping[str, object]],
+    references: CorpusReferenceManifest,
+) -> list[dict[str, object]]:
+    """开盲后按完整 sample_id 集合一对一生成独立评分记录。"""
+    blind = {
+        str(row["sample_id"]): BlindHypothesisRecord.model_validate(row)
+        for row in blind_rows
+    }
+    reference_by_id = {reference.sample_id: reference for reference in references.samples}
+    if set(blind) != set(reference_by_id):
+        raise ValueError("blind hypotheses and references must have identical sample IDs")
+    scored: list[dict[str, object]] = []
+    for sample_id in sorted(blind):
+        row = blind[sample_id]
+        reference = reference_by_id[sample_id]
+        if normalize_primary_text(reference.reference_raw) != reference.reference_normalized:
+            raise ValueError(f"reference normalization mismatch: {sample_id}")
+        values: dict[str, object] = {
+            **row.model_dump(mode="json"),
+            "reference_raw": reference.reference_raw,
+            "reference_normalized": reference.reference_normalized,
+        }
+        if row.error_status is not None:
+            values.update(
+                {
+                    "S": None,
+                    "D": None,
+                    "I": None,
+                    "N": None,
+                    "cer_status": MetricStatus.MISSING.value,
+                    "cer": None,
+                }
+            )
+        else:
+            cer = character_error_rate(
+                reference.reference_normalized,
+                row.hypothesis_normalized,
+            )
+            values.update(
+                {
+                    "S": cer.substitutions,
+                    "D": cer.deletions,
+                    "I": cer.insertions,
+                    "N": cer.reference_tokens,
+                    "cer_status": cer.status.value,
+                    "cer": cer.value,
+                }
+            )
+        record = HypothesisRecord.model_validate(values)
+        scored.append(cast(dict[str, object], record.model_dump(mode="json", by_alias=True)))
+    return scored
+
+
+def write_scored_hypotheses(
+    path: Path,
+    rows: Sequence[Mapping[str, object]],
+) -> None:
+    """另写开盲评分产物，拒绝覆盖原始盲 hypotheses。"""
+    if path.exists():
+        raise FileExistsError(f"scored hypotheses already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            for row in rows:
+                record = HypothesisRecord.model_validate(row)
+                stream.write(record.model_dump_json(by_alias=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        path.chmod(0o600)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _finite_number(value: object) -> float | None:
@@ -537,7 +621,9 @@ def compare_hypotheses(
 
     baseline = supported_rows(baseline_rows)
     candidate = supported_rows(candidate_rows)
-    paired_ids = sorted(baseline.keys() & candidate.keys())
+    if set(baseline) != set(candidate):
+        raise ValueError("baseline and candidate must have identical supported sample IDs")
+    paired_ids = sorted(baseline)
     differences_by_scenario: dict[str, list[float]] = {}
     sample_differences: list[float] = []
     for sample_id in paired_ids:
@@ -604,22 +690,14 @@ def _prepare_output_dir(output_dir: Path, artifact_names: Sequence[str]) -> None
             (output_dir / name).chmod(0o600)
 
 
-def _failure_hypothesis(sample: CorpusSample, error_code: str) -> dict[str, object]:
+def _failure_hypothesis(sample: BenchmarkSample, error_code: str) -> dict[str, object]:
     return {
         "sample_id": sample.sample_id,
         "scenario": sample.scenario,
-        "reference_raw": sample.reference_raw,
-        "reference_normalized": sample.reference_normalized,
         "hypothesis_raw": "",
         "hypothesis_normalized": "",
         "language": sample.language,
         "duration_ms": sample.duration_ms,
-        "S": None,
-        "D": None,
-        "I": None,
-        "N": None,
-        "cer_status": MetricStatus.MISSING.value,
-        "cer": None,
         "wall_time_ms": None,
         "rtf": None,
         "deadline_misses": None,
@@ -631,7 +709,7 @@ def _failure_hypothesis(sample: CorpusSample, error_code: str) -> dict[str, obje
 async def run_benchmark(
     *,
     manifest: ASRRunManifest,
-    corpus: CorpusManifest,
+    corpus: CorpusInputManifest,
     corpus_root: Path,
     output_dir: Path,
     transcriber_factory: BenchmarkTranscriberFactory,
@@ -730,10 +808,22 @@ async def run_benchmark(
         for log in (events_log, vendor_events_log, failures_log, hypotheses_log):
             log.close()
 
-    hypothesis_rows = load_hypotheses(output_dir / "hypotheses.jsonl")
-    summary = score_hypotheses(hypothesis_rows)
-    summary["completed_samples"] = completed
-    summary["failed_samples"] = failed
+    hypothesis_rows = load_blind_hypotheses(output_dir / "hypotheses.jsonl")
+    rtf_values = [
+        value
+        for row in hypothesis_rows
+        if (value := _finite_number(row.get("rtf"))) is not None
+    ]
+    summary: dict[str, object] = {
+        "schema_version": "1.0",
+        "samples": len(hypothesis_rows),
+        "completed_samples": completed,
+        "failed_samples": failed,
+        "failure_rate": failed / len(hypothesis_rows) if hypothesis_rows else None,
+        "rtf_p50": percentile(rtf_values, 50).value,
+        "rtf_p95": percentile(rtf_values, 95).value,
+        "scoring_status": "withheld",
+    }
     write_json(output_dir / "summary.json", summary)
     final_status = "completed" if failed == 0 else "failed"
     write_run_manifest(

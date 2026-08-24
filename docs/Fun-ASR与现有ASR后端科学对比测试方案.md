@@ -702,6 +702,7 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
   "run_id": "20260824T120000Z-Q3-WLK-MPS-blind-r2",
   "git_commit": "<40-hex>",
   "corpus_manifest_sha256": "<64-hex>",
+  "reference_manifest_sha256": "<64-hex>",
   "backend_id": "wlk-qwen3-streaming",
   "model_id": "Qwen/Qwen3-ASR-1.7B",
   "model_revision": "<immutable revision>",
@@ -732,9 +733,15 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 
 ---
 
-### 9.2 `hypotheses.jsonl`
+### 9.2 盲推理与开盲评分产物
 
-每行记录包含一个样本的识别结果，至少包含以下字段：
+`hypotheses.jsonl` 是运行阶段的不可变盲输出，类型上不存在 reference、CER 或 S/D/I/N 字段；每行仅
+包含 `sample_id`、`scenario`、`hypothesis_raw` / `hypothesis_normalized`、`language`、`duration_ms`、
+性能字段与 `error_status`。runner 只接受不含 reference 的 `CorpusInputManifest`，不会接收 reference
+路径，也不会在运行结束时自动评分。
+
+只有显式执行 `score --references ...` 开盲后，才另写 `scored-hypotheses.jsonl`；原始
+`hypotheses.jsonl` 不覆盖。评分记录至少包含以下字段：
 - `sample_id`：样本唯一标识符
 - `scenario`：语料场景标签
 - `reference_raw` / `reference_normalized`：原始与规范化标注参考文本
@@ -769,7 +776,9 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 ```text
 runtime/benchmarks/asr/<run_id>/
 ├── manifest.json              # 运行元数据、环境与 SHA-256 指纹
-├── hypotheses.jsonl           # 逐样本转写结果与 CER 统计
+├── hypotheses.jsonl           # 不含 reference/CER 的不可变盲转写
+├── scored-hypotheses.jsonl    # 显式开盲后另写；运行阶段不存在
+├── scored-summary.json        # 显式开盲后的聚合指标，不覆盖运行摘要
 ├── events.jsonl               # 标准化流式事件流
 ├── vendor-events.jsonl        # 原始 vendor 事件（脱敏）
 ├── resources.csv              # 1秒精度的 CPU/MPS/RSS 采样
@@ -796,7 +805,15 @@ docs/benchmarks/asr/<experiment-family>/
 
 ### 9.5 Runner 命令契约
 
-正式运行前，`manifest.json`、`corpus.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与模型均位于项目目录外；runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只使用相对于各自根目录的文件路径。
+正式运行前，`manifest.json`、不含 reference 的 `corpus.json`、独立 reference manifest、
+`analysis-plan.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与模型均位于项目目录外；
+runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只使用相对于各自根目录的文件路径。
+
+截至 2026-08-25，`prepare-corpus` 与 `freeze-analysis` 已实现：WAV/FLAC 只经固定 `ffmpeg` argv 转换
+一次为 16 kHz mono s16le，记录 source/PCM SHA-256 与实际时长；Core/Reserve 输入清单不含参考，
+两份 reference manifest 同时以 mode `000` 封存。`freeze-analysis` 仅在两份 reference 均已封存、
+四个制品 hash 全匹配时写入 `analysis-plan.json`。mode `000` 是本机流程门禁，不等价于跨账户加密；
+正式执行仍须保持 runner 账户无 reference 访问能力，并只由显式 scorer 开盲。
 
 #### Profile 配置示例
 

@@ -34,7 +34,7 @@ from voice_realtime.asr.profiles import (
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
 )
-from voice_realtime.benchmarks.asr.manifest import CorpusSample
+from voice_realtime.benchmarks.asr.manifest import BenchmarkSample
 from voice_realtime.benchmarks.asr.replay import ReplayMode
 
 RawEventSink = Callable[[Mapping[str, object]], None]
@@ -64,7 +64,7 @@ def require_compatible_mode(profile: ASRProfile, mode: str) -> None:
         raise ValueError(f"{profile.kind} profile requires --mode offline")
 
 
-def sample_profile(profile: ASRProfile, sample: CorpusSample) -> ASRProfile:
+def sample_profile(profile: ASRProfile, sample: BenchmarkSample) -> ASRProfile:
     """仅对显式 corpus 策略使用冻结样本语言。"""
     if isinstance(
         profile,
@@ -153,7 +153,7 @@ class BenchmarkBackendRuntime:
 
     def create_transcriber(
         self,
-        sample: CorpusSample,
+        sample: BenchmarkSample,
         context: ASRSessionContext,
         raw_event_sink: RawEventSink,
     ) -> StreamingTranscriber:

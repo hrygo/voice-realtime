@@ -11,14 +11,20 @@ from pydantic import ValidationError
 
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
+    CorpusInputManifest,
+    CorpusInputSample,
     CorpusManifest,
+    CorpusReference,
+    CorpusReferenceManifest,
     CorpusSample,
     EnvironmentIdentity,
     RuntimeIdentity,
+    load_corpus_input_manifest,
     load_run_manifest,
     sha256_file,
     verify_file_hashes,
     verify_git_checkout,
+    write_corpus_input_manifest,
     write_run_manifest,
 )
 
@@ -29,6 +35,7 @@ def _manifest(**updates: object) -> ASRRunManifest:
         "run_id": "20260824T120000Z-Q3-WLK-MPS-dev-r1",
         "git_commit": "a" * 40,
         "corpus_manifest_sha256": "b" * 64,
+        "reference_manifest_sha256": "c" * 64,
         "backend_id": "wlk-qwen3-streaming",
         "model_id": "Qwen/Qwen3-ASR-1.7B",
         "model_revision": "c" * 40,
@@ -62,7 +69,13 @@ def test_manifest_round_trip_preserves_required_identity(tmp_path: Path) -> None
 
 @pytest.mark.parametrize(
     "field",
-    ["git_commit", "corpus_manifest_sha256", "model_files_sha256", "device"],
+    [
+        "git_commit",
+        "corpus_manifest_sha256",
+        "reference_manifest_sha256",
+        "model_files_sha256",
+        "device",
+    ],
 )
 def test_manifest_rejects_missing_reproducibility_identity(field: str) -> None:
     values = _manifest().model_dump()
@@ -99,6 +112,63 @@ def test_corpus_manifest_rejects_duplicate_sample_ids() -> None:
             corpus_version="dev-v1",
             normalization_version="nfkc-casefold-punct-space-v1",
             samples=(sample, sample),
+        )
+
+
+def test_blind_input_manifest_round_trip_contains_no_reference(tmp_path: Path) -> None:
+    sample = CorpusInputSample(
+        sample_id="blind-001",
+        audio_path="pcm/blind-001.pcm",
+        source_sha256="a" * 64,
+        audio_sha256="b" * 64,
+        duration_ms=20,
+        session_id="session-001",
+        scenario="near-field",
+        language="zh",
+        license_or_consent="consent-001",
+        speakers=("speaker-001",),
+    )
+    manifest = CorpusInputManifest(
+        corpus_version="blind-core-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="blind-core",
+        samples=(sample,),
+    )
+    path = tmp_path / "blind-core.json"
+
+    write_corpus_input_manifest(path, manifest)
+
+    assert load_corpus_input_manifest(path) == manifest
+    assert "reference" not in path.read_text(encoding="utf-8")
+
+    payload = manifest.model_dump(mode="json")
+    payload["samples"][0]["reference_raw"] = "不得进入 runner"
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        CorpusInputManifest.model_validate(payload)
+
+
+def test_reference_manifest_binds_input_hash_and_rejects_duplicate_ids() -> None:
+    reference = CorpusReference(
+        sample_id="blind-001",
+        reference_raw="你好",
+        reference_normalized="你好",
+    )
+    with pytest.raises(ValidationError, match="input_manifest_sha256"):
+        CorpusReferenceManifest.model_validate(
+            {
+                "corpus_version": "blind-v1",
+                "normalization_version": "nfkc-casefold-punct-space-v1",
+                "split": "blind-core",
+                "samples": [reference.model_dump(mode="json")],
+            }
+        )
+    with pytest.raises(ValidationError, match="sample_id"):
+        CorpusReferenceManifest(
+            corpus_version="blind-v1",
+            normalization_version="nfkc-casefold-punct-space-v1",
+            split="blind-core",
+            input_manifest_sha256="a" * 64,
+            samples=(reference, reference),
         )
 
 

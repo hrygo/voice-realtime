@@ -267,20 +267,20 @@ git commit -m "refactor(asr): 统一基准后端构建与身份核验"
 - Produces outside repository: 16kHz mono s16le PCM、`dev.json`、`blind-core.json`、
   `blind-reserve.json`、`reliability.json`、`analysis-plan.json` 与 checksums。
 
-- [ ] **Step 1: 写隐私、格式与冻结 RED 测试**
+- [x] **Step 1: 写隐私、格式与冻结 RED 测试**
 
 覆盖 WAV/FLAC 统一转码身份、时长/hash 校验、相对路径、symlink 逃逸、重复 sample ID、许可/同意缺失、
 blind reference 不可读模式、正交多标签、60m Core/45m Reserve 分层配额、两个 manifest hash、cluster
 跨 look 泄漏、analysis plan alpha/seed/MDE/conditional power、已冻结文件拒绝覆盖。配额按唯一音频
 时长计算，禁止标签重复计时；Core/Reserve session 与 speaker 均不得重叠。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/benchmarks/test_asr_corpus.py tests/benchmarks/test_asr_analysis_plan.py tests/benchmarks/test_asr_manifest.py -q --no-cov`
 
 Expected: corpus/analysis_plan 模块不存在而失败。
 
-- [ ] **Step 3: 实现确定性制备与冻结**
+- [x] **Step 3: 实现确定性制备与冻结**
 
 只调用本机可验证的 `ffmpeg` 进行一次转码，记录原始与 PCM SHA-256；reference/hypothesis 共用版本化
 归一化函数。生成 `blind-core.json`、`blind-reserve.json` 与不可变配额摘要；两段 reference 同时进入

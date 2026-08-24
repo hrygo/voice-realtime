@@ -26,15 +26,22 @@ from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
+from voice_realtime.benchmarks.asr.analysis_plan import (
+    AnalysisPlan,
+    freeze_analysis_plan,
+    sealed_sha256,
+)
 from voice_realtime.benchmarks.asr.backend_factory import (
     build_backend_runtime,
     require_compatible_mode,
     sample_profile,
     verify_profile_identity,
 )
+from voice_realtime.benchmarks.asr.corpus import load_preparation_spec, prepare_corpus
 from voice_realtime.benchmarks.asr.manifest import (
-    CorpusSample,
-    load_corpus_manifest,
+    BenchmarkSample,
+    load_corpus_input_manifest,
+    load_reference_manifest,
     load_run_manifest,
     sha256_file,
     verify_file_hashes,
@@ -44,10 +51,13 @@ from voice_realtime.benchmarks.asr.replay import (
     BenchmarkRunResult,
     ReplayMode,
     compare_hypotheses,
+    load_blind_hypotheses,
     load_hypotheses,
     run_benchmark,
+    score_blind_hypotheses,
     score_hypotheses,
     write_json,
+    write_scored_hypotheses,
 )
 from voice_realtime.benchmarks.resource_lock import exclusive_resource_lock
 
@@ -120,7 +130,7 @@ def _verify_pytorch_run_identity(
             raise ValueError(f"ASR profile {name} does not match run manifest")
 
 
-def _sample_profile(profile: ASRProfile, sample: CorpusSample) -> ASRProfile:
+def _sample_profile(profile: ASRProfile, sample: BenchmarkSample) -> ASRProfile:
     """仅对显式 corpus 策略应用冻结样本的语言提示。"""
     return sample_profile(profile, sample)
 
@@ -138,6 +148,28 @@ def build_parser() -> argparse.ArgumentParser:
     """构造稳定的 benchmark CLI 参数树。"""
     parser = argparse.ArgumentParser(description="运行和分析 ASR 科学对比测试")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    prepare_parser = subparsers.add_parser(
+        "prepare-corpus", help="在项目外确定性制备并冻结语料"
+    )
+    prepare_parser.add_argument("--spec", required=True)
+    prepare_parser.add_argument("--source-root", required=True)
+    prepare_parser.add_argument("--output-root", required=True)
+    prepare_parser.add_argument("--repo-root", default=".")
+
+    freeze_parser = subparsers.add_parser(
+        "freeze-analysis", help="在 Core 输出可见前冻结序贯分析计划"
+    )
+    freeze_parser.add_argument("--core-manifest", required=True)
+    freeze_parser.add_argument("--reserve-manifest", required=True)
+    freeze_parser.add_argument("--core-references", required=True)
+    freeze_parser.add_argument("--reserve-references", required=True)
+    freeze_parser.add_argument("--candidate", action="append", required=True)
+    freeze_parser.add_argument(
+        "--bootstrap-seed", action="append", required=True, type=int
+    )
+    freeze_parser.add_argument("--pilot-baseline-cer", required=True, type=float)
+    freeze_parser.add_argument("--output", required=True)
 
     run_parser = subparsers.add_parser("run", help="运行一个冻结实验臂")
     run_parser.add_argument("--manifest", required=True, help="预冻结 run manifest JSON")
@@ -159,8 +191,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.add_argument("--lock-timeout-secs", type=float, default=0.0)
 
-    score_parser = subparsers.add_parser("score", help="从 hypotheses.jsonl 重新生成汇总")
+    score_parser = subparsers.add_parser("score", help="显式开盲并生成独立评分产物")
     score_parser.add_argument("--run-dir", required=True)
+    score_parser.add_argument("--references", required=True)
 
     compare_parser = subparsers.add_parser("compare", help="按 sample_id 配对比较两个实验臂")
     compare_parser.add_argument("--baseline", required=True)
@@ -176,7 +209,7 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     corpus_path = Path(str(args.corpus))
     profile_path = Path(str(args.profile))
     manifest = load_run_manifest(manifest_path)
-    corpus = load_corpus_manifest(corpus_path)
+    corpus = load_corpus_input_manifest(corpus_path)
     if sha256_file(corpus_path) != manifest.corpus_manifest_sha256:
         raise ValueError("corpus manifest SHA-256 does not match run manifest")
     repo_root = Path(str(args.repo_root))
@@ -201,7 +234,7 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     )
 
     def transcriber_factory(
-        sample: CorpusSample,
+        sample: BenchmarkSample,
         context: ASRSessionContext,
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber:
@@ -246,8 +279,20 @@ def _run_command(args: argparse.Namespace) -> int:
 
 def _score_command(args: argparse.Namespace) -> int:
     run_dir = Path(str(args.run_dir))
-    rows = load_hypotheses(run_dir / "hypotheses.jsonl")
-    write_json(run_dir / "summary.json", score_hypotheses(rows))
+    manifest = load_run_manifest(run_dir / "manifest.json")
+    reference_path = Path(str(args.references))
+    if sealed_sha256(reference_path) != manifest.reference_manifest_sha256:
+        raise ValueError("reference manifest SHA-256 does not match run manifest")
+    reference_path.chmod(0o600)
+    references = load_reference_manifest(reference_path)
+    if references.input_manifest_sha256 != manifest.corpus_manifest_sha256:
+        raise ValueError("reference manifest is not bound to this corpus input")
+    scored = score_blind_hypotheses(
+        load_blind_hypotheses(run_dir / "hypotheses.jsonl"),
+        references,
+    )
+    write_scored_hypotheses(run_dir / "scored-hypotheses.jsonl", scored)
+    write_json(run_dir / "scored-summary.json", score_hypotheses(scored))
     return 0
 
 
@@ -255,8 +300,8 @@ def _compare_command(args: argparse.Namespace) -> int:
     baseline = Path(str(args.baseline))
     candidate = Path(str(args.candidate))
     comparison = compare_hypotheses(
-        load_hypotheses(baseline / "hypotheses.jsonl"),
-        load_hypotheses(candidate / "hypotheses.jsonl"),
+        load_hypotheses(baseline / "scored-hypotheses.jsonl"),
+        load_hypotheses(candidate / "scored-hypotheses.jsonl"),
         iterations=int(args.bootstrap_iterations),
         seed=int(args.seed),
     )
@@ -270,6 +315,40 @@ def main(argv: Sequence[str] | None = None) -> int:
     """解析命令并把边界错误转换为稳定非零退出码。"""
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "prepare-corpus":
+            prepare_corpus(
+                spec=load_preparation_spec(Path(str(args.spec))),
+                source_root=Path(str(args.source_root)),
+                output_root=Path(str(args.output_root)),
+                repository_root=Path(str(args.repo_root)),
+            )
+            return 0
+        if args.command == "freeze-analysis":
+            seeds = tuple(args.bootstrap_seed)
+            if len(seeds) != 2:
+                raise ValueError("freeze-analysis requires exactly two bootstrap seeds")
+            core_manifest = Path(str(args.core_manifest))
+            reserve_manifest = Path(str(args.reserve_manifest))
+            core_reference = Path(str(args.core_references))
+            reserve_reference = Path(str(args.reserve_references))
+            plan = AnalysisPlan(
+                candidate_ids=tuple(args.candidate),
+                core_manifest_sha256=sha256_file(core_manifest),
+                reserve_manifest_sha256=sha256_file(reserve_manifest),
+                core_reference_sha256=sealed_sha256(core_reference),
+                reserve_reference_sha256=sealed_sha256(reserve_reference),
+                bootstrap_seeds=seeds,
+                pilot_baseline_cer=float(args.pilot_baseline_cer),
+            )
+            freeze_analysis_plan(
+                Path(str(args.output)),
+                plan,
+                core_manifest=core_manifest,
+                reserve_manifest=reserve_manifest,
+                core_reference=core_reference,
+                reserve_reference=reserve_reference,
+            )
+            return 0
         if args.command == "run":
             return _run_command(args)
         if args.command == "score":

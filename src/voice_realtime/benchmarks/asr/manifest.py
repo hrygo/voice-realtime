@@ -61,7 +61,12 @@ class EnvironmentIdentity(_FrozenModel):
 
 
 RunStatus = Literal["planned", "running", "completed", "failed", "infeasible"]
-MetricStatusValue = Literal["supported", "unsupported", "not_applicable", "missing"]
+MetricStatusValue = Literal[
+    "supported",
+    "unsupported",
+    "not_applicable",
+    "missing",
+]
 
 
 class ASRRunManifest(_FrozenModel):
@@ -71,6 +76,7 @@ class ASRRunManifest(_FrozenModel):
     run_id: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     git_commit: str
     corpus_manifest_sha256: str
+    reference_manifest_sha256: str
     backend_id: str = Field(min_length=1, max_length=200)
     model_id: str = Field(min_length=1, max_length=500)
     model_revision: str = Field(min_length=1, max_length=500)
@@ -88,7 +94,7 @@ class ASRRunManifest(_FrozenModel):
     def _validate_git_commit(cls, value: str) -> str:
         return _validate_hex(value, length=_GIT_SHA_LENGTH, field_name="git_commit")
 
-    @field_validator("corpus_manifest_sha256")
+    @field_validator("corpus_manifest_sha256", "reference_manifest_sha256")
     @classmethod
     def _validate_corpus_hash(cls, value: str) -> str:
         return _validate_hex(
@@ -187,6 +193,114 @@ class CorpusManifest(_FrozenModel):
         return self
 
 
+CorpusSplit = Literal["public", "dev", "blind-core", "blind-reserve", "reliability"]
+
+
+class CorpusInputSample(_FrozenModel):
+    """不含参考文本、可安全交给盲测 runner 的音频输入记录。"""
+
+    sample_id: str = Field(min_length=1, max_length=200)
+    audio_path: str = Field(min_length=1, max_length=1000)
+    source_sha256: str
+    audio_sha256: str
+    duration_ms: int = Field(gt=0)
+    session_id: str = Field(min_length=1, max_length=200)
+    scenario: str = Field(min_length=1, max_length=200)
+    language: str = Field(min_length=1, max_length=64)
+    license_or_consent: str = Field(min_length=1, max_length=500)
+    speakers: tuple[str, ...] = Field(min_length=1)
+    tags: tuple[str, ...] = ()
+    hotwords: tuple[str, ...] = ()
+
+    @field_validator(
+        "sample_id",
+        "session_id",
+        "scenario",
+        "language",
+        "license_or_consent",
+    )
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("source_sha256", "audio_sha256")
+    @classmethod
+    def _validate_hash(cls, value: str) -> str:
+        return _validate_hex(value, length=_SHA256_LENGTH, field_name="sha256")
+
+    @field_validator("audio_path")
+    @classmethod
+    def _validate_relative_audio_path(cls, value: str) -> str:
+        normalized = value.strip().replace("\\", "/")
+        path = PurePosixPath(normalized)
+        if path.is_absolute() or ".." in path.parts or not normalized:
+            raise ValueError("audio_path 必须是语料根目录内的相对路径")
+        return str(path)
+
+    @field_validator("speakers", "tags", "hotwords")
+    @classmethod
+    def _normalize_text_tuple(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in value if item.strip())
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("文本标签必须唯一")
+        return normalized
+
+
+class CorpusInputManifest(_FrozenModel):
+    """盲测推理输入清单；类型上不允许承载 reference。"""
+
+    schema_version: Literal["1.0"] = "1.0"
+    corpus_version: str = Field(min_length=1, max_length=200)
+    normalization_version: str = Field(min_length=1, max_length=200)
+    split: CorpusSplit
+    samples: tuple[CorpusInputSample, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _reject_duplicate_samples(self) -> Self:
+        sample_ids = [sample.sample_id for sample in self.samples]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("sample_id 必须唯一")
+        return self
+
+
+class CorpusReference(_FrozenModel):
+    """与推理输入按 sample_id 配对的封存参考文本。"""
+
+    sample_id: str = Field(min_length=1, max_length=200)
+    reference_raw: str = Field(max_length=500_000)
+    reference_normalized: str = Field(max_length=500_000)
+
+
+class CorpusReferenceManifest(_FrozenModel):
+    """独立封存的 Core 或 Reserve 参考文本清单。"""
+
+    schema_version: Literal["1.0"] = "1.0"
+    corpus_version: str = Field(min_length=1, max_length=200)
+    normalization_version: str = Field(min_length=1, max_length=200)
+    split: CorpusSplit
+    input_manifest_sha256: str
+    samples: tuple[CorpusReference, ...] = Field(min_length=1)
+
+    @field_validator("input_manifest_sha256")
+    @classmethod
+    def _validate_input_hash(cls, value: str) -> str:
+        return _validate_hex(
+            value,
+            length=_SHA256_LENGTH,
+            field_name="input_manifest_sha256",
+        )
+
+    @model_validator(mode="after")
+    def _reject_duplicate_samples(self) -> Self:
+        sample_ids = [sample.sample_id for sample in self.samples]
+        if len(sample_ids) != len(set(sample_ids)):
+            raise ValueError("sample_id 必须唯一")
+        return self
+
+
+BenchmarkSample = CorpusSample | CorpusInputSample
+
+
 class HypothesisRecord(_FrozenModel):
     """`hypotheses.jsonl` 的稳定逐样本契约。"""
 
@@ -223,11 +337,30 @@ class HypothesisRecord(_FrozenModel):
                 raise ValueError("failed hypothesis must use missing CER state")
             return self
         if self.cer_status == "supported":
-            if self.cer is None or any(value is None for value in counts):
+            if (
+                self.cer is None
+                or any(value is None for value in counts)
+            ):
                 raise ValueError("supported CER requires value and S/D/I/N")
         elif self.cer is not None:
             raise ValueError("non-supported CER cannot carry a value")
         return self
+
+
+class BlindHypothesisRecord(_FrozenModel):
+    """运行阶段的不可变盲输出；结构上不存在 reference 与 CER 字段。"""
+
+    sample_id: str = Field(min_length=1, max_length=200)
+    scenario: str = Field(min_length=1, max_length=200)
+    hypothesis_raw: str = Field(max_length=500_000)
+    hypothesis_normalized: str = Field(max_length=500_000)
+    language: str = Field(min_length=1, max_length=64)
+    duration_ms: int = Field(gt=0)
+    wall_time_ms: float | None = Field(default=None, ge=0)
+    rtf: float | None = Field(default=None, ge=0)
+    deadline_misses: int | None = Field(default=None, ge=0)
+    finalization_latency_ms: float | None = Field(default=None, ge=0)
+    error_status: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 def sha256_file(path: Path, *, block_size: int = 1024 * 1024) -> str:
@@ -300,6 +433,57 @@ def load_run_manifest(path: Path) -> ASRRunManifest:
 def load_corpus_manifest(path: Path) -> CorpusManifest:
     """从 JSON 边界校验并读取语料清单。"""
     return CorpusManifest.model_validate_json(_read_bounded_text(path))
+
+
+def load_corpus_input_manifest(path: Path) -> CorpusInputManifest:
+    """读取不含参考文本的 runner 输入清单。"""
+    return CorpusInputManifest.model_validate_json(_read_bounded_text(path))
+
+
+def load_reference_manifest(path: Path) -> CorpusReferenceManifest:
+    """仅在正式开盲后读取封存参考清单。"""
+    return CorpusReferenceManifest.model_validate_json(_read_bounded_text(path))
+
+
+def _write_frozen_model(path: Path, model: BaseModel, *, mode: int = 0o600) -> None:
+    if path.exists():
+        raise FileExistsError(f"frozen artifact already exists: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
+    payload = model.model_dump_json(indent=2) + "\n"
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary_path.replace(path)
+        path.chmod(mode)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def write_corpus_input_manifest(path: Path, manifest: CorpusInputManifest) -> None:
+    """原子写入 runner 输入清单且拒绝覆盖。"""
+    _write_frozen_model(path, manifest)
+
+
+def write_reference_manifest(
+    path: Path,
+    manifest: CorpusReferenceManifest,
+    *,
+    mode: int = 0o600,
+) -> None:
+    """原子写入独立参考清单；制备完成后可直接封存为 000。"""
+    _write_frozen_model(path, manifest, mode=mode)
 
 
 def write_run_manifest(path: Path, manifest: ASRRunManifest) -> None:
