@@ -282,7 +282,7 @@ def stratified_cluster_bootstrap_difference(
     iterations: int = 10_000,
     seed: int = 0,
 ) -> BootstrapDifference:
-    """在层内重采样会话，再对各层等权汇总配对差。"""
+    """在层内重采样独立样本；仅用于未提供 cluster 身份的敏感性分析。"""
     if iterations <= 0:
         raise ValueError("iterations 必须为正数")
     groups = {
@@ -315,6 +315,73 @@ def stratified_cluster_bootstrap_difference(
     return BootstrapDifference(
         paired_samples=len(all_values),
         mean_difference=macro_average(groups),
+        ci_low=low,
+        ci_high=high,
+    )
+
+
+def stratified_grouped_cluster_bootstrap_difference(
+    differences_by_stratum: Mapping[str, Mapping[str, Sequence[float]]],
+    *,
+    iterations: int = 10_000,
+    seed: int = 0,
+) -> BootstrapDifference:
+    """在场景内重采样完整 cluster，再对场景样本均值等权汇总。"""
+    if iterations <= 0:
+        raise ValueError("iterations 必须为正数")
+    groups = {
+        stratum: {
+            cluster_id: tuple(values)
+            for cluster_id, values in clusters.items()
+            if values
+        }
+        for stratum, clusters in differences_by_stratum.items()
+    }
+    groups = {stratum: clusters for stratum, clusters in groups.items() if clusters}
+    if not groups:
+        raise ValueError("stratified cluster bootstrap requires paired clusters")
+    all_values = [
+        value
+        for clusters in groups.values()
+        for values in clusters.values()
+        for value in values
+    ]
+    if any(not math.isfinite(value) for value in all_values):
+        raise ValueError("配对指标必须是有限数值")
+
+    def macro_average(
+        sampled_groups: Mapping[str, Sequence[float]],
+    ) -> float:
+        stratum_means = [sum(values) / len(values) for values in sampled_groups.values()]
+        return sum(stratum_means) / len(stratum_means)
+
+    observed = {
+        stratum: tuple(
+            value for values in clusters.values() for value in values
+        )
+        for stratum, clusters in groups.items()
+    }
+    random_generator = random.Random(seed)
+    bootstrapped: list[float] = []
+    for _ in range(iterations):
+        sampled: dict[str, tuple[float, ...]] = {}
+        for stratum, clusters in groups.items():
+            cluster_values = tuple(clusters.values())
+            selected = tuple(
+                random_generator.choice(cluster_values)
+                for _ in cluster_values
+            )
+            sampled[stratum] = tuple(
+                value for values in selected for value in values
+            )
+        bootstrapped.append(macro_average(sampled))
+    low = percentile(bootstrapped, 2.5).value
+    high = percentile(bootstrapped, 97.5).value
+    if low is None or high is None:  # pragma: no cover - validated input guarantees values
+        raise RuntimeError("bootstrap percentile calculation failed")
+    return BootstrapDifference(
+        paired_samples=len(all_values),
+        mean_difference=macro_average(observed),
         ci_low=low,
         ci_high=high,
     )

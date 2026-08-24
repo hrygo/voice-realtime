@@ -36,6 +36,7 @@ from voice_realtime.benchmarks.asr.metrics import (
     percentile,
     realtime_factor,
     stratified_cluster_bootstrap_difference,
+    stratified_grouped_cluster_bootstrap_difference,
 )
 from voice_realtime.meeting.models import TranscriptWindow
 
@@ -675,6 +676,7 @@ def compare_hypotheses(
     *,
     iterations: int = 10_000,
     seed: int = 0,
+    cluster_by_sample: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     """按 sample_id 对齐并比较候选减基线 CER。"""
     def supported_rows(
@@ -703,7 +705,11 @@ def compare_hypotheses(
         raise ValueError("baseline and candidate must have identical supported sample IDs")
     paired_ids = sorted(baseline)
     differences_by_scenario: dict[str, list[float]] = {}
+    differences_by_scenario_cluster: dict[str, dict[str, list[float]]] = {}
     sample_differences: list[float] = []
+    paired_cluster_ids: set[str] = set()
+    if cluster_by_sample is not None and set(cluster_by_sample) != set(paired_ids):
+        raise ValueError("cluster manifest and paired hypotheses must have identical sample IDs")
     for sample_id in paired_ids:
         baseline_scenario, baseline_value = baseline[sample_id]
         candidate_scenario, candidate_value = candidate[sample_id]
@@ -711,15 +717,42 @@ def compare_hypotheses(
             raise ValueError(f"scenario mismatch for paired sample: {sample_id}")
         difference = candidate_value - baseline_value
         differences_by_scenario.setdefault(baseline_scenario, []).append(difference)
+        if cluster_by_sample is not None:
+            cluster_id = cluster_by_sample[sample_id].strip()
+            if not cluster_id:
+                raise ValueError(f"cluster ID cannot be empty: {sample_id}")
+            paired_cluster_ids.add(cluster_id)
+            differences_by_scenario_cluster.setdefault(
+                baseline_scenario, {}
+            ).setdefault(cluster_id, []).append(difference)
         sample_differences.append(difference)
-    comparison = stratified_cluster_bootstrap_difference(
-        differences_by_scenario,
-        iterations=iterations,
-        seed=seed,
-    )
-    return {
+    if cluster_by_sample is None:
+        comparison = stratified_cluster_bootstrap_difference(
+            differences_by_scenario,
+            iterations=iterations,
+            seed=seed,
+        )
+        resampling_unit = "sample"
+        paired_clusters: int | None = None
+        stratum_cluster_counts: dict[str, int] | None = None
+    else:
+        comparison = stratified_grouped_cluster_bootstrap_difference(
+            differences_by_scenario_cluster,
+            iterations=iterations,
+            seed=seed,
+        )
+        resampling_unit = "cluster"
+        paired_clusters = len(paired_cluster_ids)
+        stratum_cluster_counts = {
+            scenario: len(clusters)
+            for scenario, clusters in sorted(differences_by_scenario_cluster.items())
+        }
+    result: dict[str, object] = {
         "schema_version": "1.0",
         "paired_samples": comparison.paired_samples,
+        "resampling_unit": resampling_unit,
+        "paired_clusters": paired_clusters,
+        "stratum_cluster_counts": stratum_cluster_counts,
         "mean_cer_difference": round(comparison.mean_difference, 12),
         "sample_mean_cer_difference": round(
             sum(sample_differences) / len(sample_differences),
@@ -730,6 +763,7 @@ def compare_hypotheses(
         "bootstrap_iterations": iterations,
         "seed": seed,
     }
+    return result
 
 
 def write_json(path: Path, payload: Mapping[str, object]) -> None:

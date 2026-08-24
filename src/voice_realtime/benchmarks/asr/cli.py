@@ -225,6 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser = subparsers.add_parser("compare", help="按 sample_id 配对比较两个实验臂")
     compare_parser.add_argument("--baseline", required=True)
     compare_parser.add_argument("--candidate", required=True)
+    compare_parser.add_argument(
+        "--corpus",
+        help="冻结输入 manifest；提供后按 content_group_id/session_id 做 cluster bootstrap",
+    )
     compare_parser.add_argument("--output", required=True)
     compare_parser.add_argument("--bootstrap-iterations", type=int, default=10_000)
     compare_parser.add_argument("--seed", type=int, default=0)
@@ -330,14 +334,25 @@ def _score_command(args: argparse.Namespace) -> int:
 def _compare_command(args: argparse.Namespace) -> int:
     baseline = Path(str(args.baseline))
     candidate = Path(str(args.candidate))
+    corpus_path = Path(str(args.corpus)) if args.corpus is not None else None
+    cluster_by_sample: dict[str, str] | None = None
+    if corpus_path is not None:
+        corpus = load_corpus_input_manifest(corpus_path)
+        cluster_by_sample = {
+            sample.sample_id: sample.content_group_id or sample.session_id
+            for sample in corpus.samples
+        }
     comparison = compare_hypotheses(
         load_hypotheses(baseline / "scored-hypotheses.jsonl"),
         load_hypotheses(candidate / "scored-hypotheses.jsonl"),
         iterations=int(args.bootstrap_iterations),
         seed=int(args.seed),
+        cluster_by_sample=cluster_by_sample,
     )
     comparison["baseline"] = str(baseline)
     comparison["candidate"] = str(candidate)
+    if corpus_path is not None:
+        comparison["corpus_manifest_sha256"] = sha256_file(corpus_path)
     write_json(Path(str(args.output)), comparison)
     return 0
 

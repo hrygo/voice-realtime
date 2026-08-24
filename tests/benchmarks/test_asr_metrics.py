@@ -170,3 +170,38 @@ def test_comparison_bootstraps_equal_weight_scenario_macro() -> None:
     assert comparison["mean_cer_difference"] == pytest.approx(0.5)
     assert comparison["sample_mean_cer_difference"] == pytest.approx(1 / 3)
     assert comparison["ci_low"] == comparison["ci_high"] == pytest.approx(0.5)
+
+
+def test_comparison_uses_declared_cluster_ids_for_bootstrap() -> None:
+    baseline = [
+        {"sample_id": "a-1", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "a-2", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "b-1", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "b-2", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+    ]
+    candidate = [
+        {"sample_id": "a-1", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "a-2", "scenario": "meeting", "cer_status": "supported", "cer": 0.0},
+        {"sample_id": "b-1", "scenario": "meeting", "cer_status": "supported", "cer": 1.0},
+        {"sample_id": "b-2", "scenario": "meeting", "cer_status": "supported", "cer": 1.0},
+    ]
+
+    comparison = compare_hypotheses(
+        baseline,
+        candidate,
+        iterations=500,
+        seed=7,
+        cluster_by_sample={
+            "a-1": "session-a",
+            "a-2": "session-a",
+            "b-1": "session-b",
+            "b-2": "session-b",
+        },
+    )
+
+    assert comparison["resampling_unit"] == "cluster"
+    assert comparison["paired_clusters"] == 2
+    assert comparison["stratum_cluster_counts"] == {"meeting": 2}
+    assert comparison["mean_cer_difference"] == pytest.approx(0.5)
+    assert comparison["ci_low"] == pytest.approx(0.0)
+    assert comparison["ci_high"] == pytest.approx(1.0)

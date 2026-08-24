@@ -29,11 +29,14 @@ from voice_realtime.benchmarks.asr.cli import (
 )
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
+    CorpusInputManifest,
+    CorpusInputSample,
     CorpusReference,
     CorpusReferenceManifest,
     EnvironmentIdentity,
     RuntimeIdentity,
     sha256_file,
+    write_corpus_input_manifest,
     write_reference_manifest,
     write_run_manifest,
 )
@@ -88,8 +91,18 @@ def test_parser_exposes_run_score_compare_subcommands() -> None:
         ]
     ).command == "prepare-corpus"
     assert parser.parse_args(
-        ["compare", "--baseline", "a", "--candidate", "b", "--output", "out.json"]
-    ).command == "compare"
+        [
+            "compare",
+            "--baseline",
+            "a",
+            "--candidate",
+            "b",
+            "--corpus",
+            "corpus.json",
+            "--output",
+            "out.json",
+        ]
+    ).corpus == "corpus.json"
 
 
 def test_run_parser_exposes_resource_lock_controls() -> None:
@@ -408,6 +421,58 @@ def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:
     assert exit_code == 0
     assert comparison["paired_samples"] == 2
     assert comparison["mean_cer_difference"] == -0.1
+
+
+def test_compare_command_uses_corpus_content_group_as_cluster(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    output = tmp_path / "comparison.json"
+    corpus_path = tmp_path / "corpus.json"
+    _write_hypotheses(baseline, [("a", 0.3), ("b", 0.4)])
+    _write_hypotheses(candidate, [("a", 0.2), ("b", 0.3)])
+    corpus = CorpusInputManifest(
+        corpus_version="test-v1",
+        normalization_version="primary-v1",
+        split="blind-core",
+        samples=tuple(
+            CorpusInputSample(
+                sample_id=sample_id,
+                audio_path=f"pcm/{sample_id}.pcm",
+                source_sha256="a" * 64,
+                audio_sha256="b" * 64,
+                duration_ms=1_000,
+                session_id=f"session-{sample_id}",
+                content_group_id="shared-content",
+                scenario="near-field",
+                language="zh",
+                license_or_consent="test",
+            )
+            for sample_id in ("a", "b")
+        ),
+    )
+    write_corpus_input_manifest(corpus_path, corpus)
+
+    exit_code = main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--candidate",
+            str(candidate),
+            "--corpus",
+            str(corpus_path),
+            "--output",
+            str(output),
+            "--bootstrap-iterations",
+            "100",
+        ]
+    )
+
+    comparison = json.loads(output.read_text())
+    assert exit_code == 0
+    assert comparison["resampling_unit"] == "cluster"
+    assert comparison["paired_clusters"] == 1
+    assert comparison["corpus_manifest_sha256"] == sha256_file(corpus_path)
 
 
 def test_compare_rejects_selective_sample_intersection(tmp_path: Path) -> None:

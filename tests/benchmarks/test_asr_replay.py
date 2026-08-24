@@ -297,10 +297,14 @@ async def test_runner_writes_complete_auditable_artifact_set(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_runner_samples_optional_transcriber_process_tree(tmp_path: Path) -> None:
+async def test_runner_samples_optional_transcriber_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     manifest, corpus, corpus_root = _benchmark_inputs(tmp_path)
     output_dir = tmp_path / "output"
     sampled_process_ids: list[tuple[int, ...]] = []
+    monkeypatch.setattr(replay_module, "_max_rss_bytes", lambda: 500_000_000)
 
     def factory(
         _sample: CorpusSample,
