@@ -40,7 +40,7 @@ runner 中证明可行且值得晋级。最终只部署胜出的单一后端，�
   revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。上游完整性核验失败的非默认
   Qwen3-ASR 0.6B ModelScope 旧快照已删除，不作为实验臂或回退来源。
 - 尚未启动固定官方 WebSocket 服务、开封 blind set 或产生任何选型结论。checkpoint 已完成 MPS/CPU
-  初步加载与推理探测，但这不等于完整 Stage 0、准确率比较或实时链路已通过。
+  Stage 0 本机功能门禁，但这不等于正式准确率比较或实时链路已通过。
 
 runner 的 `--mode offline` 只表示“不等待 wall-clock 的 PCM 回放时序”：对 WS profile，它仍只是
 流式 adapter 的快速回放；对 `funasr-nano-pytorch`，PCM 在内存中合并后才调用一次模型原生离线
@@ -198,6 +198,34 @@ MPS 进程设置 `PYTORCH_ENABLE_MPS_FALLBACK=0`，并在推理前检查所有�
 参数仍在 `mps:0`，且未写临时音频。首次实现曾因 FunASR 1.4.2 的 `FunASRNano.generate_chatml`
 实际只接受 `str`/`torch.Tensor` 而拒绝文档所称可用的裸 ndarray；现已在 engine 边界显式把内存
 float32 ndarray 转为 tensor，并加入 vendor 行为回归测试。
+
+### 3.5 Stage 0 runner 门禁结果（2026-08-24 22:47-22:48 CST）
+
+在 commit `379ad7e6124db46f549504422b7e60dc3b9a6bb6` 上，以项目外
+`~/.cache/voice-realtime/benchmarks/asr/stage0-funasr-20260824/` 作为语料、manifest 和产物根目录，
+完成独立 MPS/CPU run。语料共 10 条：模型自带中/英/日公开样例 3 条、本机 macOS voice 合成中英
+短句 6 条、纯静音 1 条。它们只用于功能门禁，不能进入正式模型准确率排名。
+
+| 指标 | `FA-PT-MPS` | `FA-PT-CPU` |
+|---|---:|---:|
+| 完成/失败 | 10 / 0 | 10 / 0 |
+| 静音 normalized text | 空 | 空 |
+| 9 条可计分样本配对 CER 差 | 0 | 基线 |
+| 首条（含模型加载）wall time | 11.568s | 12.859s |
+| warm RTF P50（后 9 条） | 0.0618 | 0.5924 |
+| warm RTF P95（后 9 条） | 0.0825 | 0.7561 |
+| warm wall time P50 | 262ms | 2623ms |
+| warm wall time P95 | 421ms | 2930ms |
+
+MPS run 设置 `PYTORCH_ENABLE_MPS_FALLBACK=0`，engine 强制检查模型参数全部位于 `mps:0`；两个 run
+都关闭 hub 更新和网络访问，模型只加载一次，输出目录及所有逐字稿/事件文件权限分别为 `0700` 和
+`0600`。MPS/CPU 的 9 条可计分输出逐字一致，10,000 次配对 bootstrap 的 CER 差 CI 为
+`[0, 0]`；静音不进入 CER 分母。
+
+本轮 CER 只反映门禁语料：模型自带样例存在来源偏倚，本机合成数字句又受到 ITN 表达差异影响，
+不得引用 `macro CER=0.0699` 作为模型质量结论。Stage 0 的唯一结论是 `FA-PT-MPS` 与
+`FA-PT-CPU` 均为 `feasible`；MPS 在本轮 warm RTF 上明显更快，因此作为 Stage 1 主要 Fun-ASR
+实验臂，CPU 保留为设备对照，不因此删除当前 Qwen3/SenseVoice 基线。
 
 ## 4. 语料设计
 
