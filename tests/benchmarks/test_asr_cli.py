@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from voice_realtime.benchmarks.asr.cli import (
     _loopback_service_url,
     _require_compatible_mode,
     _require_external_model_dir,
+    _sample_profile,
     _verify_pytorch_run_identity,
     build_parser,
     main,
@@ -129,6 +131,7 @@ def test_pytorch_profile_must_match_frozen_manifest_identity() -> None:
     profile = FunASRNanoPyTorchProfile(
         model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
         language="中文",
+        language_source="corpus",
         device="mps",
         hotwords=("开放时间",),
         itn=True,
@@ -136,6 +139,7 @@ def test_pytorch_profile_must_match_frozen_manifest_identity() -> None:
     )
     parameters = {
         "language": "中文",
+        "language_source": "corpus",
         "hotwords": ["开放时间"],
         "itn": True,
         "ncpu": 4,
@@ -151,6 +155,21 @@ def test_pytorch_profile_must_match_frozen_manifest_identity() -> None:
             device="mps",
             parameters={**parameters, "hotwords": []},
         )
+
+
+def test_pytorch_profile_can_take_language_from_frozen_corpus_sample() -> None:
+    profile = FunASRNanoPyTorchProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        language_source="corpus",
+        device="mps",
+    )
+
+    effective = _sample_profile(profile, SimpleNamespace(language="英文"))
+
+    assert isinstance(effective, FunASRNanoPyTorchProfile)
+    assert effective.language == "英文"
+    assert effective.language_source == "corpus"
 
 
 def test_benchmark_rejects_model_directory_inside_repository(tmp_path: Path) -> None:

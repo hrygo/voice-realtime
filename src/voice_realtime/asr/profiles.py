@@ -100,6 +100,7 @@ class FunASRNanoPyTorchProfile(BaseModel):
     kind: Literal["funasr-nano-pytorch"] = "funasr-nano-pytorch"
     model_dir: Path
     language: str = Field(min_length=1, max_length=64)
+    language_source: Literal["profile", "corpus"] = "profile"
     device: Literal["mps", "cpu"]
     hotwords: tuple[str, ...] = Field(default=(), max_length=100)
     itn: bool = True

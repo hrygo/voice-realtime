@@ -104,6 +104,7 @@ def _verify_pytorch_run_identity(
         raise ValueError("ASR profile device does not match run manifest")
     expected: dict[str, object] = {
         "language": profile.language,
+        "language_source": profile.language_source,
         "hotwords": list(profile.hotwords),
         "itn": profile.itn,
         "ncpu": profile.ncpu,
@@ -111,6 +112,13 @@ def _verify_pytorch_run_identity(
     for name, value in expected.items():
         if parameters.get(name) != value:
             raise ValueError(f"ASR profile {name} does not match run manifest")
+
+
+def _sample_profile(profile: ASRProfile, sample: CorpusSample) -> ASRProfile:
+    """仅对显式 corpus 策略应用冻结样本的语言提示。"""
+    if isinstance(profile, FunASRNanoPyTorchProfile) and profile.language_source == "corpus":
+        return profile.model_copy(update={"language": sample.language})
+    return profile
 
 
 def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
@@ -192,14 +200,14 @@ def _run_command(args: argparse.Namespace) -> int:
         context: ASRSessionContext,
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber:
-        del sample
+        effective_profile = _sample_profile(profile, sample)
         registry = _build_streaming_registry(
-            profile,
+            effective_profile,
             service_url,
             vendor_event_sink,
             pytorch_engine=pytorch_engine,
         )
-        return registry.create_streaming(profile, context)
+        return registry.create_streaming(effective_profile, context)
 
     output_value = args.output_dir
     output_dir = (

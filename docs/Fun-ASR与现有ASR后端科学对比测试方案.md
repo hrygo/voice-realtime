@@ -527,6 +527,7 @@ Fun-ASR WebSocket 候选的本地 `profile.json` 示例；`model_dir` 必须替�
   "kind": "funasr-nano-ws",
   "model_dir": "/absolute/path/outside/repository/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
   "language": "中文",
+  "language_source": "corpus",
   "host": "127.0.0.1",
   "port": 10095,
   "hotwords": [],
@@ -549,7 +550,10 @@ Fun-ASR WebSocket 候选的本地 `profile.json` 示例；`model_dir` 必须替�
 }
 ```
 
-该 profile 必须使用 `--mode offline`；MPS 与 CPU 分别冻结独立 profile、manifest 和 run ID。
+该 profile 必须使用 `--mode offline`；`language_source="corpus"` 表示逐条使用已冻结
+`CorpusSample.language`，避免混合语料被同一个固定语言提示污染。若设为 `profile`，则所有样本使用
+profile 的 `language`。该策略也必须与 manifest 的 `parameters.language_source` 一致。MPS 与 CPU
+分别冻结独立 profile、manifest 和 run ID。
 
 ```bash
 uv run vr-asr-benchmark run \

@@ -104,6 +104,7 @@ def test_funasr_nano_pytorch_profile_is_discriminated_without_service_fields() -
             "kind": "funasr-nano-pytorch",
             "model_dir": "/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
             "language": "中文",
+            "language_source": "corpus",
             "device": "mps",
             "hotwords": ["开放时间"],
             "itn": True,
@@ -113,6 +114,7 @@ def test_funasr_nano_pytorch_profile_is_discriminated_without_service_fields() -
 
     assert isinstance(profile, FunASRNanoPyTorchProfile)
     assert profile.device == "mps"
+    assert profile.language_source == "corpus"
     assert profile.hotwords == ("开放时间",)
     assert profile.ncpu == 4
     assert "host" not in profile.model_dump()
