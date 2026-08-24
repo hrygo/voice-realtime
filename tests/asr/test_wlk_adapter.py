@@ -94,6 +94,36 @@ async def test_wlk_snapshot_is_atomic_and_does_not_leak_raw_payload() -> None:
     assert "raw" not in events[1].metadata
 
 
+async def test_wlk_adapter_can_audit_raw_vendor_events_outside_domain_events() -> None:
+    raw = _snapshot()
+    stream = FakeWLKStream(
+        [
+            SubtitleEvent(kind="config", raw={"type": "config"}),
+            SubtitleEvent(kind="confirmed", text="第一句", raw=raw),
+            SubtitleEvent(kind="ready_to_stop", raw={"type": "ready_to_stop"}),
+        ]
+    )
+    audited: list[dict[str, object]] = []
+    adapter = WLKStreamingAdapter(
+        url="ws://127.0.0.1:8001",
+        language="Chinese",
+        context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="subtitles"),
+        stream_factory=lambda **_kwargs: stream,
+        raw_event_sink=audited.append,
+    )
+
+    await adapter.connect()
+    async for event in adapter.events():
+        if event.kind == "final":
+            break
+
+    assert audited == [
+        {"type": "config"},
+        raw,
+        {"type": "ready_to_stop"},
+    ]
+
+
 def test_legacy_presenter_builds_stable_browser_payload() -> None:
     raw = _snapshot()
     stream = FakeWLKStream([])

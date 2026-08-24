@@ -10,9 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-24-asr-backend-pluggability-design.md`
 
-**Execution status (2026-08-24):** 基础重构 Task 1-4、7 已在
-`refactor/asr-backend-pluggability` 实现；未执行计划中的 commit、benchmark、Fun-ASR 候选和冷切换
-任务。实际测试文件沿用项目既有 `tests/test_runtime.py`，未创建计划草案中的
+**Execution status (2026-08-24):** 基础重构 Task 1-4、7 已合入 `main`；Task 5 已在
+`feature/asr-benchmark-runner` 实现并通过专项测试、mypy 与 ruff。Fun-ASR 候选、冷切换和真实语料
+实验尚未执行。实际测试文件沿用项目既有 `tests/test_runtime.py`，未创建计划草案中的
 `tests/test_ui_runtime.py`。
 
 ## Global Constraints
@@ -252,35 +252,35 @@ git commit -m "refactor(asr): 通过统一接口注入字幕后端"
 - Produces: `vr-asr-benchmark run|score|compare`。
 - Produces: `manifest.json`、`events.jsonl`、`hypotheses.jsonl`、`resources.csv`、`summary.json`。
 
-- [ ] **Step 1: 写 manifest 和回放 RED 测试**
+- [x] **Step 1: 写 manifest 和回放 RED 测试**
 
 固定一个 16kHz mono PCM fixture，断言每个 profile 收到相同 chunk 序列和 audio cursor；manifest
 拒绝缺失模型哈希、语料哈希、git commit 或设备字段。
 
-- [ ] **Step 2: 写指标 RED 测试**
+- [x] **Step 2: 写指标 RED 测试**
 
 用手工可算样例验证 CER/WER、hotword precision/recall/F1、partial revision burden、commit latency、
 RTF 和 percentile。空 reference、unsupported 指标和缺失样本必须返回显式状态，不返回伪零值。
 
-- [ ] **Step 3: 运行 RED**
+- [x] **Step 3: 运行 RED**
 
 Run: `uv run pytest tests/benchmarks -q --no-cov`
 
 Expected: benchmark 模块不存在而失败。
 
-- [ ] **Step 4: 实现确定性 runner**
+- [x] **Step 4: 实现确定性 runner**
 
 `run` 支持 `offline` 与 `realtime-1x`；chunk schedule 来自语料 manifest，使用单调时钟；原始 vendor
 响应与统一事件分别写入。输出目录默认 `runtime/benchmarks/asr/<run_id>/`，不复制音频，只记录相对
 ID 和 SHA-256。
 
-- [ ] **Step 5: 运行 GREEN**
+- [x] **Step 5: 运行 GREEN**
 
 Run: `uv run pytest tests/benchmarks -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add src/voice_realtime/benchmarks tests/benchmarks pyproject.toml

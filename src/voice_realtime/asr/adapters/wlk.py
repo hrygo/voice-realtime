@@ -125,6 +125,7 @@ class _WLKEventStream(Protocol):
 
 
 WLKStreamFactory = Callable[..., _WLKEventStream]
+WLKRawEventSink = Callable[[Mapping[str, object]], None]
 
 
 class WLKStreamingAdapter:
@@ -142,6 +143,7 @@ class WLKStreamingAdapter:
         supports_speaker_labels: bool = True,
         token: str | None = None,
         stream_factory: WLKStreamFactory | None = None,
+        raw_event_sink: WLKRawEventSink | None = None,
     ) -> None:
         self.backend_id = backend_id
         self._context = context
@@ -151,6 +153,7 @@ class WLKStreamingAdapter:
         else:
             self._stream = resolved_stream_factory(url=url, language=language, token=token)
         self._normalizer = TranscriptNormalizer()
+        self._raw_event_sink = raw_event_sink
         self._last_window: TranscriptWindow | None = None
         self._final_ready = asyncio.Event()
         self._finish_lock = asyncio.Lock()
@@ -189,6 +192,8 @@ class WLKStreamingAdapter:
     async def events(self) -> AsyncIterator[ASREvent]:
         previous_raw: dict[str, object] | None = None
         async for event in self._stream.events():
+            if self._raw_event_sink is not None:
+                self._raw_event_sink(event.raw)
             if event.kind == "config":
                 yield ASREvent(kind="ready")
                 continue

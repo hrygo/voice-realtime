@@ -60,6 +60,7 @@ vr-interact = "voice_realtime.interaction.runner:main"
 vr-subtitles = "voice_realtime.subtitles.launcher:main"
 vr-subtitle-events = "voice_realtime.subtitles.consumer:main"
 vr-ui = "voice_realtime.ui.server:main"
+vr-asr-benchmark = "voice_realtime.benchmarks.asr.cli:main"
 
 [build-system]
 requires = ["hatchling"]

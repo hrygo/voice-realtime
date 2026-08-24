@@ -17,6 +17,22 @@
 及其[实施计划](superpowers/plans/2026-08-24-asr-backend-pluggability.md)。在前置 runner 尚未实现时，
 允许先做 Stage 0 可行性探测，但不得把不同脚本、不同切块或不同计时口径的结果用于最终选型。
 
+### 1.1 当前落地状态（2026-08-24）
+
+- ASR 契约、WLK 适配器、profile/registry、字幕注入边界和交互 STT factory 已合入 `main`。
+- 可复现实验 runner 已在 `feature/asr-benchmark-runner` 实现：提供 `run`、`score`、`compare`，
+  固定 16kHz mono s16le、20ms chunk、原始 vendor 事件分离记录、逐样本失败保留、1 秒资源采样、
+  分层等权 macro CER 和 10,000 次配对 cluster bootstrap。
+- runner 会核验干净 git checkout、代码 commit、语料 manifest SHA-256、模型文件 SHA-256、音频
+  SHA-256/长度、相对路径与归一化版本；输出目录为 `0700`，逐字稿和事件文件为 `0600`，不复制
+  音频。
+- 当前 `run` 只可构造已注册的 WLK profile；Fun-ASR-Nano adapter 属于后续 Task 6。尚未下载
+  Fun-ASR 模型、开封 blind set 或产生任何选型结论。
+
+这里的 `offline` 指“对同一流式 adapter 不等待 wall-clock 的快速 PCM 回放”，用于 harness 与
+系统吞吐检查；它不等同于模型原生 batch/offline API 的 Stage 1 核心质量实验。原生离线 adapter
+接入前，不得用该模式替代 Stage 1 模型本体比较。
+
 ## 2. 已知事实、假设与待检验项
 
 ### 2.1 当前实测与源码事实（2026-08-24）
@@ -390,6 +406,7 @@ runtime/benchmarks/asr/<run_id>/
 ├─ manifest.json
 ├─ hypotheses.jsonl
 ├─ events.jsonl
+├─ vendor-events.jsonl
 ├─ resources.csv
 ├─ failures.jsonl
 └─ summary.json
@@ -403,6 +420,34 @@ docs/benchmarks/asr/<experiment-family>/
 
 `runtime/` 产物不入库；入库报告只包含聚合数据、失败样本匿名 ID 和可复现元数据，不含音频或敏感
 逐字稿。
+
+### 9.5 Runner 命令契约
+
+正式运行前，`manifest.json`、`corpus.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与
+模型位于项目目录外或既有本地模型目录，清单只使用相对于各自根目录的路径。
+
+```bash
+uv run vr-asr-benchmark run \
+  --manifest manifests/run.json \
+  --corpus manifests/corpus.json \
+  --corpus-root corpus-root \
+  --profile manifests/profile.json \
+  --repo-root . \
+  --mode realtime-1x
+
+uv run vr-asr-benchmark score \
+  --run-dir runtime/benchmarks/asr/<run_id>
+
+uv run vr-asr-benchmark compare \
+  --baseline runtime/benchmarks/asr/<baseline-run-id> \
+  --candidate runtime/benchmarks/asr/<candidate-run-id> \
+  --output runtime/benchmarks/asr/comparisons/<comparison-id>.json \
+  --bootstrap-iterations 10000 \
+  --seed 20260824
+```
+
+`run` 拒绝覆盖已有产物；任一样本失败仍写入 `failures.jsonl` 和带显式 `error_status` 的
+`hypotheses.jsonl`，不删除失败样本，也不把 `unsupported`、`missing` 或 `infeasible` 填成 0。
 
 ## 10. 判定规则
 
