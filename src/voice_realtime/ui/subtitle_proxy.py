@@ -407,6 +407,7 @@ class SubtitleProxy:
                 active_stream = self._stream
                 if active_stream is None:
                     self._capture_stream_available.clear()
+                    await self._capture_stream_available.wait()
                     continue
                 chunk = pending
                 if chunk is None:

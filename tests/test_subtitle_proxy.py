@@ -169,6 +169,38 @@ class TestClientManagement:
 
 
 class TestMeetingCapture:
+    async def test_send_loop_waits_for_reconnected_stream_with_pending_audio(
+        self,
+        settings: SubtitleSettings,
+    ) -> None:
+        old_stream = FakeStream([])
+        new_stream = FakeStream([])
+        proxy = SubtitleProxy(settings)
+        proxy._capture_owner = "meeting:test"
+        proxy._capture_accept_audio = True
+        proxy._stream = old_stream  # type: ignore[assignment]
+        proxy._capture_stream_available.set()
+
+        task = asyncio.create_task(proxy._capture_send_loop(old_stream))  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        proxy._stream = None
+        proxy._capture_stream_available.clear()
+        chunk = b"\x00" * 3_200
+        proxy._audio_buffer.put_nowait(chunk)
+        await asyncio.sleep(0)
+
+        assert not task.done()
+
+        proxy._stream = new_stream  # type: ignore[assignment]
+        proxy._capture_stream_available.set()
+        await asyncio.wait_for(proxy._audio_buffer.join(), timeout=1)
+        assert new_stream.sent == [chunk]
+
+        proxy._capture_owner = None
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
     async def test_reconnect_reports_actual_backoff_audio_gap_and_new_offset(
         self,
         settings: SubtitleSettings,
