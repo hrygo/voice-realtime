@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
-from voice_realtime.meeting.transcript import TranscriptNormalizer
+from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
+from voice_realtime.meeting import transcript as transcript_module
 
 
 def _snapshot(text: str = "你好", speaker: int = 1) -> dict[str, object]:
@@ -53,3 +55,8 @@ def test_normalizer_ids_change_when_wlk_revises_text() -> None:
     revised = normalizer.normalize(_snapshot("修订版"), source_epoch=1, offset_ms=0)
 
     assert first.segments[0].id != revised.segments[0].id
+
+
+def test_meeting_transcript_has_no_vendor_adapter_dependency() -> None:
+    source = Path(transcript_module.__file__).read_text(encoding="utf-8")
+    assert "voice_realtime.asr.adapters" not in source

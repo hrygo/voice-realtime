@@ -311,6 +311,13 @@ class TestWebSocketGateways:
         ):
             assert client.app.state.runtime.observer.has_clients
 
+    def test_lan_origin_is_allowed(self) -> None:
+        client = self._app_with_runtime()
+        with client.websocket_connect(
+            "/ws/assistant", headers={"origin": "http://192.168.1.100:8100"}
+        ):
+            assert client.app.state.runtime.observer.has_clients
+
 
 class TestCommandGateway:
     """/ws/assistant/cmd 控制面：指令执行 + 响应回传。"""

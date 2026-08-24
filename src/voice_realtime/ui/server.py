@@ -44,7 +44,8 @@ logger = logging.getLogger(__name__)
 
 
 def _probe_url(host: str, port: int, path: str = "/health") -> str:
-    return f"http://{host}:{port}{path}"
+    target_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    return f"http://{target_host}:{port}{path}"
 
 
 async def _do_probe_async(
@@ -114,6 +115,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=cfg.meeting.allowed_origins,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$",
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Idempotency-Key", "X-Request-ID"],
@@ -554,7 +556,7 @@ async def _handle_v1_control(
 
 
 async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
-    """拒绝来自非本机页面的浏览器 WebSocket；无 Origin 的本地 CLI 保持可用。"""
+    """拒绝非信任来源的浏览器 WebSocket；无 Origin 的本地 CLI 保持可用。"""
     origin = websocket.headers.get("origin")
     if origin is None:
         return True
@@ -569,6 +571,22 @@ async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
     allowed.update(str(item) for item in configured_origins)
     if origin in allowed:
         return True
+    try:
+        from ipaddress import ip_address
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(origin)
+        if parsed.scheme in {"http", "https"} and parsed.hostname:
+            host = parsed.hostname.strip().removeprefix("[").removesuffix("]")
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            if port in {cfg.ui.port, 5173}:
+                if host.lower() == "localhost":
+                    return True
+                addr = ip_address(host)
+                if addr.is_loopback or addr.is_private:
+                    return True
+    except Exception:
+        pass
     await websocket.close(code=1008, reason="Origin 不受信任")
     return False
 
@@ -585,8 +603,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; media-src 'self' blob: data:; "
-            "connect-src 'self' ws://127.0.0.1:* "
-            "ws://localhost:* http://127.0.0.1:* http://localhost:*; "
+            "connect-src 'self' ws: wss: http: https:; "
             "object-src 'none'; base-uri 'self'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"

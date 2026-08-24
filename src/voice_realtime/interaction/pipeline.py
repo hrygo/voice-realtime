@@ -25,7 +25,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -57,13 +57,21 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.services.funasr.stt import FunASRSTTService, FunASRSTTSettings
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
+from voice_realtime.asr.adapters.pipecat_sensevoice import (
+    DEFAULT_SENSEVOICE_REPO as _DEFAULT_SENSEVOICE_REPO,
+)
+from voice_realtime.asr.adapters.pipecat_sensevoice import (
+    PipecatSenseVoiceFactory,
+    resolve_stt_model,
+    to_pipecat_language,
+)
+from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.config import (
     TTS_ENGINE_DEFAULT_VOICE,
@@ -76,26 +84,13 @@ from voice_realtime.interaction.reasoning import (
     LmStudioNativeLLMService,
 )
 from voice_realtime.interaction.tts import LocalBridgeTTSService
-from voice_realtime.model_cache import resolve_model_snapshot
 
-DEFAULT_SENSEVOICE_REPO = "FunAudioLLM/SenseVoiceSmall"
-_PIPECAT_LANGUAGES = {
-    "zh": Language.ZH,
-    "en": Language.EN,
-    "yue": Language.YUE,
-    "ja": Language.JA,
-    "ko": Language.KO,
-}
+DEFAULT_SENSEVOICE_REPO = _DEFAULT_SENSEVOICE_REPO
 logger = logging.getLogger(__name__)
 
 
 def _to_pipecat_language(lang_code: str) -> Language:
-    normalized = lang_code.strip().lower()
-    language = _PIPECAT_LANGUAGES.get(normalized)
-    if language is not None:
-        return language
-    logger.warning("未知 STT 语言代码 %r，回退到中文", lang_code)
-    return Language.ZH
+    return to_pipecat_language(lang_code)
 
 
 def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
@@ -105,11 +100,7 @@ def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
     （本环境 SSRF 拦截），因此任何 repo ID 都先经 snapshot_download 落到本地。
     已是本地路径（目录/文件存在）则原样透传。
     """
-    return resolve_model_snapshot(
-        model,
-        default_repo=DEFAULT_SENSEVOICE_REPO,
-        allow_downloads=allow_downloads,
-    )
+    return resolve_stt_model(model, allow_downloads=allow_downloads)
 
 
 def build_system_prompt(persona: str | None = None) -> str:
@@ -640,6 +631,7 @@ def build_pipeline(
     audio_queue: asyncio.Queue[bytes] | None = None,
     echo_state: EchoState | None = None,
     echo_buffer: EchoTextBuffer | None = None,
+    stt_factory: ConversationSTTFactory | None = None,
 ) -> Pipeline:
     """按配置装配交互管道。transport 可注入（测试/无麦克风环境）。
 
@@ -659,17 +651,16 @@ def build_pipeline(
         )
     )
 
-    stt = FunASRSTTService(
-        device="cpu",
-        settings=FunASRSTTSettings(
-            model=_resolve_stt_model(
-                settings.stt_model,
-                allow_downloads=settings.allow_model_downloads,
-            ),
-            language=_to_pipecat_language(settings.stt_language),
-            use_itn=True,
+    resolved_stt_factory = stt_factory or PipecatSenseVoiceFactory(
+        model=settings.stt_model,
+        allow_model_downloads=settings.allow_model_downloads,
+    )
+    stt = cast(
+        FrameProcessor,
+        resolved_stt_factory.create_processor(
+            sample_rate=settings.sample_rate,
+            language=settings.stt_language,
         ),
-        ttfs_p99_latency=0.5,
     )
 
     llm = LmStudioNativeLLMService(

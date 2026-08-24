@@ -164,7 +164,8 @@ class ControlBridge:
             await self._runtime.stop_active_mode()
 
     async def _set_voice(self, voice: str) -> None:
-        url = f"http://{self._bridge.host}:{self._bridge.port}/v1/voice"
+        host = "127.0.0.1" if self._bridge.host in {"0.0.0.0", "::"} else self._bridge.host
+        url = f"http://{host}:{self._bridge.port}/v1/voice"
         async with local_async_client(timeout=5.0) as client:
             response = await client.post(url, json={"voice": voice})
             response.raise_for_status()

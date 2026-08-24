@@ -14,15 +14,18 @@ from enum import StrEnum
 from time import perf_counter
 from typing import Any
 
+from voice_realtime.asr.adapters.wlk import WLKStreamFactory
+from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
+from voice_realtime.asr.defaults import build_wlk_registry
+from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
+from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import TranscriptWindow
-from voice_realtime.meeting.transcript import TranscriptNormalizer
-from voice_realtime.subtitles.events import SubtitleEvent, SubtitleStream
 
 logger = logging.getLogger(__name__)
 
 ClientSender = Callable[[str], Awaitable[None]]
-StreamFactory = Callable[..., SubtitleStream]
+TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 CaptureListener = Callable[[TranscriptWindow], Awaitable[None]]
 GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
 
@@ -76,15 +79,24 @@ class SubtitleProxy:
         self,
         settings: SubtitleSettings,
         *,
-        stream_factory: StreamFactory | None = None,
+        registry: ASRBackendRegistry | None = None,
+        transcriber_factory: TranscriberFactory | None = None,
+        stream_factory: WLKStreamFactory | None = None,
         backoff_delays: Sequence[float] = _DEFAULT_BACKOFF,
     ) -> None:
         if not backoff_delays or any(delay <= 0 for delay in backoff_delays):
             raise ValueError("backoff_delays 必须包含正数")
+        if transcriber_factory is not None and (registry is not None or stream_factory is not None):
+            raise ValueError("transcriber_factory 不能与 registry/stream_factory 同时提供")
         self._settings = settings
-        self._stream_factory = stream_factory or SubtitleStream
+        self._profile = settings.asr_profile
+        self._registry = registry or build_wlk_registry(
+            self._service_url,
+            stream_factory=stream_factory,
+        )
+        self._transcriber_factory = transcriber_factory
         self._backoff_delays = tuple(backoff_delays)
-        self._stream: SubtitleStream | None = None
+        self._stream: StreamingTranscriber | None = None
         self._clients: dict[ClientSender, _ClientChannel] = {}
         self._client_sequence = 0
         self._running = False
@@ -110,7 +122,11 @@ class SubtitleProxy:
         self._capture_last_window: TranscriptWindow | None = None
         self._event_listeners: list[CaptureListener] = []
         self._gap_listeners: list[GapListener] = []
-        self._normalizer = TranscriptNormalizer()
+
+    def _create_transcriber(self, context: ASRSessionContext) -> StreamingTranscriber:
+        if self._transcriber_factory is not None:
+            return self._transcriber_factory(context)
+        return self._registry.create_streaming(self._profile, context)
 
     @property
     def state(self) -> str:
@@ -130,6 +146,11 @@ class SubtitleProxy:
     @property
     def capture_epoch(self) -> int:
         return self._capture_epoch
+
+    @property
+    def _service_url(self) -> str:
+        host = "127.0.0.1" if self._settings.host in {"0.0.0.0", "::"} else self._settings.host
+        return f"ws://{host}:{self._settings.port}"
 
     def add_event_listener(self, listener: CaptureListener) -> None:
         if listener not in self._event_listeners:
@@ -246,9 +267,12 @@ class SubtitleProxy:
         self._capture_last_window = None
         self._state = SubtitleProxyState.CONNECTING
         try:
-            stream = self._stream_factory(
-                url=f"ws://{self._settings.host}:{self._settings.port}",
-                language=self._settings.language,
+            stream = self._create_transcriber(
+                ASRSessionContext(
+                    source_epoch=self._capture_epoch,
+                    offset_ms=self._capture_offset_ms,
+                    purpose="meeting",
+                )
             )
             self._stream = stream
             await stream.connect()
@@ -275,8 +299,10 @@ class SubtitleProxy:
         try:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._audio_buffer.join(), timeout=timeout_secs)
-            await self._stream.send_audio(b"")
-            await asyncio.wait_for(self._capture_ready_to_stop.wait(), timeout=timeout_secs)
+            final_window = await asyncio.wait_for(
+                self._stream.finish(), timeout=timeout_secs
+            )
+            self._capture_last_window = final_window
             elapsed_ms = (perf_counter() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
         except TimeoutError as exc:
@@ -328,18 +354,12 @@ class SubtitleProxy:
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
-    async def _capture_event_loop(self, stream: SubtitleStream) -> None:
+    async def _capture_event_loop(self, stream: StreamingTranscriber) -> None:
         active_stream = stream
         try:
             while self._capture_owner is not None:
                 try:
                     async for event in active_stream.events():
-                        if event.kind == "config":
-                            self._capture_ready.set()
-                        elif event.kind == "ready_to_stop":
-                            self._capture_ready_to_stop.set()
-                        elif event.kind == "error":
-                            self._last_error = event.text or "WhisperLiveKit error"
                         await self._handle_capture_event(event)
                     if not self._capture_accept_audio:
                         return
@@ -362,7 +382,7 @@ class SubtitleProxy:
         except Exception as exc:
             self._last_error = f"{type(exc).__name__}: {exc}"
 
-    async def _capture_send_loop(self, stream: SubtitleStream) -> None:
+    async def _capture_send_loop(self, stream: StreamingTranscriber) -> None:
         del stream
         while self._capture_owner is not None:
             chunk = await self._audio_buffer.get()
@@ -375,7 +395,9 @@ class SubtitleProxy:
             finally:
                 self._audio_buffer.task_done()
 
-    async def _reconnect_capture(self, old_stream: SubtitleStream) -> SubtitleStream | None:
+    async def _reconnect_capture(
+        self, old_stream: StreamingTranscriber
+    ) -> StreamingTranscriber | None:
         """建立新 ASR epoch，并显式通知无法补录的间隔。"""
         with contextlib.suppress(Exception):
             await old_stream.close()
@@ -400,9 +422,12 @@ class SubtitleProxy:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                 return None
             try:
-                stream = self._stream_factory(
-                    url=f"ws://{self._settings.host}:{self._settings.port}",
-                    language=self._settings.language,
+                stream = self._create_transcriber(
+                    ASRSessionContext(
+                        source_epoch=self._capture_epoch,
+                        offset_ms=self._capture_offset_ms,
+                        purpose="meeting",
+                    )
                 )
                 await stream.connect()
                 self._stream = stream
@@ -415,33 +440,42 @@ class SubtitleProxy:
                 self._last_error = f"{type(exc).__name__}: {exc}"
         return None
 
-    async def _handle_capture_event(self, event: SubtitleEvent) -> None:
-        if event.kind in {"config", "ready_to_stop", "error", "other"}:
-            if event.kind == "error":
-                await self._broadcast_payload(event.raw)
+    async def _handle_capture_event(self, event: ASREvent) -> None:
+        if event.kind == "ready":
+            self._capture_ready.set()
             return
-        window = self._normalizer.normalize(
-            event.raw,
-            source_epoch=self._capture_epoch,
-            offset_ms=self._capture_offset_ms,
-        )
+        if event.kind == "error":
+            self._last_error = event.error_message
+            await self._broadcast_payload(
+                {"type": "error", "error": event.error_message or "ASR error"}
+            )
+            return
+        window = event.window
+        if window is None:
+            return
         self._capture_last_window = window
+        if event.kind == "final":
+            self._capture_ready_to_stop.set()
+            return
         for listener in tuple(self._event_listeners):
             try:
                 await listener(window)
             except Exception:
                 logger.exception("SubtitleProxy: 会议转录监听器失败")
-        await self._broadcast_payload(event.raw)
+        await self._broadcast_payload(legacy_subtitle_payload(window))
 
     async def _supervise_connection(self) -> None:
         attempt = 0
         while self._running:
             self._state = SubtitleProxyState.CONNECTING
-            stream: SubtitleStream | None = None
+            stream: StreamingTranscriber | None = None
             try:
-                stream = self._stream_factory(
-                    url=f"ws://{self._settings.host}:{self._settings.port}",
-                    language=self._settings.language,
+                stream = self._create_transcriber(
+                    ASRSessionContext(
+                        source_epoch=0,
+                        offset_ms=0,
+                        purpose="subtitles",
+                    )
                 )
                 self._stream = stream
                 await stream.connect()
@@ -478,7 +512,7 @@ class SubtitleProxy:
                 continue
             break
 
-    async def _serve_connection(self, stream: SubtitleStream) -> None:
+    async def _serve_connection(self, stream: StreamingTranscriber) -> None:
         send_task = asyncio.create_task(self._audio_send_loop(stream))
         recv_task = asyncio.create_task(self._event_recv_loop(stream))
         tasks = (send_task, recv_task)
@@ -492,29 +526,39 @@ class SubtitleProxy:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _audio_send_loop(self, stream: SubtitleStream) -> None:
+    async def _audio_send_loop(self, stream: StreamingTranscriber) -> None:
         while self._running and self._stream is stream:
             chunk = await self._audio_buffer.get()
             if self.has_clients:
                 await stream.send_audio(chunk)
 
-    async def _event_recv_loop(self, stream: SubtitleStream | None = None) -> None:
+    async def _event_recv_loop(self, stream: StreamingTranscriber | None = None) -> None:
         active_stream = stream or self._stream
         if active_stream is None:
             return
         async for event in active_stream.events():
-            await self._broadcast_event(event)
+            await self._handle_stream_event(event)
 
     async def _process_loop(self) -> None:
         """兼容既有测试/调用者的接收循环入口。"""
         await self._event_recv_loop()
 
-    async def _broadcast_event(self, event: SubtitleEvent) -> None:
-        """按快照而非单事件广播，避免 confirmed 历史遮蔽新 partial。"""
+    async def _handle_stream_event(self, event: ASREvent) -> None:
+        """只消费后端无关事件，并按完整领域窗口广播。"""
         if self._capture_owner is not None:
             await self._handle_capture_event(event)
             return
-        await self._broadcast_payload(event.raw)
+        if event.kind == "ready":
+            await self._broadcast_payload(legacy_ready_payload())
+            return
+        if event.kind == "error":
+            self._last_error = event.error_message
+            await self._broadcast_payload(
+                {"type": "error", "error": event.error_message or "ASR error"}
+            )
+            return
+        if event.window is not None:
+            await self._broadcast_payload(legacy_subtitle_payload(event.window))
 
     async def _broadcast_payload(self, payload: dict[str, Any]) -> None:
         """广播发生变化的完整快照，并在 confirmed 变化时原子写入 SRT。"""

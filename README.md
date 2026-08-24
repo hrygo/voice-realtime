@@ -202,8 +202,12 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
+| `VR_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；支持 `0.0.0.0` / `localhost` / `lan` / 自定义 IP） |
+| `VR_UI_HOST` | `127.0.0.1` | Voice Studio Web 服务绑定地址（优先于全局变量） |
 | `VR_UI_PORT` | `8100` | Voice Studio Web 服务端口 |
+| `VR_BRIDGE_HOST` | `127.0.0.1` | Qwen3-TTS 桥服务绑定地址（优先于全局变量） |
 | `VR_BRIDGE_PORT` | `8765` | Qwen3-TTS 桥服务端口 |
+| `VR_SUBTITLE_HOST` | `127.0.0.1` | WhisperLiveKit 字幕服务绑定地址（优先于全局变量） |
 | `VR_SUBTITLES_PORT` | `8001` | WhisperLiveKit 字幕服务端口 |
 | `VR_LMSTUDIO_BASE_URL` | `http://localhost:1234` | LM Studio API 服务地址 |
 | `VR_INTERACTION_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
@@ -279,6 +283,7 @@ uv run vr-interact
 - 📖 [实时语音交互与字幕-方案与最佳实践](docs/实时语音交互与字幕-方案与最佳实践.md)
 - 📖 [会议助手后端运行与前后端联调手册](docs/会议助手后端运行与前后端联调.md)
 - 📖 [Voice Studio UI 设计方案](docs/Voice-Studio-UI-设计方案.md)
+- 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/Qwen3-ASR-实时语音转文字开发对接手册.md)
 - 📖 [声学防回声与全双工交互设计方案](docs/声学防回声与全双工交互设计方案.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
 - 📝 [架构决策记录 (ADR-001 ~ ADR-003)](docs/decisions)

@@ -34,3 +34,14 @@ class LocalBridgeTTSService(OpenAITTSService):
             await super().cleanup()  # type: ignore[no-untyped-call]
         finally:
             await self._local_http_client.aclose()
+
+    async def on_turn_context_completed(self) -> None:
+        """本地 HTTP 请求结束后立即封闭音频上下文，不等待 Pipecat idle timeout。"""
+        context_id = self._turn_context_id
+        if context_id is not None and self.audio_context_available(context_id):
+            # Pipecat 1.7.0 会用最后一次 TTS 请求的结果覆盖这个状态：若前序已有
+            # 音频、末尾请求却只返回 ErrorFrame/零音频，状态会变回 False，导致
+            # 已播放完的轮次额外等待默认 3s。LocalBridge 是同步 HTTP 流；只要
+            # 上下文已经创建，LLM turn 完成时即可安全排入唯一停止帧和结束哨兵。
+            self._is_yielding_frames_synchronously = True
+        await super().on_turn_context_completed()  # type: ignore[no-untyped-call]

@@ -68,6 +68,26 @@ def _mock_async_components(proxy, hub, runner) -> None:
     runner.end = AsyncMock(side_effect=end)
 
 
+def test_runtime_passes_asr_registry_to_subtitle_proxy(settings: Settings) -> None:
+    registry = MagicMock(name="asr_registry")
+    with ExitStack() as stack:
+        proxy_cls, *_ = _patched(stack)
+
+        UIRuntime(settings, asr_registry=registry)
+
+    proxy_cls.assert_called_once_with(settings.subtitles, registry=registry)
+
+
+def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) -> None:
+    stt_factory = MagicMock(name="conversation_stt_factory")
+    with ExitStack() as stack:
+        _patched(stack)
+
+        runtime = UIRuntime(settings, conversation_stt_factory=stt_factory)
+
+    assert runtime.session._stt_factory is stt_factory  # type: ignore[attr-defined]
+
+
 class TestStart:
     async def test_start_assembles_all_components(self, settings: Settings) -> None:
         """start 应依次：启动字幕代理 → 接两个 sink → 开麦 → 装配并运行管道。"""

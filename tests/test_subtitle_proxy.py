@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
+from voice_realtime.asr.contracts import ASREvent
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import TranscriptWindow
 from voice_realtime.subtitles.events import SubtitleEvent
@@ -296,7 +298,9 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
         await proxy.start()
         await proxy.begin_capture("meeting:test")
-        proxy._capture_last_window = proxy._normalizer.normalize(_snapshot("上一句"), 1, 0)
+        proxy._capture_last_window = TranscriptNormalizer().normalize(
+            _snapshot("上一句"), 1, 0
+        )
         stream._events_queue = asyncio.Queue()
 
         with pytest.raises(FinalizationTimeout) as exc_info:
@@ -308,28 +312,17 @@ class TestMeetingCapture:
 
 
 class TestBroadcast:
-    async def test_broadcast_raw_payload_to_clients(self, settings: SubtitleSettings) -> None:
-        """新 confirmed 事件应广播完整 raw payload 给浏览器。"""
-        evt = SubtitleEvent(
-            kind="confirmed",
-            text="你好",
-            start="0:00:01",
-            end="0:00:02",
-            speaker=1,
-            raw=_snapshot("你好"),
-        )
-        fake = FakeStream([evt])
+    async def test_broadcast_domain_snapshot_to_clients(
+        self, settings: SubtitleSettings
+    ) -> None:
+        """统一 snapshot 应经 presenter 广播兼容 payload。"""
         proxy = SubtitleProxy(settings)
-        proxy._stream = fake  # type: ignore[assignment]
         client = AsyncMock()
         proxy.add_client(client)
+        window = TranscriptNormalizer().normalize(_snapshot("你好"), 0, 0)
 
-        with patch.object(proxy, "_task", create=True):
-            task = asyncio.create_task(proxy._process_loop())
-            await asyncio.sleep(0.05)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+        await proxy._handle_stream_event(ASREvent(kind="snapshot", window=window))
+        await asyncio.sleep(0)
 
         assert client.call_count == 1
         payload = json.loads(client.call_args.args[0])
@@ -337,31 +330,15 @@ class TestBroadcast:
 
     async def test_duplicate_confirmed_not_rebroadcast(self, settings: SubtitleSettings) -> None:
         """同一 (start, text) 的 confirmed 事件去重，只广播一次。"""
-        evt1 = SubtitleEvent(
-            kind="confirmed",
-            text="重复",
-            start="0:00:01",
-            end="0:00:02",
-            speaker=1,
-            raw=_snapshot("重复"),
-        )
-        evt2 = SubtitleEvent(
-            kind="confirmed",
-            text="重复",
-            start="0:00:01",
-            end="0:00:02",
-            speaker=1,
-            raw=_snapshot("重复"),
-        )
-        fake = FakeStream([evt1, evt2])
+        window = TranscriptNormalizer().normalize(_snapshot("重复"), 0, 0)
+        evt1 = ASREvent(kind="snapshot", window=window)
+        evt2 = ASREvent(kind="snapshot", window=window)
         proxy = SubtitleProxy(settings)
-        proxy._stream = fake  # type: ignore[assignment]
         client = AsyncMock()
         proxy.add_client(client)
 
-        # 直接调用广播方法（不依赖 _process_loop 挂起）
-        await proxy._broadcast_event(evt1)
-        await proxy._broadcast_event(evt2)
+        await proxy._handle_stream_event(evt1)
+        await proxy._handle_stream_event(evt2)
         assert client.call_count == 1
 
     async def test_partial_update_replaces(self, settings: SubtitleSettings) -> None:
@@ -369,15 +346,19 @@ class TestBroadcast:
         proxy = SubtitleProxy(settings)
         client = AsyncMock()
         proxy.add_client(client)
-        evt1 = SubtitleEvent(kind="partial", text="正在", raw={"buffer_transcription": "正在"})
-        evt2 = SubtitleEvent(kind="partial", text="正在", raw={"buffer_transcription": "正在"})
-        evt3 = SubtitleEvent(
-            kind="partial", text="正在转写", raw={"buffer_transcription": "正在转写"}
+        evt1 = ASREvent(
+            kind="snapshot", window=TranscriptWindow(source_epoch=0, partial="正在")
+        )
+        evt2 = ASREvent(
+            kind="snapshot", window=TranscriptWindow(source_epoch=0, partial="正在")
+        )
+        evt3 = ASREvent(
+            kind="snapshot", window=TranscriptWindow(source_epoch=0, partial="正在转写")
         )
 
-        await proxy._broadcast_event(evt1)
-        await proxy._broadcast_event(evt2)
-        await proxy._broadcast_event(evt3)
+        await proxy._handle_stream_event(evt1)
+        await proxy._handle_stream_event(evt2)
+        await proxy._handle_stream_event(evt3)
         assert client.call_count == 2  # evt1 + evt3
 
     async def test_existing_confirmed_line_does_not_hide_new_partial(
@@ -450,7 +431,7 @@ class TestStreamConnection:
     async def test_start_uses_ws_scheme(self, settings: SubtitleSettings) -> None:
         """回归：wlk WS 连接必须用 ws:// scheme（http:// 会被 websockets 拒绝，
         此前导致 SubtitleStream.connect 抛 InvalidURI、字幕链路全断）。"""
-        with patch("voice_realtime.ui.subtitle_proxy.SubtitleStream") as mock_stream:
+        with patch("voice_realtime.asr.adapters.wlk.SubtitleStream") as mock_stream:
             proxy = SubtitleProxy(settings)
             mock_stream.return_value.connect = AsyncMock()
             mock_stream.return_value.close = AsyncMock()

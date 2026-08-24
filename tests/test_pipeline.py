@@ -98,7 +98,7 @@ def mock_services() -> list[MagicMock]:
     mocks = [MagicMock(), MagicMock(), MagicMock()]
     with (
         patch("voice_realtime.model_cache.snapshot_download", return_value="/mnt/stt"),
-        patch("voice_realtime.interaction.pipeline.FunASRSTTService", mocks[0]),
+        patch("voice_realtime.asr.adapters.pipecat_sensevoice.FunASRSTTService", mocks[0]),
         patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
         patch("voice_realtime.interaction.pipeline.LocalBridgeTTSService", mocks[2]),
     ):
@@ -106,6 +106,33 @@ def mock_services() -> list[MagicMock]:
 
 
 class TestBuildPipeline:
+    def test_custom_stt_factory_is_inserted_between_echo_layers(
+        self,
+        settings: InteractionSettings,
+        mock_transport: MagicMock,
+        mock_services: list[MagicMock],
+    ) -> None:
+        stt_processor = MagicMock(name="custom_stt")
+        stt_factory = MagicMock(name="stt_factory")
+        stt_factory.create_processor.return_value = stt_processor
+        with patch(
+            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+        ):
+            pipeline = build_pipeline(
+                settings,
+                transport=mock_transport,
+                stt_factory=stt_factory,
+            )
+
+        processors = list(pipeline.processors)
+        assert processors[3] is stt_processor
+        assert isinstance(processors[2], EchoSuppressionProcessor)
+        assert isinstance(processors[4], SelfEchoFilter)
+        stt_factory.create_processor.assert_called_once_with(
+            sample_rate=16000,
+            language="zh",
+        )
+
     def test_returns_pipeline_with_full_chain(
         self,
         settings: InteractionSettings,
