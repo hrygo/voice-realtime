@@ -388,7 +388,25 @@ def resolve_relative_file(root: Path, relative_path: str) -> Path:
 def verify_file_hashes(root: Path, expected_hashes: dict[str, str]) -> None:
     """核验模型清单中的每个相对文件及 SHA-256。"""
     for relative_path, expected_hash in expected_hashes.items():
-        path = resolve_relative_file(root, relative_path)
+        normalized = relative_path.strip().replace("\\", "/")
+        relative = PurePosixPath(normalized)
+        if relative.is_absolute() or ".." in relative.parts or not normalized:
+            raise ValueError("file path must be relative to its declared root")
+        resolved_root = root.resolve(strict=True)
+        lexical_path = resolved_root / Path(*relative.parts)
+        path = lexical_path.resolve(strict=True)
+        if not path.is_file():
+            raise ValueError("model file path must resolve to a file")
+        if not path.is_relative_to(resolved_root):
+            repository_root = resolved_root.parent.parent
+            blobs_root = repository_root / "blobs"
+            is_hf_snapshot_blob = (
+                resolved_root.parent.name == "snapshots"
+                and blobs_root.is_dir()
+                and path.is_relative_to(blobs_root.resolve(strict=True))
+            )
+            if not is_hf_snapshot_blob:
+                raise ValueError("model file symlink escapes its cache repository")
         if sha256_file(path) != expected_hash:
             raise ValueError(f"model file SHA-256 mismatch: {relative_path}")
 

@@ -210,6 +210,27 @@ def test_verify_model_files_rejects_hash_mismatch_and_path_escape(tmp_path: Path
         verify_file_hashes(model_root, {"../outside": "f" * 64})
 
 
+def test_verify_model_files_allows_only_same_hf_repository_blob_symlink(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "models--publisher--model"
+    snapshot = repository / "snapshots" / "revision"
+    blobs = repository / "blobs"
+    snapshot.mkdir(parents=True)
+    blobs.mkdir()
+    blob = blobs / "model-blob"
+    blob.write_bytes(b"model")
+    (snapshot / "model.bin").symlink_to(Path("../../blobs/model-blob"))
+
+    verify_file_hashes(snapshot, {"model.bin": sha256_file(blob)})
+
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside")
+    (snapshot / "outside.bin").symlink_to(outside)
+    with pytest.raises(ValueError, match="escapes"):
+        verify_file_hashes(snapshot, {"outside.bin": sha256_file(outside)})
+
+
 def test_verify_git_checkout_rejects_dirty_worktree(monkeypatch, tmp_path: Path) -> None:
     outputs = iter(("a" * 40 + "\n", " M src/example.py\n"))
 
