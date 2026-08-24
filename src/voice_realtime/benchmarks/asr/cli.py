@@ -144,6 +144,19 @@ def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
     return resolved_model_dir
 
 
+def _verify_replay_identity(
+    parameters: Mapping[str, object],
+    *,
+    chunk_ms: int,
+    final_timeout_secs: float,
+) -> None:
+    """阻止 CLI 回放参数偏离冻结 run manifest。"""
+    if parameters.get("chunk_ms") != chunk_ms:
+        raise ValueError("ASR chunk_ms does not match run manifest")
+    if parameters.get("final_timeout_secs") != final_timeout_secs:
+        raise ValueError("ASR final_timeout_secs does not match run manifest")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构造稳定的 benchmark CLI 参数树。"""
     parser = argparse.ArgumentParser(description="运行和分析 ASR 科学对比测试")
@@ -221,6 +234,11 @@ def _run_command_locked(args: argparse.Namespace) -> int:
     verify_file_hashes(model_dir, manifest.model_files_sha256)
     mode = ReplayMode(str(args.mode))
     _require_compatible_mode(profile, mode.value)
+    _verify_replay_identity(
+        manifest.parameters,
+        chunk_ms=int(args.chunk_ms),
+        final_timeout_secs=float(args.final_timeout_secs),
+    )
     verify_profile_identity(
         profile,
         device=manifest.device,

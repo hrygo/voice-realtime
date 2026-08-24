@@ -22,6 +22,7 @@ from voice_realtime.benchmarks.asr.cli import (
     _run_command,
     _sample_profile,
     _verify_pytorch_run_identity,
+    _verify_replay_identity,
     build_parser,
     main,
 )
@@ -113,6 +114,16 @@ def test_run_parser_exposes_resource_lock_controls() -> None:
 
     assert args.resource_lock == "/tmp/asr-test.lock"
     assert args.lock_timeout_secs == 1.5
+
+
+def test_replay_timing_must_match_frozen_manifest() -> None:
+    parameters = {"chunk_ms": 20, "final_timeout_secs": 120.0}
+
+    _verify_replay_identity(parameters, chunk_ms=20, final_timeout_secs=120.0)
+    with pytest.raises(ValueError, match="chunk_ms"):
+        _verify_replay_identity(parameters, chunk_ms=40, final_timeout_secs=120.0)
+    with pytest.raises(ValueError, match="final_timeout_secs"):
+        _verify_replay_identity(parameters, chunk_ms=20, final_timeout_secs=8.0)
 
 
 def test_run_command_holds_resource_lock_around_full_run(
