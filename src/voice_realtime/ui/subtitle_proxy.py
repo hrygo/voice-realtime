@@ -114,8 +114,10 @@ class SubtitleProxy:
         self._capture_epoch = 0
         self._capture_offset_ms = 0
         self._capture_audio_ms = 0
+        self._capture_input_ms = 0
         self._capture_accept_audio = False
         self._capture_ready = asyncio.Event()
+        self._capture_stream_available = asyncio.Event()
         self._capture_ready_to_stop = asyncio.Event()
         self._capture_event_task: asyncio.Task[None] | None = None
         self._capture_send_task: asyncio.Task[None] | None = None
@@ -260,9 +262,11 @@ class SubtitleProxy:
         self._capture_epoch += 1
         self._capture_offset_ms = 0
         self._capture_audio_ms = 0
+        self._capture_input_ms = 0
         self._capture_owner = owner
         self._capture_accept_audio = True
         self._capture_ready.clear()
+        self._capture_stream_available.clear()
         self._capture_ready_to_stop.clear()
         self._capture_last_window = None
         self._state = SubtitleProxyState.CONNECTING
@@ -277,6 +281,7 @@ class SubtitleProxy:
             self._stream = stream
             await stream.connect()
             self._state = SubtitleProxyState.CONNECTED
+            self._capture_stream_available.set()
             self._capture_event_task = asyncio.create_task(self._capture_event_loop(stream))
             self._capture_send_task = asyncio.create_task(self._capture_send_loop(stream))
             try:
@@ -384,16 +389,65 @@ class SubtitleProxy:
 
     async def _capture_send_loop(self, stream: StreamingTranscriber) -> None:
         del stream
-        while self._capture_owner is not None:
-            chunk = await self._audio_buffer.get()
-            try:
-                if self._capture_accept_audio:
-                    active_stream = self._stream
-                    if active_stream is not None:
-                        await active_stream.send_audio(chunk)
-                        self._capture_audio_ms += len(chunk) // 32
-            finally:
+        pending: bytes | None = None
+        try:
+            while self._capture_owner is not None:
+                if pending is None:
+                    await self._capture_stream_available.wait()
+                    if self._capture_owner is None:
+                        return
+                    if self._stream is None:
+                        self._capture_stream_available.clear()
+                        continue
+                    pending = await self._audio_buffer.get()
+                if not self._capture_accept_audio:
+                    self._audio_buffer.task_done()
+                    pending = None
+                    continue
+                active_stream = self._stream
+                if active_stream is None:
+                    self._capture_stream_available.clear()
+                    continue
+                chunk = pending
+                if chunk is None:
+                    continue
+                try:
+                    await active_stream.send_audio(chunk)
+                except Exception as exc:
+                    self._last_error = f"{type(exc).__name__}: {exc}"
+                    if self._stream is active_stream:
+                        self._stream = None
+                    self._capture_stream_available.clear()
+                    with contextlib.suppress(Exception):
+                        await active_stream.close()
+                    gap_start_ms = self._capture_offset_ms + self._capture_audio_ms
+                    self._capture_audio_ms += len(chunk) // 32
+                    await self._notify_capture_gap(
+                        gap_start_ms,
+                        self._capture_offset_ms + self._capture_audio_ms,
+                    )
+                    self._audio_buffer.task_done()
+                    pending = None
+                    await asyncio.sleep(0)
+                    continue
+                self._capture_audio_ms += len(chunk) // 32
                 self._audio_buffer.task_done()
+                pending = None
+        finally:
+            if pending is not None:
+                self._audio_buffer.task_done()
+
+    async def _notify_capture_gap(self, start_ms: int, end_ms: int) -> None:
+        if end_ms <= start_ms:
+            return
+        gap = TranscriptionGap(
+            source_epoch=self._capture_epoch,
+            start_ms=start_ms,
+            end_ms=end_ms,
+        )
+        for listener in tuple(self._gap_listeners):
+            with contextlib.suppress(Exception):
+                await listener(gap)
 
     async def _reconnect_capture(
         self, old_stream: StreamingTranscriber
@@ -403,17 +457,11 @@ class SubtitleProxy:
             await old_stream.close()
         if self._stream is old_stream:
             self._stream = None
+        self._capture_stream_available.clear()
         self._capture_offset_ms += self._capture_audio_ms
         self._capture_audio_ms = 0
         self._capture_epoch += 1
-        gap = TranscriptionGap(
-            source_epoch=self._capture_epoch,
-            start_ms=self._capture_offset_ms,
-            end_ms=self._capture_offset_ms,
-        )
-        for listener in tuple(self._gap_listeners):
-            with contextlib.suppress(Exception):
-                await listener(gap)
+        gap_start_ms = self._capture_offset_ms
         self._state = SubtitleProxyState.BACKOFF
         for delay in self._backoff_delays:
             if self._capture_owner is None or not self._running:
@@ -422,6 +470,11 @@ class SubtitleProxy:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                 return None
             try:
+                resume_offset_ms = self._capture_input_ms
+                await self._notify_capture_gap(gap_start_ms, resume_offset_ms)
+                self._capture_offset_ms = resume_offset_ms
+                gap_start_ms = resume_offset_ms
+                self._state = SubtitleProxyState.CONNECTING
                 stream = self._create_transcriber(
                     ASRSessionContext(
                         source_epoch=self._capture_epoch,
@@ -432,12 +485,17 @@ class SubtitleProxy:
                 await stream.connect()
                 self._stream = stream
                 self._state = SubtitleProxyState.CONNECTED
+                self._capture_stream_available.set()
                 self._capture_ready.clear()
                 return stream
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._last_error = f"{type(exc).__name__}: {exc}"
+                self._drain_audio_buffer()
+                self._state = SubtitleProxyState.BACKOFF
+        await self._notify_capture_gap(gap_start_ms, self._capture_input_ms)
+        self._capture_offset_ms = self._capture_input_ms
         return None
 
     async def _handle_capture_event(self, event: ASREvent) -> None:
@@ -529,8 +587,11 @@ class SubtitleProxy:
     async def _audio_send_loop(self, stream: StreamingTranscriber) -> None:
         while self._running and self._stream is stream:
             chunk = await self._audio_buffer.get()
-            if self.has_clients:
-                await stream.send_audio(chunk)
+            try:
+                if self.has_clients:
+                    await stream.send_audio(chunk)
+            finally:
+                self._audio_buffer.task_done()
 
     async def _event_recv_loop(self, stream: StreamingTranscriber | None = None) -> None:
         active_stream = stream or self._stream
@@ -609,10 +670,14 @@ class SubtitleProxy:
         if self._capture_owner is not None:
             if not self._capture_accept_audio:
                 return
+            duration_ms = len(data) // 32
+            start_ms = self._capture_input_ms
+            self._capture_input_ms += duration_ms
+            if self._stream is None and self._state is SubtitleProxyState.BACKOFF:
+                return
             if self._audio_buffer.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    self._audio_buffer.get_nowait()
-                    self._audio_buffer.task_done()
+                await self._notify_capture_gap(start_ms, self._capture_input_ms)
+                return
             with contextlib.suppress(asyncio.QueueFull):
                 self._audio_buffer.put_nowait(data)
             return
@@ -625,6 +690,7 @@ class SubtitleProxy:
         if self._audio_buffer.full():
             with contextlib.suppress(asyncio.QueueEmpty):
                 self._audio_buffer.get_nowait()
+                self._audio_buffer.task_done()
         with contextlib.suppress(asyncio.QueueFull):
             self._audio_buffer.put_nowait(data)
 
@@ -639,7 +705,10 @@ class SubtitleProxy:
                 data = self._audio_buffer.get_nowait()
             except asyncio.QueueEmpty:
                 return
-            await stream.send_audio(data)
+            try:
+                await stream.send_audio(data)
+            finally:
+                self._audio_buffer.task_done()
 
     async def _client_send_loop(
         self, callback: ClientSender, queue: asyncio.Queue[str]
@@ -669,6 +738,7 @@ class SubtitleProxy:
                 self._audio_buffer.get_nowait()
             except asyncio.QueueEmpty:
                 return
+            self._audio_buffer.task_done()
 
     @staticmethod
     def _confirmed_lines(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -767,6 +837,7 @@ class SubtitleProxy:
             await asyncio.gather(*tasks, return_exceptions=True)
         stream = self._stream
         self._stream = None
+        self._capture_stream_available.clear()
         if stream is not None:
             with contextlib.suppress(Exception):
                 await stream.close()

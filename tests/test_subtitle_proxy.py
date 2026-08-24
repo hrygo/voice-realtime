@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
-from voice_realtime.asr.contracts import ASREvent
+from voice_realtime.asr.contracts import ASREvent, ASRSessionContext
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import TranscriptWindow
 from voice_realtime.subtitles.events import SubtitleEvent
@@ -19,6 +19,7 @@ from voice_realtime.ui.subtitle_proxy import (
     FinalizationTimeout,
     SubtitleProxy,
     SubtitleProxyState,
+    TranscriptionGap,
 )
 
 CONF = {"host": "127.0.0.1", "port": 8001, "language": "Chinese"}
@@ -168,6 +169,74 @@ class TestClientManagement:
 
 
 class TestMeetingCapture:
+    async def test_reconnect_reports_actual_backoff_audio_gap_and_new_offset(
+        self,
+        settings: SubtitleSettings,
+    ) -> None:
+        old_stream = FakeStream([])
+        new_stream = FakeStream([])
+        contexts: list[ASRSessionContext] = []
+
+        def create(context: ASRSessionContext) -> FakeStream:
+            contexts.append(context)
+            return new_stream
+
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=create,  # type: ignore[arg-type]
+            backoff_delays=(0.01,),
+        )
+        gaps: list[TranscriptionGap] = []
+
+        async def record_gap(gap: TranscriptionGap) -> None:
+            gaps.append(gap)
+
+        proxy.add_gap_listener(record_gap)
+        proxy._running = True
+        proxy._capture_owner = "meeting:test"
+        proxy._capture_accept_audio = True
+        proxy._capture_epoch = 1
+        proxy._capture_offset_ms = 0
+        proxy._capture_audio_ms = 1_000
+        proxy._capture_input_ms = 1_000
+        proxy._stream = old_stream  # type: ignore[assignment]
+
+        reconnect = asyncio.create_task(proxy._reconnect_capture(old_stream))  # type: ignore[arg-type]
+        for _ in range(20):
+            if proxy.state == "backoff":
+                break
+            await asyncio.sleep(0)
+        await proxy.push_audio(b"\x00" * 3_200)
+        result = await reconnect
+
+        assert result is new_stream
+        assert gaps == [TranscriptionGap(source_epoch=2, start_ms=1_000, end_ms=1_100)]
+        assert contexts[0].offset_ms == 1_100
+
+    async def test_reconnect_does_not_emit_zero_length_gap(
+        self,
+        settings: SubtitleSettings,
+    ) -> None:
+        old_stream = FakeStream([])
+        new_stream = FakeStream([])
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=lambda _context: new_stream,  # type: ignore[arg-type]
+            backoff_delays=(0.001,),
+        )
+        listener = AsyncMock()
+        proxy.add_gap_listener(listener)
+        proxy._running = True
+        proxy._capture_owner = "meeting:test"
+        proxy._capture_accept_audio = True
+        proxy._capture_audio_ms = 1_000
+        proxy._capture_input_ms = 1_000
+        proxy._stream = old_stream  # type: ignore[assignment]
+
+        await proxy._reconnect_capture(old_stream)  # type: ignore[arg-type]
+
+        listener.assert_not_awaited()
+
     async def test_finish_capture_resumes_browser_supervisor(
         self, settings: SubtitleSettings
     ) -> None:
@@ -529,6 +598,7 @@ class TestAudioPush:
         await proxy.push_audio(b"\x01" * 512)
         await proxy._push_audio_batch()
         assert fake.sent == [b"\x01" * 512]
+        await asyncio.wait_for(proxy._audio_buffer.join(), timeout=0.1)
 
     async def test_audio_during_backoff_is_discarded(self, settings: SubtitleSettings) -> None:
         proxy = SubtitleProxy(settings)
