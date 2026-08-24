@@ -21,6 +21,10 @@ from voice_realtime.asr.profiles import (
     WLKSenseVoiceProfile,
 )
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
+from voice_realtime.model_cache import (
+    huggingface_snapshot_path,
+    modelscope_snapshot_path,
+)
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
@@ -331,7 +335,7 @@ class SubtitleSettings(BaseSettings):
     port: int = Field(default=8001, description="字幕服务端口")
     model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
     model_dir: Path = Field(
-        default=Path("runtime/qwen3-asr-1.7b"),
+        default_factory=lambda: modelscope_snapshot_path("Qwen/Qwen3-ASR-1.7B"),
         description="ASR 本地模型目录（离线环境必填，避免启动时拉取模型）",
     )
     output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
@@ -342,7 +346,12 @@ class SubtitleSettings(BaseSettings):
     diarization: bool = Field(default=True, description="是否启用匿名说话人分离")
     diarization_backend: str = Field(default="sortformer", description="说话人分离后端")
     diarization_model_path: Path = Field(
-        default=Path("runtime/sortformer.nemo"), description="本地 Sortformer 模型路径"
+        default_factory=lambda: huggingface_snapshot_path(
+            "nvidia/diar_streaming_sortformer_4spk-v2",
+            revision="5240a64075176943f677d30fa2171c780229f341",
+        )
+        / "diar_streaming_sortformer_4spk-v2.nemo",
+        description="本地 Sortformer 模型路径",
     )
     diarization_max_speakers: int = Field(
         default=4, ge=1, le=4, description="最多匿名说话人数"

@@ -74,7 +74,8 @@
 ### 2. 离线优先与模型下载源
 - 默认 `allow_model_downloads=False` 且使用 `local_files_only=True`，只有显式授权才允许联网。
 - pipecat `FunASRSTTService` 把 funasr `hub` 硬编码为 modelscope（`ms`），在受限网络下会被 **SSRF 拦截** ➔ 任何 repo ID 必须经 `snapshot_download()` 存入 `~/.cache/huggingface/hub` 后使用**本地路径**加载（`pipeline._resolve_stt_model` + `InteractionSettings.stt_model`，空值自动解析 `FunAudioLLM/SenseVoiceSmall` 快照）。
-- Sortformer（`runtime/sortformer.nemo`）与 Qwen3-ASR 本地模型目录缺失时 fail-fast，不隐式联网下载。
+- Sortformer 与 Qwen3-ASR 均从项目外供应商 cache 的绝对 snapshot 路径加载；缺失时 fail-fast，
+  不隐式联网下载，也不得重新放回 `runtime/`。
 
 ### 3. 会议数据边界与存储隔离
 - PostgreSQL 是会议元数据、confirmed 转录、speaker 映射与 AI 纪要的**唯一事实源**；**绝对不保存音频**；会议采集不写 `runtime/subtitles/current.srt`。
@@ -175,8 +176,8 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 | **PostgreSQL** | DSN: `postgresql:///knowledge`，Schema: `voice_realtime` |
 | **TTS 桥服务** (Port: `8765`) | `mlx-audio` Qwen3-TTS (24 kHz WAV/PCM)，`VoiceDesign` 音色 profile |
 | **SenseVoice 缓存快照** | `~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…` |
-| **Sortformer 说话人分离** | `runtime/sortformer.nemo` |
-| **Qwen3-ASR 本地目录** | `runtime/qwen3-asr-1.7b`（MPS/windowed，12s 左上下文，支持领域词 context） |
+| **Sortformer 说话人分离** | Hugging Face cache，固定 revision `5240a64075176943f677d30fa2171c780229f341` |
+| **Qwen3-ASR 本地目录** | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master`（MPS/windowed，12s 左上下文，支持领域词 context） |
 | **NLTK punkt_tab** | `~/nltk_data/tokenizers/punkt_tab`（TTS 断句必需；`vr-ui`/`vr-interact` 自动检查与修复） |
 | **实测性能基准 (QA 参考)** | SenseVoice RTF $\approx 0.17$；推理关闭时 TTFT $\approx 0.24 \sim 0.26\text{s}$ / $\sim 97 \sim 113\text{ tok/s}$ |
 

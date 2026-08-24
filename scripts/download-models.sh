@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 下载语音链路所需模型（HF 缓存统一由 huggingface-cli 管理）
+# 下载语音链路所需模型（使用供应商标准外部缓存，不写入 Git 工作树）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -21,15 +21,6 @@ print(f"SenseVoice 缓存: {p}")
 PY
 
 echo "== 下载 Qwen3-ASR streaming (WhisperLiveKit) =="
-uv run python - <<'PY'
-from modelscope import snapshot_download
-
-p = snapshot_download(
-    "Qwen/Qwen3-ASR-1.7B",
-    local_dir="runtime/qwen3-asr-1.7b",
-    max_workers=8,
-)
-print(f"Qwen3-ASR 1.7B 本地目录: {p}")
-PY
+uv run modelscope download --model Qwen/Qwen3-ASR-1.7B
 
 echo "全部模型就绪"

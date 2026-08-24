@@ -7,7 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from voice_realtime.benchmarks.asr.cli import _loopback_service_url, build_parser, main
+from voice_realtime.asr.contracts import ASRSessionContext
+from voice_realtime.asr.profiles import FunASRNanoWSProfile
+from voice_realtime.benchmarks.asr.cli import (
+    _build_streaming_registry,
+    _loopback_service_url,
+    _require_external_model_dir,
+    build_parser,
+    main,
+)
 from voice_realtime.benchmarks.asr.replay import load_hypotheses
 
 
@@ -56,6 +64,37 @@ def test_run_target_must_be_loopback() -> None:
     assert _loopback_service_url("::1", 8001) == "ws://[::1]:8001"
     with pytest.raises(ValueError, match="loopback"):
         _loopback_service_url("example.com", 8001)
+
+
+def test_run_registry_selects_funasr_nano_adapter_from_discriminated_profile() -> None:
+    profile = FunASRNanoWSProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        host="127.0.0.1",
+        port=10095,
+    )
+
+    registry = _build_streaming_registry(profile, "ws://127.0.0.1:10095")
+    backend = registry.create_streaming(
+        profile,
+        ASRSessionContext(source_epoch=1, offset_ms=0, purpose="subtitles"),
+    )
+
+    assert backend.backend_id == "funasr-nano-ws"
+    assert backend.uri == "ws://127.0.0.1:10095"
+
+
+def test_benchmark_rejects_model_directory_inside_repository(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    internal_model = repository / "runtime" / "model"
+    external_model = tmp_path / "model-cache" / "model"
+    internal_model.mkdir(parents=True)
+    external_model.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="outside the repository"):
+        _require_external_model_dir(internal_model, repository)
+
+    assert _require_external_model_dir(external_model, repository) == external_model
 
 
 def test_score_command_writes_summary(tmp_path: Path) -> None:

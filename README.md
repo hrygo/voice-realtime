@@ -107,7 +107,8 @@ cd ui && npm install && npm run build && cd ..
 
 ### 步骤 2：下载本地模型与初始化数据
 
-本项目坚持离线优先原则，模型统一保存在本地缓存与运行时目录中：
+本项目坚持离线优先原则，模型统一保存在 ModelScope、Hugging Face 或 LM Studio 的项目外缓存中，
+Git 工作树只保存代码、配置和运行产物：
 
 ```bash
 # 下载 SenseVoice、Qwen3-TTS、Qwen3-ASR 模型
@@ -117,7 +118,8 @@ bash scripts/download-models.sh
 bash scripts/install-nltk-data.sh
 ```
 
-> ⚠️ **Sortformer 模型**：如需使用会议助手的多人分离识别功能，请将 `sortformer.nemo` 放置在 `runtime/sortformer.nemo` 路径下。
+> ⚠️ **Sortformer 模型**：默认从 Hugging Face Hub 外部缓存的固定 revision 路径加载；缺失时
+> fail-fast，不会隐式联网。可用 `VR_SUBTITLE_DIARIZATION_MODEL_PATH` 指定其他项目外绝对路径。
 
 ### 步骤 3：初始化 PostgreSQL 数据库 (会议助手必需)
 
@@ -150,7 +152,6 @@ uv run vr-subtitles
 # 终端 3: 启动 Web 控制台与主运行协调服务 (8100)
 export VR_MEETING_DATABASE_URL='postgresql://voice_realtime_app@/knowledge'
 export VR_MEETING_SCHEMA='voice_realtime'
-export VR_SUBTITLE_DIARIZATION_MODEL_PATH='runtime/sortformer.nemo'
 uv run vr-ui
 ```
 
@@ -214,7 +215,8 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_SUMMARY_MODEL` | `qwen/qwen3.8-27b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
-| `VR_SUBTITLE_DIARIZATION_MODEL_PATH` | `runtime/sortformer.nemo` | Sortformer 说话人分离模型路径 |
+| `VR_SUBTITLE_MODEL_DIR` | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master` | Qwen3-ASR 项目外模型目录 |
+| `VR_SUBTITLE_DIARIZATION_MODEL_PATH` | Hugging Face cache 中固定 revision 的 `diar_streaming_sortformer_4spk-v2.nemo` | Sortformer 项目外模型路径 |
 | `VR_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` / `headphone_duplex`) |
 
 ---

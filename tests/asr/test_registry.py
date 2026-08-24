@@ -11,7 +11,7 @@ from voice_realtime.asr.contracts import (
     ASREvent,
     ASRSessionContext,
 )
-from voice_realtime.asr.profiles import WLKSenseVoiceProfile
+from voice_realtime.asr.profiles import FunASRNanoWSProfile, WLKSenseVoiceProfile
 from voice_realtime.asr.registry import (
     ASRBackendRegistry,
     BackendCapabilityError,
@@ -54,6 +54,15 @@ def _profile() -> WLKSenseVoiceProfile:
         language="Chinese",
         host="127.0.0.1",
         port=8001,
+    )
+
+
+def _funasr_profile() -> FunASRNanoWSProfile:
+    return FunASRNanoWSProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        host="127.0.0.1",
+        port=10095,
     )
 
 
@@ -174,3 +183,42 @@ def test_registry_returns_capability_compatible_backend() -> None:
     )
 
     assert actual is expected
+
+
+def test_registry_allows_funasr_nano_for_subtitles_without_native_timestamps() -> None:
+    registry = ASRBackendRegistry()
+    expected = FakeTranscriber(
+        _capabilities(
+            languages=frozenset({"中文", "英文", "日文"}),
+            segment_timestamps=False,
+            speaker_labels=False,
+        )
+    )
+    expected.backend_id = "funasr-nano-ws"
+    registry.register_streaming("funasr-nano-ws", lambda _profile, _context: expected)
+
+    actual = registry.create_streaming(
+        _funasr_profile(),
+        ASRSessionContext(source_epoch=1, offset_ms=0, purpose="subtitles"),
+    )
+
+    assert actual is expected
+
+
+def test_registry_rejects_funasr_nano_for_meeting_without_reliable_timestamps() -> None:
+    registry = ASRBackendRegistry()
+    backend = FakeTranscriber(
+        _capabilities(
+            languages=frozenset({"中文", "英文", "日文"}),
+            segment_timestamps=False,
+            speaker_labels=False,
+        )
+    )
+    backend.backend_id = "funasr-nano-ws"
+    registry.register_streaming("funasr-nano-ws", lambda _profile, _context: backend)
+
+    with pytest.raises(BackendCapabilityError, match="segment timestamps"):
+        registry.create_streaming(
+            _funasr_profile(),
+            ASRSessionContext(source_epoch=1, offset_ms=0, purpose="meeting"),
+        )

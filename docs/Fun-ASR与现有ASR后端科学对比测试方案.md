@@ -26,8 +26,17 @@
 - runner 会核验干净 git checkout、代码 commit、语料 manifest SHA-256、模型文件 SHA-256、音频
   SHA-256/长度、相对路径与归一化版本；输出目录为 `0700`，逐字稿和事件文件为 `0600`，不复制
   音频。
-- 当前 `run` 只可构造已注册的 WLK profile；Fun-ASR-Nano adapter 属于后续 Task 6。尚未下载
-  Fun-ASR 模型、开封 blind set 或产生任何选型结论。
+- `FunASRNanoWSAdapter`、`funasr-nano-ws` 判别 profile、用途能力门禁和 benchmark runner 接线已在
+  当前分支实现；mock 协议测试覆盖握手、partial/final、STOP 幂等、错误、断线与非法时间戳。
+- Fun-ASR-Nano-2512 已迁移到项目外的 ModelScope cache。`modelscope scan-cache` 能识别该
+  `FunAudioLLM/Fun-ASR-Nano-2512@master` 快照（21 个文件，约 2.0 GiB）；20 个非隐藏远端文件已
+  通过 `modelscope cache verify`。校验器仍报告 `.gitattributes` 缺失，但当前文件实测存在，因此
+  这是工具对隐藏文件的覆盖差异，不能据此声称整个快照未完成。
+- 当前 Qwen3-ASR 1.7B/0.6B 也已迁移到 ModelScope cache，Sortformer 已迁移到 Hugging Face
+  cache 的固定 revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。0.6B 是非默认旧制品，
+  上游完整性核验显示缺少 README/configuration 元数据，禁止作为可行实验臂，除非重新取得完整快照。
+- 尚未启动固定官方 WebSocket 服务、加载 checkpoint、开封 blind set 或产生任何选型结论。
+  模型已落盘只完成制品门禁，不等于 MPS/CPU 推理与实时链路已可行。
 
 这里的 `offline` 指“对同一流式 adapter 不等待 wall-clock 的快速 PCM 回放”，用于 harness 与
 系统吞吐检查；它不等同于模型原生 batch/offline API 的 Stage 1 核心质量实验。原生离线 adapter
@@ -44,7 +53,9 @@
 - 当前交互助手 STT：SenseVoiceSmall、CPU、ITN 开启、`ttfs_p99_latency=0.5`。
 - 当前 WLK `backend="funasr"` 指向 SenseVoiceSmall，不代表 Fun-ASR-Nano。
 - Fun-ASR 官方实时 WebSocket 与当前 WLK `/asr` 协议不同。
-- 本机不满足 vLLM 的 CUDA/Ampere 前提，因此 vLLM 只记录为非本机参考，不进入本机排名。
+- 固定 commit 的官方 `serve_realtime_ws.py` 使用 vLLM；本机没有 vLLM，且 Apple Silicon 不满足其
+  CUDA/Ampere 前提。因此官方 WS 仅完成客户端协议兼容，不进入本机排名。若后续实现 PyTorch
+  本机 WS 服务，必须作为不同 runtime 实验臂登记，不能沿用官方 vLLM 身份。
 
 ### 2.2 候选事实
 
@@ -78,13 +89,29 @@ H1/H2 是质量优势假设；H3-H5 是非劣与安全假设。任何硬门禁�
 | `SV-WLK-CPU` | SenseVoiceSmall / WLK LocalAgreement | CPU | 轻量对照 | 必选 |
 | `FA-PT-MPS` | Fun-ASR-Nano-2512 / PyTorch-FunASR | MPS | 主要候选 | 通过 Stage 0 后 |
 | `FA-PT-CPU` | Fun-ASR-Nano-2512 / PyTorch-FunASR | CPU | 兼容对照 | MPS 不可用时仍单列 |
-| `FA-WS-MPS` | Fun-ASR 官方实时 WS / PyTorch | MPS | 流式候选 | 通过协议和设备门禁后 |
+| `FA-WS-vLLM-CUDA` | Fun-ASR 固定官方实时 WS / vLLM | CUDA | 协议参考 | 本机排除 |
+| `FA-WS-PT-MPS` | 待实现的 PyTorch 本机 WS 服务 | MPS | 流式候选 | 独立登记并通过 Stage 0 后 |
 | `FA-GGUF-Q5` | Fun-ASR-Nano GGUF Q5 / llama.cpp | CPU | 速度/体积候选 | 通过正确性门禁后 |
 | `FA-GGUF-Q8` | Fun-ASR-Nano GGUF Q8 / llama.cpp | CPU | 质量量化候选 | 通过正确性门禁后 |
 
 `FA-PT-MPS` 失败时不得静默落到 CPU；必须把该臂标记为 `infeasible`，另跑 `FA-PT-CPU`。
 每个模型制品记录来源、revision、SHA-256、文件清单和运行时识别结果。下载时优先检查 ModelScope；
 只有目标 GGUF/版本缺失或运行时明确要求时才回退官方 Hugging Face/GitHub release，并记录原因。
+
+模型制品不得放在 Git 工作树内。当前本机使用 ModelScope cache 的标准 repo/snapshot 布局；每台
+执行主机通过 `modelscope scan-cache` 定位实际绝对路径，并把该路径写入本地、不入库的
+`profile.json`。`FunASRNanoWSProfile` 拒绝相对 `model_dir`，防止候选模型重新落回 `runtime/`。
+
+当前快照的关键文件 SHA-256（2026-08-24 迁移前后复核一致）：
+
+| 相对路径 | SHA-256 |
+|---|---|
+| `model.pt` | `81fec8616083c69377f3ceef36aba3655660ee0ca69a5d4a1e9810cd340ca499` |
+| `config.yaml` | `daed38ea6484f5650fb32cbd9069b9aa13880acaf2bcb1f0bf4be2712837917c` |
+| `configuration.json` | `b64a3a55d35bcbe2cf4d31f2d3ef25a423d3ba2ebff203298c27fa055f3c7612` |
+| `multilingual.tiktoken` | `747979631e813193436aabcff7c1c235d37de8097b71c563ec8b63b7a515c718` |
+
+正式 manifest 仍须列出所有影响推理的文件，不能只复制上述关键文件摘要。
 
 ### 3.2 排除臂
 
@@ -424,7 +451,24 @@ docs/benchmarks/asr/<experiment-family>/
 ### 9.5 Runner 命令契约
 
 正式运行前，`manifest.json`、`corpus.json` 和 `profile.json` 必须在 blind set 开封前冻结。语料与
-模型位于项目目录外或既有本地模型目录，清单只使用相对于各自根目录的路径。
+模型均位于项目目录外；runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只使用相对于
+各自根目录的文件路径。
+
+Fun-ASR WebSocket 候选的本地 `profile.json` 示例；`model_dir` 必须替换为执行机
+`modelscope scan-cache` 返回的项目外绝对 snapshot 路径：
+
+```json
+{
+  "kind": "funasr-nano-ws",
+  "model_dir": "/absolute/path/outside/repository/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+  "language": "中文",
+  "host": "127.0.0.1",
+  "port": 10095,
+  "hotwords": [],
+  "connect_timeout_secs": 5.0,
+  "final_timeout_secs": 10.0
+}
+```
 
 ```bash
 uv run vr-asr-benchmark run \

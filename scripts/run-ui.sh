@@ -10,7 +10,6 @@ export VR_UI_HOST="$(resolve_bind_host "${VR_UI_HOST:-}" "127.0.0.1")"
 export VR_UI_PORT="${VR_UI_PORT:-8100}"
 export VR_MEETING_DATABASE_URL="${VR_MEETING_DATABASE_URL:-postgresql://voice_realtime_app@/knowledge}"
 export VR_MEETING_SCHEMA="${VR_MEETING_SCHEMA:-voice_realtime}"
-export VR_SUBTITLE_DIARIZATION_MODEL_PATH="${VR_SUBTITLE_DIARIZATION_MODEL_PATH:-runtime/sortformer.nemo}"
 
 echo "========================================================"
 echo "🎙️  Voice Studio Web 控制台"

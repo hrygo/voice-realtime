@@ -15,7 +15,6 @@ export VR_SUBTITLE_HOST="$(resolve_bind_host "${VR_SUBTITLE_HOST:-}" "127.0.0.1"
 export VR_SUBTITLE_PORT="${VR_SUBTITLE_PORT:-8001}"
 export VR_MEETING_DATABASE_URL="${VR_MEETING_DATABASE_URL:-postgresql://voice_realtime_app@/knowledge}"
 export VR_MEETING_SCHEMA="${VR_MEETING_SCHEMA:-voice_realtime}"
-export VR_SUBTITLE_DIARIZATION_MODEL_PATH="${VR_SUBTITLE_DIARIZATION_MODEL_PATH:-runtime/sortformer.nemo}"
 
 echo "========================================================"
 echo "🚀  启动 voice-realtime 全套服务"

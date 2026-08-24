@@ -12,8 +12,12 @@ from pathlib import Path
 from pydantic import TypeAdapter
 
 from voice_realtime.asr.contracts import ASRSessionContext, StreamingTranscriber
-from voice_realtime.asr.defaults import build_wlk_registry
-from voice_realtime.asr.profiles import ASRProfile
+from voice_realtime.asr.defaults import (
+    build_funasr_nano_ws_registry,
+    build_wlk_registry,
+)
+from voice_realtime.asr.profiles import ASRProfile, FunASRNanoWSProfile
+from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.benchmarks.asr.manifest import (
     CorpusSample,
     load_corpus_manifest,
@@ -47,6 +51,29 @@ def _loopback_service_url(host: str, port: int) -> str:
         raise ValueError("benchmark ASR service host must be loopback")
     rendered_host = f"[{address}]" if address.version == 6 else str(address)
     return f"ws://{rendered_host}:{port}"
+
+
+def _build_streaming_registry(
+    profile: ASRProfile,
+    service_url: str,
+    raw_event_sink: Callable[[Mapping[str, object]], None] | None = None,
+) -> ASRBackendRegistry:
+    """按判别 profile 选择对应协议 registry。"""
+    if isinstance(profile, FunASRNanoWSProfile):
+        return build_funasr_nano_ws_registry(
+            service_url,
+            raw_event_sink=raw_event_sink,
+        )
+    return build_wlk_registry(service_url, raw_event_sink=raw_event_sink)
+
+
+def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
+    """拒绝把 benchmark 模型制品放在 Git 工作树内。"""
+    resolved_model_dir = model_dir.resolve(strict=True)
+    resolved_repo_root = repo_root.resolve(strict=True)
+    if resolved_model_dir.is_relative_to(resolved_repo_root):
+        raise ValueError("benchmark model_dir must be outside the repository")
+    return resolved_model_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -89,11 +116,13 @@ def _run_command(args: argparse.Namespace) -> int:
     corpus = load_corpus_manifest(corpus_path)
     if sha256_file(corpus_path) != manifest.corpus_manifest_sha256:
         raise ValueError("corpus manifest SHA-256 does not match run manifest")
-    verify_git_checkout(Path(str(args.repo_root)), manifest.git_commit)
+    repo_root = Path(str(args.repo_root))
+    verify_git_checkout(repo_root, manifest.git_commit)
     profile = _PROFILE_ADAPTER.validate_json(profile_path.read_text(encoding="utf-8"))
     if profile.kind != manifest.backend_id:
         raise ValueError("ASR profile backend_id does not match run manifest")
-    verify_file_hashes(profile.model_dir, manifest.model_files_sha256)
+    model_dir = _require_external_model_dir(profile.model_dir, repo_root)
+    verify_file_hashes(model_dir, manifest.model_files_sha256)
     service_url = _loopback_service_url(profile.host, profile.port)
 
     def transcriber_factory(
@@ -102,7 +131,7 @@ def _run_command(args: argparse.Namespace) -> int:
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber:
         del sample
-        registry = build_wlk_registry(service_url, raw_event_sink=vendor_event_sink)
+        registry = _build_streaming_registry(profile, service_url, vendor_event_sink)
         return registry.create_streaming(profile, context)
 
     output_value = args.output_dir

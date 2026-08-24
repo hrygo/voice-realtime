@@ -291,41 +291,46 @@ git commit -m "feat(asr): 增加可复现对比测试运行器"
 
 **Files:**
 - Create: `src/voice_realtime/asr/adapters/funasr_nano_ws.py`
-- Modify: `src/voice_realtime/asr/registry.py`
+- Modify: `src/voice_realtime/asr/profiles.py`
+- Modify: `src/voice_realtime/asr/defaults.py`
+- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
 - Create: `tests/asr/test_funasr_nano_ws_adapter.py`
+- Create: `tests/asr/test_defaults.py`
+- Modify: `tests/asr/test_profiles.py`
 - Modify: `tests/asr/test_registry.py`
+- Modify: `tests/benchmarks/test_asr_cli.py`
 
 **Interfaces:**
 - Consumes: Fun-ASR `START`/`LANGUAGE`/`HOTWORDS`/binary PCM/`STOP` 协议。
 - Produces: `StreamingTranscriber`，backend ID `funasr-nano-ws`。
 
-- [ ] **Step 1: 写协议映射 RED 测试**
+- [x] **Step 1: 写协议映射 RED 测试**
 
 Mock WebSocket 必须验证消息顺序；覆盖 `started`、partial、sentences、final、服务端 error、断线和
 超时。时间戳缺失或非单调时 capabilities 必须报告 false 或拒绝 meeting 用途，禁止补造时间戳。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/asr/test_funasr_nano_ws_adapter.py tests/asr/test_registry.py -q --no-cov`
 
 Expected: adapter 不存在而失败。
 
-- [ ] **Step 3: 实现边界验证和 adapter**
+- [x] **Step 3: 实现边界验证和 adapter**
 
 所有外部 JSON 在 adapter 边界做类型、长度和单调性校验。`finish()` 发送一次 `STOP` 并等待
 `is_final=true`；错误映射为稳定 `ASREvent(kind="error")`，不把服务端堆栈透传给 UI。
 
-- [ ] **Step 4: 运行 GREEN**
+- [x] **Step 4: 运行 GREEN**
 
 Run: `uv run pytest tests/asr/test_funasr_nano_ws_adapter.py tests/asr/test_registry.py -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr/adapters/funasr_nano_ws.py src/voice_realtime/asr/registry.py tests/asr
-git commit -m "feat(asr): 接入 Fun-ASR Nano WebSocket 候选"
+git add src scripts tests README.md AGENTS.md docs
+git commit -m "feat(asr): 接入 Fun-ASR 并规范模型缓存"
 ```
 
 ### Task 7: 抽离交互助手 STT 工厂

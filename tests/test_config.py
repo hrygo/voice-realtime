@@ -113,7 +113,8 @@ def test_subtitle_downloads_are_disabled_by_default() -> None:
 def test_subtitle_defaults_to_qwen3_asr_1_7b_quality_profile() -> None:
     settings = SubtitleSettings()
 
-    assert settings.model_dir.as_posix() == "runtime/qwen3-asr-1.7b"
+    assert settings.model_dir.is_absolute()
+    assert "Qwen--Qwen3-ASR-1.7B/snapshots/master" in settings.model_dir.as_posix()
     assert settings.qwen3_streaming_chunk_sec == 2.0
     assert settings.qwen3_streaming_left_context_sec == 12.0
     assert settings.qwen3_streaming_right_context_ms == 640
@@ -121,6 +122,7 @@ def test_subtitle_defaults_to_qwen3_asr_1_7b_quality_profile() -> None:
     assert settings.qwen3_streaming_stable_iterations == 2
     assert settings.qwen3_streaming_max_new_tokens == 256
     assert settings.qwen3_streaming_device == "mps"
+    assert settings.diarization_model_path.name == "diar_streaming_sortformer_4spk-v2.nemo"
     assert settings.punctuation_split is True
     assert "Qwen3-ASR" in settings.context
     assert "保留英文、数字、连字符和大小写" in settings.context
@@ -195,4 +197,3 @@ def test_meeting_diarization_smoothing_defaults() -> None:
     assert settings.diarization_smoothing_enabled is True
     assert settings.diarization_min_duration_ms == 350
     assert settings.diarization_hangover_gap_ms == 800
-
