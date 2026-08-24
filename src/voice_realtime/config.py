@@ -14,6 +14,12 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from voice_realtime.asr.profiles import (
+    ASRProfile,
+    WLKAutoProfile,
+    WLKQwen3Profile,
+    WLKSenseVoiceProfile,
+)
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
@@ -379,6 +385,41 @@ class SubtitleSettings(BaseSettings):
         return value.strip()
 
     _validate_host = field_validator("host")(_validate_listen_host)
+
+    @property
+    def asr_profile(self) -> ASRProfile:
+        """把旧字幕配置投影为内部无歧义的 ASR profile。"""
+        if self.backend == "funasr":
+            return WLKSenseVoiceProfile(
+                model_dir=self.model_dir,
+                language=self.language,
+                host=self.host,
+                port=self.port,
+                speaker_labels=self.diarization,
+            )
+        if self.backend == "auto":
+            return WLKAutoProfile(
+                model_dir=self.model_dir,
+                language=self.language,
+                host=self.host,
+                port=self.port,
+                speaker_labels=self.diarization,
+            )
+        return WLKQwen3Profile(
+            model_dir=self.model_dir,
+            language=self.language,
+            host=self.host,
+            port=self.port,
+            speaker_labels=self.diarization,
+            device=self.qwen3_streaming_device,
+            chunk_sec=self.qwen3_streaming_chunk_sec,
+            left_context_sec=self.qwen3_streaming_left_context_sec,
+            right_context_ms=self.qwen3_streaming_right_context_ms,
+            hold_back_words=self.qwen3_streaming_hold_back_words,
+            stable_iterations=self.qwen3_streaming_stable_iterations,
+            max_new_tokens=self.qwen3_streaming_max_new_tokens,
+            context=self.context,
+        )
 
 
 class MeetingSettings(BaseSettings):

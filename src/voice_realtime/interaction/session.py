@@ -16,6 +16,7 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.workers.runner import WorkerRunner
 
+from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
 from voice_realtime.interaction.ownership import (
     InteractionOwnership,
@@ -58,6 +59,7 @@ class InteractionSession:
         stop_timeout_secs: float = 3.0,
         handle_signals: bool = False,
         echo_state: EchoState | None = None,
+        stt_factory: ConversationSTTFactory | None = None,
     ) -> None:
         self._settings = settings
         self._audio_queue = audio_queue
@@ -76,6 +78,7 @@ class InteractionSession:
         self._runner_task: asyncio.Task[None] | None = None
         self._timeout_task: asyncio.Task[None] | None = None
         self._echo_state = echo_state if echo_state is not None else EchoState()
+        self._stt_factory = stt_factory
         self._echo_suppressor: EchoSuppressionProcessor | None = None
         self._llm_service: LmStudioNativeLLMService | None = None
         self._persona: str | None = None
@@ -170,12 +173,14 @@ class InteractionSession:
             raise
         try:
             self._echo_state.reset()
-            pipeline = self._pipeline_factory(
-                self._settings,
-                persona=self._persona,
-                audio_queue=self._audio_queue,
-                echo_state=self._echo_state,
-            )
+            pipeline_kwargs: dict[str, object] = {
+                "persona": self._persona,
+                "audio_queue": self._audio_queue,
+                "echo_state": self._echo_state,
+            }
+            if self._stt_factory is not None:
+                pipeline_kwargs["stt_factory"] = self._stt_factory
+            pipeline = self._pipeline_factory(self._settings, **pipeline_kwargs)
             self._echo_suppressor = next(
                 (
                     processor

@@ -36,6 +36,7 @@ def _session(
     run: AsyncMock,
     end: AsyncMock,
     audio_queue: asyncio.Queue[bytes] | None = None,
+    stt_factory: object | None = None,
 ) -> tuple[InteractionSession, MagicMock, MagicMock]:
     pipeline = MagicMock(processors=[])
     pipeline_factory = MagicMock(return_value=pipeline)
@@ -55,8 +56,32 @@ def _session(
         worker_factory=worker_factory,
         runner_factory=runner_factory,
         stop_timeout_secs=0.01,
+        stt_factory=stt_factory,
     )
     return session, pipeline_factory, runner
+
+
+async def test_session_passes_stt_factory_to_pipeline(tmp_path: Path) -> None:
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        await stopped.wait()
+
+    async def end(*_args: object, **_kwargs: object) -> None:
+        stopped.set()
+
+    stt_factory = MagicMock(name="conversation_stt_factory")
+    session, pipeline_factory, _runner = _session(
+        tmp_path,
+        run=AsyncMock(side_effect=run),
+        end=AsyncMock(side_effect=end),
+        stt_factory=stt_factory,
+    )
+
+    await session.start()
+
+    assert pipeline_factory.call_args.kwargs["stt_factory"] is stt_factory
+    await session.stop()
 
 
 async def test_stop_requests_graceful_end_then_cancels_stuck_runner(tmp_path: Path) -> None:

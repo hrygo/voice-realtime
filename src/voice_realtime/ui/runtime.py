@@ -7,6 +7,8 @@ import contextlib
 import logging
 from typing import Any
 
+from voice_realtime.asr.contracts import ConversationSTTFactory
+from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.audio.hub import AudioHub
 from voice_realtime.config import Settings
 from voice_realtime.interaction.nltk_data import ensure_punkt_tab
@@ -37,6 +39,8 @@ class UIRuntime:
         *,
         meeting_session: Any | None = None,
         mode_coordinator: RuntimeModeCoordinator | None = None,
+        asr_registry: ASRBackendRegistry | None = None,
+        conversation_stt_factory: ConversationSTTFactory | None = None,
     ) -> None:
         self._settings = settings
         self._started = False
@@ -45,13 +49,17 @@ class UIRuntime:
         self.observer = StatusBridgeObserver()
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self.hub = AudioHub(device_index=settings.interaction.input_device)
-        self.subtitle_proxy = SubtitleProxy(settings.subtitles)
+        subtitle_proxy_kwargs: dict[str, Any] = {}
+        if asr_registry is not None:
+            subtitle_proxy_kwargs["registry"] = asr_registry
+        self.subtitle_proxy = SubtitleProxy(settings.subtitles, **subtitle_proxy_kwargs)
         self.session = InteractionSession(
             settings.interaction,
             audio_queue=self.audio_queue,
             observers=[self.observer],
             ownership=InteractionOwnership(),
             pipeline_factory=build_pipeline,
+            stt_factory=conversation_stt_factory,
         )
         self.meeting_session = meeting_session
         self.mode_coordinator = mode_coordinator
