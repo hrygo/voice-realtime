@@ -139,7 +139,7 @@ def create_app(
         yield
         engine.close()
 
-    app = FastAPI(title="qwen3-tts-openai bridge", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="qwen3-tts-openai bridge", version="1.0.0", lifespan=lifespan)
     app.state.settings = bridge_settings
     app.state.engine = engine
 
