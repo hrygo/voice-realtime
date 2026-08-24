@@ -12,10 +12,11 @@
 两个决策分别给结论，不把不同目标、协议和延迟预算合并成一个“总冠军”。质量优先于内存节省，
 但实时性、数据完整性、离线边界与长期稳定性是硬门禁。
 
-本方案依赖先完成
+本方案复用
 [`ASR 后端可插拔架构评估与前置设计`](superpowers/specs/2026-08-24-asr-backend-pluggability-design.md)
-及其[实施计划](superpowers/plans/2026-08-24-asr-backend-pluggability.md)。在前置 runner 尚未实现时，
-允许先做 Stage 0 可行性探测，但不得把不同脚本、不同切块或不同计时口径的结果用于最终选型。
+及其[实施计划](superpowers/plans/2026-08-24-asr-backend-pluggability.md)已经完成的统一契约、adapter、
+registry 与 benchmark runner。生产环境冷切换不再是科学对比的前置条件：模型候选必须先在独立
+runner 中证明可行且值得晋级。最终只部署胜出的单一后端，不建设生产运行时切换事务。
 
 ### 1.1 当前落地状态（2026-08-24）
 
@@ -28,6 +29,9 @@
   音频。
 - `FunASRNanoWSAdapter`、`funasr-nano-ws` 判别 profile、用途能力门禁和 benchmark runner 接线已在
   当前分支实现；mock 协议测试覆盖握手、partial/final、STOP 幂等、错误、断线与非法时间戳。
+- `FunASRNanoPyTorchAdapter`、`funasr-nano-pytorch` profile 与 benchmark CLI 接线已在当前分支
+  实现。engine 在一次 run 中只加载一次模型，样本 adapter 只缓冲内存 PCM；原生离线 profile
+  强制 `--mode offline`，禁止误报为流式实验。
 - Fun-ASR-Nano-2512 已迁移到项目外的 ModelScope cache。`modelscope scan-cache` 能识别该
   `FunAudioLLM/Fun-ASR-Nano-2512@master` 快照（21 个文件，约 2.0 GiB）；20 个非隐藏远端文件已
   通过 `modelscope cache verify`。校验器仍报告 `.gitattributes` 缺失，但当前文件实测存在，因此
@@ -35,12 +39,45 @@
 - 当前 Qwen3-ASR 1.7B 已迁移到 ModelScope cache，Sortformer 已迁移到 Hugging Face cache 的固定
   revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。上游完整性核验失败的非默认
   Qwen3-ASR 0.6B ModelScope 旧快照已删除，不作为实验臂或回退来源。
-- 尚未启动固定官方 WebSocket 服务、加载 checkpoint、开封 blind set 或产生任何选型结论。
-  模型已落盘只完成制品门禁，不等于 MPS/CPU 推理与实时链路已可行。
+- 尚未启动固定官方 WebSocket 服务、开封 blind set 或产生任何选型结论。checkpoint 已完成 MPS/CPU
+  初步加载与推理探测，但这不等于完整 Stage 0、准确率比较或实时链路已通过。
 
-这里的 `offline` 指“对同一流式 adapter 不等待 wall-clock 的快速 PCM 回放”，用于 harness 与
-系统吞吐检查；它不等同于模型原生 batch/offline API 的 Stage 1 核心质量实验。原生离线 adapter
-接入前，不得用该模式替代 Stage 1 模型本体比较。
+runner 的 `--mode offline` 只表示“不等待 wall-clock 的 PCM 回放时序”：对 WS profile，它仍只是
+流式 adapter 的快速回放；对 `funasr-nano-pytorch`，PCM 在内存中合并后才调用一次模型原生离线
+推理，可用于 Stage 1 模型核心实验。两类结果必须使用不同 backend ID，不得混为同一实验臂。
+
+### 1.2 本机执行顺序修订（2026-08-24）
+
+原实施计划先建设生产冷切换，再做候选验证；当前决策和本机环境表明这既无必要，也会引入无效
+前置工作：
+
+- `UIRuntime` 只连接外部 ASR WebSocket，不拥有 WhisperLiveKit/Fun-ASR 服务进程，无法真实执行
+  “停止旧模型进程 → 启动候选 → 失败回滚”。
+- 固定官方 Fun-ASR WebSocket 服务使用 vLLM/CUDA，本机 Apple Silicon 不具备运行条件。
+- 科学 runner 已能独立冻结输入、记录事件和比较指标，无需经过生产控制 WebSocket。
+
+因此按本机条件采用以下顺序：
+
+```text
+本地 checkpoint 完整性
+  → PyTorch MPS 加载探测（禁止 fallback）
+  → 独立 PyTorch CPU 加载探测
+  → 原生离线 adapter 与 Stage 1 dev 比较
+  → 通过质量门禁后才建设本机流式服务与 Stage 2
+  → 胜出后固定为生产唯一后端
+```
+
+测试期间保留多个 adapter/实验 profile 是为了公平复现，不代表生产系统需要动态切换。官方 vLLM
+WS 保留为协议参考并标记本机 `infeasible`，不再阻塞 PyTorch 实验臂。
+
+### 1.3 选型后的收敛与清理原则
+
+- 生产配置只保留一个默认 ASR 后端，不暴露热切换、冷切换或用户选择入口。
+- 胜出方案完成真实试运行和验收后，删除落选模型权重、专用服务启动项及只为其生产接入存在的代码；
+  共用 benchmark 契约、聚合报告和不含敏感逐字稿的失败证据继续保留，用于复核结论。
+- 删除前生成最终决策报告，记录模型 revision、配置、指标、失败原因和制品 SHA-256。删除模型 bytes
+  不影响复现实验身份；将来如需复核，按固定来源和 hash 重新取得。
+- 清理动作只在最终结论明确且生产验收完成后执行，不在 Stage 0/1 探测期间提前删除仍需比较的基线。
 
 ## 2. 已知事实、假设与待检验项
 
@@ -124,15 +161,43 @@ H1/H2 是质量优势假设；H3-H5 是非劣与安全假设。任何硬门禁�
 
 每个候选先用 10 个公开或自有短样本完成：
 
-1. 本地离线加载，网络禁用时不尝试下载。
-2. 16kHz mono s16le 输入正确，非 16kHz 输入由统一预处理器转换一次。
-3. 普通话、英文、静音各能得到结构合法结果。
-4. 流式臂能完成 ready → partial/confirmed → final，EOF 不死锁。
-5. 设备、dtype 与实际执行后端一致；MPS fallback 必须从日志和 profiler 中排除。
-6. 结果无 NaN、负时间戳、时间倒退或超出音频长度。
-7. 进程退出后显存/统一内存和端口释放。
+1. 从项目外已校验 snapshot 本地离线加载，网络禁用时不尝试下载。
+2. `FA-PT-MPS` 必须显式使用 MPS 并检查 profiler/log；任何 CPU fallback 都判该臂
+   `infeasible`，不得把 fallback 结果记为 MPS。
+3. MPS 无论成功与否都独立运行 `FA-PT-CPU`，两者使用不同 manifest 和 run ID。
+4. 16kHz mono s16le 输入正确，非 16kHz 输入由统一预处理器转换一次。
+5. 普通话、英文、静音各能得到结构合法结果。
+6. 流式臂能完成 ready → partial/confirmed → final，EOF 不死锁；本机暂不要求官方 vLLM WS。
+7. 结果无 NaN、负时间戳、时间倒退或超出音频长度。
+8. 进程退出后统一内存和文件描述符释放；仅流式服务臂检查端口释放。
 
 门禁失败的臂保留错误、环境和日志证据，状态记为 `infeasible`，不进入统计排名，也不以零分填充。
+
+### 3.4 Stage 0 初步探测记录（2026-08-24 22:21-22:23 CST）
+
+以下结果来自模型自带 `zh.mp3`、`en.mp3`、`ja.mp3` 和临时生成的 3 秒 16kHz mono s16le 静音，
+只证明本机运行时可行；模型自带样例不具备独立准确率证据，且当前 4 条样本尚未满足 10 条 Stage 0
+门禁。
+
+| 设备 | 真实参数 device | 加载时间 | zh RTF | en RTF | ja RTF | 静音结果 | 进程峰值 RSS |
+|---|---|---:|---:|---:|---:|---|---:|
+| MPS | 全部 `mps:0` | 8.728s | 0.0818 | 0.1404 | 0.0713 | 仅空白 | 约 6.91 GiB |
+| CPU（4 threads） | 全部 `cpu` | 8.376s | 0.1870 | 0.2868 | 0.3437 | 仅空白 | 约 6.91 GiB |
+
+MPS 进程设置 `PYTORCH_ENABLE_MPS_FALLBACK=0`，并在推理前检查所有参数 device；MPS/CPU 都使用项目
+外同一 snapshot、FunASR 1.4.2、PyTorch 2.13.0 和关闭更新/联网的环境。三种语言的文本在两设备间
+一致；静音文本经主归一化后为空。未加热词时中文样例把“开放”识别为“开饭”，加入“开放时间”
+热词后可纠正，因此热词实验必须与无 context 主实验分开登记。
+
+单独的首次 MPS generate 曾为 3.101s，后续同进程样例明显更快，说明存在显著 warm-up 效应；上表
+仅是一次功能探测，不用于宣称设备性能优劣。正式 Stage 1 仍按 §5.2 分离冷启动与 warm 重复、轮换
+顺序并报告置信区间。
+
+新增 adapter 的真实 MPS 接线复测已完成：5616ms raw PCM 按 20ms chunk 输入后产生
+`ready → final`，最终文本为“开放时间早上九点至下午五点。”，整段人工边界为 5616ms，全部模型
+参数仍在 `mps:0`，且未写临时音频。首次实现曾因 FunASR 1.4.2 的 `FunASRNano.generate_chatml`
+实际只接受 `str`/`torch.Tensor` 而拒绝文档所称可用的裸 ndarray；现已在 engine 边界显式把内存
+float32 ndarray 转为 tensor，并加入 vendor 行为回归测试。
 
 ## 4. 语料设计
 
@@ -470,6 +535,22 @@ Fun-ASR WebSocket 候选的本地 `profile.json` 示例；`model_dir` 必须替�
 }
 ```
 
+原生 PyTorch 离线实验使用无端口 profile，并显式指定设备：
+
+```json
+{
+  "kind": "funasr-nano-pytorch",
+  "model_dir": "/absolute/path/outside/repository/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+  "language": "中文",
+  "device": "mps",
+  "hotwords": [],
+  "itn": true,
+  "ncpu": 4
+}
+```
+
+该 profile 必须使用 `--mode offline`；MPS 与 CPU 分别冻结独立 profile、manifest 和 run ID。
+
 ```bash
 uv run vr-asr-benchmark run \
   --manifest manifests/run.json \
@@ -512,9 +593,9 @@ uv run vr-asr-benchmark compare \
 
 | 结果 | 条件 | 动作 |
 |---|---|---|
-| Promote | 全部硬门禁通过；主 CER superiority；其他主指标满足非劣界值 | 先设为 opt-in，完成真实试运行后再改默认 |
-| Specialized | 特定层显著更好，但总体或延迟未达默认门槛 | 保留为方言/离线批处理等显式 profile |
-| Experimental | CI 跨越阈值或样本量不足，但无安全失败 | 扩充语料，不做默认切换 |
+| Promote | 全部硬门禁通过；主 CER superiority；其他主指标满足非劣界值 | 完成受控真实试运行后设为唯一默认后端 |
+| Specialized | 特定层显著更好，但总体或延迟未达默认门槛 | 不进入当前生产主链；仅在另立需求和实验后考虑独立用途 |
+| Experimental | CI 跨越阈值或样本量不足，但无安全失败 | 扩充语料，不改生产默认后端 |
 | Reject | 任一硬门禁失败，或质量/延迟明确越过劣界 | 保持现基线并归档失败证据 |
 | Infeasible | 本机运行时/设备无法正确执行 | 不排名，不宣称质量优劣 |
 
@@ -522,15 +603,18 @@ uv run vr-asr-benchmark compare \
 
 ## 11. 执行顺序与停止规则
 
-1. 完成前置架构 Phase 0-2，并让 Qwen3 对自身重复运行的输出一致。
-2. 冻结语料、归一化、analysis plan、模型 revision 和配置。
-3. 跑 Stage 0；淘汰不可行运行时。
-4. 在 dev 上做有限参数选择，每个实验臂使用同等调参预算。
+1. 使用现有统一 runner 复跑 Qwen3 基线，确认自身重复运行输出一致。
+2. 对 Fun-ASR 执行本地 checkpoint、MPS 和 CPU Stage 0；官方 vLLM WS 直接记录本机
+   `infeasible`。
+3. 实现原生 PyTorch 离线 adapter，冻结公开/dev 语料、归一化、analysis plan、模型 revision 和
+   配置。
+4. 在 dev 上做有限参数选择，每个可行实验臂使用同等调参预算。
 5. 冻结参数并运行 Stage 1 blind。
-6. 只有准确率未明确劣于基线的臂进入 Stage 2。
-7. 只有实时门禁通过的臂进入 Stage 3/4。
+6. 只有准确率未明确劣于基线的臂才建设本机流式 runtime 并进入 Stage 2。
+7. 只有实时门禁通过的臂才接入固定的生产候选配置并进入 Stage 3/4，不建设运行时切换。
 8. 只有系统链路无硬失败的臂进入 Stage 5。
-9. 生成带 CI、失败率、分层结果和 manifest 链接的决策报告。
+9. 生成带 CI、失败率、分层结果和 manifest 链接的决策报告；完成真实试运行后固定唯一后端并清理
+   落选模型和专用生产接入。
 
 提前停止只允许：硬件/运行时不可行、隐私违规、连续三次确定性崩溃、或在至少 30% blind 样本上
 质量已明显越过预注册劣界且置信区间不再可能恢复。提前停止原因必须写入 manifest。

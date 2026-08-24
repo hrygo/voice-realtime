@@ -4,14 +4,14 @@
 
 **Goal:** 在不改变默认行为的前提下，为字幕、会议和交互助手建立显式 ASR 契约、注册表、适配器和可复现实验入口，使 Fun-ASR-Nano 能以候选后端安全接入。
 
-**Architecture:** 字幕/会议使用 `StreamingTranscriber`，交互助手使用 `ConversationSTTFactory`；两者共享后端 ID、能力描述和 profile。先用 WLK adapter 平移现有行为，再增加 benchmark runner 和 Fun-ASR adapter，生产切换只允许 idle 冷切换。
+**Architecture:** 字幕/会议使用 `StreamingTranscriber`，交互助手使用 `ConversationSTTFactory`；两者共享后端 ID、能力描述和 profile。先用 WLK adapter 平移现有行为，再增加 benchmark runner 和 Fun-ASR adapter。多后端能力只服务于实验比较；最终生产固定单一胜出后端，不实现运行时切换。
 
 **Tech Stack:** Python 3.12、asyncio、Pydantic v2、Pipecat、WebSockets、WhisperLiveKit、pytest、PostgreSQL（仅会议 confirmed 文本）。
 
 **Spec:** `docs/superpowers/specs/2026-08-24-asr-backend-pluggability-design.md`
 
 **Execution status (2026-08-24):** 基础重构 Task 1-4、7 已合入 `main`；Task 5 已在
-`feature/asr-benchmark-runner` 实现并通过专项测试、mypy 与 ruff。Fun-ASR 候选、冷切换和真实语料
+`feature/asr-benchmark-runner` 实现并通过专项测试、mypy 与 ruff。Fun-ASR 候选和真实语料
 实验尚未执行。实际测试文件沿用项目既有 `tests/test_runtime.py`，未创建计划草案中的
 `tests/test_ui_runtime.py`。
 
@@ -377,7 +377,11 @@ git add src/voice_realtime/asr/adapters/pipecat_sensevoice.py src/voice_realtime
 git commit -m "refactor(asr): 抽离交互助手 STT 工厂"
 ```
 
-### Task 8: 增加空闲冷切换与失败恢复
+### Task 8: ~~增加空闲冷切换与失败恢复~~（取消）
+
+**取消原因（2026-08-24）：** 科学对比只需 benchmark runner 并列执行多个 adapter；最终选型后生产
+固定单一后端，落选模型和专用接入可清理。`UIRuntime` 也不拥有外部 ASR 服务进程，因此不再建设
+没有生产需求支撑的 supervisor、切换事务或 UI/API 切换入口。以下步骤仅保留为历史计划，不执行。
 
 **Files:**
 - Create: `src/voice_realtime/asr/switching.py`

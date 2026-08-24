@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from voice_realtime.asr.adapters.funasr_nano_pytorch import (
+    FunASRNanoPyTorchAdapter,
+    FunASRNanoPyTorchInference,
+    FunASRNanoPyTorchRawEventSink,
+)
 from voice_realtime.asr.adapters.funasr_nano_ws import (
     FunASRNanoWSAdapter,
     FunASRNanoWSConnectFactory,
@@ -13,7 +18,11 @@ from voice_realtime.asr.adapters.wlk import (
     WLKStreamingAdapter,
 )
 from voice_realtime.asr.contracts import ASRSessionContext, StreamingTranscriber
-from voice_realtime.asr.profiles import ASRProfile, FunASRNanoWSProfile
+from voice_realtime.asr.profiles import (
+    ASRProfile,
+    FunASRNanoPyTorchProfile,
+    FunASRNanoWSProfile,
+)
 from voice_realtime.asr.registry import ASRBackendRegistry
 
 
@@ -27,7 +36,7 @@ def build_wlk_registry(
     registry = ASRBackendRegistry()
 
     def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
-        if isinstance(profile, FunASRNanoWSProfile):
+        if isinstance(profile, (FunASRNanoWSProfile, FunASRNanoPyTorchProfile)):
             raise TypeError("Fun-ASR profile cannot be constructed by the WLK registry")
         if stream_factory is None:
             return WLKStreamingAdapter(
@@ -77,4 +86,28 @@ def build_funasr_nano_ws_registry(
         )
 
     registry.register_streaming("funasr-nano-ws", create)
+    return registry
+
+
+def build_funasr_nano_pytorch_registry(
+    engine: FunASRNanoPyTorchInference,
+    *,
+    raw_event_sink: FunASRNanoPyTorchRawEventSink | None = None,
+) -> ASRBackendRegistry:
+    """注册复用同一个 engine 的 Fun-ASR Nano 原生离线实验臂。"""
+    registry = ASRBackendRegistry()
+
+    def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
+        if not isinstance(profile, FunASRNanoPyTorchProfile):
+            raise TypeError("non-PyTorch profile cannot use the Fun-ASR PyTorch registry")
+        return FunASRNanoPyTorchAdapter(
+            engine=engine,
+            language=profile.language,
+            context=context,
+            hotwords=profile.hotwords,
+            itn=profile.itn,
+            raw_event_sink=raw_event_sink,
+        )
+
+    registry.register_streaming("funasr-nano-pytorch", create)
     return registry

@@ -11,12 +11,21 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
+from voice_realtime.asr.adapters.funasr_nano_pytorch import (
+    FunASRNanoPyTorchEngine,
+    FunASRNanoPyTorchInference,
+)
 from voice_realtime.asr.contracts import ASRSessionContext, StreamingTranscriber
 from voice_realtime.asr.defaults import (
+    build_funasr_nano_pytorch_registry,
     build_funasr_nano_ws_registry,
     build_wlk_registry,
 )
-from voice_realtime.asr.profiles import ASRProfile, FunASRNanoWSProfile
+from voice_realtime.asr.profiles import (
+    ASRProfile,
+    FunASRNanoPyTorchProfile,
+    FunASRNanoWSProfile,
+)
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.benchmarks.asr.manifest import (
     CorpusSample,
@@ -55,16 +64,53 @@ def _loopback_service_url(host: str, port: int) -> str:
 
 def _build_streaming_registry(
     profile: ASRProfile,
-    service_url: str,
+    service_url: str | None = None,
     raw_event_sink: Callable[[Mapping[str, object]], None] | None = None,
+    *,
+    pytorch_engine: FunASRNanoPyTorchInference | None = None,
 ) -> ASRBackendRegistry:
     """按判别 profile 选择对应协议 registry。"""
+    if isinstance(profile, FunASRNanoPyTorchProfile):
+        if pytorch_engine is None:
+            raise ValueError("Fun-ASR PyTorch profile requires a shared inference engine")
+        return build_funasr_nano_pytorch_registry(
+            pytorch_engine,
+            raw_event_sink=raw_event_sink,
+        )
+    if service_url is None:
+        raise ValueError("streaming ASR profile requires a service URL")
     if isinstance(profile, FunASRNanoWSProfile):
         return build_funasr_nano_ws_registry(
             service_url,
             raw_event_sink=raw_event_sink,
         )
     return build_wlk_registry(service_url, raw_event_sink=raw_event_sink)
+
+
+def _require_compatible_mode(profile: ASRProfile, mode: str) -> None:
+    """阻止把原生离线推理的缓冲时间误报为实时流式指标。"""
+    if isinstance(profile, FunASRNanoPyTorchProfile) and mode != ReplayMode.OFFLINE.value:
+        raise ValueError("Fun-ASR PyTorch profile requires --mode offline")
+
+
+def _verify_pytorch_run_identity(
+    profile: FunASRNanoPyTorchProfile,
+    *,
+    device: str,
+    parameters: Mapping[str, object],
+) -> None:
+    """核对实际 profile 与盲测前冻结的 manifest 参数。"""
+    if device != profile.device:
+        raise ValueError("ASR profile device does not match run manifest")
+    expected: dict[str, object] = {
+        "language": profile.language,
+        "hotwords": list(profile.hotwords),
+        "itn": profile.itn,
+        "ncpu": profile.ncpu,
+    }
+    for name, value in expected.items():
+        if parameters.get(name) != value:
+            raise ValueError(f"ASR profile {name} does not match run manifest")
 
 
 def _require_external_model_dir(model_dir: Path, repo_root: Path) -> Path:
@@ -123,7 +169,23 @@ def _run_command(args: argparse.Namespace) -> int:
         raise ValueError("ASR profile backend_id does not match run manifest")
     model_dir = _require_external_model_dir(profile.model_dir, repo_root)
     verify_file_hashes(model_dir, manifest.model_files_sha256)
-    service_url = _loopback_service_url(profile.host, profile.port)
+    mode = ReplayMode(str(args.mode))
+    _require_compatible_mode(profile, mode.value)
+    service_url: str | None = None
+    pytorch_engine: FunASRNanoPyTorchInference | None = None
+    if isinstance(profile, FunASRNanoPyTorchProfile):
+        _verify_pytorch_run_identity(
+            profile,
+            device=manifest.device,
+            parameters=manifest.parameters,
+        )
+        pytorch_engine = FunASRNanoPyTorchEngine(
+            model_dir=model_dir,
+            device=profile.device,
+            ncpu=profile.ncpu,
+        )
+    else:
+        service_url = _loopback_service_url(profile.host, profile.port)
 
     def transcriber_factory(
         sample: CorpusSample,
@@ -131,7 +193,12 @@ def _run_command(args: argparse.Namespace) -> int:
         vendor_event_sink: Callable[[Mapping[str, object]], None],
     ) -> StreamingTranscriber:
         del sample
-        registry = _build_streaming_registry(profile, service_url, vendor_event_sink)
+        registry = _build_streaming_registry(
+            profile,
+            service_url,
+            vendor_event_sink,
+            pytorch_engine=pytorch_engine,
+        )
         return registry.create_streaming(profile, context)
 
     output_value = args.output_dir
@@ -147,7 +214,7 @@ def _run_command(args: argparse.Namespace) -> int:
             corpus_root=Path(str(args.corpus_root)),
             output_dir=output_dir,
             transcriber_factory=transcriber_factory,
-            mode=ReplayMode(str(args.mode)),
+            mode=mode,
             chunk_ms=int(args.chunk_ms),
             final_timeout_secs=float(args.final_timeout_secs),
         )

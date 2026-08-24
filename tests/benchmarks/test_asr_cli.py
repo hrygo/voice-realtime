@@ -8,11 +8,13 @@ from pathlib import Path
 import pytest
 
 from voice_realtime.asr.contracts import ASRSessionContext
-from voice_realtime.asr.profiles import FunASRNanoWSProfile
+from voice_realtime.asr.profiles import FunASRNanoPyTorchProfile, FunASRNanoWSProfile
 from voice_realtime.benchmarks.asr.cli import (
     _build_streaming_registry,
     _loopback_service_url,
+    _require_compatible_mode,
     _require_external_model_dir,
+    _verify_pytorch_run_identity,
     build_parser,
     main,
 )
@@ -82,6 +84,73 @@ def test_run_registry_selects_funasr_nano_adapter_from_discriminated_profile() -
 
     assert backend.backend_id == "funasr-nano-ws"
     assert backend.uri == "ws://127.0.0.1:10095"
+
+
+def test_run_registry_selects_shared_funasr_pytorch_engine_without_service_url() -> None:
+    profile = FunASRNanoPyTorchProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        device="mps",
+    )
+
+    def engine(
+        audio: object,
+        *,
+        language: str,
+        hotwords: tuple[str, ...],
+        itn: bool,
+    ) -> object:
+        del audio, language, hotwords, itn
+        return [{"text": "结果"}]
+
+    registry = _build_streaming_registry(profile, pytorch_engine=engine)
+    backend = registry.create_streaming(
+        profile,
+        ASRSessionContext(source_epoch=1, offset_ms=0, purpose="subtitles"),
+    )
+
+    assert backend.backend_id == "funasr-nano-pytorch"
+    assert backend.uri == "offline://funasr-nano-pytorch"
+
+
+def test_pytorch_profile_requires_offline_mode() -> None:
+    profile = FunASRNanoPyTorchProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        device="cpu",
+    )
+
+    _require_compatible_mode(profile, "offline")
+    with pytest.raises(ValueError, match="offline"):
+        _require_compatible_mode(profile, "realtime-1x")
+
+
+def test_pytorch_profile_must_match_frozen_manifest_identity() -> None:
+    profile = FunASRNanoPyTorchProfile(
+        model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+        language="中文",
+        device="mps",
+        hotwords=("开放时间",),
+        itn=True,
+        ncpu=4,
+    )
+    parameters = {
+        "language": "中文",
+        "hotwords": ["开放时间"],
+        "itn": True,
+        "ncpu": 4,
+        "chunk_ms": 20,
+    }
+
+    _verify_pytorch_run_identity(profile, device="mps", parameters=parameters)
+    with pytest.raises(ValueError, match="device"):
+        _verify_pytorch_run_identity(profile, device="cpu", parameters=parameters)
+    with pytest.raises(ValueError, match="hotwords"):
+        _verify_pytorch_run_identity(
+            profile,
+            device="mps",
+            parameters={**parameters, "hotwords": []},
+        )
 
 
 def test_benchmark_rejects_model_directory_inside_repository(tmp_path: Path) -> None:

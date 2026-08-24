@@ -92,7 +92,48 @@ class FunASRNanoWSProfile(BaseModel):
         return normalized
 
 
+class FunASRNanoPyTorchProfile(BaseModel):
+    """Fun-ASR Nano 原生 PyTorch 离线实验臂的冻结运行参数。"""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["funasr-nano-pytorch"] = "funasr-nano-pytorch"
+    model_dir: Path
+    language: str = Field(min_length=1, max_length=64)
+    device: Literal["mps", "cpu"]
+    hotwords: tuple[str, ...] = Field(default=(), max_length=100)
+    itn: bool = True
+    ncpu: int = Field(default=4, ge=1, le=32)
+
+    @field_validator("model_dir")
+    @classmethod
+    def _require_external_model_path(cls, value: Path) -> Path:
+        if not value.is_absolute():
+            raise ValueError("Fun-ASR model_dir 必须是项目外模型缓存的绝对路径")
+        return value
+
+    @field_validator("language")
+    @classmethod
+    def _strip_language(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("字段不能为空")
+        return stripped
+
+    @field_validator("hotwords")
+    @classmethod
+    def _normalize_hotwords(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        normalized = tuple(value.strip() for value in values)
+        if any(not value or len(value) > 100 for value in normalized):
+            raise ValueError("热词必须为 1 到 100 个字符")
+        return normalized
+
+
 ASRProfile = Annotated[
-    WLKQwen3Profile | WLKSenseVoiceProfile | WLKAutoProfile | FunASRNanoWSProfile,
+    WLKQwen3Profile
+    | WLKSenseVoiceProfile
+    | WLKAutoProfile
+    | FunASRNanoWSProfile
+    | FunASRNanoPyTorchProfile,
     Field(discriminator="kind"),
 ]

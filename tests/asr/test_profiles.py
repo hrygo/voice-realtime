@@ -7,6 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from voice_realtime.asr.profiles import (
     ASRProfile,
+    FunASRNanoPyTorchProfile,
     FunASRNanoWSProfile,
     WLKAutoProfile,
     WLKQwen3Profile,
@@ -94,4 +95,42 @@ def test_funasr_nano_ws_profile_rejects_project_relative_model_path() -> None:
             language="中文",
             host="127.0.0.1",
             port=10095,
+        )
+
+
+def test_funasr_nano_pytorch_profile_is_discriminated_without_service_fields() -> None:
+    profile = TypeAdapter(ASRProfile).validate_python(
+        {
+            "kind": "funasr-nano-pytorch",
+            "model_dir": "/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+            "language": "中文",
+            "device": "mps",
+            "hotwords": ["开放时间"],
+            "itn": True,
+            "ncpu": 4,
+        }
+    )
+
+    assert isinstance(profile, FunASRNanoPyTorchProfile)
+    assert profile.device == "mps"
+    assert profile.hotwords == ("开放时间",)
+    assert profile.ncpu == 4
+    assert "host" not in profile.model_dump()
+    assert "port" not in profile.model_dump()
+
+
+def test_funasr_nano_pytorch_profile_requires_explicit_device() -> None:
+    with pytest.raises(ValidationError, match="device"):
+        FunASRNanoPyTorchProfile(  # type: ignore[call-arg]
+            model_dir="/model-cache/FunAudioLLM--Fun-ASR-Nano-2512/snapshots/master",
+            language="中文",
+        )
+
+
+def test_funasr_nano_pytorch_profile_rejects_relative_model_path() -> None:
+    with pytest.raises(ValidationError, match="绝对路径"):
+        FunASRNanoPyTorchProfile(
+            model_dir="runtime/fun-asr-nano-2512",
+            language="中文",
+            device="mps",
         )
