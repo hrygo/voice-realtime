@@ -2,8 +2,14 @@
 
 > **环境基准**：Apple M5 Max / 128GB 统一内存 / macOS 26.6.2 / Python 3.12.14 / PyTorch 2.13.0 (MPS)
 > **核心决策**：(1) 字幕/会议 ASR 选型 (`Qwen3-ASR` vs `Fun-ASR-Nano`)；(2) 交互 STT 选型 (`SenseVoiceSmall` vs `Fun-ASR-Nano`)
-> **方案版本**：v1.1（轻量化高 ROI 科学评测与快速执行基准）
-> **状态**：**已定稿（涵盖精简正交语料配额、阶梯式执行矩阵、Stage 0 门禁实测数据与判定契约）**
+> **方案版本**：v1.2（`60 min Core + 45 min Reserve` 序贯盲测与 finalist-only 验收）
+> **状态**：**执行中（v1.2 设计已批准；须在 blind 开封前冻结 manifests 与 `analysis-plan.json`）**
+
+> **v1.2 修订摘要**：v1.1 的 105 分钟完整 Blind Set 保留为最大证据集，但拆为预冻结的 60 分钟
+> Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；已完成的 Fun-ASR
+> Stage 0 不重跑；Stage 2/4 先 screen、finalist 再 confirm；Stage 3 候选的前 30 分钟与 60 分钟
+> reliability 长跑共用同一连续会话；Stage 5 只由每个决策方向的最终候选执行；生产收敛不重复已有
+> Stage 3/4/5 主测量。决策理由见 [ADR-004](decisions/0004-asr-sequential-evaluation.md)。
 
 ---
 
@@ -25,7 +31,7 @@
    - 3.5 [Stage 0 runner 门禁结果（2026-08-24 22:47-22:48 CST）](#35-stage-0-runner-门禁结果2026-08-24-2247-2248-cst)
 4. [语料设计（轻量化与正交多标签）](#4-语料设计轻量化与正交多标签)
    - 4.1 [精简三层语料体系](#41-精简三层语料体系)
-   - 4.2 [目标域正交分层配额（~105 min）](#42-目标域正交分层配额105-min)
+   - 4.2 [目标域序贯正交配额（60 min Core + 45 min Reserve）](#42-目标域序贯正交配额60-min-core--45-min-reserve)
    - 4.3 [标注协议](#43-标注协议)
    - 4.4 [归一化规则](#44-归一化规则)
    - 4.5 [数据冻结与防泄漏](#45-数据冻结与防泄漏)
@@ -46,11 +52,11 @@
    - 7.3 [样本量与检验功效（Power 校验）](#73-样本量与检验功效power-校验)
    - 7.4 [最小实际意义](#74-最小实际意义)
 8. [执行矩阵与耗时预算](#8-执行矩阵与耗时预算)
-   - 8.1 [Stage 1：模型核心离线质量（全量 ~6 min）](#81-stage-1模型核心离线质量全量-6-min)
-   - 8.2 [Stage 2：流式质量与延迟（典型切片 ~15-20 min）](#82-stage-2流式质量与延迟典型切片-15-20-min)
-   - 8.3 [Stage 3：字幕/会议系统链路（~15-30 min）](#83-stage-3字幕会议系统链路15-30-min)
-   - 8.4 [Stage 4：交互助手链路（~10 min）](#84-stage-4交互助手链路10-min)
-   - 8.5 [Stage 5：长时稳定性与故障注入（~60 min）](#85-stage-5长时稳定性与故障注入60-min)
+   - 8.1 [Stage 1：模型核心序贯盲测](#81-stage-1模型核心序贯盲测)
+   - 8.2 [Stage 2：流式 Screen 与 Confirm](#82-stage-2流式-screen-与-confirm)
+   - 8.3 [Stage 3：字幕/会议系统链路](#83-stage-3字幕会议系统链路)
+   - 8.4 [Stage 4：交互助手 Screen 与 Confirm](#84-stage-4交互助手-screen-与-confirm)
+   - 8.5 [Stage 5：Finalist 长时稳定性与故障注入](#85-stage-5finalist-长时稳定性与故障注入)
 9. [结果数据契约](#9-结果数据契约)
    - 9.1 [`manifest.json`](#91-manifestjson)
    - 9.2 [`hypotheses.jsonl`](#92-hypothesesjsonl)
@@ -116,13 +122,15 @@
 
 ```mermaid
 flowchart TD
-    A[本地 Checkpoint 完整性核验] --> B[PyTorch MPS 加载探测<br/>禁止 CPU fallback]
-    B --> C[独立 PyTorch CPU 加载对照探测]
-    C --> D[原生离线 Adapter 与 Stage 1 Dev 比较]
-    D --> E{通过质量与非劣门禁?}
-    E -- 是 --> F[建设本机流式服务与 Stage 2/3/4]
-    E -- 否 --> G[保持现有基线 / 归档结论]
-    F --> H[胜出后固定为生产唯一后端]
+    A[核验既有 Fun Stage 0<br/>只补 Qwen/Sense] --> B[冻结 Dev + Core + Reserve<br/>分析计划与两个 look]
+    B --> C[Stage 1A: 三 primary 臂各 60m Core]
+    C --> D{Advance / Reject / Continue?}
+    D -- Continue --> E[Stage 1B: 对应 family +45m Reserve]
+    D -- Reject --> F[保持现有基线 / 归档]
+    D -- Advance --> G[Finalist-only Stage 2/3/4]
+    E --> G
+    G --> H[每决策方向最多一个 60m Reliability]
+    H --> I[增量部署 smoke → 唯一生产后端]
 ```
 
 测试期间保留多个 adapter / 实验 profile 是为了公平复现，不代表生产系统需要动态切换。官方 vLLM WS 保留为协议参考并标记本机 `infeasible`，不再阻塞 PyTorch 实验臂。
@@ -182,16 +190,18 @@ flowchart TD
 
 | 实验臂 ID | 模型与运行时 | 设备 | 角色 | 排名资格 |
 |:---|:---|:---:|:---|:---|
-| `Q3-WLK-MPS` | Qwen3-ASR-1.7B / WLK qwen3-streaming | MPS | 当前主基线 | **必选** |
-| `SV-WLK-CPU` | SenseVoiceSmall / WLK LocalAgreement | CPU | 轻量对照 | **必选** |
-| `FA-PT-MPS` | Fun-ASR-Nano-2512 / PyTorch-FunASR | MPS | 主要候选 | 通过 Stage 0 后 |
-| `FA-PT-CPU` | Fun-ASR-Nano-2512 / PyTorch-FunASR | CPU | 兼容对照 | MPS 不可用时仍单列 |
+| `Q3-WLK-MPS` | Qwen3-ASR-1.7B / WLK qwen3-streaming | MPS | 字幕/会议当前基线 | **Stage 1 必选** |
+| `SV-WLK-CPU` | SenseVoiceSmall / WLK LocalAgreement | CPU | 交互当前基线 | **Stage 1 必选；不进入字幕 Stage 2/3** |
+| `FA-PT-MPS` | Fun-ASR-Nano-2512 / PyTorch-FunASR | MPS | 两个决策共享候选 | **Stage 1 必选；一次输出复用** |
+| `FA-PT-CPU` | Fun-ASR-Nano-2512 / PyTorch-FunASR | CPU | 兼容对照 | **Stage 0-only；仅 MPS 不可行时升级** |
 | `FA-WS-vLLM-CUDA` | Fun-ASR 固定官方实时 WS / vLLM | CUDA | 协议参考 | **本机排除 (Infeasible)** |
-| `FA-WS-PT-MPS` | 待实现的 PyTorch 本机 WS 服务 | MPS | 流式候选 | 独立登记并通过 Stage 0 后 |
-| `FA-GGUF-Q5` | Fun-ASR-Nano GGUF Q5 / llama.cpp | CPU | 速度/体积候选 | 通过正确性门禁后 |
-| `FA-GGUF-Q8` | Fun-ASR-Nano GGUF Q8 / llama.cpp | CPU | 质量量化候选 | 通过正确性门禁后 |
+| `FA-WS-PT-MPS` | 待实现的 PyTorch 本机 WS 服务 | MPS | 字幕流式候选 | **仅 Stage 1 finalist 建设** |
+| `FA-GGUF-Q5` | Fun-ASR-Nano GGUF Q5 / llama.cpp | CPU | 探索路径 | **v1.2 deferred，不进入选型关键路径** |
+| `FA-GGUF-Q8` | Fun-ASR-Nano GGUF Q8 / llama.cpp | CPU | 探索路径 | **v1.2 deferred，不进入选型关键路径** |
 
-`FA-PT-MPS` 失败时不得静默落到 CPU；必须把该臂标记为 `infeasible`，另跑 `FA-PT-CPU`。每个模型制品记录来源、revision、SHA-256、文件清单和运行时识别结果。下载时优先检查 ModelScope；只有目标 GGUF/版本缺失或运行时明确要求时才回退官方 Hugging Face/GitHub release，并记录原因。
+`FA-PT-MPS` 失败时不得静默落到 CPU；必须把该臂标记为 `infeasible`，再决定是否把已完成 Stage 0 的
+`FA-PT-CPU` 升级为正式实验臂。MPS 可行时 CPU 不跑 Core/Reserve。每个模型制品记录来源、revision、
+SHA-256、文件清单和运行时识别结果。GGUF 在 v1.2 不下载、不实现、不运行；将来另立实验才按来源规则处理。
 
 模型制品不得放在 Git 工作树内。当前本机使用 ModelScope cache 的标准 repo/snapshot 布局；每台执行主机通过 `modelscope scan-cache` 定位实际绝对路径，并把该路径写入本地、不入库的 `profile.json`。`FunASRNanoWSProfile` 拒绝相对 `model_dir`，防止候选模型重新落回 `runtime/`。
 
@@ -221,6 +231,11 @@ flowchart TD
 ### 3.3 Stage 0 可行性门禁
 
 每个候选先用 10 个公开或自有短样本完成以下门禁检查：
+
+> [!IMPORTANT]
+> v1.2 执行时，Fun-ASR MPS/CPU 已有 §3.5 的 10 样本证据。只要模型 hash、profile、adapter 契约和
+> 运行身份未漂移，就标记 `reused` 而不重跑；本轮只补 Qwen MPS 与 SenseVoice CPU。Stage 0 因此是
+> 三模型、四实验臂的证据汇总，不是四臂都重新执行。
 
 1. **离线加载与网络隔离**：从项目外已校验 snapshot 本地离线加载，网络禁用时不尝试下载。
 2. **禁止静默 Fallback**：`FA-PT-MPS` 必须显式使用 MPS 并检查 profiler/log；任何 CPU fallback 都判该臂 `infeasible`，不得把 fallback 结果记为 MPS。
@@ -279,29 +294,39 @@ flowchart TD
 
 | 语料分层 | 用途 | 推荐精简规模 | 说明 |
 |:---|:---|---:|:---|
-| **Public Reproducibility** | 与公开研究可对照 | $\approx 1 \sim 2\text{ 小时}$ | AISHELL-1 / Common Voice 验证子集；固定版本和 checksum |
-| **Target-domain Blind Set** | 生产选型主依据 | **$\mathbf{\approx 105\text{ min} (1.75h)}$** | 真实声学与词汇分布；$\approx 100$ 条样本，$\approx 2.2\text{ 万字}$；测试前封存 |
-| **Reliability Set** | 长会与故障注入 | $\approx 1 \sim 1.5\text{ 小时}$ | $1 \times 60\text{min}$ 连续会议或 $2 \times 30\text{min}$ 真实会议 + 注入断线与崩溃 |
+| **Public Reproducibility** | 与公开研究可对照 | $\approx 1 \sim 2\text{ 小时}$ | 版本、许可和 checksum 先冻结；完整运行延后到最终 baseline + winner，不阻塞选型 |
+| **Target-domain Blind Set** | 生产选型主依据 | **$60\text{ min Core} + 45\text{ min Reserve}$** | 最大 105 min、约 98–105 个预分配切片、约 2.2 万字；两个 look 均在开封前冻结 |
+| **Reliability Set** | 最终候选长会与故障注入 | **$1 \times 60\text{min}$** | 每个决策方向只由一个 finalist 执行；会议候选与 Stage 3 共用同一连续会话 |
 
 > [!IMPORTANT]
-> 公开集和目标域集分别报告，不用公开集均值掩盖本项目回退。涉及真实会议时需取得授权、脱敏并将语料保存在项目目录外；项目只保存不可逆样本 ID、元数据和 SHA-256，不保存音频副本。
+> 公开集和目标域集分别报告，不用公开集均值掩盖本项目回退。完整 Public 仅作为最终可复现附录，
+> 不参与 Stage 1 早停。涉及真实会议时需取得授权、脱敏并将语料保存在项目目录外；项目只保存
+> 不可逆样本 ID、元数据和 SHA-256，不保存音频副本。
 
 ---
 
-### 4.2 目标域正交分层配额（~105 min）
+### 4.2 目标域序贯正交配额（60 min Core + 45 min Reserve）
 
-摒弃将互包含场景线性叠加的旧方案，采用**正交多标签切片架构（Multi-label Orthogonal Slicing）**：一段 30 分钟的多人自然会议录音，可同时打上 `[远场, 重叠说话, 领域词, 数字]` 标签，在统计分析时按切片投影计算，大幅降低录制与标注成本。
+保留 v1.1 的**正交多标签切片架构（Multi-label Orthogonal Slicing）**，但在开封前把全部样本
+不可变地分配到 `blind-core` 与 `blind-reserve`。一段多人会议可同时带有 `[远场, 重叠说话,
+领域词, 数字]` 标签，唯一音频时长只计一次；Core/Reserve 均覆盖所有主层，Reserve 不是按模型错误
+挑出的“困难集”。两个 look 使用互不重叠的完整 `analysis_cluster_id`，session 和说话人均不得跨 look。
 
-| 主层场景分类 | 时长配额 | 样本切片数 | 最低人数 | 核心考察变量与正交标签 |
+| 主层场景分类 | Core 时长 / 目标切片 | Reserve 时长 / 目标切片 | 最大总时长 | 核心考察变量与正交标签 |
 |:---|---:|---:|---:|:---|
-| **近讲清晰普通话** | 15 min | 15 ~ 20 条 | 6 | 基础声学上限、高信噪比纯净语音 |
-| **远场多人自然会议** | 30 min | 3 ~ 5 会话 | 8 | 麦克风距离、自然轮换、重叠说话 (Overlap)、停顿 |
-| **普英混说 (Code-Switch)** | 15 min | 15 ~ 20 条 | 6 | 中英混说、技术产品名、英文术语（如 PR, Git, Kubernetes） |
-| **方言与地区口音** | 20 min | 20 ~ 30 条 | 8 | 4 个主要口音组（西南、粤普、江浙、北方）各 5 min |
-| **噪声与混响环境** | 10 min | 10 ~ 15 条 | 4 | 机械键盘敲击、风扇嗡鸣、开放办公区环境背景音 |
-| **数字、日期与实体专项** | 10 min | 15 ~ 20 条 | 4 | ITN 原始与规范化双计分、人名、项目缩写、时间金额 |
-| **静音/非语音负样本** | 5 min | 5 ~ 10 条 | 0 | 纯音乐、敲击声、绝对静音（检验静音幻觉与虚警） |
-| **合计** | **$\mathbf{105\text{ min}}$** | **$\approx 100\text{ 条}$** | **$\ge 20\text{ 人}$** | **总字数约 2.2 万字，全场景正交切片覆盖** |
+| **近讲清晰普通话** | 9 min / 10 | 6 min / 6 | 15 min | 基础声学上限、高信噪比纯净语音 |
+| **远场多人自然会议** | 17 min / 3 | 13 min / 2 | 30 min | 麦克风距离、自然轮换、重叠说话、停顿 |
+| **普英混说 (Code-Switch)** | 9 min / 10 | 6 min / 7 | 15 min | 中英混说、技术产品名、英文术语 |
+| **方言与地区口音** | 11 min / 14 | 9 min / 10 | 20 min | 西南、粤普、江浙、北方四组均进入 Core |
+| **噪声与混响环境** | 6 min / 7 | 4 min / 5 | 10 min | 键盘、风扇、开放办公区背景音 |
+| **数字、日期与实体专项** | 6 min / 10 | 4 min / 7 | 10 min | ITN 双计分、人名、项目缩写、时间金额 |
+| **静音/非语音负样本** | 2 min / 4 | 3 min / 3 | 5 min | 音乐、敲击声、绝对静音；不进入 CER 分母 |
+| **合计** | **60 min / 约 58** | **45 min / 约 40** | **105 min** | **约 98 个目标切片；容许转码边界造成小幅数量变化，但时长与分层不得漂移** |
+
+全局唯一说话人不少于 20 人；分层人数是覆盖要求而非可相加人数。Core 目标不少于 14 名、Reserve
+目标不少于 6 名互不重叠说话人。`analysis-plan.json` 必须冻结两个 manifest SHA-256、每层配额、
+`analysis_cluster_id`、样本顺序和停止边界。Core 提前停止时，报告只能声明“在 60 分钟 look 停止”，
+不得声称完成 105 分钟全量证据。
 
 ---
 
@@ -313,7 +338,9 @@ flowchart TD
 4. **结构化实体计分**：数字、日期、货币、百分比同时做 verbatim 和 ITN 评分。
 5. **说话人匿名时间戳**：Speaker reference 以时间区间和匿名 speaker ID 标注；无法判断的重叠段显式标为 uncertain。
 6. **领域词元数据绑定**：每个领域词记录规范形式、允许变体、出现次数和是否提供给热词/context。
-7. **一致性前置验证**：先在 15 分钟双标子集上计算一致性；normalized CER 差异超过 1.0 个绝对百分点时，修订规范并重新标注受影响范围。
+7. **一致性前置验证**：先运行 5 分钟分层 `label-calibration-pilot`；normalized CER 差异超过
+   1.0 个绝对百分点时扩展至 15 分钟并修订规范。完整 Core 与 Reserve reference 必须在首次 Core
+   模型输出可见前全部冻结；不得看完 Core 后再标 Reserve。
 
 ---
 
@@ -331,6 +358,8 @@ flowchart TD
 ### 4.5 数据冻结与防泄漏
 
 - **集间隔离**：`dev` 集用于参数选择，`blind` 集只在配置冻结后运行一次正式评估。
+- **两段同时冻结**：`blind-core`、`blind-reserve` 的音频、reference、cluster、样本顺序与 hash 必须在
+  Core 运行前同时封存；Core/Reserve 是一次序贯盲测的两个部分，不是两次可重新调参的实验。
 - **热词防透传**：热词表仅来自部署时可获得的会议元数据或预声明词典，不从 blind reference 反向生成。
 - **不可变 Manifest**：语料 manifest 固定 `corpus_version`、license/consent、sample SHA-256、duration、speaker、scenario、language、noise、overlap 和 reference revision。
 - **版本分流原则**：任何人工查看 blind 输出后的配置修改都创建新 experiment family，不覆盖原结果。
@@ -354,9 +383,11 @@ flowchart TD
 1. **电源与负载锁定**：接通电源，固定系统电源模式（高功率模式）；关闭无关高负载任务。
 2. **冷热分离与高效重复**：
    - 准确率评估（Greedy 确定性解码）只需完整运行 1 次，输出确定性文本；
-   - 性能评估（RTF/延迟采样）按 Latin square 顺序运行 3 次（第 1 次冷启动，第 2-3 次 warm 重复），兼顾统计精度与执行效率。
+   - 性能评估只在预冻结短 `perf-block` 上按 Latin square 运行 3 次（第 1 次 cold、第 2–3 次 warm），
+     不把完整 Core/Reserve 重复三次。
 3. **温控熔断重跑**：轮次间记录温度/频率可用指标；出现 thermal throttling 时整 block 作废重跑，不删改单个差结果。
-4. **采样与随机种子**：存在采样时固定 seed 并运行 3 个 seed，结果按录音配对。
+4. **随机性边界**：主实验固定 deterministic greedy 与单一 seed；禁止额外 seed sweep。随机采样只能
+   另立探索实验，不进入主结论或主时间预算。
 5. **参数全量冻结**：记录并冻结线程数、device、dtype、量化、VAD、context、chunk/window、beam 和 decoder 参数。
 
 ---
@@ -367,11 +398,11 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    S1["Stage 1: 模型核心<br/>同音频 · 同分段 · 无分人 (~6 min 离线跑完)"]
-    S2["Stage 2: 流式核心<br/>同 PCM chunks · 典型切片 1× 回放 (~15-20 min)"]
-    S3["Stage 3: 系统链路<br/>各 adapter · 固定 Sortformer · EOF/重连 (~15-30 min)"]
-    S4["Stage 4: 交互链路<br/>固定 VAD/LLM/TTS/回声防线 · 仅换 STT Factory (~10 min)"]
-    S5["Stage 5: 长时与故障<br/>60min 稳定性 · 故障与断线注入 (~60 min)"]
+    S1["Stage 1: 模型核心序贯盲测<br/>60m Core · 不确定时 +45m Reserve"]
+    S2["Stage 2: 流式核心<br/>8–10m Screen · finalist 15–20m Confirm"]
+    S3["Stage 3: 字幕/会议链路<br/>一次 30m baseline · finalist 连续长跑前 30m"]
+    S4["Stage 4: 交互链路<br/>5 轮 Screen · finalist 10–15 轮 Confirm"]
+    S5["Stage 5: Finalist 长时与故障<br/>每个决策方向最多 1×60m"]
 
     S1 --> S2 --> S3 --> S4 --> S5
 ```
@@ -469,22 +500,31 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 ### 7.2 置信区间与检验
 
-1. **Cluster Bootstrap**：对候选与基线的配对 CER 差、SA-CER 差和延迟差做 10,000 次 cluster bootstrap，报告 95% CI。
+1. **Cluster Bootstrap**：对候选与基线的配对 CER 差、SA-CER 差和延迟差做 10,000 次 cluster
+   bootstrap；常规描述报告 95% CI，序贯停止另用 §7.4 的 99%/96% decision CI。
 2. **多重比较校正**：主假设按字幕/会议和交互两个 family 分开；family 内多候选比较使用 Holm 校正。
 3. **效应量并列报告**：同时报绝对差、相对变化和置信区间；严禁只报 p-value。
 4. **单双侧检验方向**：预先固定方向：准确率做 superiority；延迟、DER、幻觉和可靠性做 non-inferiority。
 5. **失败样本全保留**：缺失或失败运行不删除，报告失败率；只有可证明与模型无关的基础设施故障才允许整 block 重跑。
-6. **分析计划冻结**：盲测开封前生成 `analysis_plan.json`，冻结主指标、归一化版本、过滤规则、候选和阈值。
+6. **两 look 错误率控制**：采用当前 runner 可直接实现的保守 alpha spending：Core look 使用
+   $\alpha_1=0.01$，Reserve 后 final look 使用 $\alpha_2=0.04$，由 union bound 保证两次 look 的
+   总体错误率不超过 0.05。每个决策 family 在每个 look 内对固定候选集合执行 Holm 校正；superiority
+   使用双侧检验，non-inferiority 使用方向预注册的单侧检验与对应 $1-\alpha_k$ 单侧置信界。
+7. **分析计划冻结**：盲测开封前生成 `analysis-plan.json`，冻结两个 manifest hash、主指标、归一化、
+   cluster、候选集合、$\alpha_1/\alpha_2$、MDE、conditional power 阈值、过滤规则和 bootstrap seed。
 
 ---
 
 ### 7.3 样本量与检验功效（Power 校验）
 
-在 105 分钟目标域 Blind Set（$\approx 100$ 个独立样本切片、$\approx 2.2\text{ 万字}$）下：
+105 分钟目标域 Blind Set 是**最大设计信息量**，不是未经 pilot 验证即可宣称充分的既成事实：
 - **效应量假设**：预注册最小相关效应为 **相对 CER 改善 $\ge 5\%$**（如从基线 7.0% 降至 6.65%）。
-- **功效模拟验证**：基于 pilot 录音的样本间方差，在 10,000 次 cluster bootstrap 下：
-  $$\text{Statistical Power} > 0.85 \quad (\alpha = 0.05, \text{ 双侧})$$
-- **结论**：105 分钟语料已完全满足统计功效要求，能稳定捕捉 5% 相对差距并收窄置信区间，无需过度抽样至 11 小时。
+- **功效模拟验证**：在 blind 开封前，用 dev/pilot 的 session 级方差对 Core 和完整 105 分钟分别做
+  10,000 次模拟；完整设计目标为 $\text{power}>0.85$、双侧 family-wise $\alpha\le0.05$。
+- **信息比例**：Core 的计划信息比例按时长近似为 $60/105=0.5714$，实际分析同时报告 cluster 数和
+  估计方差，不能假设分钟数与统计信息严格线性。
+- **证据降级**：如 pilot 显示完整 105 分钟仍不足以检出 5% 相对改善，不扩大开封后的语料；结论
+  降级为 `Experimental / No decision`，不得把预计 power 写成实测 power。
 
 ---
 
@@ -492,13 +532,30 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 统计显著但改善过小不自动晋级。采用以下预注册效果阈值：
 
-- **Primary Macro CER**：相对改善至少 5%，且配对差的 95% CI 上界 $< 0$。
+- **Primary Macro CER**：$\delta_{MDE}=0.05\times CER_{baseline,pilot}$ 在 blind 开封前冻结；Core
+  需 Holm-adjusted superiority 通过且 99% cluster-bootstrap CI 上界 $<-\delta_{MDE}$，final look
+  需 Holm-adjusted superiority 通过且 96% CI 上界 $<-\delta_{MDE}$。普通 CI 是单比较效果区间，
+  正式 family 决策以 Holm-adjusted p-value 为准。
 - **多人会议 SA-CER**：不劣于基线 1.0 个绝对百分点；若希望替换默认后端，目标为相对改善至少 5%。
 - **热词 Recall**：不低于基线 2 个百分点；若主张热词优势，需提高至少 5 个百分点。
 - **P95 Commit Latency**：不高于基线 $1.10\times$，且绝对不超过 3.0 秒。
 - **P99 Finalization Latency**：不超过项目 8 秒超时预算的 80%，即 $\le 6.4\text{ 秒}$。
 - **静音幻觉**：不高于基线，且严重幻觉必须为 0。
 - **DER**：固定 Sortformer 时不劣于基线 1.0 个绝对百分点。
+
+Core look 只允许冻结程序生成以下状态，不允许人工逐样本查看后决定：
+
+- `Reject-Hard`：任一硬门禁失败，立即停止该臂。
+- `Advance-Early`：该 family 只剩一个可晋级候选，且 Core 的 Holm-adjusted superiority、99% CI、
+  所有已可测 non-inferiority 门禁均通过；它只代表进入 Stage 2，不是生产 `Promote`。
+- `Reject-Futility`：预注册 conditional power $<0.20$，或 99% CI 已明确无法达到 MDE；这是
+  non-binding futility，不宣称正式劣势。
+- `Continue`：其余情况追加 Reserve。
+
+如果同一 family 有多个仍可能成为赢家的候选，必须让这些候选全部完成 Reserve，禁止拿 60 分钟结果
+与另一个候选的 105 分钟结果直接排名。Final look 使用 Core + Reserve 全部配对 cluster 重算：通过
+质量和非劣门禁者进入 `Finalist / Reliability Pending`；正式劣势或硬失败为 `Reject`；仍不确定为
+`Experimental / No decision`。
 
 > [!NOTE]
 > 阈值可在 pilot 后基于测量分辨率调整一次，但必须在 blind set 开封前冻结并留下 revision 记录。
@@ -507,44 +564,77 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 ## 8. 执行矩阵与耗时预算
 
-通过分层阶梯式设计，单个完整晋级臂的名义横向评测预算约为 **90 ~ 120 分钟**；按各阶段上界计算约
-126 分钟，另加进程切换、温控恢复与失败重跑开销。所有实验臂严格串行，因此总墙钟必须按实际晋级臂
-数量累加，不能把单臂预算当成全实验预算：
+v1.2 不再用“单臂 90–120 分钟”代替全实验预算，而是按筛选、finalist、winner 三种状态计时。
+Stage 1 的 60/45 分钟是音频覆盖，不是 wall-clock；离线墙钟按每臂实际 RTF 与模型加载时间计算。
+所有模型、服务、链路和全量测试仍严格串行。
+
+| 阶段 | 所有可行臂 / Screen | Finalist / Winner 追加 | 时间压缩规则 |
+|:---|---:|---:|:---|
+| Stage 0 | 只补 Qwen MPS、Sense CPU 最小门禁 | Fun MPS/CPU 复用既有 10 样本证据 | snapshot/profile/hash 未变时不重跑历史门禁 |
+| Stage 1A | 60m Core，按各臂 RTF | — | Fun MPS 输出同时服务两个决策；Fun CPU 不进入正式排名 |
+| Stage 1B | 仅 `Continue` family 追加 45m | — | 只在预注册 final look 开封 Reserve |
+| Stage 2 | 每臂先跑 8–10m Screen | 通过后原 run 延长至总计 15–20m | baseline 与 finalist 使用同一冻结 block |
+| Stage 3 | baseline 一次 30m | candidate 60m 的前 30m | 前 5m 是同一会话 preflight，不另跑 15m |
+| Stage 4 | 每臂先跑 5 轮 Screen | 通过后原 session 延长至总计 10–15 轮 | baseline 与 finalist 使用同一冻结话术 |
+| Stage 5 | 不对所有晋级臂长跑 | 每个决策方向最多一个 finalist 运行 1×60m | 会议 candidate 与 Stage 3 共用同一 60m 连续会话 |
+| 生产收敛 | 3–5 轮增量 smoke | 配置身份变化才重跑受影响链路 | 不重复 Stage 3/4/5 和固定 30 轮 |
+
+当前可验证的规划输入为 SenseVoice RTF $\approx0.17$、Fun-ASR MPS warm P50 RTF $0.0618$；Qwen
+Stage 0 尚未实测，以 $q$ 表示其 RTF。仅 Stage 1 blind 的机器预算为：
+
+$$T_{Core}=60(q+0.17+0.0618),\qquad T_{Full}=105(q+0.17+0.0618)\text{ min}$$
+
+若仅用于排程而暂取未验证假设 $q=1.0$，Core 约 73.9 分钟，完整 105 分钟约 129.3 分钟。加上
+Stage 2–5、锁/进程切换和温控恢复，在 Fun 同时进入两个决策 finalist 的保守场景中：典型路径约
+5.4–6.1 小时，Reserve 全开的最坏路径约 6.3–7.0 小时；Fun 在 Stage 1 被拒时约 2–3 小时结束。
+这些是排程估算，不是性能结论，Qwen Stage 0 后必须用实测 $q$ 重算。相对 v1.1 严格解释的约
+13–15 小时路径，预计减少约 45%–55% 机器墙钟。完整 reference 仍须在 Core 前冻结，10–15 人工工时
+不因机器早停自动减少。
 
 ```mermaid
-gantt
-    title ASR 评测多阶段耗时与执行流 (单模型总耗时约 90-120 min)
-    dateFormat  X
-    axisFormat %d min
-    section Stage 1
-    模型核心离线质量 (105min 语料 · MPS 离线) :s1, 0, 6
-    section Stage 2
-    流式质量与 1x 延迟预算 (抽取 15-20min 典型切片) :s2, 6, 26
-    section Stage 3
-    字幕/会议端到端链路 (30min 会议会话与对账) :s3, 26, 56
-    section Stage 4
-    交互助手链路 (15 轮对话 · VAD/双防线/延迟) :s4, 56, 66
-    section Stage 5
-    长时 60min 稳定性与故障注入 (内存斜率/重连) :s5, 66, 126
+flowchart TD
+    A[Stage 1A: 三 primary 臂 60m Core] --> B{每个 family 的冻结状态}
+    B -- Continue --> C[对应 baseline + Fun 各追加 45m Reserve]
+    B -- Advance-Early --> D[进入用途专属 finalist 路径]
+    B -- Reject --> E[停止该 family]
+    C --> D
+    D --> F[字幕: 每臂 8–10m Screen<br/>通过则延长至总计 15–20m]
+    F --> G[Qwen 30m baseline]
+    G --> H[Fun 60m 连续 Stage 3+5]
+    D --> I[交互: 每臂 5轮 Screen<br/>通过则延长至总计 10–15轮]
+    I --> J[交互 finalist 60m Stage 5]
+    H --> K[增量部署 smoke]
+    J --> K
 ```
 
 ---
 
-### 8.1 Stage 1：模型核心离线质量（全量 ~6 min）
+### 8.1 Stage 1：模型核心序贯盲测
 
-对所有可行臂运行 public、dev、blind，使用相同人工/VAD segment。在 MPS 离线推理模式下（实测 RTF $\approx 0.06$），**仅 105 分钟 blind 音频**预计约 6 分钟；Public Reproducibility、dev、CPU 臂、冷启动和调度开销分别按各臂实测 RTF 另计，不并入该 6 分钟。分别测试：
+Stage 1 只运行三个 primary 臂：Qwen MPS、SenseVoice CPU、Fun-ASR MPS。Fun-ASR CPU 的既有结果只
+作为设备兼容性证据；MPS 可行时不进入正式 blind。三个臂先依次完成同一 60 分钟 Core，再由冻结
+程序分别对字幕/会议 family（Fun vs Qwen）和交互 family（Fun vs SenseVoice）输出
+`Advance-Early / Reject / Continue`。先对 `Continue` family 的 Qwen 和/或 SenseVoice baseline
+依次追加 45 分钟；只要任一 family 为 `Continue`，Fun Reserve 统一运行一次并复用于两个统计视图。
+
+主比较固定无 context/hotword 的 primary 配置。统一 context 与生产 context 只在 dev 和 finalist
+短子集验证，不重复完整 blind。完整 1–2 小时 Public 延后到最终 baseline + winner，标记为公开
+可复现附录，不参与 Stage 1 停止。
 
 - **无 context / hotword**：测基础模型本体质量。
-- **统一可表达 context**：测公平部署能力；不支持者标记 `unsupported`。
-- **生产 context**：测真实系统收益，但不得替代基础比较。
+- **统一可表达 context**：只在 dev/finalist 子集测公平部署能力；不支持者标记 `unsupported`。
+- **生产 context**：只对 finalist 测真实收益，不得替代基础比较。
 
 **输出物**：`raw/normalized hypothesis`、`CER/WER`、`S/D/I`、实体和语义错误、每段耗时与系统资源。
 
 ---
 
-### 8.2 Stage 2：流式质量与延迟（典型切片 ~15-20 min）
+### 8.2 Stage 2：流式 Screen 与 Confirm
 
-只对通过 Stage 1 且具备流式路径的臂运行。**从目标域中抽取 15~20 分钟高密度典型切片**，固定 20ms PCM 帧和 1× 回放（耗时 15~20 min），重点测试：
+只对字幕/会议 family 的 baseline 与 `Finalist / Reliability Pending` 候选运行。每臂预先冻结一条
+15–20 分钟 1× block，前 8–10 分钟是 Screen window；明显违反延迟、EOF、状态机或资源硬门禁者
+立即停止该臂。通过时不重启模型，继续同一 block 到总计 15–20 分钟。baseline 与 candidate 都完成
+Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧。
 
 - 0.5s / 1s / 2s 短句尾段。
 - 连续 30 秒自然语音。
@@ -556,10 +646,12 @@ gantt
 
 ---
 
-### 8.3 Stage 3：字幕/会议系统链路（~15-30 min）
+### 8.3 Stage 3：字幕/会议系统链路
 
-固定 `AudioHub`、PCM fan-out、Sortformer、PostgreSQL、会议对账和 SRT 规则。先运行 15 分钟系统冒烟，
-通过后再运行 30 分钟主统计会议；主比较使用同一档位，不能把 15 分钟与 30 分钟结果直接横比：
+固定 `AudioHub`、PCM fan-out、Sortformer、PostgreSQL、会议对账和 SRT 规则。Qwen baseline 只运行
+一次 30 分钟无故障主会议。候选直接进入一条 60 分钟连续会话：前 5 分钟是 preflight，前 30 分钟
+同时构成 Stage 3 主会议，后 30 分钟继续运行并注入 Stage 5 故障。preflight 或前 30 分钟硬失败时
+立即停止，不再消耗余下时间；不再单独运行旧计划的 15 分钟冒烟。
 
 1. 普通字幕浏览器订阅。
 2. 模式切换：`assistant → meeting → idle → assistant`。
@@ -570,26 +662,33 @@ gantt
 
 ---
 
-### 8.4 Stage 4：交互助手链路（~10 min）
+### 8.4 Stage 4：交互助手 Screen 与 Confirm
 
-只有具备 `ConversationSTTFactory` 的臂进入。固定 LLM、TTS、Silero VAD、`silence_secs=0.45`、回声双防线，运行 10~15 轮交互会话：
+只有交互 family 的 SenseVoice baseline 与候选进入。固定 LLM、TTS、Silero VAD、
+`silence_secs=0.45` 和回声双防线。每臂预先冻结 10–15 轮相同话术，前 5 轮是 Screen：短指令、
+长问句、数字/人名、TTS 播报结束后外放下一轮输入、插话/自回声各至少覆盖一次。通过时保持当前
+身份并继续到总计 10–15 轮；baseline 与 candidate 都完成 Confirm。Confirm 同时作为受控交互试运行，
+不在生产收敛阶段重复。
 
 - 用户停说到 final transcript、LLM 首 token 和 TTS 首音频的分段延迟。
 - 插话成功率、误打断率、机器人自响应率。
-- 短指令、长问句、数字/人名；横向主比较固定 10~15 轮。
-
-胜出后端可额外运行连续 30 轮加速回归，但该结果只用于生产回归验收，不进入横向主统计。
+- 外放模式 TTS 状态结束、echo tail hangover 与下一轮输入恢复时序。
 
 > [!WARNING]
 > 任何删除或绕过双层回声防线的配置均不具备比较资格。
 
 ---
 
-### 8.5 Stage 5：长时稳定性与故障注入（~60 min）
+### 8.5 Stage 5：Finalist 长时稳定性与故障注入
 
-- **稳定性长跑**：每个晋级臂运行 1 次 **60 分钟连续录制**。
+- **状态门槛**：Stage 1–4 只能产生 `Finalist / Reliability Pending`；每个决策方向只选一个 finalist
+  进入 60 分钟，完成后才能成为生产 `Promote`。
+- **会议链路**：候选的 1×60 分钟与 Stage 3 共用，前 30 分钟主会议、后 30 分钟继续稳定性与故障；
+  整体仍是不中断的 60 分钟连续运行。
+- **交互链路**：只有交互 finalist 另跑 1×60 分钟；若候选未赢得该用途则不运行。
 - **故障注入**：在固定音频 cursor 注入 3 次网络断开、1 次 ASR 子进程崩溃、1 次 finalization delay。
 - **指标审计**：检查内存斜率（MB/hour）、文件描述符、后台 task、端口、队列、gap、重复持久化和恢复后字幕。
+- **未长跑候选**：标记 `deferred/not_run`，不能错误写成 `Promote` 或 `Reject`。
 
 ---
 
@@ -678,7 +777,7 @@ runtime/benchmarks/asr/<run_id>/
 └── summary.json               # 本次 run 聚合指标摘要
 
 docs/benchmarks/asr/<experiment-family>/
-├── analysis-plan.json         # 冻结的统计分析计划
+├── analysis-plan.json         # 同时冻结 Core/Reserve、两 look 与停止边界
 ├── summary.csv                # 横向对比汇总表
 ├── report.md                  # 最终决策报告与分析
 └── plots/                     # 指标对比图与延迟分布图
@@ -686,6 +785,12 @@ docs/benchmarks/asr/<experiment-family>/
 
 > [!IMPORTANT]
 > `runtime/` 产物不入库；入库报告只包含聚合数据、失败样本匿名 ID 和可复现元数据，严格不含音频或敏感逐字稿。
+
+`analysis-plan.json` 至少增加：`core_manifest_sha256`、`reserve_manifest_sha256`、
+`core_duration_ms`、`reserve_duration_ms`、`analysis_cluster_ids`、`look_alpha=[0.01,0.04]`、
+`conditional_power_futility=0.20`、`core_bootstrap_seed`、`final_bootstrap_seed`、固定候选集合，以及
+`stopped_at=core|reserve|completed`。Core/Reserve hypotheses 分目录保存，final 分析使用两段的并集，
+不得覆盖 Core 产物。
 
 ---
 
@@ -781,7 +886,8 @@ uv run vr-asr-benchmark compare \
 
 | 晋级结论 | 满足条件 | 后续动作 |
 |:---|:---|:---|
-| **Promote** | 全部硬门禁通过；主 CER 显著优于基线（Superiority）；其他主指标满足非劣界值 | 完成受控真实试运行后设为唯一默认后端 |
+| **Promote** | Stage 5 已完成；全部硬门禁通过；主 CER 显著优于基线；其他主指标满足非劣界值 | 完成增量部署 smoke 后设为唯一默认后端 |
+| **Finalist / Reliability Pending** | Stage 1–4 质量、流式或交互门禁通过，但尚未完成本用途 60 分钟长跑 | 每个决策方向只选一个进入 Stage 5；不得先设为生产默认 |
 | **Specialized** | 特定层显著更好，但总体或延迟未达默认门槛 | 不进入当前生产主链；仅在另立需求和实验后考虑独立用途 |
 | **Experimental** | CI 跨越阈值或样本量不足，但无安全失败 | 扩充语料继续检验，不改变生产默认后端 |
 | **Reject** | 任一硬门禁失败，或质量/延迟明确越过劣界 | 保持现有基线并归档失败证据 |
@@ -794,22 +900,31 @@ uv run vr-asr-benchmark compare \
 
 ## 11. 执行顺序与停止规则
 
-1. **三后端 Stage 0 对等门禁**：用同一 10 条 PCM 依次运行 Qwen3 MPS、SenseVoice CPU、Fun-ASR MPS 和 Fun-ASR CPU，确认身份、结构与资源回收；不得并行加载模型。
-2. **不可行路径登记**：Fun-ASR 官方 vLLM WS 直接记录本机 `infeasible`，不得用非等价路径替代。
-3. **Adapter 与计划冻结**：完成三个原生离线 adapter，冻结公开/dev 语料、归一化、analysis plan、模型 revision 和配置。
-4. **Dev 集调优**：在 dev 上做有限参数选择，每个可行实验臂使用同等调参预算。
-5. **Stage 1 盲测（MPS blind 预计 ~6 min）**：冻结参数并运行 Stage 1 blind，离线验证准确率与场景切片；public/dev/CPU 和性能重复另计。
-6. **Stage 2 流式验证（~15-20 min）**：只有准确率未明确劣于基线的臂才建设本机流式 runtime，抽取典型切片进行 1× 延迟与抖动测试。
-7. **Stage 3/4 系统与交互（~30-40 min）**：只有实时门禁通过的臂才接入固定的生产候选配置并进入 Stage 3/4，验证会议对账与交互双防线，不建设运行时切换。
-8. **Stage 5 长时压测（~60 min）**：只有系统链路无硬失败的臂进入 Stage 5 稳定性测试。
-9. **收敛决策与清理**：生成带 CI、失败率、分层结果和 manifest 链接的决策报告；完成真实试运行后固定唯一后端并清理落选模型和专用生产接入。
+1. **补齐 Stage 0**：复用已完成且身份未漂移的 Fun-ASR MPS/CPU 历史门禁，只依次补跑 Qwen3 MPS、
+   SenseVoice CPU；这是三模型四实验臂的门禁，但 Fun CPU 后续默认不排名。
+2. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、Core、Reserve、两个
+   manifest hash、分析 cluster、候选集合、MDE、alpha spending、模型 revision 和 primary profile。
+3. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
+4. **Stage 1A Core**：依次运行 Qwen、SenseVoice、Fun MPS 的 60 分钟 Core；Fun 输出复用到两个 family。
+5. **Stage 1B Reserve**：只对 `Continue` family 追加 45 分钟；禁止在两个固定 look 之外查看并停止。
+6. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
+   8–10 分钟是 Screen，通过后原 run 继续到 Confirm 总时长。
+7. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
+   Stage 3 主会议和 Stage 5 可靠性。
+8. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
+   通过后原 session 继续到 Confirm 总轮数；只有交互 finalist 再运行 1×60 分钟可靠性。
+9. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时 Public；不阻塞生产选型。
+10. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
+    EOF/外放恢复抽查；随后固定唯一后端并清理落选模型与专用接入。
 
 > [!WARNING]
-> **提前停止规则**：提前停止仅允许在以下情况触发：
+> **提前停止规则**：除 Stage 0/硬门禁外，Stage 1 只允许在 Core=60 分钟与 Final=105 分钟两个固定
+> look 做程序化判断；删除 v1.1 的任意“30% blind”人工判断。提前停止仅允许在以下情况触发：
 > - 硬件/运行时不可行；
 > - 隐私违规；
 > - 连续三次确定性崩溃；
-> - 在至少 30% blind 样本上质量已明显越过预注册劣界且置信区间不再可能恢复。
+> - Core 达到 `Reject-Hard`、`Advance-Early` 或预注册 conditional power $<0.20$ 的
+>   `Reject-Futility` 边界。
 > 提前停止原因必须完整写入 manifest。
 
 ---
@@ -818,7 +933,8 @@ uv run vr-asr-benchmark compare \
 
 - [ ] 每个实验臂的模型、运行时和设备身份可验证。
 - [ ] 同一 block 的音频 bytes、切块和发送时间表一致。
-- [ ] blind set 在配置冻结后才开封。
+- [ ] Core/Reserve reference、cluster、manifest 与停止边界在任何 Core 输出可见前同时冻结。
+- [ ] 只在 60/105 分钟两个固定 look 决策，Core 提前停止没有被误报为完整 105 分钟证据。
 - [ ] 原始与 normalized 指标并列，S/D/I 可追溯。
 - [ ] macro、micro、分层、失败率和 95% CI 均完整报告。
 - [ ] `unsupported` 与 `infeasible` 状态不被错误填成 0。
@@ -837,6 +953,8 @@ uv run vr-asr-benchmark compare \
 - [Fun-ASR-Nano-2512 模型卡](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-2512)
 - [FunAudio-ASR Technical Report (arXiv:2509.12508)](https://arxiv.org/abs/2509.12508)
 - [开源 checkpoint 时间戳问题 Issue #106](https://github.com/QwenAudio/Fun-ASR/issues/106)
+- [FDA Adaptive Design Clinical Trials Guidance（预注册 group-sequential 与总体错误率控制）](https://www.fda.gov/media/78495/download)
+- [Reboussin et al., Lan-DeMets Spending Function Computation](https://doi.org/10.1016/S0197-2456(00)00057-X)
 
 > [!NOTE]
 > 官方报告与模型卡仅用于形成候选假设，不作为本机选型结论；最终结论只来自上述冻结语料、统一 runner 和本机重复实验。
