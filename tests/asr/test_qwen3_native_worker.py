@@ -8,7 +8,11 @@ import struct
 from io import BytesIO
 from pathlib import Path
 
-from voice_realtime.asr.workers.qwen3_native_worker import WorkerIdentity, serve
+from voice_realtime.asr.workers.qwen3_native_worker import (
+    Qwen3ASREngine,
+    WorkerIdentity,
+    serve,
+)
 
 
 def _frame(payload: dict[str, object]) -> bytes:
@@ -25,6 +29,27 @@ def _read_frames(payload: bytes) -> list[dict[str, object]]:
         assert isinstance(value, dict)
         frames.append(value)
     return frames
+
+
+def test_engine_uses_none_for_auto_detect_language() -> None:
+    calls: list[object] = []
+
+    class Result:
+        text = "mixed result"
+        language = "Chinese,English"
+
+    class FakeModel:
+        def transcribe(self, **kwargs: object) -> list[Result]:
+            calls.append(kwargs["language"])
+            return [Result()]
+
+    engine = object.__new__(Qwen3ASREngine)
+    engine._model = FakeModel()  # type: ignore[attr-defined]
+
+    text, language = engine.transcribe(b"\x00\x00", language="auto", context="")
+
+    assert calls == [None]
+    assert (text, language) == ("mixed result", "Chinese,English")
 
 
 def test_worker_loads_once_and_serves_multiple_framed_requests(tmp_path: Path) -> None:

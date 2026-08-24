@@ -12,7 +12,11 @@ from voice_realtime.asr.adapters.qwen3_native import (
     Qwen3WorkerResult,
 )
 from voice_realtime.asr.contracts import ASRSessionContext
-from voice_realtime.asr.profiles import Qwen3NativeProfile, SenseVoiceNativeProfile
+from voice_realtime.asr.profiles import (
+    FunASRNanoPyTorchProfile,
+    Qwen3NativeProfile,
+    SenseVoiceNativeProfile,
+)
 from voice_realtime.benchmarks.asr.backend_factory import (
     build_backend_runtime,
     require_compatible_mode,
@@ -73,6 +77,37 @@ def test_corpus_language_source_is_applied_to_each_native_profile() -> None:
 
     assert sample_profile(qwen, sample).language == "en"
     assert sample_profile(sense, sample).language == "en"
+
+
+@pytest.mark.parametrize("language", ["zh-en", "en-zh", "mixed", "auto"])
+def test_mixed_corpus_language_uses_native_auto_detection(language: str) -> None:
+    sample = _sample(language=language)
+    profiles = (
+        Qwen3NativeProfile(
+            model_dir="/model-cache/qwen",
+            python_executable="/runtime/python",
+            language="Chinese",
+            language_source="corpus",
+            device="mps",
+        ),
+        SenseVoiceNativeProfile(
+            model_dir="/model-cache/sensevoice",
+            language="zh",
+            language_source="corpus",
+        ),
+        FunASRNanoPyTorchProfile(
+            model_dir="/model-cache/funasr",
+            language="中文",
+            language_source="corpus",
+            device="mps",
+        ),
+    )
+
+    assert [sample_profile(profile, sample).language for profile in profiles] == [
+        "auto",
+        "auto",
+        "auto",
+    ]
 
 
 def test_native_profile_identity_rejects_manifest_drift() -> None:

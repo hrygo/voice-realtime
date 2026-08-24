@@ -201,7 +201,7 @@ class FunASRNanoPyTorchEngine:
                 cache={},
                 batch_size=1,
                 hotwords=list(hotwords),
-                language=language,
+                language=None if language.strip().lower() == "auto" else language,
                 itn=itn,
             )
         except Exception as exc:

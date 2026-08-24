@@ -36,6 +36,7 @@ _MODEL_FILES = (
     "model-00002-of-00002.safetensors",
 )
 _LANGUAGES = {
+    "auto": "auto",
     "zh": "Chinese",
     "中文": "Chinese",
     "chinese": "Chinese",

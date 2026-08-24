@@ -38,6 +38,7 @@ from voice_realtime.benchmarks.asr.manifest import BenchmarkSample
 from voice_realtime.benchmarks.asr.replay import ReplayMode
 
 RawEventSink = Callable[[Mapping[str, object]], None]
+_AUTO_DETECT_LANGUAGE_LABELS = frozenset({"auto", "mixed", "zh-en", "en-zh"})
 
 
 def loopback_service_url(host: str, port: int) -> str:
@@ -70,7 +71,10 @@ def sample_profile(profile: ASRProfile, sample: BenchmarkSample) -> ASRProfile:
         profile,
         (FunASRNanoPyTorchProfile, Qwen3NativeProfile, SenseVoiceNativeProfile),
     ) and profile.language_source == "corpus":
-        return profile.model_copy(update={"language": sample.language})
+        language = sample.language.strip()
+        if language.lower() in _AUTO_DETECT_LANGUAGE_LABELS:
+            language = "auto"
+        return profile.model_copy(update={"language": language})
     return profile
 
 

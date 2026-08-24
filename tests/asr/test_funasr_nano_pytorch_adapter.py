@@ -323,6 +323,7 @@ def test_engine_converts_numpy_to_tensor_before_funasr_generate(
 ) -> None:
     sentinel_tensor = object()
     generated_inputs: list[object] = []
+    generated_languages: list[object] = []
 
     class FakeTorch:
         @staticmethod
@@ -336,6 +337,7 @@ def test_engine_converts_numpy_to_tensor_before_funasr_generate(
 
         def generate(self, **kwargs: object) -> list[dict[str, str]]:
             generated_inputs.extend(kwargs["input"])  # type: ignore[arg-type]
+            generated_languages.append(kwargs["language"])
             return [{"text": "内存输入"}]
 
     monkeypatch.setitem(sys.modules, "torch", FakeTorch())
@@ -346,13 +348,14 @@ def test_engine_converts_numpy_to_tensor_before_funasr_generate(
 
     result = engine(
         np.zeros(160, dtype=np.float32),
-        language="中文",
+        language="auto",
         hotwords=(),
         itn=True,
     )
 
     assert result == [{"text": "内存输入"}]
     assert generated_inputs == [sentinel_tensor]
+    assert generated_languages == [None]
 
 
 async def test_raw_vendor_result_is_json_safe_and_bounded() -> None:

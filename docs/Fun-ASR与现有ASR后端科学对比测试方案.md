@@ -884,7 +884,12 @@ runner 会拒绝解析后仍落在 Git 工作树内的 `model_dir`。清单只�
 ```
 
 > [!NOTE]
-> 该 profile 必须使用 `--mode offline`；`language_source="corpus"` 表示逐条使用已冻结 `CorpusSample.language`，避免混合语料被同一个固定语言提示污染。若设为 `profile`，则所有样本使用 profile 的 `language`。该策略也必须与 manifest 的 `parameters.language_source` 一致。MPS 与 CPU 分别冻结独立 profile、manifest 和 run ID。
+> 该 profile 必须使用 `--mode offline`；`language_source="corpus"` 表示逐条使用已冻结
+> `CorpusSample.language`，避免混合语料被同一个固定语言提示污染。`zh-en`、`en-zh` 与 `mixed`
+> 统一解析为各后端原生 auto-detect：Qwen 传 `None`、SenseVoice 传 `auto`、Fun-ASR 不注入语言提示；
+> 禁止把字符串 `auto` 写进 Fun-ASR 提示词。若设为 `profile`，则所有样本使用 profile 的
+> `language`。该策略也必须与 manifest 的 `parameters.language_source` 一致。MPS 与 CPU 分别冻结
+> 独立 profile、manifest 和 run ID。
 
 #### CLI 执行命令
 

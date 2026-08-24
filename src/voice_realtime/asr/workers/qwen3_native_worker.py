@@ -278,7 +278,7 @@ class Qwen3ASREngine:
         results = self._model.transcribe(
             audio=(waveform, 16_000),
             context=context,
-            language=language,
+            language=None if language == "auto" else language,
             return_time_stamps=False,
         )
         if not results:

@@ -388,7 +388,7 @@ async def test_adapter_buffers_16k_s16le_in_memory_and_forwards_context_and_lang
 
 @pytest.mark.parametrize(
     ("input_language", "expected_language"),
-    [("zh", "Chinese"), ("en", "English")],
+    [("zh", "Chinese"), ("en", "English"), ("auto", "auto")],
 )
 @pytest.mark.asyncio
 async def test_language_codes_are_mapped_to_qwen_canonical_names(
