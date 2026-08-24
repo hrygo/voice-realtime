@@ -27,8 +27,9 @@ from voice_realtime.asr.profiles import (
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.benchmarks.asr.analysis_plan import (
-    AnalysisPlan,
-    freeze_analysis_plan,
+    freeze_formal_analysis_plan,
+    load_analysis_plan,
+    load_analysis_plan_design,
     sealed_sha256,
 )
 from voice_realtime.benchmarks.asr.backend_factory import (
@@ -48,6 +49,7 @@ from voice_realtime.benchmarks.asr.manifest import (
     verify_file_hashes,
     verify_git_checkout,
 )
+from voice_realtime.benchmarks.asr.preflight import run_blind_preflight
 from voice_realtime.benchmarks.asr.replay import (
     BenchmarkRunResult,
     ReplayMode,
@@ -184,6 +186,14 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--output-root", required=True)
     prepare_parser.add_argument("--repo-root", default=".")
 
+    preflight_parser = subparsers.add_parser(
+        "preflight-corpus",
+        help="不读取音频或逐字稿，预检项目外 blind metadata",
+    )
+    preflight_parser.add_argument("--metadata", required=True)
+    preflight_parser.add_argument("--output-report", required=True)
+    preflight_parser.add_argument("--repo-root", default=".")
+
     freeze_parser = subparsers.add_parser(
         "freeze-analysis", help="在 Core 输出可见前冻结序贯分析计划"
     )
@@ -191,11 +201,14 @@ def build_parser() -> argparse.ArgumentParser:
     freeze_parser.add_argument("--reserve-manifest", required=True)
     freeze_parser.add_argument("--core-references", required=True)
     freeze_parser.add_argument("--reserve-references", required=True)
-    freeze_parser.add_argument("--candidate", action="append", required=True)
+    freeze_parser.add_argument("--design", required=True)
+    freeze_parser.add_argument("--preflight-report", required=True)
     freeze_parser.add_argument(
-        "--bootstrap-seed", action="append", required=True, type=int
+        "--profile",
+        action="append",
+        required=True,
+        help="固定候选 profile，格式 candidate_id=/path/to/profile.json",
     )
-    freeze_parser.add_argument("--pilot-baseline-cer", required=True, type=float)
     freeze_parser.add_argument("--output", required=True)
 
     run_parser = subparsers.add_parser("run", help="运行一个冻结实验臂")
@@ -225,9 +238,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare_parser = subparsers.add_parser("compare", help="按 sample_id 配对比较两个实验臂")
     compare_parser.add_argument("--baseline", required=True)
     compare_parser.add_argument("--candidate", required=True)
-    compare_parser.add_argument(
+    resampling_group = compare_parser.add_mutually_exclusive_group()
+    resampling_group.add_argument(
         "--corpus",
         help="冻结输入 manifest；提供后按 content_group_id/session_id 做 cluster bootstrap",
+    )
+    compare_parser.add_argument(
+        "--analysis-plan",
+        help="绑定 formal analysis plan；省略时 cluster 结果仅为 calibration",
+    )
+    resampling_group.add_argument(
+        "--exploratory-sample-bootstrap",
+        action="store_true",
+        help="仅供探索性诊断；正式证据必须提供 --corpus",
     )
     compare_parser.add_argument("--output", required=True)
     compare_parser.add_argument("--bootstrap-iterations", type=int, default=10_000)
@@ -335,11 +358,26 @@ def _compare_command(args: argparse.Namespace) -> int:
     baseline = Path(str(args.baseline))
     candidate = Path(str(args.candidate))
     corpus_path = Path(str(args.corpus)) if args.corpus is not None else None
+    if corpus_path is None and not bool(args.exploratory_sample_bootstrap):
+        raise ValueError(
+            "formal comparison requires --corpus for cluster bootstrap; "
+            "sample bootstrap is exploratory only"
+        )
+    analysis_plan_path = (
+        Path(str(args.analysis_plan)) if args.analysis_plan is not None else None
+    )
+    if analysis_plan_path is not None and corpus_path is None:
+        raise ValueError("--analysis-plan requires --corpus")
     cluster_by_sample: dict[str, str] | None = None
+    corpus = None
     if corpus_path is not None:
         corpus = load_corpus_input_manifest(corpus_path)
         cluster_by_sample = {
-            sample.sample_id: sample.content_group_id or sample.session_id
+            sample.sample_id: (
+                sample.analysis_cluster_id
+                or sample.content_group_id
+                or sample.session_id
+            )
             for sample in corpus.samples
         }
     comparison = compare_hypotheses(
@@ -352,9 +390,53 @@ def _compare_command(args: argparse.Namespace) -> int:
     comparison["baseline"] = str(baseline)
     comparison["candidate"] = str(candidate)
     if corpus_path is not None:
-        comparison["corpus_manifest_sha256"] = sha256_file(corpus_path)
+        corpus_hash = sha256_file(corpus_path)
+        comparison["corpus_manifest_sha256"] = corpus_hash
+        comparison["evidence_tier"] = "cluster_calibration"
+        if analysis_plan_path is not None:
+            plan = load_analysis_plan(analysis_plan_path)
+            if plan.evidence_tier != "formal":
+                raise ValueError("comparison analysis plan must be formal")
+            if corpus is None:
+                raise RuntimeError("corpus must be loaded before formal comparison")
+            if corpus.split == "blind-core":
+                expected_hash = plan.core_manifest_sha256
+                expected_clusters = plan.core_analysis_cluster_ids
+            elif corpus.split == "blind-reserve":
+                expected_hash = plan.reserve_manifest_sha256
+                expected_clusters = plan.reserve_analysis_cluster_ids
+            else:
+                raise ValueError("formal comparison requires a blind Core/Reserve corpus")
+            observed_clusters = tuple(
+                sorted(
+                    {
+                        sample.analysis_cluster_id or ""
+                        for sample in corpus.samples
+                    }
+                )
+            )
+            if corpus_hash != expected_hash or observed_clusters != expected_clusters:
+                raise ValueError("corpus does not match formal analysis plan identity")
+            comparison["evidence_tier"] = "formal"
+            comparison["analysis_plan_sha256"] = sha256_file(analysis_plan_path)
+    else:
+        comparison["evidence_tier"] = "exploratory"
     write_json(Path(str(args.output)), comparison)
     return 0
+
+
+def _parse_profile_paths(values: Sequence[str]) -> dict[str, Path]:
+    profiles: dict[str, Path] = {}
+    for value in values:
+        candidate_id, separator, raw_path = value.partition("=")
+        candidate_id = candidate_id.strip()
+        raw_path = raw_path.strip()
+        if not separator or not candidate_id or not raw_path:
+            raise ValueError("--profile must use candidate_id=/path/to/profile.json")
+        if candidate_id in profiles:
+            raise ValueError(f"duplicate --profile candidate_id: {candidate_id}")
+        profiles[candidate_id] = Path(raw_path)
+    return profiles
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -369,30 +451,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 repository_root=Path(str(args.repo_root)),
             )
             return 0
+        if args.command == "preflight-corpus":
+            run_blind_preflight(
+                metadata_path=Path(str(args.metadata)),
+                output_path=Path(str(args.output_report)),
+                repository_root=Path(str(args.repo_root)),
+            )
+            return 0
         if args.command == "freeze-analysis":
-            seeds = tuple(args.bootstrap_seed)
-            if len(seeds) != 2:
-                raise ValueError("freeze-analysis requires exactly two bootstrap seeds")
             core_manifest = Path(str(args.core_manifest))
             reserve_manifest = Path(str(args.reserve_manifest))
             core_reference = Path(str(args.core_references))
             reserve_reference = Path(str(args.reserve_references))
-            plan = AnalysisPlan(
-                candidate_ids=tuple(args.candidate),
-                core_manifest_sha256=sha256_file(core_manifest),
-                reserve_manifest_sha256=sha256_file(reserve_manifest),
-                core_reference_sha256=sealed_sha256(core_reference),
-                reserve_reference_sha256=sealed_sha256(reserve_reference),
-                bootstrap_seeds=seeds,
-                pilot_baseline_cer=float(args.pilot_baseline_cer),
-            )
-            freeze_analysis_plan(
+            design = load_analysis_plan_design(Path(str(args.design)))
+            freeze_formal_analysis_plan(
                 Path(str(args.output)),
-                plan,
+                design,
                 core_manifest=core_manifest,
                 reserve_manifest=reserve_manifest,
                 core_reference=core_reference,
                 reserve_reference=reserve_reference,
+                preflight_report=Path(str(args.preflight_report)),
+                profile_paths=_parse_profile_paths(tuple(args.profile)),
             )
             return 0
         if args.command == "run":

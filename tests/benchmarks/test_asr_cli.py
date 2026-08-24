@@ -14,6 +14,7 @@ import pytest
 import voice_realtime.benchmarks.asr.cli as cli_module
 from voice_realtime.asr.contracts import ASRSessionContext
 from voice_realtime.asr.profiles import FunASRNanoPyTorchProfile, FunASRNanoWSProfile
+from voice_realtime.benchmarks.asr.analysis_plan import AnalysisPlan, DecisionFamily
 from voice_realtime.benchmarks.asr.cli import (
     _build_streaming_registry,
     _loopback_service_url,
@@ -103,6 +104,27 @@ def test_parser_exposes_run_score_compare_subcommands() -> None:
             "out.json",
         ]
     ).corpus == "corpus.json"
+    assert parser.parse_args(
+        [
+            "freeze-analysis",
+            "--design",
+            "design.json",
+            "--core-manifest",
+            "core.json",
+            "--reserve-manifest",
+            "reserve.json",
+            "--core-references",
+            "core.references.json",
+            "--reserve-references",
+            "reserve.references.json",
+            "--preflight-report",
+            "preflight.json",
+            "--profile",
+            "qwen=qwen.json",
+            "--output",
+            "analysis-plan.json",
+        ]
+    ).design == "design.json"
 
 
 def test_run_parser_exposes_resource_lock_controls() -> None:
@@ -414,6 +436,7 @@ def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:
             str(output),
             "--bootstrap-iterations",
             "100",
+            "--exploratory-sample-bootstrap",
         ]
     )
 
@@ -421,6 +444,33 @@ def test_compare_command_uses_paired_sample_ids(tmp_path: Path) -> None:
     assert exit_code == 0
     assert comparison["paired_samples"] == 2
     assert comparison["mean_cer_difference"] == -0.1
+    assert comparison["resampling_unit"] == "sample"
+    assert comparison["evidence_tier"] == "exploratory"
+
+
+def test_compare_command_requires_cluster_manifest_for_formal_evidence(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    output = tmp_path / "comparison.json"
+    _write_hypotheses(baseline, [("a", 0.3), ("b", 0.4)])
+    _write_hypotheses(candidate, [("a", 0.2), ("b", 0.3)])
+
+    exit_code = main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--candidate",
+            str(candidate),
+            "--output",
+            str(output),
+        ]
+    )
+
+    assert exit_code == 2
+    assert not output.exists()
 
 
 def test_compare_command_uses_corpus_content_group_as_cluster(tmp_path: Path) -> None:
@@ -442,7 +492,8 @@ def test_compare_command_uses_corpus_content_group_as_cluster(tmp_path: Path) ->
                 audio_sha256="b" * 64,
                 duration_ms=1_000,
                 session_id=f"session-{sample_id}",
-                content_group_id="shared-content",
+                content_group_id=f"content-{sample_id}",
+                analysis_cluster_id="shared-analysis-cluster",
                 scenario="near-field",
                 language="zh",
                 license_or_consent="test",
@@ -473,6 +524,98 @@ def test_compare_command_uses_corpus_content_group_as_cluster(tmp_path: Path) ->
     assert comparison["resampling_unit"] == "cluster"
     assert comparison["paired_clusters"] == 1
     assert comparison["corpus_manifest_sha256"] == sha256_file(corpus_path)
+    assert comparison["evidence_tier"] == "cluster_calibration"
+
+
+def test_compare_marks_formal_only_when_bound_to_frozen_analysis_plan(
+    tmp_path: Path,
+) -> None:
+    baseline = tmp_path / "baseline"
+    candidate = tmp_path / "candidate"
+    output = tmp_path / "comparison.json"
+    corpus_path = tmp_path / "corpus.json"
+    plan_path = tmp_path / "analysis-plan.json"
+    _write_hypotheses(baseline, [("a", 0.3), ("b", 0.4)])
+    _write_hypotheses(candidate, [("a", 0.2), ("b", 0.3)])
+    corpus = CorpusInputManifest(
+        corpus_version="target-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        split="blind-core",
+        samples=tuple(
+            CorpusInputSample(
+                sample_id=sample_id,
+                audio_path=f"pcm/{sample_id}.pcm",
+                source_sha256="a" * 64,
+                audio_sha256="b" * 64,
+                duration_ms=1_000,
+                session_id=f"session-{sample_id}",
+                analysis_cluster_id="cluster:core",
+                scenario="near-field",
+                language="zh",
+                license_or_consent="test",
+            )
+            for sample_id in ("a", "b")
+        ),
+    )
+    write_corpus_input_manifest(corpus_path, corpus)
+    plan = AnalysisPlan(
+        evidence_tier="formal",
+        candidate_ids=("qwen", "sense", "fun"),
+        candidate_profile_sha256=dict.fromkeys(
+            ("qwen", "sense", "fun"),
+            "e" * 64,
+        ),
+        core_manifest_sha256=sha256_file(corpus_path),
+        reserve_manifest_sha256="c" * 64,
+        core_reference_sha256="d" * 64,
+        reserve_reference_sha256="f" * 64,
+        preflight_report_sha256="1" * 64,
+        core_duration_ms=2_000,
+        reserve_duration_ms=1_000,
+        core_analysis_cluster_ids=("cluster:core",),
+        reserve_analysis_cluster_ids=("cluster:reserve",),
+        analysis_cluster_ids=("cluster:core", "cluster:reserve"),
+        primary_endpoints=("macro_cer",),
+        normalization_version="nfkc-casefold-punct-space-v1",
+        filtering_rules=("retain_all_failures",),
+        bootstrap_seeds=(1, 2),
+        pilot_baseline_cer=0.10,
+        decision_families=(
+            DecisionFamily(
+                family_id="meeting",
+                baseline_id="qwen",
+                candidate_ids=("fun",),
+                pilot_baseline_cer=0.10,
+            ),
+        ),
+    )
+    plan_path.write_text(
+        plan.model_dump_json(exclude_computed_fields=True),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "compare",
+            "--baseline",
+            str(baseline),
+            "--candidate",
+            str(candidate),
+            "--corpus",
+            str(corpus_path),
+            "--analysis-plan",
+            str(plan_path),
+            "--output",
+            str(output),
+            "--bootstrap-iterations",
+            "100",
+        ]
+    )
+
+    comparison = json.loads(output.read_text())
+    assert exit_code == 0
+    assert comparison["evidence_tier"] == "formal"
+    assert comparison["analysis_plan_sha256"] == sha256_file(plan_path)
 
 
 def test_compare_rejects_selective_sample_intersection(tmp_path: Path) -> None:

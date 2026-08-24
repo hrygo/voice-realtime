@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from voice_realtime.benchmarks.asr.cli import main
 from voice_realtime.benchmarks.asr.preflight import (
     BlindCandidateMetadata,
     BlindPreflightSpec,
@@ -178,3 +179,28 @@ def test_run_preflight_requires_external_metadata_and_refuses_overwrite(
             output_path=external / "other-report.json",
             repository_root=repository,
         )
+
+
+def test_preflight_corpus_cli_writes_metadata_status(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    metadata = external / "metadata.json"
+    metadata.write_text(_spec().model_dump_json(), encoding="utf-8")
+    output = external / "report.json"
+
+    exit_code = main(
+        [
+            "preflight-corpus",
+            "--metadata",
+            str(metadata),
+            "--output-report",
+            str(output),
+            "--repo-root",
+            str(repository),
+        ]
+    )
+
+    assert exit_code == 0
+    assert json.loads(output.read_text(encoding="utf-8"))["status"] == "metadata_ready"
