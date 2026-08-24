@@ -56,6 +56,31 @@ def _default_blind_tags() -> dict[
     return {"blind-core": required, "blind-reserve": required}
 
 
+def _default_scenario_durations() -> dict[
+    Literal["blind-core", "blind-reserve"], dict[str, int]
+]:
+    return {
+        "blind-core": {
+            "near-field": 9 * 60_000,
+            "meeting": 17 * 60_000,
+            "code-switch": 9 * 60_000,
+            "accent": 11 * 60_000,
+            "noise": 6 * 60_000,
+            "entity": 6 * 60_000,
+            "negative": 2 * 60_000,
+        },
+        "blind-reserve": {
+            "near-field": 6 * 60_000,
+            "meeting": 13 * 60_000,
+            "code-switch": 6 * 60_000,
+            "accent": 9 * 60_000,
+            "noise": 4 * 60_000,
+            "entity": 4 * 60_000,
+            "negative": 3 * 60_000,
+        },
+    }
+
+
 class CorpusSourceSample(_FrozenModel):
     """制备前的受权源音频及冻结标注。"""
 
@@ -119,6 +144,9 @@ class CorpusPreparationSpec(_FrozenModel):
     required_duration_ms: dict[Literal["blind-core", "blind-reserve"], int] = Field(
         default_factory=_default_blind_durations
     )
+    required_scenario_duration_ms: dict[
+        Literal["blind-core", "blind-reserve"], dict[str, int]
+    ] = Field(default_factory=_default_scenario_durations)
     minimum_blind_speakers: int = Field(default=20, ge=1)
     minimum_speakers_per_look: int = Field(default=6, ge=1)
     required_tags: dict[
@@ -141,6 +169,17 @@ class CorpusPreparationSpec(_FrozenModel):
             actual = sum(sample.expected_duration_ms for sample in samples)
             if expected is None or actual != expected:
                 raise ValueError(f"{split} unique duration must equal frozen quota")
+            scenario_duration: dict[str, int] = {}
+            for sample in samples:
+                scenario_duration[sample.scenario] = (
+                    scenario_duration.get(sample.scenario, 0)
+                    + sample.expected_duration_ms
+                )
+            required_scenarios = self.required_scenario_duration_ms.get(
+                cast(Literal["blind-core", "blind-reserve"], split)
+            )
+            if required_scenarios is None or scenario_duration != required_scenarios:
+                raise ValueError(f"{split} scenario duration must equal frozen quota")
         core_sessions = {sample.session_id for sample in core}
         reserve_sessions = {sample.session_id for sample in reserve}
         if core_sessions & reserve_sessions:
@@ -193,12 +232,17 @@ def quota_summary(spec: CorpusPreparationSpec) -> dict[str, dict[str, object]]:
         if not samples:
             continue
         tag_duration: dict[str, int] = {}
+        scenario_duration: dict[str, int] = {}
         for sample in samples:
+            scenario_duration[sample.scenario] = (
+                scenario_duration.get(sample.scenario, 0) + sample.expected_duration_ms
+            )
             for tag in sample.tags:
                 tag_duration[tag] = tag_duration.get(tag, 0) + sample.expected_duration_ms
         summary[split] = {
             "sample_count": len(samples),
             "unique_duration_ms": sum(sample.expected_duration_ms for sample in samples),
+            "scenario_duration_ms": dict(sorted(scenario_duration.items())),
             "tag_duration_ms": dict(sorted(tag_duration.items())),
         }
     return summary

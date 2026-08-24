@@ -55,6 +55,10 @@ def _spec(samples: tuple[CorpusSourceSample, ...]) -> CorpusPreparationSpec:
         corpus_version="target-domain-v1",
         samples=samples,
         required_duration_ms={"blind-core": 60_000, "blind-reserve": 45_000},
+        required_scenario_duration_ms={
+            "blind-core": {"near-field": 60_000},
+            "blind-reserve": {"near-field": 45_000},
+        },
         minimum_blind_speakers=2,
         minimum_speakers_per_look=1,
         required_tags={
@@ -128,6 +132,29 @@ def test_quota_summary_counts_unique_audio_once_across_orthogonal_tags() -> None
         "near-field": 60_000,
     }
     assert summary["blind-reserve"]["unique_duration_ms"] == 45_000
+    assert summary["blind-core"]["scenario_duration_ms"] == {"near-field": 60_000}
+
+
+def test_spec_rejects_wrong_primary_scenario_quota_even_when_tags_exist() -> None:
+    core = _sample("core", split="blind-core", duration_ms=60_000)
+    reserve = _sample("reserve", split="blind-reserve", duration_ms=45_000)
+
+    with pytest.raises(ValidationError, match="scenario duration"):
+        CorpusPreparationSpec(
+            corpus_version="target-domain-v1",
+            samples=(core, reserve),
+            required_duration_ms={"blind-core": 60_000, "blind-reserve": 45_000},
+            required_scenario_duration_ms={
+                "blind-core": {"meeting": 60_000},
+                "blind-reserve": {"near-field": 45_000},
+            },
+            minimum_blind_speakers=2,
+            minimum_speakers_per_look=1,
+            required_tags={
+                "blind-core": ("near-field", "entity"),
+                "blind-reserve": ("near-field", "entity"),
+            },
+        )
 
 
 def test_prepare_corpus_converts_once_and_freezes_separate_blind_references(

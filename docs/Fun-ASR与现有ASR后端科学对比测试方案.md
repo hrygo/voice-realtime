@@ -324,6 +324,12 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 > 不参与 Stage 1 早停。涉及真实会议时需取得授权、脱敏并将语料保存在项目目录外；项目只保存
 > 不可逆样本 ID、元数据和 SHA-256，不保存音频副本。
 
+截至 2026-08-25，已获取并校验最小公共代理候选池：AliMeeting Eval、ASCEND 与 HI-MIA-CW，原始制品
+均位于项目外；来源、许可冲突处理、SHA-256、speaker/session 实测与预分配见
+[`source-inventory.md`](benchmarks/asr/corpus-v12-20260825/source-inventory.md)。该组合用于与本项目用途相近
+的公共代理 blind，不冒充真实用户域；若结果未达到预注册显著性与非劣边界，必须补授权目标域语料并
+将当前结论保持为 `Experimental`。
+
 ---
 
 ### 4.2 目标域序贯正交配额（60 min Core + 45 min Reserve）
