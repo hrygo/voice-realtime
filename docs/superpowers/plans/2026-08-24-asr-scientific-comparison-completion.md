@@ -4,11 +4,16 @@
 
 **Goal:** 完成 Qwen3-ASR、SenseVoiceSmall 与 Fun-ASR-Nano 的可复现本机科学对比，分别选出字幕/会议和交互助手的唯一生产后端，并在生产验收后删除落选模型与专用接入。
 
-**Architecture:** 科学 runner 只依赖统一 `StreamingTranscriber` 契约；三种原生离线模型各由独立 adapter 吸收 vendor 差异。所有模型加载、服务启动、基准运行和全量测试都先取得项目外的主机级排他锁并由主 Agent 串行调度；只有 Stage 1 质量门禁通过的候选才建设流式 runtime，最终生产配置固定一个后端，不建设运行时切换。
+**Architecture:** 科学 runner 只依赖统一 `StreamingTranscriber` 契约；三种原生离线模型各由独立 adapter 吸收 vendor 差异。Qwen 官方 `qwen-asr==0.0.6` 与主项目 Transformers 版本冲突，因此通过 WhisperLiveKit 的隔离 Python 环境和持久子进程 worker 推理，不修改主项目依赖锁。所有模型加载、服务启动、基准运行和全量测试都先取得项目外的主机级排他锁并由主 Agent 串行调度；只有 Stage 1 质量门禁通过的候选才建设流式 runtime，最终生产配置固定一个后端，不建设运行时切换。
 
 **Tech Stack:** Python 3.12、asyncio、PyTorch/MPS、FunASR、WhisperLiveKit/Qwen3-ASR、Pydantic v2、pytest、cluster bootstrap、PostgreSQL（仅系统链路 confirmed 文本）。
 
 **Spec:** `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
+
+**Spec Revision:** v1.1（105 分钟正交 Blind Set、3 次性能采样、阶梯式 90–120 分钟/晋级臂预算）。
+
+**Execution status (2026-08-24):** Task 1 已按 TDD 完成并提交（`4a73bd9`、`ffbf810`）；Task 2/3 的
+RED 测试草案已由互斥 worker 分别写入独立文件，尚未运行或实现。模型和服务保持停止。
 
 ## Global Constraints
 
@@ -19,8 +24,26 @@
 - worker 只允许并行进行只读调查或修改彼此不重叠的文件；测试、模型加载、提交与删除由主 Agent 串行执行。
 - `PYTORCH_ENABLE_MPS_FALLBACK=0`；MPS 实验必须验证真实参数 device，失败单列 `infeasible`，不得静默转 CPU。
 - blind set 只在 `analysis-plan.json`、模型 revision、profile 和阈值冻结后开封一次；人工查看后调参必须创建新实验 family。
+- 目标域 blind 固定为约 105 分钟、约 100 个独立切片、约 2.2 万字；主层采用正交多标签，不把同一
+  会议中的远场、重叠、领域词和数字重复累计为独立录音时长。
+- 确定性准确率全量只运行 1 次；性能按 Latin square 运行 3 次（1 次 cold + 2 次 warm）。单模型/臂
+  的 90–120 分钟是条件晋级后的预算，资源串行时总墙钟按实际运行臂数量累加。
 - 会议不保存音频；保留 `EchoSuppressionProcessor` 与 `SelfEchoFilter` 双层回声防线。
 - 删除模型或生产接入只在最终分类、真实试运行和回退证据完成后执行，并精确记录删除清单。
+
+## Revised Time Budget (Spec v1.1)
+
+| 范围 | 冻结规模 / 单臂预算 | 执行说明 |
+|---|---:|---|
+| Public Reproducibility | 1–2h 音频 | 单独报告；离线运行耗时按各臂实测 RTF 计算 |
+| Target-domain Blind | 105m / 约 100 切片 / 约 2.2 万字 | 6 个有语音主层等权 macro；另含 5m 静音负样本 |
+| 标注 | 约 10–15 人工工时 | 双标 + 第三人裁决；先做 15m 一致性 pilot |
+| Stage 1 | MPS blind 预计约 6m | 准确率全量 1 次；性能 1 cold + 2 warm；public/dev 另计 |
+| Stage 2 | 15–20m | 仅晋级且具流式路径的臂；典型切片 1× 回放 |
+| Stage 3 | 15–30m | 主会议会话 30m，含 EOF/重连/故障/对账 |
+| Stage 4 | 约 10m / 10–15 轮 | 30 轮仅胜出后端加速回归，不进入横向主统计 |
+| Stage 5 | 1×60m | 每个晋级臂一次长跑，固定 cursor 注入全部故障 |
+| 完整晋级臂 | 约 90–120m | 这是单臂条件预算；严格串行时按晋级臂数量累加 |
 
 ---
 
@@ -36,31 +59,31 @@
 - Produces: `exclusive_resource_lock(path: Path | None, timeout_secs: float) -> ContextManager[ResourceLockMetadata]`。
 - Preserves: `score`、`compare` 为纯分析命令，不争抢模型锁；`run` 从模型身份校验前到产物封存后全程持锁。
 
-- [ ] **Step 1: 写竞争与权限 RED 测试**
+- [x] **Step 1: 写竞争与权限 RED 测试**
 
 覆盖首次持锁、同进程第二个非阻塞竞争者收到稳定 `RESOURCE_BUSY`、超时、异常退出自动释放、锁目录
 `0700`、锁文件 `0600`，以及 `score`/`compare` 不取锁。测试使用 `tmp_path` 和独立子进程，不触碰默认
 主机锁。
 
-- [ ] **Step 2: 运行 RED**
+- [x] **Step 2: 运行 RED**
 
 Run: `uv run pytest tests/benchmarks/test_resource_lock.py tests/benchmarks/test_asr_cli.py -q --no-cov`
 
 Expected: `voice_realtime.benchmarks.resource_lock` 不存在而失败。
 
-- [ ] **Step 3: 实现最小排他锁**
+- [x] **Step 3: 实现最小排他锁**
 
 使用 macOS/POSIX `fcntl.flock(LOCK_EX | LOCK_NB)`；采用单调时钟和短轮询实现有界等待。锁内容仅写 PID、
 UTC started_at、command 与 run_id，不写环境变量。CLI 增加 `--resource-lock` 和
 `--lock-timeout-secs`，默认路径通过 `Path.home()` 解析到项目外 cache。
 
-- [ ] **Step 4: 运行 GREEN 与回归**
+- [x] **Step 4: 运行 GREEN 与回归**
 
 Run: `uv run pytest tests/benchmarks/test_resource_lock.py tests/benchmarks/test_asr_cli.py tests/benchmarks/test_asr_replay.py -q --no-cov`
 
 Expected: PASS，且现有 runner 产物契约不变。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add src/voice_realtime/benchmarks tests/benchmarks
@@ -71,6 +94,8 @@ git commit -m "feat(asr): 增加实验主机资源排他锁"
 
 **Files:**
 - Create: `src/voice_realtime/asr/adapters/qwen3_native.py`
+- Create: `src/voice_realtime/asr/workers/__init__.py`
+- Create: `src/voice_realtime/asr/workers/qwen3_native_worker.py`
 - Modify: `src/voice_realtime/asr/adapters/__init__.py`
 - Modify: `src/voice_realtime/asr/profiles.py`
 - Modify: `src/voice_realtime/asr/defaults.py`
@@ -83,7 +108,7 @@ git commit -m "feat(asr): 增加实验主机资源排他锁"
 **Interfaces:**
 - Produces: `Qwen3NativeProfile(kind="qwen3-asr-native")`、`Qwen3NativeEngine`、
   `Qwen3NativeAdapter`，backend ID `qwen3-asr-native`。
-- Consumes: 项目外固定 Qwen3-ASR-1.7B snapshot、内存 16kHz mono float32/PCM、冻结 language/context。
+- Consumes: 项目外固定 Qwen3-ASR-1.7B snapshot、WhisperLiveKit 隔离解释器、内存 16kHz mono float32/PCM、冻结 language/context。
 
 - [ ] **Step 1: 写 vendor 行为与 adapter RED 测试**
 
@@ -99,9 +124,10 @@ Expected: 新 profile 和 adapter import 失败。
 
 - [ ] **Step 3: 实现最小原生离线边界**
 
-按当前本机 Qwen3-ASR/WhisperLiveKit 源码的真实签名加载本地 snapshot，显式 `local_files_only` 或等价
-离线边界；输入统一为 16kHz；只接受结构合法的文本结果。profile 冻结 device、dtype、language_source、
-context 和 decoder 参数，manifest 逐字段核对。
+主项目 adapter 启动一个持久隔离 worker，并用有界二进制帧传输元数据和 PCM；worker 按当前本机
+`qwen-asr` 真实签名加载本地 snapshot，分别对 model/processor 强制本地路径和离线边界。输入统一为
+16kHz；只接受结构合法且包含实际 device/dtype 的结果。profile 冻结隔离解释器、device、dtype、
+language_source、context 和 decoder 参数，manifest 逐字段核对；任何 CPU fallback 都失败。
 
 - [ ] **Step 4: 运行 GREEN 与类型检查**
 
@@ -109,7 +135,7 @@ Run:
 
 ```bash
 uv run pytest tests/asr/test_qwen3_native_adapter.py tests/asr/test_profiles.py tests/asr/test_defaults.py tests/benchmarks/test_asr_cli.py -q --no-cov
-uv run mypy src/voice_realtime/asr/adapters/qwen3_native.py src/voice_realtime/benchmarks/asr/cli.py
+uv run mypy src/voice_realtime/asr/adapters/qwen3_native.py src/voice_realtime/asr/workers/qwen3_native_worker.py src/voice_realtime/benchmarks/asr/cli.py
 ```
 
 Expected: PASS。
@@ -117,7 +143,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py
+git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md
 git commit -m "feat(asr): 增加Qwen3原生离线实验臂"
 ```
 
@@ -235,7 +261,8 @@ git commit -m "refactor(asr): 统一基准后端构建与身份核验"
 - [ ] **Step 1: 写隐私、格式与冻结 RED 测试**
 
 覆盖 WAV/FLAC 统一转码身份、时长/hash 校验、相对路径、symlink 逃逸、重复 sample ID、许可/同意缺失、
-blind reference 不可读模式、分层配额摘要、analysis plan hash、已冻结文件拒绝覆盖。
+blind reference 不可读模式、正交多标签、105 分钟/约 100 切片配额摘要、analysis plan hash、已冻结
+文件拒绝覆盖。配额统计必须按唯一音频时长计算，禁止因多个标签重复累加时长。
 
 - [ ] **Step 2: 运行 RED**
 
@@ -251,9 +278,11 @@ Expected: corpus/analysis_plan 模块不存在而失败。
 
 - [ ] **Step 4: 制备公开集、dev 与 blind 目录**
 
-在 `~/.cache/voice-realtime/benchmarks/asr/corpora/` 下创建版本化目录；公开数据记录数据集官方版本、
-许可、来源与 checksum。目标域数据仅纳入已授权录音；不足配额时在冻结报告中明确缺口，禁止用合成
-音频冒充真实 blind set。
+在 `~/.cache/voice-realtime/benchmarks/asr/corpora/` 下创建版本化目录；Public Reproducibility 冻结
+1–2 小时 AISHELL-1/Common Voice 合法子集，记录官方版本、许可、来源与 checksum。目标域 blind
+固定约 105 分钟、约 100 条、至少 20 人：近讲 15m、远场多人会议 30m、code-switch 15m、方言口音
+20m、噪声混响 10m、数字/日期/实体 10m、静音/非语音 5m；同一录音允许正交多标签。Reliability
+Set 固定 1×60m 或 2×30m。目标域仅纳入已授权录音；不足配额时明确缺口，禁止用合成音频冒充 blind。
 
 - [ ] **Step 5: 运行 GREEN 并提交工具与文档**
 
@@ -309,8 +338,9 @@ git commit -m "docs(asr): 回填三后端Stage0门禁结果"
 
 - [ ] **Step 1: 验证 dev 语料独立性与功效输入**
 
-确认 dev 未进入 blind，分层、说话人、许可、参考标注与 hash 完整；以会议/录音为 cluster，禁止以字符
-为独立样本。
+确认 dev 未进入 105 分钟 blind，分层、说话人、许可、参考标注与 hash 完整；以会议/录音为 cluster，
+禁止以字符为独立样本。先在 15 分钟双标 pilot 上验证标注一致性；normalized CER 差异超过 1.0 个
+绝对百分点时，先修订规范再继续冻结。
 
 - [ ] **Step 2: 冻结等调参预算**
 
@@ -319,13 +349,16 @@ git commit -m "docs(asr): 回填三后端Stage0门禁结果"
 
 - [ ] **Step 3: 采用 Latin square 串行运行**
 
-每个 block 顺序轮换，但任何时刻只加载一个模型；每臂一次 cold + 四次 warm。检测 thermal throttling
+每个 block 顺序轮换，但任何时刻只加载一个模型。确定性 greedy 准确率对完整 dev 只运行 1 次；性能
+采样共 3 次（第 1 次 cold、第 2–3 次 warm），不再执行旧计划的 5 次重复。检测 thermal throttling
 时整 block 作废并保留原因，不能删改单个差结果。
 
 - [ ] **Step 4: 生成统计与功效报告**
 
 报告 macro/micro CER、S/D/I、WER/MER、实体/数字/严重语义错误、失败率、资源和 10,000 次配对
-cluster bootstrap。用 dev 会话级差异估计 blind power，必要扩容只能发生在 blind 开封前。
+cluster bootstrap。用 dev 会话级差异对约 100 个 blind cluster 做 10,000 次功效模拟；目标 power
+`> 0.85`、双侧 alpha 0.05、最小相对 CER 改善 5%。如实测 pilot 方差不支持该功效结论，只能在
+blind 开封前扩容或把结论降级为 `Experimental`，不得直接复用方案中的预计 power。
 
 - [ ] **Step 5: 冻结 blind `analysis-plan.json` 并提交聚合结果**
 
@@ -359,8 +392,11 @@ Expected: PASS。
 
 - [ ] **Step 3: 核验冻结身份后开封一次**
 
-核对 code commit、模型/profile/corpus/analysis hashes 与排他锁，再按 Latin square 串行运行。失败样本
-必须保留，只有可证明与模型无关的基础设施故障才能整 block 重跑。
+核对 code commit、模型/profile/corpus/analysis hashes 与排他锁，再一次性开封约 105 分钟、约 100
+切片的 blind。每臂完整确定性准确率只运行 1 次；性能 3 次采用预冻结代表性 block 与 Latin square，
+不得把性能重复误报为三次独立准确率样本。MPS RTF≈0.06 时仅 blind 离线推理预算约 6 分钟；Public
+1–2 小时与独立 dev 的运行时间另计，CPU 臂按其实测 RTF 另计。失败样本必须保留，只有可证明与模型
+无关的基础设施故障才能整 block 重跑。
 
 - [ ] **Step 4: 分别做字幕/会议与交互结论**
 
@@ -421,8 +457,8 @@ git commit -m "feat(asr): 增加Fun-ASR本机流式候选服务"
 - Create: `docs/benchmarks/asr/stage2-<family>/summary.csv`
 - Modify: `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
 
-- [ ] **Step 1: 冻结相同 20ms PCM 与 1× schedule**
-- [ ] **Step 2: 依次运行基线与晋级候选，服务切换之间确认端口和锁释放**
+- [ ] **Step 1: 从 105 分钟目标域冻结 15–20 分钟高密度典型切片及相同 20ms PCM/1× schedule**
+- [ ] **Step 2: 依次运行基线与晋级候选，每臂 1× 回放 15–20 分钟；切换之间确认端口和锁释放**
 - [ ] **Step 3: 报告 TTFP、TTFC、finalization、revision、rollback、deadline miss 与失败率**
 - [ ] **Step 4: 对有可靠词时间戳的臂报告 commit latency；其余显式 `unsupported`**
 - [ ] **Step 5: 按延迟非劣与 6.4 秒 finalization 硬门禁决定是否进入 Stage 3/4**
@@ -442,8 +478,9 @@ git commit -m "docs(asr): 回填Stage2流式对比结果"
 
 - [ ] **Step 1: 写可重复的系统场景测试**
 
-覆盖字幕订阅、`assistant → meeting → idle → assistant`、30/60/120 分钟、EOF 正常/超时、断线、
-崩溃、慢客户端、epoch 重连、journal 回放和 exactly-once persistence。
+覆盖字幕订阅、`assistant → meeting → idle → assistant` 和 15–30 分钟系统场景；主会议会话固定为
+30 分钟，不再执行旧计划的 60/120 分钟重复。覆盖 EOF 正常/超时、断线、崩溃、慢客户端、epoch
+重连、journal 回放和 exactly-once persistence。
 
 - [ ] **Step 2: 为每个实验臂重建独立临时 PostgreSQL schema**
 
@@ -475,8 +512,9 @@ git commit -m "test(asr): 完成Stage3字幕会议系统验收"
 
 - [ ] **Step 1: 写固定链路实验测试**
 
-固定 VAD、LLM、TTS、`silence_secs=0.45`、相同话术与双层回声防线，只替换 STT factory。覆盖短指令、
-长问句、数字/人名、插话和连续 30 轮。
+固定 VAD、LLM、TTS、`silence_secs=0.45`、相同话术与双层回声防线，只替换 STT factory。主测量运行
+10–15 轮、预算约 10 分钟，覆盖短指令、长问句、数字/人名和插话。方案中“连续 30 轮”保留为胜出
+后端的加速回归，不作为每个实验臂的实时测量预算，也不与 10–15 轮主样本混合统计。
 
 - [ ] **Step 2: 依次启动所需单一服务并检查锁/端口**
 
@@ -507,8 +545,8 @@ git commit -m "test(asr): 完成Stage4交互链路验收"
 - Modify: `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
 
 - [ ] **Step 1: 冻结可靠性 cursor 与注入计划**
-- [ ] **Step 2: 每个晋级臂依次完成 3×120 分钟，禁止并行或交错模型驻留**
-- [ ] **Step 3: 每轮注入 3 次断线、1 次 ASR 崩溃、1 次 finalization delay**
+- [ ] **Step 2: 每个晋级臂依次完成 1×60 分钟连续录制，禁止并行或交错模型驻留**
+- [ ] **Step 3: 在同一冻结 cursor 依次注入 3 次断线、1 次 ASR 崩溃、1 次 finalization delay**
 - [ ] **Step 4: 报告内存斜率、FD/task/端口、队列、gap、重复持久化、尾段和恢复**
 - [ ] **Step 5: 任何硬门禁失败即记录 Reject，保留失败证据并停止该臂后续试运行**
 
@@ -541,7 +579,8 @@ git commit -m "test(asr): 完成Stage5长时可靠性验收"
 
 - [ ] **Step 2: 先完成受控真实试运行**
 
-固定一个生产候选，串行验证字幕、会议 EOF/恢复、交互 30 轮、外放下一轮输入、重启和离线启动。
+固定一个生产候选，串行验证字幕、30 分钟会议 EOF/恢复、交互 10–15 轮、外放下一轮输入、重启和
+离线启动；如主测量全绿，再执行一次不进入跨后端统计的 30 轮胜出后端加速回归。
 失败则恢复当前基线，不执行模型删除。
 
 - [ ] **Step 3: TDD 固定唯一默认后端**
