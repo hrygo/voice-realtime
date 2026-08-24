@@ -13,7 +13,9 @@
 **Spec Revision:** v1.1（105 分钟正交 Blind Set、3 次性能采样、阶梯式 90–120 分钟/晋级臂预算）。
 
 **Execution status (2026-08-24):** Task 1 已按 TDD 完成并提交（`4a73bd9`、`ffbf810`）；Task 2/3 的
-RED 测试草案已由互斥 worker 分别写入独立文件，尚未运行或实现。模型和服务保持停止。
+Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已按 TDD 提交（`e8a23b2`），ASR
+专项 107 tests、mypy 与 ruff 通过。runner factory/profile 身份核验接线和真实 Stage 0 仍待执行；
+模型和服务保持停止。
 
 ## Global Constraints
 
