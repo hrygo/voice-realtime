@@ -32,9 +32,9 @@
   `FunAudioLLM/Fun-ASR-Nano-2512@master` 快照（21 个文件，约 2.0 GiB）；20 个非隐藏远端文件已
   通过 `modelscope cache verify`。校验器仍报告 `.gitattributes` 缺失，但当前文件实测存在，因此
   这是工具对隐藏文件的覆盖差异，不能据此声称整个快照未完成。
-- 当前 Qwen3-ASR 1.7B/0.6B 也已迁移到 ModelScope cache，Sortformer 已迁移到 Hugging Face
-  cache 的固定 revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。0.6B 是非默认旧制品，
-  上游完整性核验显示缺少 README/configuration 元数据，禁止作为可行实验臂，除非重新取得完整快照。
+- 当前 Qwen3-ASR 1.7B 已迁移到 ModelScope cache，Sortformer 已迁移到 Hugging Face cache 的固定
+  revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。上游完整性核验失败的非默认
+  Qwen3-ASR 0.6B ModelScope 旧快照已删除，不作为实验臂或回退来源。
 - 尚未启动固定官方 WebSocket 服务、加载 checkpoint、开封 blind set 或产生任何选型结论。
   模型已落盘只完成制品门禁，不等于 MPS/CPU 推理与实时链路已可行。
 
