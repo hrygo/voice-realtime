@@ -409,6 +409,9 @@ class StageRunManifest(_FrozenModel):
     profile_sha256: str
     runtime_config_sha256: str
     schedule_sha256: str
+    input_manifest_sha256: str | None = None
+    eligibility_sha256: str | None = None
+    upstream_report_sha256s: dict[UpstreamStage, str] = Field(default_factory=dict)
     fault_plan_sha256: str | None = None
     started_at: datetime
     status: Literal["planned", "running", "completed", "failed", "deferred"]
@@ -423,6 +426,8 @@ class StageRunManifest(_FrozenModel):
         "profile_sha256",
         "runtime_config_sha256",
         "schedule_sha256",
+        "input_manifest_sha256",
+        "eligibility_sha256",
         "fault_plan_sha256",
     )
     @classmethod
@@ -430,6 +435,17 @@ class StageRunManifest(_FrozenModel):
         if value is None:
             return None
         return _validate_hex(value, length=_SHA256_LENGTH, label="artifact SHA-256")
+
+    @field_validator("upstream_report_sha256s")
+    @classmethod
+    def _upstream_hashes(
+        cls,
+        value: dict[UpstreamStage, str],
+    ) -> dict[UpstreamStage, str]:
+        return {
+            stage: _validate_hex(digest, length=_SHA256_LENGTH, label=f"{stage} SHA-256")
+            for stage, digest in value.items()
+        }
 
     @field_validator("started_at")
     @classmethod

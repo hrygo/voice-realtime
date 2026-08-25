@@ -193,6 +193,51 @@ class TestStreamSpeech:
         assert len(chunks) == 2
 
     @pytest.mark.asyncio
+    async def test_final_chunk_trims_long_trailing_silence(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        result = _mock_generation_result(samples=14_400, final=True)
+        result.audio = mx.array(
+            np.concatenate(
+                (
+                    np.full(2_400, 0.25, dtype=np.float32),
+                    np.zeros(12_000, dtype=np.float32),
+                )
+            )
+        )
+        model.generate.return_value = iter([result])
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        pcm = np.frombuffer(
+            b"".join([chunk async for chunk in engine.stream_speech("你好")]),
+            dtype=np.int16,
+        )
+
+        assert 2_400 <= pcm.size <= 4_800
+
+    @pytest.mark.asyncio
+    async def test_non_final_chunk_preserves_silence_for_stream_continuity(
+        self,
+        engine: TTSEngine,
+    ) -> None:
+        model = _mock_model("voice_design")
+        model.generate.return_value = iter(
+            [
+                _mock_generation_result(samples=4_800, final=False),
+                _mock_generation_result(samples=2_400, final=True),
+            ]
+        )
+        first = model.generate.return_value.__iter__().__next__()
+        first.audio = mx.array(np.zeros(4_800, dtype=np.float32))
+        model.generate.return_value = iter([first, _mock_generation_result(samples=2_400)])
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        chunks = [chunk async for chunk in engine.stream_speech("你好")]
+
+        assert len(chunks[0]) == 4_800 * 2
+
+    @pytest.mark.asyncio
     async def test_not_loaded_raises_runtime_error(self, engine: TTSEngine) -> None:
         with pytest.raises(RuntimeError, match="not loaded"):
             await anext(engine.stream_speech("你好"))

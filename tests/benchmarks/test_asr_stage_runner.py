@@ -173,7 +173,12 @@ async def test_formal_deferred_run_never_constructs_executor(tmp_path: Path) -> 
     result = await run_stage(request, executor_factory=factory, policy=fixture.policy)
     assert result.status == "deferred"
     assert calls == []
-    assert (request.output_root / request.run_id / "artifact-index.json").exists()
+    run_dir = request.output_root / request.run_id
+    assert (run_dir / "artifact-index.json").exists()
+    manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["input_manifest_sha256"] == _sha256(request.input_manifest_path)
+    assert manifest["eligibility_sha256"] == _sha256(eligibility_path)
+    assert manifest["upstream_report_sha256s"] == {"stage1": _sha256(upstream)}
 
 
 @pytest.mark.asyncio
@@ -606,6 +611,34 @@ def test_formal_git_head_verification_is_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(StageRequestError, match="formal repository HEAD"):
         stage_validation._git_commit(tmp_path, "formal")
     assert stage_validation._git_commit(tmp_path, "experimental") == "0" * 40
+
+
+def test_formal_git_head_rejects_dirty_worktree(tmp_path: Path) -> None:
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    _init_test_git(repository)
+    (repository / "uncommitted.txt").write_text("dirty", encoding="utf-8")
+
+    with pytest.raises(StageRequestError, match="clean worktree"):
+        stage_validation._git_commit(repository, "formal")
+
+
+@pytest.mark.asyncio
+async def test_run_manifest_binds_validated_input_identity(tmp_path: Path) -> None:
+    fixture = build_stage_fixture(tmp_path)
+
+    result = await run_stage(
+        fixture.request,
+        executor_factory=SyntheticStageExecutor,
+        policy=fixture.policy,
+    )
+
+    manifest = json.loads(
+        (fixture.request.output_root / result.run_id / "manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["input_manifest_sha256"] == _sha256(fixture.request.input_manifest_path)
 
 
 def test_direct_request_validation_rejects_invalid_upstream_timeout_and_lineage(

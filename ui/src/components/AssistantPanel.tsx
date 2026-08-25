@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
-import type { AssistantPhase, AssistantBubble, TurnMetrics } from "../stores/assistantStore";
 import {
   parseAssistantEvent,
   selectAssistantConnected,
   selectAssistantLatestMetrics,
   selectAssistantPhase,
+  selectAssistantSpeechSequence,
   selectAssistantTranscript,
   selectLastInterruptionTime,
   useAssistantStore,
@@ -17,7 +17,23 @@ import {
   type DuplexMode,
   type PersonaTemplate,
 } from "../stores/uiSettingsStore";
-import { MarkdownRenderer } from "./meeting/MarkdownRenderer";
+import { playAudioBlob } from "../utils/audioPlayback";
+import { useDisplayedAssistantPhase } from "./AssistantPhaseDisplay";
+import { AssistantWaveform as ExtractedAssistantWaveform } from "./AssistantWaveform";
+import { AssistantTranscript } from "./AssistantTranscript";
+import {
+  canRequestDuplexModeChange,
+  DUPLEX_MODE_PRESENTATION,
+  FALLBACK_VOICES,
+  formatMetric,
+  getDuplexModeFeedback,
+  getDuplexToggleMode,
+  getTelemetryBadge,
+  PHASE_CONFIG,
+  TELEMETRY_HELP_STEPS,
+  VOICE_CONFIGS,
+} from "./assistantPresentation";
+import { PersonaDialog } from "./PersonaDialog";
 import { showToast } from "./Toast";
 import {
   ActivityIcon,
@@ -37,193 +53,25 @@ import {
 import "./AssistantPanel.css";
 
 type Command = "clear_context" | "stop_session" | "restart";
-const PHASE_CONFIG: Record<
-  AssistantPhase,
-  { label: string; icon: string; desc: string; className: string }
-> = {
-  idle: { label: "待命", icon: "💤", desc: "系统就绪，请直接说话", className: "phase-idle" },
-  listening: { label: "聆听", icon: "👂", desc: "正在接收麦克风语音...", className: "phase-listening" },
-  thinking: { label: "思考", icon: "🧠", desc: "LM Studio 推理生成中...", className: "phase-thinking" },
-  speaking: { label: "播报", icon: "🗣️", desc: "Qwen3-TTS 语音播报中...", className: "phase-speaking" },
-  degraded: { label: "降级", icon: "⚠️", desc: "交互链路异常，请检查服务状态", className: "phase-idle" },
-  stopped: { label: "已停止", icon: "⏹️", desc: "语音交互会话已停止", className: "phase-idle" },
-};
-
-const FALLBACK_VOICES: readonly string[] = ["default", "warm", "bright", "calm"];
 
 /**
  * 给“用户开始说话”留出一个可感知的视觉窗口。
  * 实际管道状态仍按事件即时更新，这个延迟只作用于助手面板的展示层。
  */
-export const LISTENING_TO_THINKING_MIN_VISIBLE_MS = 240;
-
-export function getAssistantPhaseTransitionDelay(
-  displayedPhase: AssistantPhase,
-  nextPhase: AssistantPhase,
-  phaseStartedAt: number,
-  now = Date.now(),
-): number {
-  if (displayedPhase !== "listening" || nextPhase !== "thinking") return 0;
-
-  const elapsed = Math.max(0, now - phaseStartedAt);
-  return Math.max(0, LISTENING_TO_THINKING_MIN_VISIBLE_MS - elapsed);
-}
-
-export const DUPLEX_MODE_PRESENTATION: Record<
-  DuplexMode,
-  {
-    readonly icon: string;
-    readonly label: string;
-    readonly summary: string;
-    readonly detail: string;
-    readonly interruptionEnabled: boolean;
-  }
-> = {
-  speaker_focus: {
-    icon: "🔊",
-    label: "扬声器",
-    summary: "播报时不接收插话",
-    detail: "通过扬声器播放；播报期间暂停麦克风输入，避免回声触发新一轮对话。",
-    interruptionEnabled: false,
-  },
-  headphone_duplex: {
-    icon: "🎧",
-    label: "耳机",
-    summary: "播报时可随时插话",
-    detail: "通过耳机播放；播报期间保持麦克风监听，检测到真人声音后立即打断。需佩戴耳机。",
-    interruptionEnabled: true,
-  },
-};
-
-export type DuplexModeFeedbackTone = "active" | "switching" | "error" | "offline";
-
-export interface DuplexModeFeedback {
-  readonly tone: DuplexModeFeedbackTone;
-  readonly title: string;
-  readonly detail: string;
-}
-
-export function canRequestDuplexModeChange(
-  currentMode: DuplexMode,
-  requestedMode: DuplexMode,
-  pendingMode: DuplexMode | null,
-): boolean {
-  return currentMode !== requestedMode && pendingMode === null;
-}
-
-export function getDuplexToggleMode(
-  currentMode: DuplexMode,
-  pendingMode: DuplexMode | null,
-): DuplexMode {
-  return pendingMode ?? currentMode;
-}
-
-export function getDuplexModeFeedback(
-  currentMode: DuplexMode,
-  pendingMode: DuplexMode | null,
-  commandReady: boolean,
-  errorMessage?: string,
-): DuplexModeFeedback {
-  if (!commandReady) {
-    return {
-      tone: "offline",
-      title: "正在连接控制端",
-      detail: "连接成功后才能切换声音输出与插话方式。",
-    };
-  }
-
-  if (pendingMode !== null) {
-    return {
-      tone: "switching",
-      title: `正在切换到「${DUPLEX_MODE_PRESENTATION[pendingMode].label}」`,
-      detail: "系统正在应用新的声音输出与插话设置，请稍候。",
-    };
-  }
-
-  if (errorMessage) {
-    return {
-      tone: "error",
-      title: errorMessage,
-      detail: `当前仍使用「${DUPLEX_MODE_PRESENTATION[currentMode].label}」。再次选择目标模式可重试。`,
-    };
-  }
-
-  return {
-    tone: "active",
-    title: `当前使用「${DUPLEX_MODE_PRESENTATION[currentMode].label}」`,
-    detail: DUPLEX_MODE_PRESENTATION[currentMode].detail,
-  };
-}
+export {
+  getAssistantPhaseTransitionDelay,
+  LISTENING_TO_THINKING_MIN_VISIBLE_MS,
+} from "./AssistantPhaseDisplay";
+export {
+  canRequestDuplexModeChange,
+  DUPLEX_MODE_PRESENTATION,
+  getDuplexModeFeedback,
+  getDuplexToggleMode,
+  getTelemetryBadge,
+  TELEMETRY_HELP_STEPS,
+} from "./assistantPresentation";
 
 const DUPLEX_MODES: readonly DuplexMode[] = ["speaker_focus", "headphone_duplex"];
-
-const VOICE_CONFIGS: Record<string, { label: string; tag: string }> = {
-  default: { label: "默认原声", tag: "标准" },
-  warm: { label: "温暖磁性", tag: "亲和" },
-  bright: { label: "清脆干练", tag: "活力" },
-  calm: { label: "沉稳专业", tag: "严谨" },
-};
-
-function formatMetric(value: number | null): string {
-  return value === null ? "—" : `${value}ms`;
-}
-
-export interface TelemetryBadge {
-  readonly className: "fast" | "good" | "slow" | "idle";
-  readonly label: "极速" | "良好" | "偏高" | "数据不足" | "待命中";
-  readonly value: number | null;
-}
-
-export interface TelemetryHelpStep {
-  readonly title: string;
-  readonly formula: string;
-  readonly event: string;
-  readonly description: string;
-}
-
-export const TELEMETRY_HELP_STEPS: readonly TelemetryHelpStep[] = [
-  {
-    title: "STT 识别",
-    formula: "max(0, STT final − 说话结束)",
-    event: "UserStoppedSpeakingFrame → TranscriptionFrame",
-    description: "用户停止说话后，到语音转写产出最终文本的等待时间。若 final 已先于静音帧到达，则按 0ms 计，不把说话时长算进去。",
-  },
-  {
-    title: "LLM 首字",
-    formula: "LLM 首字 − max(STT final, 说话结束)",
-    event: "TranscriptionFrame / UserStoppedSpeakingFrame → LLMTextFrame",
-    description: "转写完成且用户回合结束后，到大模型输出第一段文本的等待时间；不代表完整回答生成完成。",
-  },
-  {
-    title: "TTS 首包",
-    formula: "TTS 首帧 − LLM 首字",
-    event: "LLMTextFrame → TTSAudioRawFrame",
-    description: "大模型开始输出文本后，到语音合成送出第一帧音频的等待时间；不代表整段语音已经播放完。",
-  },
-] as const;
-
-type TelemetryMetrics = Pick<TurnMetrics, "sttMs" | "llmTtftMs" | "ttsTtfbMs" | "e2eMs">;
-
-export function getTelemetryBadge(metrics: TelemetryMetrics | null): TelemetryBadge {
-  if (metrics === null) {
-    return { className: "idle", label: "待命中", value: null };
-  }
-
-  if (
-    metrics.sttMs === null
-    || metrics.llmTtftMs === null
-    || metrics.ttsTtfbMs === null
-    || metrics.e2eMs === null
-  ) {
-    return { className: "idle", label: "数据不足", value: null };
-  }
-
-  return metrics.e2eMs < 1200
-    ? { className: "fast", label: "极速", value: metrics.e2eMs }
-    : metrics.e2eMs < 2500
-      ? { className: "good", label: "良好", value: metrics.e2eMs }
-      : { className: "slow", label: "偏高", value: metrics.e2eMs };
-}
 
 interface AssistantPanelProps {
   readonly commandSocket: CommandSocketApi;
@@ -237,7 +85,8 @@ export default function AssistantPanel({
   onNavigateMeeting,
 }: AssistantPanelProps) {
   const phase = useAssistantStore(selectAssistantPhase);
-  const visiblePhase = useDisplayedAssistantPhase(phase);
+  const speechSequence = useAssistantStore(selectAssistantSpeechSequence);
+  const visiblePhase = useDisplayedAssistantPhase(phase, speechSequence);
   const transcript = useAssistantStore(selectAssistantTranscript);
   const connected = useAssistantStore(selectAssistantConnected);
   const lastInterruptionTime = useAssistantStore(selectLastInterruptionTime);
@@ -447,21 +296,11 @@ export default function AssistantPanel({
       }
 
       try {
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        audio.onended = () => {
-          setIsPreviewPlaying(false);
-          URL.revokeObjectURL(audioUrl);
-        };
-        audio.onerror = () => {
-          setIsPreviewPlaying(false);
-          URL.revokeObjectURL(audioUrl);
-          showToast("试听音频解码或播放失败", "error");
-        };
-        await audio.play();
-      } catch (playErr) {
-        setIsPreviewPlaying(false);
+        await playAudioBlob(blob);
+      } catch {
         showToast("音频播放被浏览器拦截，请点击页面后重试", "error");
+      } finally {
+        setIsPreviewPlaying(false);
       }
     },
     [isPreviewPlaying],
@@ -542,21 +381,11 @@ export default function AssistantPanel({
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
-        const audioUrl = URL.createObjectURL(blob);
-        const audio = new Audio(audioUrl);
-        audio.onended = () => {
-          setPlayingBubbleKey(null);
-          URL.revokeObjectURL(audioUrl);
-        };
-        audio.onerror = () => {
-          setPlayingBubbleKey(null);
-          URL.revokeObjectURL(audioUrl);
-          showToast("语音播放失败", "error");
-        };
-        await audio.play();
+        await playAudioBlob(blob);
       } catch {
-        setPlayingBubbleKey(null);
         showToast("语音朗读请求失败，请确保 TTS 桥已启动", "error");
+      } finally {
+        setPlayingBubbleKey(null);
       }
     },
     [playingBubbleKey, voice],
@@ -1128,454 +957,44 @@ export default function AssistantPanel({
 
         {/* 60FPS 声学动态可视化波形 */}
         <div className="assistant-waveform-container">
-          <AssistantWaveform phase={visiblePhase} isMuted={micMuted} />
+          <ExtractedAssistantWaveform phase={visiblePhase} isMuted={micMuted} />
         </div>
 
-        {/* 对话气泡流 */}
-        <div className="assistant-transcript-container">
-          <div
-            className="assistant-transcript"
-            ref={transcriptScrollRef}
-            onScroll={handleScroll}
-            aria-live="polite"
-          >
-            {transcript.map((bubble: AssistantBubble, idx: number) => {
-              const bubbleKey = `${bubble.role}-${bubble.turnId ?? idx}-${bubble.timestamp ?? idx}`;
-              const isCopied = copiedKey === bubbleKey;
-              return (
-                <div
-                  className={`assistant-bubble-row ${bubble.role}`}
-                  key={bubbleKey}
-                >
-                  <div className="bubble-meta-header">
-                    <span className="bubble-role-badge">
-                      {bubble.role === "user" ? "👤 你" : "🤖 AI 助手"}
-                    </span>
-                    {bubble.turnId !== undefined && (
-                      <span className="bubble-turn-pill">#{bubble.turnId}</span>
-                    )}
-                    {bubble.timestamp && (
-                      <span className="bubble-time-pill">{bubble.timestamp}</span>
-                    )}
-                    {bubble.interrupted && (
-                      <span className="bubble-interrupted-tag">⚡ 已打断 (耳机插话)</span>
-                    )}
-                  </div>
-                  <div className={`bubble-card ${bubble.final ? "final" : "streaming"}`}>
-                    {bubble.role === "assistant" ? (
-                      <MarkdownRenderer content={bubble.text} />
-                    ) : (
-                      <span>{bubble.text}</span>
-                    )}
-                    <div className="bubble-actions-group">
-                      {bubble.role === "assistant" && bubble.final && (
-                        <button
-                          type="button"
-                          className={`bubble-action-btn ${playingBubbleKey === bubbleKey ? "playing" : ""}`}
-                          onClick={() => void handleReplayBubbleVoice(bubble.text, bubbleKey)}
-                          disabled={playingBubbleKey !== null}
-                          title="使用当前音色重新朗读此条回复"
-                        >
-                          {playingBubbleKey === bubbleKey ? "🔊 播报中..." : "🔊 朗读"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className={`bubble-action-btn ${isCopied ? "copied" : ""}`}
-                        onClick={() => handleCopyBubble(bubble.text, bubbleKey)}
-                        title="复制内容"
-                      >
-                        {isCopied ? "✓ 已复制" : "📋 复制"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {!transcript.length && (
-              <div className="assistant-empty-state">
-                <span className="empty-state-icon">🎙️</span>
-                <p className="empty-state-title">等待语音输入...</p>
-                <p className="empty-state-desc">
-                  直接对着麦克风说话，AI 助手将实时转写、推理并语音应答。
-                  {duplexPresentation.summary}。
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* 智能贴底按钮 */}
-          {isScrolledUp && (
-            <button
-              type="button"
-              className="scroll-to-bottom-btn"
-              onClick={scrollToBottom}
-              aria-label="回到底部"
-            >
-              <span>↓</span> 最新对话
-            </button>
-          )}
-
-          {/* 文字输入兜底栏 (Text-to-Chat) */}
-          <div className="assistant-input-bar">
-            <input
-              type="text"
-              className="assistant-text-input"
-              placeholder="💬 输入文字与助手对话 (按 Enter 发送)..."
-              value={textInput}
-              onChange={(e) => setTextInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendText();
-                }
-              }}
-            />
-            <button
-              type="button"
-              className="assistant-send-btn"
-              onClick={handleSendText}
-              disabled={!textInput.trim()}
-              title="发送文字消息"
-            >
-              <span>↑</span> 发送
-            </button>
-          </div>
-        </div>
+        <AssistantTranscript
+          transcript={transcript}
+          scrollRef={transcriptScrollRef}
+          isScrolledUp={isScrolledUp}
+          copiedKey={copiedKey}
+          playingBubbleKey={playingBubbleKey}
+          textInput={textInput}
+          duplexSummary={duplexPresentation.summary}
+          onScroll={handleScroll}
+          onScrollToBottom={scrollToBottom}
+          onReplay={handleReplayBubbleVoice}
+          onCopy={handleCopyBubble}
+          onTextInputChange={setTextInput}
+          onSendText={handleSendText}
+        />
       </main>
 
-      {/* 人格与提示词管理器 Modal */}
       {personaOpen && (
-        <div
-          className="persona-modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="persona-modal-title"
-          onClick={cancelPersona}
-        >
-          <div className="persona-modal-dialog" onClick={(e) => e.stopPropagation()}>
-            <div className="persona-dialog-header">
-              <h3 id="persona-modal-title">
-                <span>🎭</span> 助手人设库与提示词定制
-              </h3>
-              <button
-                type="button"
-                className="persona-dialog-close"
-                onClick={cancelPersona}
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="persona-dialog-body">
-              <div className="persona-presets-section">
-                <div className="presets-header-line">
-                  <span className="presets-label">人设模板库 (点击载入)</span>
-                  <button
-                    type="button"
-                    className="preset-chip"
-                    onClick={() => setShowAddCustom(!showAddCustom)}
-                  >
-                    {showAddCustom ? "取消新增" : "+ 存为新模板"}
-                  </button>
-                </div>
-
-                <div className="presets-chips">
-                  {allTemplates.map((preset) => {
-                    const isSelected = personaDraft.trim() === preset.prompt.trim();
-                    return (
-                      <span
-                        key={preset.id}
-                        className={`preset-chip ${isSelected ? "active" : ""}`}
-                        onClick={() => setPersonaDraft(preset.prompt)}
-                      >
-                        {preset.name}
-                        {!preset.isBuiltin && (
-                          <span
-                            className="preset-delete-icon"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeCustomPersona(preset.id);
-                              showToast(`已删除人设: ${preset.name}`, "info");
-                            }}
-                            title="删除此自定义模板"
-                          >
-                            ✕
-                          </span>
-                        )}
-                      </span>
-                    );
-                  })}
-                </div>
-
-                {showAddCustom && (
-                  <div className="persona-custom-creator">
-                    <input
-                      type="text"
-                      className="persona-custom-name-input"
-                      placeholder="输入新模板名称 (如: 🎙️ 英语面试官)..."
-                      value={newTemplateName}
-                      onChange={(e) => setNewTemplateName(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      className="btn-primary"
-                      onClick={handleSaveCustom}
-                    >
-                      保存模板
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div className="persona-textarea-wrap">
-                <textarea
-                  className="persona-textarea"
-                  value={personaDraft}
-                  onChange={(e) => {
-                    setPersonaDraft(e.target.value);
-                    if (personaError) setPersonaError("");
-                  }}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      e.preventDefault();
-                      void savePersona();
-                    }
-                  }}
-                  placeholder="输入助手 System Prompt 提示词..."
-                  rows={8}
-                  aria-label="系统提示词"
-                />
-                <div className="persona-meta-bar">
-                  <span>支持快捷键 <kbd>Cmd / Ctrl + Enter</kbd> 快速保存</span>
-                  <span>{personaDraft.length} 字符</span>
-                </div>
-                {personaError && <p className="persona-error">{personaError}</p>}
-              </div>
-            </div>
-
-            <div className="persona-dialog-footer">
-              <span style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
-                保存后立即向 LM Studio 下发并清空当前上下文
-              </span>
-              <div className="persona-dialog-footer-right">
-                <button type="button" className="btn-ctrl" onClick={cancelPersona}>
-                  取消
-                </button>
-                <button type="button" className="btn-primary" onClick={() => void savePersona()} disabled={!commandSocket.ready}>
-                  应用并生效
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PersonaDialog
+          templates={allTemplates}
+          draft={personaDraft}
+          error={personaError}
+          showAddCustom={showAddCustom}
+          newTemplateName={newTemplateName}
+          commandReady={commandSocket.ready}
+          onDraftChange={setPersonaDraft}
+          onClearError={() => setPersonaError("")}
+          onToggleAddCustom={() => setShowAddCustom((value) => !value)}
+          onNewTemplateNameChange={setNewTemplateName}
+          onSaveCustom={handleSaveCustom}
+          onRemoveCustom={removeCustomPersona}
+          onCancel={cancelPersona}
+          onSave={savePersona}
+        />
       )}
     </div>
-  );
-}
-
-function useDisplayedAssistantPhase(phase: AssistantPhase): AssistantPhase {
-  const [displayedPhase, setDisplayedPhase] = useState(phase);
-  const phaseStartedAtRef = useRef(Date.now());
-
-  useLayoutEffect(() => {
-    if (phase === displayedPhase) return;
-
-    const delay = getAssistantPhaseTransitionDelay(
-      displayedPhase,
-      phase,
-      phaseStartedAtRef.current,
-    );
-    if (delay === 0) {
-      phaseStartedAtRef.current = Date.now();
-      setDisplayedPhase(phase);
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      phaseStartedAtRef.current = Date.now();
-      setDisplayedPhase(phase);
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [displayedPhase, phase]);
-
-  return displayedPhase;
-}
-
-/**
- * 高性能声学动态波形绘制：
- * 1. 消除 Layout Thrashing（尺寸仅在 ResizeObserver 中更新并缓存）
- * 2. 状态感知智能降频（活跃态 35FPS，待命/静音态 15FPS）
- * 3. 集成 Page Visibility API（后台标签页彻底挂起，0 CPU/GPU 消耗）
- */
-function AssistantWaveform({
-  phase,
-  isMuted,
-}: {
-  readonly phase: AssistantPhase;
-  readonly isMuted: boolean;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const phaseRef = useRef(phase);
-  const mutedRef = useRef(isMuted);
-  phaseRef.current = phase;
-  mutedRef.current = isMuted;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-
-    let animFrame = 0;
-    let tick = 0;
-    let lastTime = 0;
-    let cachedWidth = 0;
-    let cachedHeight = 0;
-    let isRunning = true;
-
-    const barCount = 34;
-    const barLevels = new Array(barCount).fill(4);
-    const targetLevels = new Array(barCount).fill(4);
-
-    const resize = () => {
-      const bounds = canvas.getBoundingClientRect();
-      cachedWidth = bounds.width;
-      cachedHeight = bounds.height;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(cachedWidth * dpr));
-      canvas.height = Math.max(1, Math.round(cachedHeight * dpr));
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-
-    const render = (currentTime: number) => {
-      if (!isRunning) return;
-
-      const currentPhase = phaseRef.current;
-      const muted = mutedRef.current;
-      const isActive = !muted
-        && currentPhase !== "idle"
-        && currentPhase !== "degraded"
-        && currentPhase !== "stopped";
-
-      // 动态帧率控制：活跃状态 ~35FPS (28ms)，待命/静音状态 ~15FPS (66ms)
-      const targetInterval = isActive ? 28 : 66;
-      const elapsed = currentTime - lastTime;
-
-      if (elapsed >= targetInterval) {
-        lastTime = currentTime - (elapsed % targetInterval);
-        tick += 1;
-
-        if (cachedWidth > 0 && cachedHeight > 0) {
-          // 更新目标电平
-          for (let i = 0; i < barCount; i++) {
-            if (muted) {
-              targetLevels[i] = 2;
-            } else {
-              switch (currentPhase) {
-                case "idle":
-                case "degraded":
-                case "stopped":
-                  targetLevels[i] = 3 + Math.sin(tick * 0.08 + i * 0.2) * 1.5;
-                  break;
-                case "listening":
-                  targetLevels[i] =
-                    4 + Math.random() * 24 + Math.sin(i * 0.3 + tick * 0.2) * 6;
-                  break;
-                case "thinking":
-                  targetLevels[i] = 6 + Math.sin(tick * 0.2 - i * 0.4) * 12;
-                  break;
-                case "speaking":
-                  targetLevels[i] =
-                    6 +
-                    Math.abs(Math.sin(tick * 0.15 + i * 0.25)) * 26 +
-                    Math.random() * 8;
-                  break;
-              }
-            }
-          }
-
-          ctx.clearRect(0, 0, cachedWidth, cachedHeight);
-
-          const gradient = ctx.createLinearGradient(0, 0, cachedWidth, 0);
-          if (muted) {
-            gradient.addColorStop(0, "rgba(239, 68, 68, 0.4)");
-            gradient.addColorStop(1, "rgba(239, 68, 68, 0.4)");
-          } else if (currentPhase === "speaking") {
-            gradient.addColorStop(0, "#6366f1");
-            gradient.addColorStop(0.5, "#a855f7");
-            gradient.addColorStop(1, "#06b6d4");
-          } else if (currentPhase === "listening") {
-            gradient.addColorStop(0, "#10b981");
-            gradient.addColorStop(1, "#06b6d4");
-          } else if (currentPhase === "thinking") {
-            gradient.addColorStop(0, "#f59e0b");
-            gradient.addColorStop(1, "#ec4899");
-          } else {
-            gradient.addColorStop(0, "rgba(148, 163, 184, 0.4)");
-            gradient.addColorStop(1, "rgba(148, 163, 184, 0.6)");
-          }
-
-          ctx.fillStyle = gradient;
-
-          const gap = cachedWidth / barCount;
-          const barWidth = Math.max(2.5, gap * 0.52);
-
-          for (let i = 0; i < barCount; i++) {
-            barLevels[i] += (targetLevels[i] - barLevels[i]) * 0.25;
-            const h = Math.max(2, barLevels[i]);
-            const x = i * gap + (gap - barWidth) / 2;
-            const y = (cachedHeight - h) / 2;
-
-            ctx.beginPath();
-            ctx.roundRect(x, y, barWidth, h, 2);
-            ctx.fill();
-          }
-        }
-      }
-
-      animFrame = requestAnimationFrame(render);
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        isRunning = false;
-        cancelAnimationFrame(animFrame);
-      } else {
-        if (!isRunning) {
-          isRunning = true;
-          lastTime = performance.now();
-          animFrame = requestAnimationFrame(render);
-        }
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    resize();
-
-    if (!document.hidden) {
-      animFrame = requestAnimationFrame(render);
-    } else {
-      isRunning = false;
-    }
-
-    return () => {
-      isRunning = false;
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      observer.disconnect();
-      cancelAnimationFrame(animFrame);
-    };
-  }, []);
-
-  return (
-    <canvas
-      className="assistant-waveform-canvas"
-      ref={canvasRef}
-      role="img"
-      aria-label="声学动态频谱波形"
-    />
   );
 }

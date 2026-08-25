@@ -75,6 +75,7 @@ from voice_realtime.asr.adapters.pipecat_sensevoice import (
 )
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
+from voice_realtime.audio.devices import resolve_input_device_index
 from voice_realtime.config import (
     TTS_ENGINE_DEFAULT_VOICE,
     TTS_OUTPUT_SAMPLE_RATE,
@@ -656,15 +657,22 @@ def build_pipeline(
     下游 VAD/回声抑制/STT 无感知）。
     """
     use_injector = audio_queue is not None
-    transport = transport or LocalAudioTransport(
-        LocalAudioTransportParams(
-            audio_in_enabled=not use_injector,
-            audio_out_enabled=True,
-            audio_in_sample_rate=settings.sample_rate,
-            audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
-            input_device_index=settings.input_device,
+    if transport is None:
+        input_device_index = settings.input_device
+        if not use_injector and settings.input_device_name is not None:
+            input_device_index = resolve_input_device_index(
+                device_index=settings.input_device,
+                device_name=settings.input_device_name,
+            )
+        transport = LocalAudioTransport(
+            LocalAudioTransportParams(
+                audio_in_enabled=not use_injector,
+                audio_out_enabled=True,
+                audio_in_sample_rate=settings.sample_rate,
+                audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
+                input_device_index=input_device_index,
+            )
         )
-    )
 
     resolved_stt_factory = stt_factory or PipecatSenseVoiceFactory(
         model=settings.stt_model,

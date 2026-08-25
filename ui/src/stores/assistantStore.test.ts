@@ -31,6 +31,21 @@ describe("reduceAssistantEvent", () => {
       .toBe("speaking");
   });
 
+  it("records every microphone speech start even when final STT immediately follows", () => {
+    const started = reduceAssistantEvent(createAssistantSnapshot(), {
+      type: "vad",
+      state: "user_speaking",
+    });
+    const finalized = reduceAssistantEvent(started, {
+      type: "stt",
+      state: "final",
+      text: "你好",
+    });
+
+    expect(finalized.phase).toBe("thinking");
+    expect(finalized.speechSequence).toBe(1);
+  });
+
   it("enters thinking after final STT with valid text, but stays idle on punctuation-only STT", () => {
     const valid = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "stt",

@@ -1,0 +1,158 @@
+.assistant-phase-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  transition: all 0.25s ease;
+}
+
+.assistant-phase-badge.phase-idle {
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+}
+
+.assistant-phase-badge.phase-listening {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 12%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-green) 40%, transparent);
+  box-shadow: 0 0 12px var(--color-green-glow);
+  animation: listening-phase-pulse 1.35s ease-in-out infinite;
+}
+
+.assistant-phase-badge.phase-thinking {
+  color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 12%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-yellow) 40%, transparent);
+  box-shadow: 0 0 12px var(--color-yellow-glow);
+}
+
+.assistant-phase-badge.phase-speaking {
+  color: var(--color-accent-light);
+  background: color-mix(in srgb, var(--color-accent) 15%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  box-shadow: 0 0 12px var(--color-accent-glow);
+}
+
+.assistant-phase-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--border-dim);
+  background: rgba(0, 0, 0, 0.12);
+  gap: 12px;
+  position: relative;
+}
+
+.phase-step-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  background: transparent;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.phase-step-item.active {
+  color: var(--text-primary);
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  border-color: var(--border-light);
+}
+
+.phase-step-item.active.step-listening {
+  color: var(--color-green);
+  border-color: color-mix(in srgb, var(--color-green) 35%, transparent);
+  animation: listening-phase-pulse 1.35s ease-in-out infinite;
+}
+
+.phase-step-item.active.step-listening .phase-step-icon {
+  display: inline-flex;
+  transform-origin: center;
+  animation: listening-icon-pulse 1.35s ease-in-out infinite;
+}
+
+@keyframes listening-phase-pulse {
+  0%,
+  100% {
+    background: var(--bg-tertiary);
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    background: color-mix(in srgb, var(--color-green) 12%, var(--bg-tertiary));
+    box-shadow: 0 0 0 4px var(--color-green-glow), 0 0 14px var(--color-green-glow);
+  }
+}
+
+@keyframes listening-icon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.16) translateY(-1px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-phase-badge.phase-listening,
+  .phase-step-item.active.step-listening,
+  .phase-step-item.active.step-listening .phase-step-icon {
+    animation: none;
+  }
+}
+
+.phase-step-item.active.step-thinking {
+  color: var(--color-yellow);
+  border-color: color-mix(in srgb, var(--color-yellow) 35%, transparent);
+}
+
+.phase-step-item.active.step-speaking {
+  color: var(--color-accent-light);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.interruption-alert-chip {
+  position: absolute;
+  right: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-yellow) 20%, var(--bg-card));
+  color: var(--color-yellow);
+  border: 1px solid var(--color-yellow);
+  font-size: 0.7rem;
+  font-weight: 600;
+  box-shadow: 0 0 10px var(--color-yellow-glow);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.assistant-waveform-container {
+  height: 72px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-secondary) 60%, transparent);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistant-waveform-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

@@ -35,6 +35,8 @@ _QUEUE_PUT_POLL_SECS = 0.05
 _MIN_GENERATION_TOKENS = 96
 _MAX_GENERATION_TOKENS = 1200
 _TOKENS_PER_TEXT_CHAR = 8
+_FINAL_SILENCE_THRESHOLD = 1e-3
+_FINAL_SILENCE_KEEP_MS = 100
 
 
 def _generation_token_budget(text: str) -> int:
@@ -188,7 +190,8 @@ class TTSEngine:
                     ):
                         if stop_requested.is_set():
                             break
-                        if not _publish(self._to_pcm(result)):
+                        pcm = self._to_pcm(result)
+                        if pcm and not _publish(pcm):
                             break
                 except Exception as exc:
                     _publish(exc)
@@ -224,5 +227,13 @@ class TTSEngine:
             )
         audio: Any = result.audio
         samples = np.asarray(audio, dtype=np.float32)
+        if bool(getattr(result, "is_final_chunk", False)):
+            non_silent = np.flatnonzero(np.abs(samples) > _FINAL_SILENCE_THRESHOLD)
+            if non_silent.size == 0:
+                samples = samples[:0]
+            else:
+                keep_samples = result_sample_rate * _FINAL_SILENCE_KEEP_MS // 1000
+                end = min(samples.size, int(non_silent[-1]) + 1 + keep_samples)
+                samples = samples[:end]
         pcm = np.clip(samples * 32767.0, -32768.0, 32767.0).astype(np.int16)
         return pcm.tobytes()

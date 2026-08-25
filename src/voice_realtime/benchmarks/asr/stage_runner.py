@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, cast
 
 from voice_realtime.benchmarks.asr.stage_artifacts import (
     StageArtifactError,
@@ -28,6 +28,7 @@ from voice_realtime.benchmarks.asr.stage_contracts import (
     StageRunManifest,
     StageRunState,
     StageStatus,
+    UpstreamStage,
 )
 from voice_realtime.benchmarks.asr.stage_evaluators import (
     MeetingStagePolicy,
@@ -170,6 +171,13 @@ def _build_manifest(
         profile_sha256=validated.identity_sha256s["profile"],
         runtime_config_sha256=validated.identity_sha256s["runtime_config"],
         schedule_sha256=validated.identity_sha256s["schedule"],
+        input_manifest_sha256=validated.identity_sha256s["input_manifest"],
+        eligibility_sha256=validated.identity_sha256s.get("eligibility"),
+        upstream_report_sha256s={
+            cast(UpstreamStage, key.removeprefix("upstream:")): digest
+            for key, digest in validated.identity_sha256s.items()
+            if key.startswith("upstream:")
+        },
         fault_plan_sha256=validated.identity_sha256s.get("fault_plan"),
         started_at=started_at,
         status=status,

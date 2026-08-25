@@ -32,6 +32,16 @@ def test_cer_reports_substitution_deletion_insertion_counts() -> None:
     assert result.reference_tokens == 4
 
 
+def test_cer_counts_leading_hypothesis_token_only_as_insertion() -> None:
+    result = character_error_rate("b", "ab")
+
+    assert result.status is MetricStatus.SUPPORTED
+    assert result.value == pytest.approx(1.0)
+    assert result.substitutions == 0
+    assert result.deletions == 0
+    assert result.insertions == 1
+
+
 def test_wer_uses_whitespace_tokens() -> None:
     result = word_error_rate("one two three", "one too three now")
 

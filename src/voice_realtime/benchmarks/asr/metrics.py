@@ -159,7 +159,7 @@ def conditional_power_from_interim(
 
 def _edit_counts(reference: Sequence[str], hypothesis: Sequence[str]) -> tuple[int, int, int]:
     """返回最小编辑路径的 substitutions、deletions、insertions。"""
-    previous = [(index, 0, index) for index in range(len(hypothesis) + 1)]
+    previous = [(0, 0, index) for index in range(len(hypothesis) + 1)]
     for ref_index, reference_token in enumerate(reference, start=1):
         current: list[tuple[int, int, int]] = [(0, ref_index, 0)]
         for hyp_index, hypothesis_token in enumerate(hypothesis, start=1):

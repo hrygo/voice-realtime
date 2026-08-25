@@ -22,6 +22,7 @@ from voice_realtime.benchmarks.asr.stage_contracts import (
     StageDecisionReport,
     StageGateEvidenceBundle,
     StageNumber,
+    StageRunManifest,
     UpstreamStage,
 )
 from voice_realtime.benchmarks.asr.stage_evidence import (
@@ -230,6 +231,24 @@ def _load_upstream(
             if stage_report.upstream_report_sha256s[previous] != previous_file.sha256:
                 raise StageEvidenceError(f"{stage} report upstream hash mismatch")
     return MappingProxyType(files)
+
+
+def _validate_run_upstream_binding(
+    manifest: StageRunManifest,
+    upstream_sha256s: Mapping[UpstreamStage, str],
+) -> None:
+    """新式 formal manifest 必须与决策阶段重新读取的上游证据完全一致。"""
+
+    if manifest.evidence_tier != "formal" or manifest.input_manifest_sha256 is None:
+        return
+    if manifest.eligibility_sha256 is None:
+        raise StageEvidenceError("formal run eligibility identity is missing")
+    bound = {
+        stage: manifest.upstream_report_sha256s.get(stage)
+        for stage in upstream_sha256s
+    }
+    if bound != upstream_sha256s:
+        raise StageEvidenceError("run manifest upstream identity mismatch")
 
 
 def _load_gate_evidence(
@@ -585,6 +604,10 @@ def verify_stage_decision(request: StageDecisionRequest) -> StageDecisionReport:
         request,
         repository,
         run=run,
+    )
+    _validate_run_upstream_binding(
+        run.manifest,
+        {stage: item.sha256 for stage, item in upstream_files.items()},
     )
     gates = _load_gate_evidence(request, repository, run, upstream_files)
     selection: FinalistSelectionEvidence | None = None

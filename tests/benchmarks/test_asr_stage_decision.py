@@ -5,12 +5,14 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from asr_stage_fakes import _fault_rows, build_decision_fixture
 
-from voice_realtime.benchmarks.asr import stage_evidence
+from voice_realtime.benchmarks.asr import stage_decision, stage_evidence
+from voice_realtime.benchmarks.asr.stage_contracts import StageRunManifest
 from voice_realtime.benchmarks.asr.stage_decision import (
     StageEvidenceError,
     verify_stage_decision,
@@ -67,6 +69,35 @@ def test_promote_is_derived_from_sealed_sources(tmp_path: Path) -> None:
         "finalization_delay": 1,
     }
     assert report.unique_finalist is True
+
+
+def test_new_formal_manifest_rebinds_upstream_report_hashes() -> None:
+    manifest = StageRunManifest(
+        run_id="stage2-meeting-fun",
+        stage=2,
+        covered_stages=(2,),
+        family_id="meeting",
+        arm="finalist",
+        candidate_id="fun",
+        evidence_tier="formal",
+        executor_id="meeting-real-test",
+        git_commit="1" * 40,
+        model_sha256="a" * 64,
+        profile_sha256="b" * 64,
+        runtime_config_sha256="c" * 64,
+        schedule_sha256="d" * 64,
+        input_manifest_sha256="e" * 64,
+        eligibility_sha256="f" * 64,
+        upstream_report_sha256s={"stage1": "1" * 64},
+        started_at=datetime(2026, 8, 25, tzinfo=UTC),
+        status="completed",
+    )
+
+    with pytest.raises(StageEvidenceError, match="upstream identity mismatch"):
+        stage_decision._validate_run_upstream_binding(
+            manifest,
+            {"stage1": "2" * 64},
+        )
 
 
 def test_stage3_uses_only_the_sealed_slice_and_does_not_read_future_paths(

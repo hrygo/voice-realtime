@@ -389,12 +389,18 @@ def test_stage_run_manifest_binds_schedule_and_runtime_identity() -> None:
         profile_sha256=_hash("b"),
         runtime_config_sha256=_hash("c"),
         schedule_sha256=_hash("d"),
+        input_manifest_sha256=_hash("f"),
+        eligibility_sha256=_hash("0"),
+        upstream_report_sha256s={"stage1": _hash("1")},
         fault_plan_sha256=None,
         started_at=datetime(2026, 8, 25, tzinfo=UTC),
         status="planned",
     )
 
     assert manifest.stage == 2
+    assert manifest.input_manifest_sha256 == _hash("f")
+    assert manifest.eligibility_sha256 == _hash("0")
+    assert manifest.upstream_report_sha256s == {"stage1": _hash("1")}
     with pytest.raises(ValidationError, match="fault plan is required"):
         StageRunManifest(
             **{

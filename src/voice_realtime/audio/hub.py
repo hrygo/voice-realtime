@@ -22,6 +22,11 @@ from typing import Any
 
 import pyaudio  # type: ignore[import-untyped]
 
+from voice_realtime.audio.devices import (
+    AudioInputDeviceError,
+    resolve_input_device_index_with,
+)
+
 logger = logging.getLogger(__name__)
 
 # 音频参数：与 Pipecat 管道默认 sample_rate 一致
@@ -37,10 +42,6 @@ class _SinkState:
     queue: asyncio.Queue[bytes]
     task: asyncio.Task[None] | None = None
     dropped: int = 0
-
-
-class AudioInputDeviceError(RuntimeError):
-    """麦克风设备选择失败。"""
 
 
 class AudioHub:
@@ -304,63 +305,11 @@ class AudioHub:
         pa = self._qaudio
         if pa is None:
             raise AudioInputDeviceError("PyAudio 尚未初始化")
-        if self._device_index is not None:
-            self._require_input_device(self._device_index)
-            return self._device_index
-        if self._device_name is None:
-            try:
-                default_info = pa.get_default_input_device_info()
-                default_index = int(default_info["index"])
-            except (KeyError, OSError, TypeError, ValueError) as exc:
-                raise AudioInputDeviceError("无法获取系统默认输入设备") from exc
-            self._require_input_device(default_index)
-            return default_index
-
-        selector = self._device_name.casefold()
-        devices = self._input_devices()
-        exact = [device for device in devices if device[1].casefold() == selector]
-        if len(exact) == 1:
-            return exact[0][0]
-        fragments = [device for device in devices if selector in device[1].casefold()]
-        if len(fragments) == 1:
-            return fragments[0][0]
-        if len(fragments) > 1:
-            names = ", ".join(name for _, name in fragments)
-            raise AudioInputDeviceError(
-                f"麦克风名称 {self._device_name!r} 匹配到多个输入设备: {names}"
-            )
-        available = ", ".join(name for _, name in devices) or "无"
-        raise AudioInputDeviceError(
-            f"未找到输入设备 {self._device_name!r}；可用输入设备: {available}"
+        return resolve_input_device_index_with(
+            pa,
+            device_index=self._device_index,
+            device_name=self._device_name,
         )
-
-    def _input_devices(self) -> list[tuple[int, str]]:
-        pa = self._qaudio
-        if pa is None:
-            return []
-        devices: list[tuple[int, str]] = []
-        for index in range(pa.get_device_count()):
-            try:
-                info = pa.get_device_info_by_index(index)
-                channels = int(info.get("maxInputChannels", 0) or 0)
-            except (OSError, IndexError, TypeError, ValueError):
-                continue
-            name = str(info.get("name", "")).strip()
-            if channels > 0 and name:
-                devices.append((index, name))
-        return devices
-
-    def _require_input_device(self, index: int) -> None:
-        pa = self._qaudio
-        if pa is None:
-            raise AudioInputDeviceError("PyAudio 尚未初始化")
-        try:
-            info = pa.get_device_info_by_index(index)
-            channels = int(info.get("maxInputChannels", 0) or 0)
-        except (OSError, IndexError, TypeError, ValueError) as exc:
-            raise AudioInputDeviceError(f"麦克风设备索引无效: {index}") from exc
-        if channels <= 0:
-            raise AudioInputDeviceError(f"设备索引 {index} 不支持音频输入")
 
     def _get_device_info(self, index: int | None = None) -> dict[str, Any] | None:
         """获取设备信息（用于日志）。"""

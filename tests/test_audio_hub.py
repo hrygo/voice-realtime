@@ -53,14 +53,17 @@ class TestFanout:
     async def test_both_sinks_receive_each_chunk(self, mock_pyaudio: MagicMock) -> None:
         """一个音频块扇出到两个 sink。"""
         hub = AudioHub(chunk_size=512, throttle_secs=0.005)
-        sink_a = AsyncMock()
-        sink_b = AsyncMock()
+        received_a = asyncio.Event()
+        received_b = asyncio.Event()
+        sink_a = AsyncMock(side_effect=lambda _data: received_a.set())
+        sink_b = AsyncMock(side_effect=lambda _data: received_b.set())
         hub.add_sink("a", sink_a)
         hub.add_sink("b", sink_b)
 
         await hub.start()
         assert hub._qaudio is not None
-        await asyncio.sleep(0.05)
+        async with asyncio.timeout(1.0):
+            await asyncio.gather(received_a.wait(), received_b.wait())
         await hub.stop()
 
         assert sink_a.call_count >= 1
@@ -78,12 +81,14 @@ class TestFanout:
     async def test_dispatch_error_isolated(self, mock_pyaudio: MagicMock) -> None:
         """一个 sink 抛错不影响其他 sink 和采集循环。"""
         hub = AudioHub(throttle_secs=0.005)
+        received = asyncio.Event()
         bad_sink = AsyncMock(side_effect=RuntimeError("boom"))
-        good_sink = AsyncMock()
+        good_sink = AsyncMock(side_effect=lambda _data: received.set())
         hub.add_sink("bad", bad_sink)
         hub.add_sink("good", good_sink)
         await hub.start()
-        await asyncio.sleep(0.05)
+        async with asyncio.timeout(1.0):
+            await received.wait()
         await hub.stop()
         assert good_sink.call_count >= 1
 
@@ -141,7 +146,8 @@ class TestDefaultDevice:
         """回归：真实 pyaudio 默认设备信息是 dict（含 index 键），不得当整数传给
         get_device_info_by_index（此前 TypeError 导致 AudioHub.start 崩溃、页面无声）。"""
         hub = AudioHub(chunk_size=512, throttle_secs=0.005)  # device_index=None → 默认设备路径
-        sink = AsyncMock()
+        received = asyncio.Event()
+        sink = AsyncMock(side_effect=lambda _data: received.set())
         hub.add_sink("a", sink)
 
         await hub.start()
@@ -149,7 +155,8 @@ class TestDefaultDevice:
         info = hub._get_device_info()
         assert info is not None
         assert info["name"] == "mock-mic"
-        await asyncio.sleep(0.05)
+        async with asyncio.timeout(1.0):
+            await received.wait()
         await hub.stop()
 
         assert sink.call_count >= 1

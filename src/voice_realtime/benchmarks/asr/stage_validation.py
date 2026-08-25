@@ -656,6 +656,8 @@ def _expected_upstream_eligibility(
 def _load_eligibility(
     request: StageRunRequest,
     repository_root: Path,
+    *,
+    identity_sha256s: dict[str, str] | None = None,
 ) -> StageEligibilityEvidence | None:
     if request.evidence_tier == "experimental":
         if request.eligibility_path is not None or request.upstream_report_paths:
@@ -668,6 +670,8 @@ def _load_eligibility(
         repository_root,
         label="eligibility evidence",
     )
+    if identity_sha256s is not None:
+        identity_sha256s["eligibility"] = eligibility_stable.sha256
     try:
         evidence = StageEligibilityEvidence.model_validate_json(eligibility_stable.raw)
     except ValueError as exc:
@@ -690,6 +694,8 @@ def _load_eligibility(
     for stage_name, report_path in request.upstream_report_paths.items():
         upstream_stage = cast(UpstreamStage, stage_name)
         stable = _external_file(report_path, repository_root, label=f"{stage_name} report")
+        if identity_sha256s is not None:
+            identity_sha256s[f"upstream:{stage_name}"] = stable.sha256
         if stable.sha256 != evidence.upstream_report_sha256s[upstream_stage]:
             raise StageEligibilityError(f"{stage_name} report hash mismatch")
         expected_eligible = _expected_upstream_eligibility(
@@ -722,6 +728,19 @@ def _git_commit(repository_root: Path, evidence_tier: EvidenceTier) -> str:
         return _ZERO_GIT_COMMIT
     value = completed.stdout.strip().lower()
     if len(value) == 40 and all(character in "0123456789abcdef" for character in value):
+        if evidence_tier == "formal":
+            try:
+                status = subprocess.run(
+                    ["git", "-C", str(repository_root), "status", "--porcelain"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=5.0,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise StageRequestError("formal repository worktree cannot be verified") from exc
+            if status.stdout:
+                raise StageRequestError("formal repository requires a clean worktree")
         return value
     if evidence_tier == "formal":
         raise StageRequestError("formal repository HEAD is not a valid commit")
@@ -776,7 +795,12 @@ def validate_stage_request(request: StageRunRequest) -> ValidatedStageRunRequest
         repository_root,
         request.stage,
     )
-    eligibility = _load_eligibility(request, repository_root)
+    eligibility_identity_sha256s: dict[str, str] = {}
+    eligibility = _load_eligibility(
+        request,
+        repository_root,
+        identity_sha256s=eligibility_identity_sha256s,
+    )
     git_commit = _git_commit(repository_root, request.evidence_tier)
     runtime_inputs = ValidatedRuntimeInputs(
         model_root=model_root,
@@ -790,6 +814,7 @@ def validate_stage_request(request: StageRunRequest) -> ValidatedStageRunRequest
         "runtime_config": runtime_stable.sha256,
         "schedule": schedule_stable.sha256,
         "input_manifest": input_stable.sha256,
+        **eligibility_identity_sha256s,
     }
     if fault_stable is not None:
         identity_sha256s["fault_plan"] = fault_stable.sha256

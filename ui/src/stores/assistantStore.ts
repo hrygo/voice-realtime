@@ -30,6 +30,7 @@ export interface TurnMetrics {
 export interface AssistantSnapshot {
   readonly phase: AssistantPhase;
   readonly activity: AssistantActivity;
+  readonly speechSequence: number;
   readonly transcript: readonly AssistantBubble[];
   readonly lastInterruptionTime: number | null;
   readonly interruptionCount: number;
@@ -65,6 +66,7 @@ const IDLE_ACTIVITY: AssistantActivity = { listening: false, thinking: false, sp
 const INITIAL_SNAPSHOT: AssistantSnapshot = {
   phase: "idle",
   activity: IDLE_ACTIVITY,
+  speechSequence: 0,
   transcript: [],
   lastInterruptionTime: null,
   interruptionCount: 0,
@@ -150,7 +152,10 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       };
     case "vad":
       return event.state === "user_speaking"
-        ? withActivity(snapshot, { listening: true, thinking: false, speaking: false })
+        ? withActivity(
+            { ...snapshot, speechSequence: snapshot.speechSequence + 1 },
+            { listening: true, thinking: false, speaking: false },
+          )
         : withActivity(snapshot, { listening: false, thinking: true, speaking: false });
     case "stt": {
       const isMeaningful = Boolean(event.text.replace(/[。，！？,.!?\s]/g, "").trim());
@@ -304,6 +309,7 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
 
 /** 供组件按字段订阅，避免为无关状态重复渲染。 */
 export const selectAssistantPhase = (state: AssistantStore): AssistantPhase => state.phase;
+export const selectAssistantSpeechSequence = (state: AssistantStore): number => state.speechSequence;
 export const selectAssistantTranscript = (state: AssistantStore): readonly AssistantBubble[] => state.transcript;
 export const selectAssistantConnected = (state: AssistantStore): boolean => state.connected;
 export const selectLastInterruptionTime = (state: AssistantStore): number | null => state.lastInterruptionTime;

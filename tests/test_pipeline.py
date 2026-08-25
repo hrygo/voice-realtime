@@ -108,6 +108,34 @@ def mock_services() -> list[MagicMock]:
 
 
 class TestBuildPipeline:
+    def test_headless_transport_resolves_configured_microphone_name(
+        self,
+        settings: InteractionSettings,
+        mock_services: list[MagicMock],
+    ) -> None:
+        named_settings = settings.model_copy(
+            update={"input_device_name": "MacBook Pro microphone"}
+        )
+        transport_mock = MagicMock()
+        with (
+            patch(
+                "voice_realtime.interaction.pipeline.resolve_input_device_index",
+                return_value=7,
+            ) as resolve_device,
+            patch(
+                "voice_realtime.interaction.pipeline.LocalAudioTransport",
+                return_value=transport_mock,
+            ) as transport_class,
+        ):
+            build_pipeline(named_settings)
+
+        resolve_device.assert_called_once_with(
+            device_index=None,
+            device_name="MacBook Pro microphone",
+        )
+        params = transport_class.call_args.args[0]
+        assert params.input_device_index == 7
+
     def test_custom_stt_factory_is_inserted_between_echo_layers(
         self,
         settings: InteractionSettings,
