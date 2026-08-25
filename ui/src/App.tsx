@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import AssistantPanel from "./components/AssistantPanel";
 import StatusBar from "./components/StatusBar";
 import SubtitleStream from "./components/SubtitleStream";
 import MeetingPanel from "./components/meeting/MeetingPanel";
 import ShortcutsModal from "./components/ShortcutsModal";
-import { ToastContainer } from "./components/Toast";
+import { showToast, ToastContainer } from "./components/Toast";
 import { useCommandSocket } from "./hooks/useCommandSocket";
 import { useMeetingSocket } from "./hooks/useMeetingSocket";
+import type { RuntimeMode } from "./contracts/meetingContract";
+import type { RuntimeStateSnapshot } from "./protocol";
 import { useMeetingStore } from "./stores/meetingStore";
 import "./App.css";
 
@@ -32,6 +34,32 @@ function persistWorkspaceTab(tab: WorkspaceTab): void {
   } catch {
     // 隐私模式或存储受限时仅保留当前内存状态。
   }
+}
+
+export function resolveWorkspaceTab(
+  mode: RuntimeMode,
+  persistedTab: WorkspaceTab,
+  currentTab: WorkspaceTab | null,
+): WorkspaceTab {
+  if (mode === "meeting") return "meeting";
+  if (mode === "subtitles") return "subtitles";
+  const candidate = currentTab ?? persistedTab;
+  return candidate === "subtitles" ? "assistant" : candidate;
+}
+
+interface PendingWorkspaceSwitch {
+  readonly tab: Exclude<WorkspaceTab, "meeting">;
+  readonly startedRevision: number;
+  readonly generation: number;
+}
+
+function errorCode(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  return typeof error.code === "string" ? error.code : null;
+}
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
 }
 
 function ActiveMeetingMiniDock({
@@ -107,7 +135,14 @@ function ActiveMeetingMiniDock({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>(readStoredWorkspaceTab);
+  const persistedTabRef = useRef<WorkspaceTab>(readStoredWorkspaceTab());
+  const [activeTab, setActiveTab] = useState<WorkspaceTab | null>(null);
+  const [pendingTab, setPendingTab] = useState<WorkspaceTab | null>(null);
+  const [reconciling, setReconciling] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const pendingSwitchRef = useRef<PendingWorkspaceSwitch | null>(null);
+  const reconcilingRef = useRef(false);
+  const switchGenerationRef = useRef(0);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const commandSocket = useCommandSocket();
   useMeetingSocket();
@@ -120,18 +155,59 @@ export default function App() {
   const meetingMicMuted = useMeetingStore((s) => s.health.mic_muted);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 
-  useEffect(() => {
-    if (!isMeetingRecording) {
+  const clearPendingSwitch = useCallback(() => {
+    pendingSwitchRef.current = null;
+    reconcilingRef.current = false;
+    setPendingTab(null);
+    setReconciling(false);
+  }, []);
+
+  const commitWorkspaceTab = useCallback((tab: WorkspaceTab) => {
+    persistedTabRef.current = tab;
+    persistWorkspaceTab(tab);
+    setActiveTab(tab);
+  }, []);
+
+  const applyAuthoritativeSnapshot = useCallback((
+    snapshot: RuntimeStateSnapshot,
+    allowPendingTarget: boolean,
+  ) => {
+    const pending = pendingSwitchRef.current;
+    if (!pending) {
+      setActiveTab((currentTab) => (
+        resolveWorkspaceTab(snapshot.mode, persistedTabRef.current, currentTab)
+      ));
       return;
     }
-    setActiveTab((currentTab) => {
-      if (currentTab === "meeting") {
-        return currentTab;
-      }
-      persistWorkspaceTab("meeting");
-      return "meeting";
-    });
-  }, [isMeetingRecording]);
+
+    const isNewer = snapshot.runtime_revision > pending.startedRevision;
+    const targetMatches = snapshot.mode === pending.tab;
+    if (
+      snapshot.mode !== "meeting"
+      && !isNewer
+      && !(allowPendingTarget && targetMatches && snapshot.runtime_revision >= pending.startedRevision)
+    ) {
+      return;
+    }
+    if (targetMatches && !allowPendingTarget && !reconcilingRef.current) {
+      return;
+    }
+
+    clearPendingSwitch();
+    setSwitchError(null);
+    if (targetMatches) {
+      commitWorkspaceTab(pending.tab);
+    } else {
+      setActiveTab((currentTab) => (
+        resolveWorkspaceTab(snapshot.mode, persistedTabRef.current, currentTab)
+      ));
+    }
+  }, [clearPendingSwitch, commitWorkspaceTab]);
+
+  useEffect(() => {
+    if (!commandSocket.snapshot) return;
+    applyAuthoritativeSnapshot(commandSocket.snapshot, false);
+  }, [applyAuthoritativeSnapshot, commandSocket.snapshot, reconciling]);
 
   // Live elapsed time for meeting recording
   const [recordingElapsed, setRecordingElapsed] = useState(0);
@@ -150,24 +226,76 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isMeetingRecording, sessionStartedAt]);
 
-  /** Tab 智能联动：切换到「实时字幕」时自动挂起 AI 助手；切回「语音助手」时自动恢复 */
   const handleTabChange = useCallback(
     (newTab: WorkspaceTab) => {
-      setActiveTab(newTab);
-      persistWorkspaceTab(newTab);
-      if (isMeetingRecording) {
-        return; // 会议录制中由会议状态机接管
-      }
-      if (!commandSocket.ready) {
+      if (!commandSocket.snapshot) {
         return;
       }
-      if (newTab === "subtitles") {
-        void commandSocket.sendCommand({ cmd: "stop_session" }).catch(() => {});
-      } else if (newTab === "assistant") {
-        void commandSocket.sendCommand({ cmd: "start_assistant" }).catch(() => {});
+      if (newTab === "meeting") {
+        commitWorkspaceTab("meeting");
+        setSwitchError(null);
+        return;
       }
+
+      if (pendingSwitchRef.current || activeTab === newTab) return;
+
+      const startedRevision = commandSocket.highestRuntimeRevision
+        ?? commandSocket.snapshot.runtime_revision;
+      const generation = switchGenerationRef.current + 1;
+      switchGenerationRef.current = generation;
+      const pendingSwitch: PendingWorkspaceSwitch = {
+        tab: newTab,
+        startedRevision,
+        generation,
+      };
+      pendingSwitchRef.current = pendingSwitch;
+      reconcilingRef.current = false;
+      setPendingTab(newTab);
+      setReconciling(false);
+      setSwitchError(null);
+
+      const command = newTab === "subtitles"
+        ? { cmd: "start_subtitles" as const }
+        : { cmd: "start_assistant" as const };
+      void commandSocket.sendCommand(command).then(
+        (snapshot) => {
+          if (pendingSwitchRef.current?.generation !== generation) return;
+          applyAuthoritativeSnapshot(snapshot, true);
+        },
+        (error: unknown) => {
+          if (pendingSwitchRef.current?.generation !== generation) return;
+          if (errorCode(error) === "timeout") {
+            reconcilingRef.current = true;
+            setReconciling(true);
+            void commandSocket.reconcileRuntime().then(
+              (snapshot) => {
+                if (pendingSwitchRef.current?.generation !== generation) return;
+                applyAuthoritativeSnapshot(snapshot, true);
+              },
+              (reconcileError: unknown) => {
+                if (pendingSwitchRef.current?.generation !== generation) return;
+                const message = errorMessage(reconcileError, "运行时状态对账失败");
+                setSwitchError(message);
+                showToast(message, "error");
+              },
+            );
+            return;
+          }
+
+          const message = errorMessage(error, "工作区切换失败");
+          clearPendingSwitch();
+          setSwitchError(message);
+          showToast(message, "error");
+        },
+      );
     },
-    [commandSocket, isMeetingRecording],
+    [
+      activeTab,
+      applyAuthoritativeSnapshot,
+      clearPendingSwitch,
+      commandSocket,
+      commitWorkspaceTab,
+    ],
   );
 
   // Global Keyboard Shortcuts (Cmd/Ctrl + 1/2/3 for tabs, ? for help)
@@ -210,6 +338,9 @@ export default function App() {
         commandSocket={commandSocket}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         activeTab={activeTab}
+        pendingTab={pendingTab}
+        reconciling={reconciling}
+        switchError={switchError}
         onTabChange={handleTabChange}
         recordingElapsed={recordingElapsed}
       />

@@ -69,7 +69,10 @@ function formatTabTimer(sec: number): string {
 interface StatusBarProps {
   commandSocket: CommandSocketApi;
   onOpenShortcuts?: () => void;
-  activeTab?: WorkspaceTab;
+  activeTab?: WorkspaceTab | null;
+  pendingTab?: WorkspaceTab | null;
+  reconciling?: boolean;
+  switchError?: string | null;
   onTabChange?: (tab: WorkspaceTab) => void;
   recordingElapsed?: number;
 }
@@ -101,6 +104,9 @@ export default function StatusBar({
   commandSocket,
   onOpenShortcuts,
   activeTab = "assistant",
+  pendingTab = null,
+  reconciling = false,
+  switchError = null,
   onTabChange,
   recordingElapsed = 0,
 }: StatusBarProps) {
@@ -342,6 +348,7 @@ export default function StatusBar({
               type="button"
               className={`status-tab-btn ${activeTab === "assistant" ? "active" : ""}`}
               onClick={() => onTabChange("assistant")}
+              disabled={pendingTab !== null}
               title="切换至语音助手 (快捷键 Cmd+1)"
             >
               <span className="tab-icon">🤖</span>
@@ -372,6 +379,7 @@ export default function StatusBar({
               type="button"
               className={`status-tab-btn ${activeTab === "subtitles" ? "active" : ""}`}
               onClick={() => onTabChange("subtitles")}
+              disabled={pendingTab !== null}
               title="切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"
             >
               <span className="tab-icon">📝</span>
@@ -384,6 +392,19 @@ export default function StatusBar({
               )}
             </button>
           </nav>
+          {(pendingTab || switchError) && (
+            <span
+              className={`workspace-switch-state ${switchError ? "error" : ""}`}
+              role={switchError ? "alert" : "status"}
+              aria-live="polite"
+            >
+              {switchError
+                ? switchError
+                : reconciling
+                  ? "正在对账"
+                  : `切换中：${pendingTab === "subtitles" ? "实时字幕" : "语音助手"}`}
+            </span>
+          )}
         </div>
       )}
 

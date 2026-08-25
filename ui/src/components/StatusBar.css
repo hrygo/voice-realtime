@@ -29,8 +29,10 @@
 
 .status-center {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   flex-shrink: 0;
 }
 
@@ -71,6 +73,16 @@
 .status-tab-btn:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
+}
+
+.status-tab-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.status-tab-btn:disabled:hover {
+  color: var(--text-secondary);
+  background: transparent;
 }
 
 .status-tab-btn.active {
@@ -145,6 +157,22 @@
   background: color-mix(in srgb, var(--color-green) 18%, transparent);
   color: var(--color-green);
   border: 1px solid color-mix(in srgb, var(--color-green) 35%, transparent);
+}
+
+.workspace-switch-state {
+  min-height: 12px;
+  color: var(--color-accent-light);
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.workspace-switch-state.error {
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--color-red);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-brand {
