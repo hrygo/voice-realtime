@@ -219,7 +219,11 @@ class SubtitleProxy:
         if channel is not None:
             channel.task.cancel()
             logger.info("SubtitleProxy: 浏览器取消订阅 (剩余 %d 个)", len(self._clients))
-        if not self._clients:
+        if (
+            not self._clients
+            and not self._browser_capture_active
+            and self._capture_owner is None
+        ):
             self._drain_audio_buffer()
 
     @property
@@ -454,10 +458,10 @@ class SubtitleProxy:
             raise ValueError("timeout_secs 必须大于 0")
         start_time = perf_counter()
         logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
+        self._capture_accept_audio = False
         try:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._audio_buffer.join(), timeout=timeout_secs)
-            self._capture_accept_audio = False
             self._capture_active.clear()
             final_window = await asyncio.wait_for(stream.finish(), timeout=timeout_secs)
             self._capture_last_window = final_window
@@ -556,10 +560,6 @@ class SubtitleProxy:
                         self._capture_stream_available.clear()
                         continue
                     pending = await self._audio_buffer.get()
-                if not self._capture_accept_audio:
-                    self._audio_buffer.task_done()
-                    pending = None
-                    continue
                 active_stream = self._capture_stream
                 if active_stream is None:
                     self._capture_stream_available.clear()
@@ -758,7 +758,7 @@ class SubtitleProxy:
                 return
             chunk = await self._audio_buffer.get()
             try:
-                if self._browser_capture_active and self.has_clients:
+                if self._browser_capture_active:
                     await stream.send_audio(chunk)
             finally:
                 self._audio_buffer.task_done()
@@ -854,8 +854,7 @@ class SubtitleProxy:
                 self._audio_buffer.put_nowait(data)
             return
         if (
-            not self.has_clients
-            or not self._running
+            not self._running
             or not self._browser_capture_active
             or self._browser_stream is None
             or not self._browser_ready.is_set()
@@ -871,7 +870,7 @@ class SubtitleProxy:
     async def _push_audio_batch(self) -> None:
         """兼容性批量发送入口；只发送当前订阅期内已排队的音频。"""
         stream = self._browser_stream
-        if stream is None or not self.has_clients or not self._browser_capture_active:
+        if stream is None or not self._browser_capture_active:
             self._drain_audio_buffer()
             return
         while True:
@@ -898,7 +897,11 @@ class SubtitleProxy:
             current = self._clients.get(callback)
             if current is not None and current.task is asyncio.current_task():
                 self._clients.pop(callback, None)
-                if not self._clients:
+                if (
+                    not self._clients
+                    and not self._browser_capture_active
+                    and self._capture_owner is None
+                ):
                     self._drain_audio_buffer()
 
     @staticmethod

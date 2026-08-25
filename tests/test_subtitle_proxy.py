@@ -162,6 +162,26 @@ class ControlledTranscriber:
         await asyncio.sleep(0)
 
 
+class BlockingTranscriber(ControlledTranscriber):
+    """阻塞 PCM 发送，以便测试排队与关闭顺序。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.send_started = asyncio.Event()
+        self.allow_send = asyncio.Event()
+        self.operations: list[tuple[str, bytes | None]] = []
+
+    async def send_audio(self, chunk: bytes) -> None:
+        self.send_started.set()
+        await self.allow_send.wait()
+        self.sent_audio.append(chunk)
+        self.operations.append(("send", chunk))
+
+    async def finish(self) -> TranscriptWindow:
+        self.operations.append(("finish", None))
+        return TranscriptWindow(source_epoch=0)
+
+
 async def _wait_until(predicate: Callable[[], bool], *, attempts: int = 50) -> None:
     for _ in range(attempts):
         if predicate():
@@ -697,6 +717,44 @@ class TestMeetingCapture:
         assert proxy.capture_owner is None
         await proxy.stop()
 
+    async def test_finish_rejects_new_audio_but_drains_already_accepted_audio(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = BlockingTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+        preparation_task = asyncio.create_task(
+            proxy.prepare_capture("meeting:drain", timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await preparation_task
+        proxy.commit_capture(preparation)
+
+        first = b"a" * 32
+        second = b"b" * 32
+        late = b"c" * 32
+        await proxy.push_audio(first)
+        await stream.send_started.wait()
+        await proxy.push_audio(second)
+
+        finish_task = asyncio.create_task(proxy.finish_capture(timeout_secs=1))
+        await asyncio.sleep(0)
+        await proxy.push_audio(late)
+        stream.allow_send.set()
+        await finish_task
+
+        assert stream.operations == [
+            ("send", first),
+            ("send", second),
+            ("finish", None),
+        ]
+        assert late not in stream.sent_audio
+        await proxy.stop()
+
     async def test_capture_accepts_audio_without_browser_clients(
         self, settings: SubtitleSettings
     ) -> None:
@@ -937,6 +995,66 @@ class TestStreamConnection:
 
 
 class TestAudioPush:
+    async def test_committed_browser_capture_sends_without_clients(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+        preparation_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await preparation_task
+        proxy.commit_browser_capture(preparation)
+
+        await proxy.push_audio(b"pcm")
+        await _wait_until(lambda: stream.sent_audio == [b"pcm"])
+
+        assert proxy.browser_capture_active is True
+        await proxy.deactivate_browser_capture()
+        await proxy.stop()
+
+    async def test_last_client_removal_preserves_active_browser_audio(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = BlockingTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        client = AsyncMock()
+        proxy.add_client(client)
+        await proxy.start()
+        preparation_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await preparation_task
+        proxy.commit_browser_capture(preparation)
+
+        first = b"first"
+        queued = b"queued"
+        after_remove = b"after-remove"
+        await proxy.push_audio(first)
+        await stream.send_started.wait()
+        await proxy.push_audio(queued)
+        proxy.remove_client(client)
+        await proxy.push_audio(after_remove)
+        stream.allow_send.set()
+        await _wait_until(
+            lambda: stream.sent_audio == [first, queued, after_remove]
+        )
+
+        assert proxy.browser_capture_active is True
+        await proxy.deactivate_browser_capture()
+        await proxy.stop()
+
     async def test_push_audio_discarded_when_no_client(self, settings: SubtitleSettings) -> None:
         """无浏览器订阅时丢弃音频，恢复订阅后不发送历史帧。"""
         fake = FakeStream([])
@@ -945,8 +1063,10 @@ class TestAudioPush:
         await proxy.push_audio(b"\x00" * 512)
         assert proxy._audio_buffer.qsize() == 0
 
-    async def test_send_audio_when_client_present(self, settings: SubtitleSettings) -> None:
-        """有浏览器订阅时，音频经 _push_audio_batch 送到 wlk。"""
+    async def test_push_audio_batch_sends_without_client_when_active(
+        self, settings: SubtitleSettings
+    ) -> None:
+        """兼容批量入口只服从 workload 生命周期。"""
         fake = FakeStream([])
         proxy = SubtitleProxy(settings)
         proxy._browser_stream = fake  # type: ignore[assignment]
@@ -954,9 +1074,8 @@ class TestAudioPush:
         proxy._browser_ready.set()
         proxy._running = True
         proxy._state = SubtitleProxyState.CONNECTED
-        proxy.add_client(AsyncMock())
 
-        await proxy.push_audio(b"\x01" * 512)
+        proxy._audio_buffer.put_nowait(b"\x01" * 512)
         await proxy._push_audio_batch()
         assert fake.sent == [b"\x01" * 512]
         await asyncio.wait_for(proxy._audio_buffer.join(), timeout=0.1)
