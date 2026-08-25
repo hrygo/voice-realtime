@@ -172,3 +172,38 @@ async def test_echo_state_and_is_echo_suppressing(tmp_path: Path) -> None:
     await session.stop()
     # 会话停止后 reset，is_echo_suppressing 为 False
     assert not session.is_echo_suppressing()
+
+
+async def test_send_text_queues_frames(tmp_path: Path) -> None:
+    """测试 send_text 向 worker 队列推送 TranscriptionFrame 和 UserStoppedSpeakingFrame。"""
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        await stopped.wait()
+
+    async def end(*_args: object, **_kwargs: object) -> None:
+        stopped.set()
+
+    session, _factory, _runner = _session(
+        tmp_path,
+        run=AsyncMock(side_effect=run),
+        end=AsyncMock(side_effect=end),
+    )
+
+    with pytest.raises(RuntimeError, match="交互会话未运行"):
+        await session.send_text("你好")
+
+    await session.start()
+    assert session.active
+    worker = session.worker
+    assert worker is not None
+
+    await session.send_text("你好，语音助手")
+    assert worker.queue_frame.call_count == 2
+    first_frame = worker.queue_frame.call_args_list[0].args[0]
+    second_frame = worker.queue_frame.call_args_list[1].args[0]
+    assert type(first_frame).__name__ == "TranscriptionFrame"
+    assert first_frame.text == "你好，语音助手"
+    assert type(second_frame).__name__ == "UserStoppedSpeakingFrame"
+
+    await session.stop()

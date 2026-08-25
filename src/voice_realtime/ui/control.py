@@ -21,6 +21,7 @@ from voice_realtime.ui.protocol import (
     ErrorCode,
     RestartCommand,
     RuntimeStateSnapshot,
+    SendTextCommand,
     SetBargeInModeCommand,
     SetDuplexModeCommand,
     SetMicMutedCommand,
@@ -50,6 +51,7 @@ _COMMAND_NAMES = frozenset(
         "end_meeting",
         "start_assistant",
         "stop_active_mode",
+        "send_text",
     }
 )
 
@@ -64,6 +66,7 @@ class ControlRuntime(Protocol):
     async def end_meeting(self, meeting_id: str | None = None) -> Any: ...
     async def start_assistant(self) -> None: ...
     async def stop_active_mode(self) -> None: ...
+    async def send_text(self, text: str) -> None: ...
     def set_persona(self, persona: str) -> None: ...
     def set_voice(self, voice: str) -> None: ...
     def set_duplex_mode(self, mode: DuplexMode) -> None: ...
@@ -162,6 +165,8 @@ class ControlBridge:
             await self._runtime.start_assistant()
         elif isinstance(command, StopActiveModeCommand):
             await self._runtime.stop_active_mode()
+        elif isinstance(command, SendTextCommand):
+            await self._runtime.send_text(command.text)
 
     async def _set_voice(self, voice: str) -> None:
         host = "127.0.0.1" if self._bridge.host in {"0.0.0.0", "::"} else self._bridge.host

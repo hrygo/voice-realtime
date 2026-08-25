@@ -250,7 +250,7 @@ class TestLmStudioNativeLLMService:
     def test_native_client_has_explicit_local_timeouts(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
         assert svc._http.timeout.connect == 5
-        assert svc._http.timeout.read is None
+        assert svc._http.timeout.read == 15
         assert svc._http.timeout.write == 10
         assert svc._http.timeout.pool == 5
 
@@ -360,6 +360,57 @@ class TestLmStudioNativeLLMService:
                 {"model": "m", "input": "历史", "store": False},
                 timeout_seconds=1.0,
             )
+
+    async def test_stream_read_timeout_resets_current_native_chain(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._previous_response_id = "resp_stalled"
+        svc._system_prompt = "你是一个中文语音助手"
+        svc._completed_user_turns = 1
+        svc._memory_packet = valid_packet()
+
+        @asynccontextmanager
+        async def timeout_stream(*_: Any, **__: Any) -> Any:
+            raise httpx.ReadTimeout("stream stalled")
+            yield  # pragma: no cover
+
+        svc._http.stream = timeout_stream  # type: ignore[method-assign]
+        stream = await svc.get_chat_completions(make_second_turn_context())
+
+        with pytest.raises(httpx.ReadTimeout):
+            _ = [chunk async for chunk in stream]
+
+        assert svc._previous_response_id is None
+        assert svc._system_prompt is None
+        assert svc._completed_user_turns == 0
+        assert svc.memory_packet is None
+
+    async def test_stale_stream_timeout_does_not_reset_newer_native_chain(self) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        svc._request_generation = 2
+        svc._previous_response_id = "resp_newer"
+        svc._system_prompt = "系统"
+        svc._completed_user_turns = 2
+
+        @asynccontextmanager
+        async def timeout_stream(*_: Any, **__: Any) -> Any:
+            raise httpx.ReadTimeout("stale stream stalled")
+            yield  # pragma: no cover
+
+        svc._http.stream = timeout_stream  # type: ignore[method-assign]
+        stream = svc._native_completions(
+            {"model": "m", "input": "旧请求"},
+            generation=1,
+            system_prompt="系统",
+            user_turns=1,
+            messages=make_context().get_messages(),
+        )
+
+        with pytest.raises(httpx.ReadTimeout):
+            _ = [chunk async for chunk in stream]
+
+        assert svc._previous_response_id == "resp_newer"
+        assert svc._system_prompt == "系统"
+        assert svc._completed_user_turns == 2
 
     async def test_model_context_length_uses_loaded_instance_and_caches(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")

@@ -100,6 +100,11 @@ class StopActiveModeCommand(CommandBase):
     contract_version: Literal["1"] | None = None
 
 
+class SendTextCommand(CommandBase):
+    cmd: Literal["send_text"]
+    text: PersonaText
+
+
 ControlCommand = Annotated[
     ClearContextCommand
     | ClearSubtitlesCommand
@@ -113,7 +118,8 @@ ControlCommand = Annotated[
     | StartMeetingCommand
     | EndMeetingCommand
     | StartAssistantCommand
-    | StopActiveModeCommand,
+    | StopActiveModeCommand
+    | SendTextCommand,
     Field(discriminator="cmd"),
 ]
 _COMMAND_ADAPTER: TypeAdapter[ControlCommand] = TypeAdapter(ControlCommand)

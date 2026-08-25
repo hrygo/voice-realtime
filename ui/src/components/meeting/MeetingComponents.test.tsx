@@ -119,6 +119,10 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("已完成");
     expect(container.textContent).toContain("加载更多历史");
 
+    expect(container.querySelector(".meeting-sidebar-group-status")).not.toBeNull();
+    expect(container.querySelector(".meeting-sidebar-group-controls")).not.toBeNull();
+    expect(container.querySelector(".meeting-sidebar-group-history")).not.toBeNull();
+
     // Click refresh button
     const refreshBtn = container.querySelector(".btn-refresh-history") as HTMLButtonElement;
     expect(refreshBtn).not.toBeNull();
@@ -420,4 +424,3 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(firstChip.classList.contains("selected")).toBe(true);
   });
 });
-

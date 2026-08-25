@@ -71,3 +71,36 @@ resolve_bind_host() {
             ;;
     esac
 }
+
+# 将监听地址转换为同机客户端可连接的地址。
+# 通配监听地址不能作为 HTTP 客户端目标；其余地址保持不变。
+resolve_connect_host() {
+    local listen_host="${1:-127.0.0.1}"
+    local lower_host
+    lower_host=$(echo "$listen_host" | tr '[:upper:]' '[:lower:]' | xargs)
+
+    case "$lower_host" in
+        0.0.0.0)
+            echo "127.0.0.1"
+            ;;
+        ::|\[::\])
+            echo "::1"
+            ;;
+        localhost|local|loopback)
+            echo "127.0.0.1"
+            ;;
+        *)
+            echo "$listen_host"
+            ;;
+    esac
+}
+
+# 将主机名格式化为 URL authority；IPv6 地址需要方括号。
+format_url_host() {
+    local host="${1:-127.0.0.1}"
+    if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+        echo "[$host]"
+    else
+        echo "$host"
+    fi
+}

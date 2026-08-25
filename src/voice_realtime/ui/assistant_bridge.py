@@ -206,25 +206,44 @@ class StatusBridgeObserver(BaseObserver):
             await self._emit_event({"type": "system", "state": "pipeline_started"})
 
     async def _emit_turn_metrics(self) -> None:
-        """在一轮对话 TTS 开始时下发端到端耗时瀑布。"""
-        if self._t_silence is None or self._t_tts_first is None:
+        """以用户说话结束为起点，下发一轮对话的端到端耗时瀑布。"""
+        if (self._t_silence is None and self._t_stt_final is None) or self._t_tts_first is None:
             return
+
+        if self._t_stt_final is not None and self._t_silence is not None:
+            turn_ready = max(self._t_stt_final, self._t_silence)
+        elif self._t_stt_final is not None:
+            turn_ready = self._t_stt_final
+        else:
+            assert self._t_silence is not None
+            turn_ready = self._t_silence
+
         stt_ms = (
             max(0.0, round((self._t_stt_final - self._t_silence) * 1000, 1))
-            if self._t_stt_final is not None
+            if self._t_stt_final is not None and self._t_silence is not None
             else None
         )
+
         llm_ttft_ms = (
-            max(0.0, round((self._t_llm_first - self._t_stt_final) * 1000, 1))
-            if self._t_llm_first is not None and self._t_stt_final is not None
+            max(0.0, round((self._t_llm_first - turn_ready) * 1000, 1))
+            if self._t_llm_first is not None and turn_ready is not None
             else None
         )
         tts_ttfb_ms = (
             max(0.0, round((self._t_tts_first - self._t_llm_first) * 1000, 1))
-            if self._t_llm_first is not None
+            if self._t_tts_first is not None and self._t_llm_first is not None
             else None
         )
-        e2e_ms = max(0.0, round((self._t_tts_first - self._t_silence) * 1000, 1))
+        e2e_ms: float | None
+        if stt_ms is not None and llm_ttft_ms is not None and tts_ttfb_ms is not None:
+            # 总耗时按已展示的一位小数求和，避免独立四舍五入后出现 0.1ms 视觉不一致。
+            e2e_ms = round(stt_ms + llm_ttft_ms + tts_ttfb_ms, 1)
+        else:
+            e2e_ms = (
+                max(0.0, round((self._t_tts_first - self._t_silence) * 1000, 1))
+                if self._t_silence is not None
+                else None
+            )
         await self._emit_event(
             {
                 "type": "metrics",

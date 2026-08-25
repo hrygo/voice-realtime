@@ -178,6 +178,12 @@ class InteractionSettings(BaseSettings):
         default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
     )
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
+    input_device_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="麦克风设备名称或唯一名称片段；配置后找不到设备即停止采集",
+    )
     sample_rate: int = Field(default=16000, description="音频管线采样率")
     silence_secs: float = Field(
         default=0.45,
@@ -277,6 +283,20 @@ class InteractionSettings(BaseSettings):
         if v != 16000:
             raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
         return v
+
+    @field_validator("input_device_name", mode="before")
+    @classmethod
+    def _normalize_input_device_name(cls, v: object) -> object:
+        if isinstance(v, str):
+            stripped = v.strip()
+            return stripped or None
+        return v
+
+    @model_validator(mode="after")
+    def _validate_input_device_selector(self) -> InteractionSettings:
+        if self.input_device is not None and self.input_device_name is not None:
+            raise ValueError("麦克风设备索引与名称不能同时配置")
+        return self
 
     @model_validator(mode="after")
     def _validate_context_compaction_thresholds(self) -> InteractionSettings:

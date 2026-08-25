@@ -1521,6 +1521,194 @@
   color: #ef4444;
 }
 
+/* Unified sidebar treatment: the meeting history keeps its navigation role,
+   but follows the assistant's grouped-card hierarchy and control density. */
+.mode-sidebar.meeting-sidebar {
+  width: 300px;
+  min-width: 285px;
+  max-width: 320px;
+  box-sizing: border-box;
+  padding: 12px 10px;
+  gap: 10px;
+  overflow: hidden;
+  background: var(--bg-card-solid);
+}
+
+[data-theme="light"] .mode-sidebar.meeting-sidebar {
+  background: rgba(248, 250, 252, 0.94);
+}
+
+.meeting-sidebar-header {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 2px 10px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+
+.meeting-sidebar-title {
+  min-width: 0;
+  gap: 7px;
+  font-size: 0.78rem;
+}
+
+.meeting-sidebar-title-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meeting-sidebar-title-copy strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meeting-sidebar-title-copy small {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.meeting-sidebar .sidebar-header-actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.meeting-sidebar .btn-refresh-history,
+.meeting-sidebar .btn-new-meeting {
+  min-height: 28px;
+  box-sizing: border-box;
+}
+
+.meeting-sidebar .btn-refresh-history {
+  width: 28px;
+  padding: 0;
+}
+
+.meeting-sidebar .btn-new-meeting {
+  padding: 5px 8px;
+  font-size: 0.7rem;
+}
+
+.meeting-sidebar-status-label {
+  padding: 2px 7px;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: var(--radius-pill);
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-red);
+  font-size: 0.62rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.meeting-sidebar-group-status .pinned-active-meeting {
+  margin: 0;
+}
+
+.meeting-sidebar .mode-sidebar-group-history {
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow: hidden;
+}
+
+.meeting-sidebar .history-list {
+  min-height: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.meeting-sidebar .history-search-wrap {
+  min-height: 32px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.meeting-sidebar .history-search-icon {
+  left: 10px;
+}
+
+.meeting-sidebar .history-search-clear {
+  right: 8px;
+}
+
+.meeting-filter-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.meeting-filter-button {
+  min-height: 28px;
+  padding: 4px 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 500;
+  transition: all 0.15s ease;
+}
+
+.meeting-filter-button:hover {
+  border-color: var(--color-accent);
+  color: var(--text-primary);
+}
+
+.meeting-filter-button.active {
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-secondary));
+  color: var(--color-accent-light);
+  font-weight: 600;
+}
+
+.meeting-filter-button.active.recording {
+  border-color: color-mix(in srgb, var(--color-red) 45%, transparent);
+  background: color-mix(in srgb, var(--color-red) 12%, var(--bg-secondary));
+  color: var(--color-red);
+}
+
+.meeting-filter-button.active.completed {
+  border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
+  background: color-mix(in srgb, var(--color-green) 12%, var(--bg-secondary));
+  color: var(--color-green);
+}
+
+.meeting-sidebar .history-delete-btn {
+  padding: 2px;
+  opacity: 0.42;
+}
+
+.meeting-sidebar .history-item.active .history-delete-btn,
+.meeting-sidebar .history-delete-btn:hover {
+  opacity: 0.9;
+}
+
+@media (max-width: 1024px) {
+  .mode-sidebar.meeting-sidebar {
+    width: 260px;
+    min-width: 260px;
+  }
+}
+
+@media (max-width: 880px) {
+  .mode-sidebar.meeting-sidebar {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    max-height: 270px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 /* Live Floating Banner in Main Content Area */
 .meeting-live-banner {
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(30, 41, 59, 0.95) 100%);
@@ -1867,4 +2055,236 @@
   padding: 0 2px;
   border-radius: 2px;
   font-weight: 600;
+}
+
+/* ==========================================================================
+   Unified Meeting Controls
+   Aligns idle, recording, transcript, minutes, detail, modal, and live-banner
+   actions with the compact assistant-sidebar control language.
+   ========================================================================== */
+
+.meeting-workspace button {
+  font-family: inherit;
+}
+
+.meeting-workspace button:focus-visible,
+.meeting-workspace select:focus-visible,
+.meeting-workspace input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.meeting-workspace .btn-secondary,
+.meeting-workspace .btn-primary,
+.meeting-workspace .btn-new-meeting,
+.meeting-workspace .btn-end-meeting,
+.meeting-workspace .btn-live-banner-mic,
+.meeting-workspace .btn-live-banner-end,
+.meeting-workspace .btn-live-banner-return,
+.meeting-workspace .detail-back-btn {
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.meeting-workspace .btn-secondary,
+.meeting-workspace .btn-live-banner-mic,
+.meeting-workspace .detail-back-btn {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.meeting-workspace .btn-secondary:hover:not(:disabled),
+.meeting-workspace .btn-live-banner-mic:hover:not(:disabled),
+.meeting-workspace .detail-back-btn:hover:not(:disabled) {
+  border-color: var(--color-accent-light);
+  background: var(--bg-tertiary);
+  color: var(--color-accent-light);
+  transform: translateY(-1px);
+}
+
+.meeting-workspace .btn-primary,
+.meeting-workspace .btn-new-meeting,
+.meeting-workspace .btn-live-banner-return {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.meeting-workspace .btn-primary:hover:not(:disabled),
+.meeting-workspace .btn-new-meeting:hover:not(:disabled),
+.meeting-workspace .btn-live-banner-return:hover:not(:disabled) {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+  color: #fff;
+  box-shadow: 0 4px 14px var(--color-accent-glow);
+  transform: translateY(-1px);
+}
+
+.meeting-workspace .btn-end-meeting,
+.meeting-workspace .btn-live-banner-end {
+  border: 1px solid var(--color-red);
+  background: var(--color-red);
+  color: #fff;
+  box-shadow: 0 2px 10px var(--color-red-glow);
+}
+
+.meeting-workspace .btn-end-meeting:hover:not(:disabled),
+.meeting-workspace .btn-live-banner-end:hover:not(:disabled) {
+  border-color: #dc2626;
+  background: #dc2626;
+  color: #fff;
+  box-shadow: 0 4px 14px var(--color-red-glow);
+  transform: translateY(-1px);
+}
+
+.meeting-workspace .btn-start-meeting {
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  box-shadow: var(--shadow-glow);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.meeting-workspace .btn-start-meeting:hover:not(:disabled) {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+  box-shadow: 0 6px 20px var(--color-accent-glow);
+  transform: translateY(-1px);
+}
+
+.meeting-workspace .btn-load-more {
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+}
+
+.meeting-workspace .export-menu {
+  padding: 5px;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}
+
+.meeting-workspace .export-item {
+  min-height: 30px;
+  box-sizing: border-box;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.meeting-workspace .export-item:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--bg-secondary));
+  color: var(--color-accent-light);
+}
+
+.meeting-workspace .btn-live-banner-mic,
+.meeting-workspace .btn-live-banner-end,
+.meeting-workspace .btn-live-banner-return {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.meeting-workspace .btn-live-banner-mic.muted {
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 12%, var(--bg-secondary));
+  color: var(--color-yellow);
+}
+
+.meeting-workspace .detail-back-btn {
+  padding: 0 9px;
+}
+
+.meeting-workspace .detail-back-btn.is-live-return {
+  border-color: color-mix(in srgb, var(--color-red) 45%, transparent);
+  background: color-mix(in srgb, var(--color-red) 10%, var(--bg-secondary));
+  color: var(--color-red);
+}
+
+.meeting-workspace .detail-back-btn.is-live-return:hover:not(:disabled) {
+  border-color: var(--color-red);
+  background: var(--color-red);
+  color: #fff;
+  box-shadow: 0 4px 14px var(--color-red-glow);
+}
+
+.meeting-workspace .speaker-tag-btn {
+  min-height: 28px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.meeting-workspace .speaker-tag-btn:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--bg-secondary));
+  color: var(--color-accent-light);
+  text-decoration: none;
+}
+
+.meeting-workspace .btn-star-latest {
+  color: var(--color-yellow);
+}
+
+.meeting-workspace .btn-star-latest:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 12%, var(--bg-secondary));
+  color: var(--color-yellow);
+}
+
+.meeting-workspace .btn-secondary:disabled,
+.meeting-workspace .btn-primary:disabled,
+.meeting-workspace .btn-new-meeting:disabled,
+.meeting-workspace .btn-end-meeting:disabled,
+.meeting-workspace .btn-live-banner-end:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.meeting-workspace .form-input,
+.meeting-workspace .search-input,
+.meeting-workspace .speaker-select {
+  min-height: 32px;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  font-size: 0.74rem;
+}
+
+@media (max-width: 700px) {
+  .meeting-workspace .detail-actions,
+  .meeting-workspace .live-banner-actions {
+    flex-wrap: wrap;
+  }
+
+  .meeting-workspace .btn-live-banner-return {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
 }

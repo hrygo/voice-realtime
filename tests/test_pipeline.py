@@ -8,12 +8,14 @@ from __future__ import annotations
 import asyncio
 import struct
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    CancelFrame,
+    ErrorFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
@@ -797,6 +799,31 @@ class TestSelfEchoFilter:
             "BotStoppedSpeakingFrame",
         }
 
+    def test_first_transcription_after_confirmed_interruption_bypasses_echo_match(
+        self,
+    ) -> None:
+        buffer = EchoTextBuffer(window_secs=10.0)
+        buffer.add("今天天气真不错", now=time.monotonic())
+        processor = self._make_filter(buffer)
+
+        with patch.object(FrameProcessor, "process_frame", new=AsyncMock()):
+            emitted = asyncio.run(
+                _run_seq(
+                    processor,
+                    [
+                        InterruptionFrame(),
+                        TranscriptionFrame("今天天气真不错", "user-1", "t1"),
+                        TranscriptionFrame("今天天气真不错", "user-1", "t2"),
+                    ],
+                )
+            )
+
+        assert [type(frame).__name__ for frame in emitted] == [
+            "InterruptionFrame",
+            "TranscriptionFrame",
+        ]
+        assert processor._dropped == 1  # type: ignore[attr-defined]
+
 
 class TestBotTextRecorder:
     def test_llm_text_does_not_mark_tts_active(self) -> None:
@@ -817,6 +844,27 @@ class TestBotTextRecorder:
         assert state.bot_speaking
         asyncio.run(_run_seq(observer, [TTSStoppedFrame()]))
         assert not state.bot_speaking
+
+    @pytest.mark.parametrize(
+        "abort_frame",
+        [InterruptionFrame(), CancelFrame(), ErrorFrame("TTS failed")],
+    )
+    def test_tts_state_observer_resets_state_when_playback_aborts(
+        self, abort_frame: Frame
+    ) -> None:
+        state = EchoState()
+        state.on_tts_started()
+        state.on_bot_speaking_started()
+        observer = TTSStateObserver(state)
+        observer._FrameProcessor__started = True  # type: ignore[attr-defined]
+
+        with patch.object(FrameProcessor, "process_frame", new=AsyncMock()):
+            emitted = asyncio.run(_run_seq(observer, [abort_frame]))
+
+        assert emitted == [abort_frame]
+        assert not state.bot_speaking
+        assert not state._tts_active
+        assert not state._speaker_active
 
     def test_aggregates_streaming_tokens_and_flushes_on_punctuation(self) -> None:
         buffer = EchoTextBuffer()

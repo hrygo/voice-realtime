@@ -157,6 +157,90 @@ class TestDefaultDevice:
         mock_pyaudio.PyAudio.return_value.get_device_info_by_index.assert_called_with(0)
 
 
+class TestNamedDevice:
+    @staticmethod
+    def _configure_devices(mock_pyaudio: MagicMock, devices: list[dict[str, object]]) -> None:
+        instance = mock_pyaudio.PyAudio.return_value
+        instance.get_device_count.return_value = len(devices)
+        instance.get_device_info_by_index.side_effect = devices.__getitem__
+
+    async def test_unique_name_fragment_selects_input_device(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        self._configure_devices(
+            mock_pyaudio,
+            [
+                {"name": "OpenFit Pro by Shokz", "maxInputChannels": 1},
+                {"name": "MacBook Pro麦克风", "maxInputChannels": 1},
+            ],
+        )
+        hub = AudioHub(device_name="macbook pro", throttle_secs=0.005)
+        hub.add_sink("a", AsyncMock())
+
+        await hub.start()
+        await hub.stop()
+
+        kwargs = mock_pyaudio.PyAudio.return_value.open.call_args.kwargs
+        assert kwargs["input_device_index"] == 1
+
+    async def test_exact_name_wins_over_other_fragment_matches(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        self._configure_devices(
+            mock_pyaudio,
+            [
+                {"name": "MacBook Pro USB Mic", "maxInputChannels": 1},
+                {"name": "MacBook Pro", "maxInputChannels": 1},
+            ],
+        )
+        hub = AudioHub(device_name="macbook pro", throttle_secs=0.005)
+        hub.add_sink("a", AsyncMock())
+
+        await hub.start()
+        await hub.stop()
+
+        kwargs = mock_pyaudio.PyAudio.return_value.open.call_args.kwargs
+        assert kwargs["input_device_index"] == 1
+
+    async def test_ambiguous_name_fails_without_opening_stream(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        self._configure_devices(
+            mock_pyaudio,
+            [
+                {"name": "MacBook Pro Front", "maxInputChannels": 1},
+                {"name": "MacBook Pro Rear", "maxInputChannels": 1},
+            ],
+        )
+        hub = AudioHub(device_name="MacBook Pro")
+
+        with pytest.raises(RuntimeError, match="匹配到多个输入设备"):
+            await hub.start()
+
+        mock_pyaudio.PyAudio.return_value.open.assert_not_called()
+
+    async def test_missing_name_fails_without_default_fallback(
+        self, mock_pyaudio: MagicMock
+    ) -> None:
+        self._configure_devices(
+            mock_pyaudio,
+            [
+                {"name": "OpenFit Pro by Shokz", "maxInputChannels": 1},
+                {"name": "HDMI Output", "maxInputChannels": 0},
+            ],
+        )
+        hub = AudioHub(device_name="MacBook Pro")
+
+        with pytest.raises(RuntimeError, match="未找到输入设备"):
+            await hub.start()
+
+        mock_pyaudio.PyAudio.return_value.open.assert_not_called()
+
+    def test_name_and_index_cannot_be_configured_together(self) -> None:
+        with pytest.raises(ValueError, match="不能同时配置"):
+            AudioHub(device_index=3, device_name="MacBook Pro")
+
+
 class TestMuteAndBackpressure:
     async def test_muted_hub_drops_audio_and_drains_sink_queues(self) -> None:
         hub = AudioHub(queue_size=2)

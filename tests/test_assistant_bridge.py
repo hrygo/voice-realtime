@@ -311,3 +311,104 @@ class TestMetrics:
         assert observer._t_stt_final is None  # type: ignore[attr-defined]
         assert observer._t_llm_first is None  # type: ignore[attr-defined]
         assert observer._t_tts_first is None  # type: ignore[attr-defined]
+
+    async def test_turn_metrics_additive_waterfall_precision(self) -> None:
+        observer = StatusBridgeObserver(tts_throttle_secs=0.0)
+        client = _upsert_mock_client(observer)
+
+        # 模拟精准时序:
+        # t=0.0 用户开始说话, t=1.2 用户停止说话, t=1.35 STT产出final (尾延150ms)
+        # t=2.05 LLM吐出首字 (700ms), t=2.30 TTS发出首包 (250ms)
+        observer._t_speaking_start = 0.0  # type: ignore[attr-defined]
+        observer._t_silence = 1.2  # type: ignore[attr-defined]
+        observer._t_stt_final = 1.35  # type: ignore[attr-defined]
+        observer._t_llm_first = 2.05  # type: ignore[attr-defined]
+        observer._t_tts_first = 2.30  # type: ignore[attr-defined]
+        observer._metrics_turn_id = 1  # type: ignore[attr-defined]
+
+        await observer._emit_turn_metrics()  # type: ignore[attr-defined]
+        metrics = next(
+            json.loads(call.args[0])
+            for call in client.call_args_list
+            if json.loads(call.args[0]).get("type") == "metrics"
+        )
+        assert metrics["stt_ms"] == 150.0
+        assert metrics["llm_ttft_ms"] == 700.0
+        assert metrics["tts_ttfb_ms"] == 250.0
+        assert metrics["e2e_ms"] == 1100.0
+        total_stages = (
+            metrics["stt_ms"] + metrics["llm_ttft_ms"] + metrics["tts_ttfb_ms"]
+        )
+        assert round(total_stages, 1) == metrics["e2e_ms"]
+
+    async def test_turn_metrics_rounds_total_from_displayed_stages(self) -> None:
+        observer = StatusBridgeObserver(tts_throttle_secs=0.0)
+        client = _upsert_mock_client(observer)
+
+        # 三段原始值分别为 100.04ms、200.04ms、300.04ms；
+        # 独立显示为 100.0 + 200.0 + 300.0ms，总耗时也必须显示为 600.0ms。
+        observer._t_silence = 1.0  # type: ignore[attr-defined]
+        observer._t_stt_final = 1.10004  # type: ignore[attr-defined]
+        observer._t_llm_first = 1.30008  # type: ignore[attr-defined]
+        observer._t_tts_first = 1.60012  # type: ignore[attr-defined]
+
+        await observer._emit_turn_metrics()  # type: ignore[attr-defined]
+        metrics = next(
+            json.loads(call.args[0])
+            for call in client.call_args_list
+            if json.loads(call.args[0]).get("type") == "metrics"
+        )
+        assert metrics["stt_ms"] == 100.0
+        assert metrics["llm_ttft_ms"] == 200.0
+        assert metrics["tts_ttfb_ms"] == 300.0
+        assert metrics["e2e_ms"] == 600.0
+
+    async def test_turn_metrics_follow_real_text_input_frame_order(self) -> None:
+        observer = StatusBridgeObserver(tts_throttle_secs=0.0)
+        client = _upsert_mock_client(observer)
+
+        # 文本输入链路可能先收到 STT final，再收到用户静音帧；
+        # 计时仍以静音时刻为下游瀑布起点，不能把说话时长计入 STT。
+        await _push(observer, UserStartedSpeakingFrame())
+        await _push(observer, TranscriptionFrame(**_text_args(), finalized=True))
+        await _push(observer, UserStoppedSpeakingFrame())
+        await _push(observer, LLMTextFrame(text="你好！"))
+        await _push(observer, _tts_audio())
+
+        metrics = next(
+            json.loads(call.args[0])
+            for call in client.call_args_list
+            if json.loads(call.args[0]).get("type") == "metrics"
+        )
+        assert metrics["stt_ms"] == 0.0
+        assert metrics["llm_ttft_ms"] is not None
+        assert metrics["tts_ttfb_ms"] is not None
+        assert metrics["e2e_ms"] is not None
+        assert round(
+            metrics["stt_ms"] + metrics["llm_ttft_ms"] + metrics["tts_ttfb_ms"],
+            1,
+        ) == metrics["e2e_ms"]
+
+    async def test_turn_metrics_does_not_count_speech_duration_without_silence_marker(
+        self,
+    ) -> None:
+        observer = StatusBridgeObserver(tts_throttle_secs=0.0)
+        client = _upsert_mock_client(observer)
+
+        # 没有用户说话结束帧时，不能把“开始说话→STT final”冒充 STT 尾延，
+        # 也不能把从 STT final 开始的下游耗时冒充完整 E2E。
+        observer._t_speaking_start = 0.0  # type: ignore[attr-defined]
+        observer._t_stt_final = 1.5238  # type: ignore[attr-defined]
+        observer._t_llm_first = 2.2114  # type: ignore[attr-defined]
+        observer._t_tts_first = 2.4469  # type: ignore[attr-defined]
+
+        await observer._emit_turn_metrics()  # type: ignore[attr-defined]
+        metrics = next(
+            json.loads(call.args[0])
+            for call in client.call_args_list
+            if json.loads(call.args[0]).get("type") == "metrics"
+        )
+        assert metrics["stt_ms"] is None
+        assert metrics["e2e_ms"] is None
+        assert metrics["llm_ttft_ms"] == 687.6
+        assert metrics["tts_ttfb_ms"] == 235.5

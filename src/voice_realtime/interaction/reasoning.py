@@ -79,6 +79,7 @@ _NATIVE_CHAT_PATH = "/api/v1/chat"
 _NATIVE_MODELS_PATH = "/api/v1/models"
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 _RECOVERY_RECENT_TURN_PAIRS = 4
+_NATIVE_STREAM_READ_TIMEOUT_SECONDS = 15.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,7 +257,12 @@ class LmStudioNativeLLMService(OpenAILLMService):
             root_url = root_url[: -len("/v1")]
         self._http = local_async_client(
             base_url=root_url,
-            timeout=httpx.Timeout(connect=5.0, read=None, write=10.0, pool=5.0),
+            timeout=httpx.Timeout(
+                connect=5.0,
+                read=_NATIVE_STREAM_READ_TIMEOUT_SECONDS,
+                write=10.0,
+                pool=5.0,
+            ),
         )
         self._native_client_closed = False
         self._previous_response_id: str | None = None
@@ -689,6 +695,41 @@ class LmStudioNativeLLMService(OpenAILLMService):
         messages: list[ChatCompletionMessageParam],
         allow_chain_retry: bool = True,
     ) -> AsyncIterator[ChatCompletionChunk]:
+        """对流式读取施加熔断；仅当前请求可原子废弃会话链。"""
+        try:
+            async for chunk in self._consume_native_completions(
+                payload,
+                generation=generation,
+                system_prompt=system_prompt,
+                user_turns=user_turns,
+                messages=messages,
+                allow_chain_retry=allow_chain_retry,
+            ):
+                yield chunk
+        except httpx.ReadTimeout:
+            if generation == self._request_generation:
+                self.reset_conversation()
+                logger.warning(
+                    "LM Studio 流式读取超时，已废弃当前会话链（generation=%s）",
+                    generation,
+                )
+            else:
+                logger.info(
+                    "LM Studio 旧流式请求读取超时，保留当前会话链（generation=%s）",
+                    generation,
+                )
+            raise
+
+    async def _consume_native_completions(
+        self,
+        payload: dict[str, Any],
+        *,
+        generation: int,
+        system_prompt: str,
+        user_turns: int,
+        messages: list[ChatCompletionMessageParam],
+        allow_chain_retry: bool = True,
+    ) -> AsyncIterator[ChatCompletionChunk]:
         """SSE 消费原生端点，把 message.delta 转成 OpenAI 兼容 chunk。"""
         saw_content = False
         content_parts: list[str] = []
@@ -727,7 +768,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
                     "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
                     generation,
                 )
-                async for retry_chunk in self._native_completions(
+                async for retry_chunk in self._consume_native_completions(
                     retry_payload,
                     generation=generation,
                     system_prompt=system_prompt,

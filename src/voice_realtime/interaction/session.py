@@ -10,7 +10,11 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pipecat.frames.frames import LLMMessagesUpdateFrame
+from pipecat.frames.frames import (
+    LLMMessagesUpdateFrame,
+    TranscriptionFrame,
+    UserStoppedSpeakingFrame,
+)
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -161,6 +165,17 @@ class InteractionSession:
             await worker.queue_frame(
                 LLMMessagesUpdateFrame(messages=[{"role": "system", "content": prompt}])
             )
+
+    async def send_text(self, text: str) -> None:
+        async with self._lock:
+            worker = self._worker
+            if worker is None or not self.active:
+                raise RuntimeError("交互会话未运行")
+            now = datetime.now(UTC).isoformat()
+            await worker.queue_frame(
+                TranscriptionFrame(text=text, user_id="user", timestamp=now)
+            )
+            await worker.queue_frame(UserStoppedSpeakingFrame())
 
     async def _start_locked(self) -> None:
         if self._state in {InteractionSessionState.STARTING, InteractionSessionState.RUNNING}:

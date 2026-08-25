@@ -12,6 +12,28 @@ import "./App.css";
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
 
+const WORKSPACE_TAB_STORAGE_KEY = "voice-studio:workspace-tab";
+
+function readStoredWorkspaceTab(): WorkspaceTab {
+  try {
+    const stored = window.localStorage.getItem(WORKSPACE_TAB_STORAGE_KEY);
+    if (stored === "assistant" || stored === "meeting" || stored === "subtitles") {
+      return stored;
+    }
+  } catch {
+    // localStorage 不可用时回退到默认工作区。
+  }
+  return "assistant";
+}
+
+function persistWorkspaceTab(tab: WorkspaceTab): void {
+  try {
+    window.localStorage.setItem(WORKSPACE_TAB_STORAGE_KEY, tab);
+  } catch {
+    // 隐私模式或存储受限时仅保留当前内存状态。
+  }
+}
+
 function ActiveMeetingMiniDock({
   title,
   elapsed,
@@ -85,7 +107,7 @@ function ActiveMeetingMiniDock({
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<WorkspaceTab>("assistant");
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>(readStoredWorkspaceTab);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const commandSocket = useCommandSocket();
   useMeetingSocket();
@@ -97,6 +119,19 @@ export default function App() {
   const partialText = useMeetingStore((s) => s.partialText);
   const meetingMicMuted = useMeetingStore((s) => s.health.mic_muted);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
+
+  useEffect(() => {
+    if (!isMeetingRecording) {
+      return;
+    }
+    setActiveTab((currentTab) => {
+      if (currentTab === "meeting") {
+        return currentTab;
+      }
+      persistWorkspaceTab("meeting");
+      return "meeting";
+    });
+  }, [isMeetingRecording]);
 
   // Live elapsed time for meeting recording
   const [recordingElapsed, setRecordingElapsed] = useState(0);
@@ -119,6 +154,7 @@ export default function App() {
   const handleTabChange = useCallback(
     (newTab: WorkspaceTab) => {
       setActiveTab(newTab);
+      persistWorkspaceTab(newTab);
       if (isMeetingRecording) {
         return; // 会议录制中由会议状态机接管
       }

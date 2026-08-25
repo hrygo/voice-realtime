@@ -140,7 +140,23 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 
 ### 步骤 5：启动系统服务
 
-依次在不同终端窗口（或后台脚本）中启动 3 个服务单元：
+推荐通过统一脚本启动全部服务，并在启动时指定监听类型：
+
+```bash
+# 仅本机访问（默认）
+scripts/run-all.sh
+
+# 仅绑定当前活动局域网 IP
+VR_BIND_HOST=lan scripts/run-all.sh
+
+# 绑定全部网络接口
+VR_BIND_HOST=0.0.0.0 scripts/run-all.sh
+```
+
+统一脚本会根据 TTS 桥的实际监听地址自动设置交互管道使用的
+`VR_INTERACTION_TTS_BRIDGE_URL`；如显式设置该变量，则保留显式配置。
+
+也可以依次在不同终端窗口中独立启动 3 个服务单元：
 
 ```bash
 # 终端 1: 启动 TTS 语音合成桥 (8765)
@@ -209,9 +225,11 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_BRIDGE_HOST` | `127.0.0.1` | Qwen3-TTS 桥服务绑定地址（优先于全局变量） |
 | `VR_BRIDGE_PORT` | `8765` | Qwen3-TTS 桥服务端口 |
 | `VR_SUBTITLE_HOST` | `127.0.0.1` | WhisperLiveKit 字幕服务绑定地址（优先于全局变量） |
-| `VR_SUBTITLES_PORT` | `8001` | WhisperLiveKit 字幕服务端口 |
+| `VR_SUBTITLE_PORT` | `8001` | WhisperLiveKit 字幕服务端口 |
 | `VR_LMSTUDIO_BASE_URL` | `http://localhost:1234` | LM Studio API 服务地址 |
 | `VR_INTERACTION_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
+| `VR_INTERACTION_TTS_BRIDGE_URL` | `http://127.0.0.1:8765/v1` | 交互管道使用的 TTS 端点；`scripts/run-all.sh` 未显式配置时按桥监听地址自动推导 |
+| `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
 | `VR_SUMMARY_MODEL` | `qwen/qwen3.8-27b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |

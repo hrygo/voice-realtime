@@ -34,6 +34,8 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
+    CancelFrame,
+    ErrorFrame,
     Frame,
     InputAudioRawFrame,
     InterruptionFrame,
@@ -207,6 +209,9 @@ class TTSStateObserver(FrameProcessor):
             self._echo_state.on_tts_stopped()
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._echo_state.on_bot_speaking_stopped()
+        elif isinstance(frame, (InterruptionFrame, CancelFrame, ErrorFrame)):
+            self._echo_state.reset()
+            logger.info("echo-state: 播报被打断或取消，立即解除回声抑制")
 
         await self.push_frame(frame, direction)
 
@@ -390,15 +395,25 @@ class SelfEchoFilter(FrameProcessor):
         self._echo_state = echo_state or EchoState()
         self._tail_hangover_secs = tail_hangover_secs
         self._dropped = 0
+        self._interruption_pending = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, TextFrame):
+        if isinstance(frame, InterruptionFrame):
+            # L1 只会放行已由能量门控确认的真人插话；保护其下一条落定转写，
+            # 避免仍在向下游传播的旧 EchoState 把真人文本当成机器人回声。
+            self._interruption_pending = True
+        elif isinstance(frame, (CancelFrame, ErrorFrame)):
+            self._interruption_pending = False
+        elif isinstance(frame, TextFrame):
             if not _normalize_text(frame.text):
                 self._dropped += 1
                 logger.debug("self-echo: 丢弃纯标点/空转写文本帧 %r", frame.text)
                 return
-            if self._echo_state.is_suppressing(
+            if self._interruption_pending:
+                self._interruption_pending = False
+                logger.info("self-echo: 放行真人插话后的首条落定转写")
+            elif self._echo_state.is_suppressing(
                 time.monotonic(), self._tail_hangover_secs
             ) and self._buffer.matches(
                 frame.text, self._min_ratio, self._min_chars, time.monotonic()

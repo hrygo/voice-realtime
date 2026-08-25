@@ -153,6 +153,23 @@ def test_normalize_completed_turns_appends_committed_assistant_text() -> None:
     ]
 
 
+def test_normalize_completed_turns_keeps_latest_consecutive_user_after_interruption() -> None:
+    messages = [
+        {"role": "system", "content": "系统"},
+        {"role": "user", "content": "被打断的问题"},
+        {"role": "user", "content": "打断后的新问题"},
+        {"role": "assistant", "content": "新问题的回答"},
+        {"role": "user", "content": "尚未回答"},
+    ]
+
+    turns = normalize_completed_turns(messages)
+
+    assert [(turn.turn_id, turn.role, turn.content) for turn in turns] == [
+        (1, "user", "打断后的新问题"),
+        (2, "assistant", "新问题的回答"),
+    ]
+
+
 @pytest.mark.parametrize(
     "messages",
     [
@@ -165,6 +182,12 @@ def test_normalize_completed_turns_appends_committed_assistant_text() -> None:
             {"role": "system", "content": "系统"},
             {"role": "user", "content": "问题"},
             {"role": "assistant", "content": []},
+        ],
+        [
+            {"role": "system", "content": "系统"},
+            {"role": "user", "content": "问题"},
+            {"role": "assistant", "content": "回答"},
+            {"role": "assistant", "content": "重复回答"},
         ],
     ],
 )

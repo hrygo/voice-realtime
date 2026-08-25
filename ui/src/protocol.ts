@@ -30,7 +30,8 @@ export type ControlCommand =
   | { readonly cmd: "start_meeting"; readonly title?: string; readonly contract_version?: "1" }
   | { readonly cmd: "end_meeting"; readonly meeting_id?: string; readonly contract_version?: "1" }
   | { readonly cmd: "start_assistant"; readonly contract_version?: "1" }
-  | { readonly cmd: "stop_active_mode"; readonly contract_version?: "1" };
+  | { readonly cmd: "stop_active_mode"; readonly contract_version?: "1" }
+  | { readonly cmd: "send_text"; readonly text: string };
 
 export interface CommandResponse {
   readonly contract_version?: "1";

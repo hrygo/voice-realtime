@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
-import type { AssistantPhase, AssistantBubble } from "../stores/assistantStore";
+import type { AssistantPhase, AssistantBubble, TurnMetrics } from "../stores/assistantStore";
 import {
   parseAssistantEvent,
   selectAssistantConnected,
@@ -19,6 +19,21 @@ import {
 } from "../stores/uiSettingsStore";
 import { MarkdownRenderer } from "./meeting/MarkdownRenderer";
 import { showToast } from "./Toast";
+import {
+  ActivityIcon,
+  BroomIcon,
+  DownloadIcon,
+  EditIcon,
+  FileTextIcon,
+  HeadphonesIcon,
+  MaskIcon,
+  RefreshCwIcon,
+  SoundWaveAnimatedIcon,
+  SpeakerIcon,
+  StopCircleIcon,
+  TrashIcon,
+  WrenchIcon,
+} from "./Icons";
 import "./AssistantPanel.css";
 
 type Command = "clear_context" | "stop_session" | "restart";
@@ -36,6 +51,24 @@ const PHASE_CONFIG: Record<
 
 const FALLBACK_VOICES: readonly string[] = ["default", "warm", "bright", "calm"];
 
+/**
+ * 给“用户开始说话”留出一个可感知的视觉窗口。
+ * 实际管道状态仍按事件即时更新，这个延迟只作用于助手面板的展示层。
+ */
+export const LISTENING_TO_THINKING_MIN_VISIBLE_MS = 240;
+
+export function getAssistantPhaseTransitionDelay(
+  displayedPhase: AssistantPhase,
+  nextPhase: AssistantPhase,
+  phaseStartedAt: number,
+  now = Date.now(),
+): number {
+  if (displayedPhase !== "listening" || nextPhase !== "thinking") return 0;
+
+  const elapsed = Math.max(0, now - phaseStartedAt);
+  return Math.max(0, LISTENING_TO_THINKING_MIN_VISIBLE_MS - elapsed);
+}
+
 export const DUPLEX_MODE_PRESENTATION: Record<
   DuplexMode,
   {
@@ -48,19 +81,81 @@ export const DUPLEX_MODE_PRESENTATION: Record<
 > = {
   speaker_focus: {
     icon: "🔊",
-    label: "外放保护",
-    summary: "Agent 播报时不可打断",
-    detail: "播报期间暂停麦克风输入，防止扬声器回声触发新一轮对话。",
+    label: "扬声器",
+    summary: "播报时不接收插话",
+    detail: "通过扬声器播放；播报期间暂停麦克风输入，避免回声触发新一轮对话。",
     interruptionEnabled: false,
   },
   headphone_duplex: {
     icon: "🎧",
-    label: "耳机双工",
-    summary: "Agent 播报时可以插话",
-    detail: "播报期间保持麦克风监听，检测到真人声音后立即打断 Agent。仅限佩戴耳机。",
+    label: "耳机",
+    summary: "播报时可随时插话",
+    detail: "通过耳机播放；播报期间保持麦克风监听，检测到真人声音后立即打断。需佩戴耳机。",
     interruptionEnabled: true,
   },
 };
+
+export type DuplexModeFeedbackTone = "active" | "switching" | "error" | "offline";
+
+export interface DuplexModeFeedback {
+  readonly tone: DuplexModeFeedbackTone;
+  readonly title: string;
+  readonly detail: string;
+}
+
+export function canRequestDuplexModeChange(
+  currentMode: DuplexMode,
+  requestedMode: DuplexMode,
+  pendingMode: DuplexMode | null,
+): boolean {
+  return currentMode !== requestedMode && pendingMode === null;
+}
+
+export function getDuplexToggleMode(
+  currentMode: DuplexMode,
+  pendingMode: DuplexMode | null,
+): DuplexMode {
+  return pendingMode ?? currentMode;
+}
+
+export function getDuplexModeFeedback(
+  currentMode: DuplexMode,
+  pendingMode: DuplexMode | null,
+  commandReady: boolean,
+  errorMessage?: string,
+): DuplexModeFeedback {
+  if (!commandReady) {
+    return {
+      tone: "offline",
+      title: "正在连接控制端",
+      detail: "连接成功后才能切换声音输出与插话方式。",
+    };
+  }
+
+  if (pendingMode !== null) {
+    return {
+      tone: "switching",
+      title: `正在切换到「${DUPLEX_MODE_PRESENTATION[pendingMode].label}」`,
+      detail: "系统正在应用新的声音输出与插话设置，请稍候。",
+    };
+  }
+
+  if (errorMessage) {
+    return {
+      tone: "error",
+      title: errorMessage,
+      detail: `当前仍使用「${DUPLEX_MODE_PRESENTATION[currentMode].label}」。再次选择目标模式可重试。`,
+    };
+  }
+
+  return {
+    tone: "active",
+    title: `当前使用「${DUPLEX_MODE_PRESENTATION[currentMode].label}」`,
+    detail: DUPLEX_MODE_PRESENTATION[currentMode].detail,
+  };
+}
+
+const DUPLEX_MODES: readonly DuplexMode[] = ["speaker_focus", "headphone_duplex"];
 
 const VOICE_CONFIGS: Record<string, { label: string; tag: string }> = {
   default: { label: "默认原声", tag: "标准" },
@@ -71,6 +166,63 @@ const VOICE_CONFIGS: Record<string, { label: string; tag: string }> = {
 
 function formatMetric(value: number | null): string {
   return value === null ? "—" : `${value}ms`;
+}
+
+export interface TelemetryBadge {
+  readonly className: "fast" | "good" | "slow" | "idle";
+  readonly label: "极速" | "良好" | "偏高" | "数据不足" | "待命中";
+  readonly value: number | null;
+}
+
+export interface TelemetryHelpStep {
+  readonly title: string;
+  readonly formula: string;
+  readonly event: string;
+  readonly description: string;
+}
+
+export const TELEMETRY_HELP_STEPS: readonly TelemetryHelpStep[] = [
+  {
+    title: "STT 识别",
+    formula: "max(0, STT final − 说话结束)",
+    event: "UserStoppedSpeakingFrame → TranscriptionFrame",
+    description: "用户停止说话后，到语音转写产出最终文本的等待时间。若 final 已先于静音帧到达，则按 0ms 计，不把说话时长算进去。",
+  },
+  {
+    title: "LLM 首字",
+    formula: "LLM 首字 − max(STT final, 说话结束)",
+    event: "TranscriptionFrame / UserStoppedSpeakingFrame → LLMTextFrame",
+    description: "转写完成且用户回合结束后，到大模型输出第一段文本的等待时间；不代表完整回答生成完成。",
+  },
+  {
+    title: "TTS 首包",
+    formula: "TTS 首帧 − LLM 首字",
+    event: "LLMTextFrame → TTSAudioRawFrame",
+    description: "大模型开始输出文本后，到语音合成送出第一帧音频的等待时间；不代表整段语音已经播放完。",
+  },
+] as const;
+
+type TelemetryMetrics = Pick<TurnMetrics, "sttMs" | "llmTtftMs" | "ttsTtfbMs" | "e2eMs">;
+
+export function getTelemetryBadge(metrics: TelemetryMetrics | null): TelemetryBadge {
+  if (metrics === null) {
+    return { className: "idle", label: "待命中", value: null };
+  }
+
+  if (
+    metrics.sttMs === null
+    || metrics.llmTtftMs === null
+    || metrics.ttsTtfbMs === null
+    || metrics.e2eMs === null
+  ) {
+    return { className: "idle", label: "数据不足", value: null };
+  }
+
+  return metrics.e2eMs < 1200
+    ? { className: "fast", label: "极速", value: metrics.e2eMs }
+    : metrics.e2eMs < 2500
+      ? { className: "good", label: "良好", value: metrics.e2eMs }
+      : { className: "slow", label: "偏高", value: metrics.e2eMs };
 }
 
 interface AssistantPanelProps {
@@ -85,18 +237,24 @@ export default function AssistantPanel({
   onNavigateMeeting,
 }: AssistantPanelProps) {
   const phase = useAssistantStore(selectAssistantPhase);
+  const visiblePhase = useDisplayedAssistantPhase(phase);
   const transcript = useAssistantStore(selectAssistantTranscript);
   const connected = useAssistantStore(selectAssistantConnected);
   const lastInterruptionTime = useAssistantStore(selectLastInterruptionTime);
   const latestMetrics = useAssistantStore(selectAssistantLatestMetrics);
+  const telemetryBadge = getTelemetryBadge(latestMetrics);
   const clearTranscript = useAssistantStore((state) => state.clearTranscript);
 
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
+  const telemetryHelpRef = useRef<HTMLDivElement>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [interruptionActive, setInterruptionActive] = useState(false);
+  const [telemetryHelpOpen, setTelemetryHelpOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [pendingDuplexMode, setPendingDuplexMode] = useState<DuplexMode | null>(null);
+  const [duplexSwitchError, setDuplexSwitchError] = useState<string | null>(null);
 
-  /* ---- 交互模式 (外放专注 vs 耳机双工打断) ---- */
+  /* ---- 声音输出与插话模式 ---- */
   const duplexMode = useUISettingsStore((s) => s.duplexMode);
   const duplexPresentation = DUPLEX_MODE_PRESENTATION[duplexMode];
 
@@ -129,6 +287,26 @@ export default function AssistantPanel({
     return () => clearTimeout(timer);
   }, [duplexPresentation.interruptionEnabled, lastInterruptionTime]);
 
+  // 遥测说明是轻量 popover：点击外部区域或按 Esc 即可关闭。
+  useEffect(() => {
+    if (!telemetryHelpOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (telemetryHelpRef.current?.contains(event.target as Node)) return;
+      setTelemetryHelpOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTelemetryHelpOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [telemetryHelpOpen]);
+
   /** 发送通用命令 */
   const sendCommandWith = useCallback(
     async (payload: Parameters<CommandSocketApi["sendCommand"]>[0], toastMsg?: string) => {
@@ -149,20 +327,26 @@ export default function AssistantPanel({
   );
 
   const handleDuplexModeChange = useCallback(
-    (mode: DuplexMode) => {
-      if (mode === "headphone_duplex") {
-        void sendCommandWith(
-          { cmd: "set_duplex_mode", mode: "headphone_duplex" },
-          "🎧 已开启【耳机打断模式】（高灵敏即时插话；⚠️ 仅限佩戴耳机时使用）",
-        );
-      } else {
-        void sendCommandWith(
-          { cmd: "set_duplex_mode", mode: "speaker_focus" },
-          "🔊 已切换为【外放专注模式】（播报期间物理闭麦，彻底阻断扬声器回声）",
-        );
+    async (mode: DuplexMode) => {
+      if (!canRequestDuplexModeChange(duplexMode, mode, pendingDuplexMode)) return;
+      if (!commandSocket.ready) {
+        showToast("控制端连接中，请稍候...", "warning");
+        return;
       }
+
+      const targetLabel = DUPLEX_MODE_PRESENTATION[mode].label;
+      setPendingDuplexMode(mode);
+      setDuplexSwitchError(null);
+
+      const acknowledged = await sendCommandWith(
+        { cmd: "set_duplex_mode", mode },
+      );
+      if (!acknowledged) {
+        setDuplexSwitchError(`切换到「${targetLabel}」未完成`);
+      }
+      setPendingDuplexMode(null);
     },
-    [sendCommandWith],
+    [commandSocket.ready, duplexMode, pendingDuplexMode, sendCommandWith],
   );
 
   const sendCommand = useCallback(
@@ -284,17 +468,21 @@ export default function AssistantPanel({
   );
 
   /** 文字兜底发送 */
-  const handleSendText = () => {
+  const handleSendText = async () => {
     const trimmed = textInput.trim();
     if (!trimmed) return;
+    if (!commandSocket.ready) {
+      showToast("控制端连接中，请稍候...", "warning");
+      return;
+    }
     setTextInput("");
-    const store = useAssistantStore.getState();
-    store.applyEvent({
-      type: "stt",
-      state: "final",
-      text: trimmed,
-    });
-    showToast("已发送输入文本", "info");
+    const success = await sendCommandWith(
+      { cmd: "send_text", text: trimmed },
+      "已发送输入文本",
+    );
+    if (!success) {
+      setTextInput(trimmed);
+    }
   };
 
   /** 导出对话 */
@@ -479,48 +667,91 @@ export default function AssistantPanel({
     [sendCommandWith],
   );
 
-  const currentPhaseConfig = PHASE_CONFIG[phase];
+  const currentPhaseConfig = PHASE_CONFIG[visiblePhase];
   const allTemplates: readonly PersonaTemplate[] = [...BUILTIN_PERSONAS, ...customPersonas];
   const isCustomActive = !allTemplates.some((preset) => persona.trim() === preset.prompt.trim());
+  const duplexToggleMode = getDuplexToggleMode(duplexMode, pendingDuplexMode);
+  const duplexFeedback = getDuplexModeFeedback(
+    duplexMode,
+    pendingDuplexMode,
+    commandSocket.ready,
+    duplexSwitchError ?? undefined,
+  );
 
   return (
     <div className="assistant-workspace">
-      {/* 左侧控制与人设侧边栏 (合理充分利用空间、流线型模块化设计) */}
+      {/* 左侧控制与人设侧边栏 (标准化模块化设计) */}
       <aside className="assistant-sidebar">
-        {/* Group 1: 声学交互模式 */}
+        {/* Group 1: 声音输出与插话 */}
         <div className="sidebar-group">
           <div className="sidebar-group-header">
             <span className="sidebar-group-title">
-              <span className="group-title-icon">🎧</span> 声学交互模式
+              <span className="group-title-badge">
+                <HeadphonesIcon size={13} />
+              </span>
+              声音输出与插话
+            </span>
+            <span className={`duplex-sync-badge tone-${duplexFeedback.tone}`}>
+              {duplexFeedback.tone === "switching"
+                ? "应用中"
+                : duplexFeedback.tone === "active"
+                  ? "已生效"
+                  : duplexFeedback.tone === "offline"
+                    ? "连接中"
+                    : "未完成"}
             </span>
           </div>
 
-          <div className="duplex-sidebar-selector" role="radiogroup" aria-label="交互打断模式">
-            <button
-              type="button"
-              className={`duplex-sidebar-btn ${duplexMode === "speaker_focus" ? "active speaker" : ""}`}
-              onClick={() => handleDuplexModeChange("speaker_focus")}
-              disabled={!commandSocket.ready}
-              title="外放保护模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
-            >
-              <span className="duplex-btn-icon">🔊</span>
-              <span className="duplex-btn-text">外放保护</span>
-            </button>
-            <button
-              type="button"
-              className={`duplex-sidebar-btn ${duplexMode === "headphone_duplex" ? "active headphone" : ""}`}
-              onClick={() => handleDuplexModeChange("headphone_duplex")}
-              disabled={!commandSocket.ready}
-              title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
-            >
-              <span className="duplex-btn-icon">🎧</span>
-              <span className="duplex-btn-text">耳机打断</span>
-            </button>
+          <div
+            className={`duplex-toggle mode-${duplexToggleMode} ${pendingDuplexMode !== null ? "is-switching" : ""}`}
+            role="radiogroup"
+            aria-label="声音输出与插话模式"
+            aria-busy={pendingDuplexMode !== null}
+          >
+            <span className="duplex-toggle-track" aria-hidden="true">
+              <span className="duplex-toggle-thumb">
+                {pendingDuplexMode !== null && <span className="duplex-toggle-spinner" />}
+              </span>
+            </span>
+            {DUPLEX_MODES.map((mode) => {
+              const presentation = DUPLEX_MODE_PRESENTATION[mode];
+              const committed = duplexMode === mode;
+              const selected = duplexToggleMode === mode;
+              const switching = pendingDuplexMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={`duplex-toggle-option ${selected ? "selected" : ""} ${switching ? "switching" : ""}`}
+                  onClick={() => void handleDuplexModeChange(mode)}
+                  disabled={!commandSocket.ready || pendingDuplexMode !== null}
+                  role="radio"
+                  aria-checked={committed}
+                  aria-busy={switching}
+                  aria-label={`${presentation.label}：${presentation.summary}`}
+                  title={presentation.detail}
+                >
+                  {mode === "speaker_focus" ? (
+                    <SpeakerIcon size={15} className="duplex-toggle-icon" />
+                  ) : (
+                    <HeadphonesIcon size={15} className="duplex-toggle-icon" />
+                  )}
+                  <span className="duplex-toggle-label">{presentation.label}</span>
+                </button>
+              );
+            })}
           </div>
 
-          <div className={`duplex-sidebar-tip mode-${duplexMode}`}>
-            <span className="tip-dot" />
-            <span className="tip-text">{duplexPresentation.summary}</span>
+          <div
+            className={`duplex-mode-feedback tone-${duplexFeedback.tone}`}
+            role={duplexFeedback.tone === "error" ? "alert" : "status"}
+            aria-live="polite"
+          >
+            <span className="duplex-feedback-indicator" aria-hidden="true" />
+            <span className="duplex-feedback-copy">
+              <strong>{duplexFeedback.title}</strong>
+              <span>{duplexFeedback.detail}</span>
+            </span>
           </div>
         </div>
 
@@ -528,7 +759,10 @@ export default function AssistantPanel({
         <div className="sidebar-group">
           <div className="sidebar-group-header">
             <span className="sidebar-group-title">
-              <span className="group-title-icon">🎭</span> 角色与声音
+              <span className="group-title-badge">
+                <MaskIcon size={13} />
+              </span>
+              角色与声音
             </span>
           </div>
 
@@ -543,34 +777,39 @@ export default function AssistantPanel({
                 onClick={openPersona}
                 title="管理与定制人设提示词 (快捷键 Cmd+K)"
               >
-                ✏️ 管理
+                <EditIcon size={11} />
+                <span>管理</span>
+                <kbd className="sidebar-link-kbd">⌘K</kbd>
               </button>
             </div>
-            <select
-              id="assistant-persona-select"
-              className="sidebar-select"
-              value={isCustomActive ? "__custom__" : persona}
-              onChange={(e) => {
-                if (e.target.value === "__custom__") {
-                  openPersona();
-                  return;
-                }
-                const selected = allTemplates.find((t) => t.prompt === e.target.value);
-                if (selected) {
-                  void handleSelectPersona(selected.prompt, selected.name);
-                }
-              }}
-            >
-              {allTemplates.map((preset) => (
-                <option key={preset.id} value={preset.prompt}>
-                  {preset.name} {!preset.isBuiltin ? "(自定义)" : ""}
-                </option>
-              ))}
-              {isCustomActive && <option value="__custom__">当前自定义人设 (编辑中)</option>}
-            </select>
-            <p className="persona-preview-card" onClick={openPersona} title="点击展开编辑系统提示词">
-              {persona || "你是一个聪明的全本地语音助手。"}
-            </p>
+            <div className="sidebar-select-wrap">
+              <select
+                id="assistant-persona-select"
+                className="sidebar-select"
+                value={isCustomActive ? "__custom__" : persona}
+                onChange={(e) => {
+                  if (e.target.value === "__custom__") {
+                    openPersona();
+                    return;
+                  }
+                  const selected = allTemplates.find((t) => t.prompt === e.target.value);
+                  if (selected) {
+                    void handleSelectPersona(selected.prompt, selected.name);
+                  }
+                }}
+              >
+                {allTemplates.map((preset) => (
+                  <option key={preset.id} value={preset.prompt}>
+                    {preset.name} {!preset.isBuiltin ? "(自定义)" : ""}
+                  </option>
+                ))}
+                {isCustomActive && <option value="__custom__">当前自定义人设 (编辑中)</option>}
+              </select>
+            </div>
+            <div className="persona-preview-card" onClick={openPersona} title="点击展开编辑系统提示词">
+              <p className="persona-preview-text">{persona || "你是一个聪明的全本地语音助手。"}</p>
+              <span className="persona-preview-hint">编辑 ↗</span>
+            </div>
           </div>
 
           <div className="sidebar-field-block">
@@ -585,22 +824,24 @@ export default function AssistantPanel({
               )}
             </div>
             <div className="voice-input-group">
-              <select
-                id="assistant-voice-select"
-                className="sidebar-select voice-select"
-                value={voice}
-                onChange={(e) => void handleVoiceChange(e.target.value)}
-                disabled={!commandSocket.ready}
-              >
-                {availableVoices.map((v) => {
-                  const desc = VOICE_CONFIGS[v];
-                  return (
-                    <option key={v} value={v}>
-                      {desc ? `${desc.label} (${v})` : v}
-                    </option>
-                  );
-                })}
-              </select>
+              <div className="sidebar-select-wrap voice-select-wrap">
+                <select
+                  id="assistant-voice-select"
+                  className="sidebar-select voice-select"
+                  value={voice}
+                  onChange={(e) => void handleVoiceChange(e.target.value)}
+                  disabled={!commandSocket.ready}
+                >
+                  {availableVoices.map((v) => {
+                    const desc = VOICE_CONFIGS[v];
+                    return (
+                      <option key={v} value={v}>
+                        {desc ? `${desc.label} (${v})` : v}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
               <button
                 type="button"
                 className={`btn-voice-audition ${isPreviewPlaying ? "playing" : ""}`}
@@ -608,55 +849,115 @@ export default function AssistantPanel({
                 disabled={isPreviewPlaying}
                 title="生成并播放当前音色试听"
               >
-                {isPreviewPlaying ? "🔊" : "🔊 试听"}
+                <SoundWaveAnimatedIcon size={13} isPlaying={isPreviewPlaying} />
+                <span>{isPreviewPlaying ? "试听中" : "试听"}</span>
               </button>
             </div>
           </div>
         </div>
 
         {/* Group 3: 交互时延遥测 */}
-        <div className="sidebar-group">
+        <div className="sidebar-group telemetry-group" ref={telemetryHelpRef}>
           <div className="sidebar-group-header">
-            <span className="sidebar-group-title">
-              <span className="group-title-icon">⚡</span> 交互时延遥测
-            </span>
-            {latestMetrics && latestMetrics.e2eMs !== null ? (
-              <span
-                className={`telemetry-grade-pill ${
-                  latestMetrics.e2eMs < 1200 ? "fast" : latestMetrics.e2eMs < 2500 ? "good" : "slow"
-                }`}
-              >
-                {latestMetrics.e2eMs < 1200 ? "极速" : latestMetrics.e2eMs < 2500 ? "良好" : "偏高"} · {formatMetric(latestMetrics.e2eMs)}
+            <div className="telemetry-title-wrap">
+              <span className="sidebar-group-title">
+                <span className="group-title-badge">
+                  <ActivityIcon size={13} />
+                </span>
+                交互时延遥测
               </span>
-            ) : (
-              <span className="telemetry-grade-pill idle">待命中</span>
-            )}
+              <button
+                type="button"
+                className={`telemetry-help-trigger ${telemetryHelpOpen ? "open" : ""}`}
+                aria-expanded={telemetryHelpOpen}
+                aria-controls="telemetry-help-panel"
+                aria-label="查看交互时延算法说明"
+                title="查看交互时延算法说明"
+                onClick={() => setTelemetryHelpOpen((open) => !open)}
+              >
+                ?
+              </button>
+            </div>
+            <span className={`telemetry-grade-pill ${telemetryBadge.className}`}>
+              {telemetryBadge.value === null
+                ? telemetryBadge.label
+                : `${telemetryBadge.label} · ${formatMetric(telemetryBadge.value)}`}
+            </span>
           </div>
+
+          {telemetryHelpOpen && (
+            <div
+              id="telemetry-help-panel"
+              className="telemetry-help-panel"
+              role="region"
+              aria-labelledby="telemetry-help-title"
+            >
+              <div className="telemetry-help-header">
+                <div>
+                  <span className="telemetry-help-kicker">计时口径</span>
+                  <strong id="telemetry-help-title">从用户说话结束开始</strong>
+                </div>
+                <button
+                  type="button"
+                  className="telemetry-help-close"
+                  aria-label="关闭交互时延算法说明"
+                  onClick={() => setTelemetryHelpOpen(false)}
+                >
+                  ×
+                </button>
+              </div>
+              <p className="telemetry-help-intro">
+                后端用单调时钟记录帧到达时间，所有数值显示到 1 位小数；只统计首个可观测事件，不估算未到达的阶段。
+              </p>
+              <div className="telemetry-help-steps">
+                {TELEMETRY_HELP_STEPS.map((step, index) => (
+                  <div className="telemetry-help-step" key={step.title}>
+                    <div className="telemetry-help-step-header">
+                      <span className="telemetry-help-step-index">{String(index + 1).padStart(2, "0")}</span>
+                      <div className="telemetry-help-step-copy">
+                        <strong>{step.title}</strong>
+                        <code>{step.formula}</code>
+                      </div>
+                    </div>
+                    <p>{step.description}</p>
+                    <span className="telemetry-help-event">帧：{step.event}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="telemetry-help-total">
+                <div>
+                  <strong>端到端（E2E）</strong>
+                  <code>STT + LLM + TTS</code>
+                </div>
+                <span>三段数据齐全时按已显示值相加；缺少任一关键帧则显示“数据不足”。</span>
+              </div>
+              <p className="telemetry-help-note">
+                不包含用户说话持续时间、LLM 完整生成时间或 TTS 剩余播放时间。
+              </p>
+            </div>
+          )}
 
           {latestMetrics ? (
             <div className="telemetry-compact-flow">
               <div className="flow-step">
-                <span className="step-num">1</span>
-                <span className="step-name">STT</span>
+                <span className="step-name">STT 识别</span>
                 <span className="step-time">{formatMetric(latestMetrics.sttMs)}</span>
               </div>
               <span className="flow-sep">→</span>
               <div className="flow-step">
-                <span className="step-num">2</span>
-                <span className="step-name">LLM</span>
+                <span className="step-name">LLM 首字</span>
                 <span className="step-time">{formatMetric(latestMetrics.llmTtftMs)}</span>
               </div>
               <span className="flow-sep">→</span>
               <div className="flow-step">
-                <span className="step-num">3</span>
-                <span className="step-name">TTS</span>
+                <span className="step-name">TTS 首包</span>
                 <span className="step-time">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
               </div>
             </div>
           ) : (
             <div className="telemetry-idle-notice">
               <span className="idle-dot" />
-              <span>对话后实时呈现全链路耗时</span>
+              <span>对话后实时呈现全链路耗时遥测</span>
             </div>
           )}
         </div>
@@ -665,7 +966,10 @@ export default function AssistantPanel({
         <div className="sidebar-group">
           <div className="sidebar-group-header">
             <span className="sidebar-group-title">
-              <span className="group-title-icon">🛠️</span> 会话与记录
+              <span className="group-title-badge">
+                <WrenchIcon size={13} />
+              </span>
+              会话与控制
             </span>
           </div>
 
@@ -677,7 +981,8 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="清空 LLM 上下文记忆 (快捷键 Cmd+Shift+C)"
             >
-              <span>🧹</span> 清空记忆
+              <BroomIcon size={13} className="btn-action-icon" />
+              <span>清空记忆</span>
             </button>
             <button
               type="button"
@@ -689,7 +994,8 @@ export default function AssistantPanel({
               disabled={!transcript.length}
               title="清空屏幕对话记录"
             >
-              <span>🗑️</span> 清空屏幕
+              <TrashIcon size={13} className="btn-action-icon" />
+              <span>清空屏幕</span>
             </button>
             <button
               type="button"
@@ -698,7 +1004,8 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="重启后端交互管道"
             >
-              <span>🔄</span> 重启管道
+              <RefreshCwIcon size={13} className="btn-action-icon" />
+              <span>重启管道</span>
             </button>
             <button
               type="button"
@@ -707,7 +1014,8 @@ export default function AssistantPanel({
               disabled={!commandSocket.ready}
               title="停止语音会话"
             >
-              <span>⏹️</span> 停止会话
+              <StopCircleIcon size={13} className="btn-action-icon" />
+              <span>停止会话</span>
             </button>
           </div>
 
@@ -721,7 +1029,8 @@ export default function AssistantPanel({
                 disabled={!transcript.length}
                 title="导出为 Markdown 格式"
               >
-                Markdown
+                <FileTextIcon size={11} />
+                <span>Markdown</span>
               </button>
               <button
                 type="button"
@@ -730,7 +1039,8 @@ export default function AssistantPanel({
                 disabled={!transcript.length}
                 title="导出为纯文本格式"
               >
-                纯文本
+                <DownloadIcon size={11} />
+                <span>纯文本</span>
               </button>
             </div>
           </div>
@@ -796,17 +1106,17 @@ export default function AssistantPanel({
 
         {/* 状态步骤指示栏 + 打断插话指示 */}
         <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
-          <div className={`phase-step-item ${phase === "listening" ? "active step-listening" : ""}`}>
+          <div className={`phase-step-item ${visiblePhase === "listening" ? "active step-listening" : ""}`}>
             <span className="phase-step-icon">👂</span>
-            <span>1. 聆听麦克风</span>
+            <span>聆听麦克风</span>
           </div>
-          <div className={`phase-step-item ${phase === "thinking" ? "active step-thinking" : ""}`}>
+          <div className={`phase-step-item ${visiblePhase === "thinking" ? "active step-thinking" : ""}`}>
             <span className="phase-step-icon">🧠</span>
-            <span>2. LM Studio 推理</span>
+            <span>LM Studio 推理</span>
           </div>
-          <div className={`phase-step-item ${phase === "speaking" ? "active step-speaking" : ""}`}>
+          <div className={`phase-step-item ${visiblePhase === "speaking" ? "active step-speaking" : ""}`}>
             <span className="phase-step-icon">🗣️</span>
-            <span>3. Qwen3-TTS 播报</span>
+            <span>Qwen3-TTS 播报</span>
           </div>
 
           {interruptionActive && duplexPresentation.interruptionEnabled && (
@@ -818,7 +1128,7 @@ export default function AssistantPanel({
 
         {/* 60FPS 声学动态可视化波形 */}
         <div className="assistant-waveform-container">
-          <AssistantWaveform phase={phase} isMuted={micMuted} />
+          <AssistantWaveform phase={visiblePhase} isMuted={micMuted} />
         </div>
 
         {/* 对话气泡流 */}
@@ -1064,6 +1374,34 @@ export default function AssistantPanel({
       )}
     </div>
   );
+}
+
+function useDisplayedAssistantPhase(phase: AssistantPhase): AssistantPhase {
+  const [displayedPhase, setDisplayedPhase] = useState(phase);
+  const phaseStartedAtRef = useRef(Date.now());
+
+  useLayoutEffect(() => {
+    if (phase === displayedPhase) return;
+
+    const delay = getAssistantPhaseTransitionDelay(
+      displayedPhase,
+      phase,
+      phaseStartedAtRef.current,
+    );
+    if (delay === 0) {
+      phaseStartedAtRef.current = Date.now();
+      setDisplayedPhase(phase);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      phaseStartedAtRef.current = Date.now();
+      setDisplayedPhase(phase);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [displayedPhase, phase]);
+
+  return displayedPhase;
 }
 
 /**

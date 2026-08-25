@@ -264,7 +264,10 @@ def normalize_completed_turns(
     messages: Sequence[Mapping[str, Any]],
     assistant_text: str | None = None,
 ) -> list[ConversationTurn]:
-    """把 Pipecat 角色消息变为稳定 turn ID，并只返回完整问答对。"""
+    """把 Pipecat 角色消息变为稳定 turn ID，并只返回完整问答对。
+
+    打断造成相邻 user 时保留最新输入；其他角色异常仍严格拒绝。
+    """
     if not messages or messages[0].get("role") != "system":
         raise ValueError("conversation must start with exactly one system message")
     if not isinstance(messages[0].get("content"), str) or not messages[0].get("content"):
@@ -276,11 +279,23 @@ def normalize_completed_turns(
         role = message.get("role")
         if role == "system":
             raise ValueError("conversation must contain exactly one system message")
-        if role not in {"user", "assistant"} or role != expected_role:
+        if role not in {"user", "assistant"}:
             raise ValueError("conversation roles must alternate user and assistant")
         content = message.get("content")
         if not isinstance(content, str) or not content:
             raise ValueError("conversation messages must contain non-empty text")
+        if role != expected_role:
+            if role == "user" and turns and turns[-1].role == "user":
+                # LLM/TTS 被打断时不会提交 assistant 消息，Pipecat 随后会追加
+                # 新的 user。最新输入取代未完成输入，避免把被打断轮次伪装成完整问答。
+                previous_user = turns[-1]
+                turns[-1] = ConversationTurn(
+                    turn_id=previous_user.turn_id,
+                    role="user",
+                    content=content,
+                )
+                continue
+            raise ValueError("conversation roles must alternate user and assistant")
         turns.append(
             ConversationTurn(
                 turn_id=len(turns) + 1,

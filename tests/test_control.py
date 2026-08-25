@@ -12,6 +12,7 @@ from voice_realtime.ui.protocol import (
     DuplexMode,
     EndMeetingCommand,
     RuntimeStateSnapshot,
+    SendTextCommand,
     SetDuplexModeCommand,
     SetPersonaCommand,
     StartAssistantCommand,
@@ -29,6 +30,7 @@ def runtime() -> MagicMock:
     rt.stop_session = AsyncMock()
     rt.restart_pipeline = AsyncMock()
     rt.set_mic_muted = AsyncMock()
+    rt.send_text = AsyncMock()
     rt.set_persona = MagicMock()
     rt.set_duplex_mode = MagicMock()
     rt.set_voice = MagicMock()
@@ -155,6 +157,21 @@ class TestDispatch:
         assert second == first
         runtime.start_meeting.assert_awaited_once_with("周会")
 
+    async def test_send_text_delegates_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        resp = await bridge.handle(
+            {"request_id": "txt-1", "cmd": "send_text", "text": "今天天气怎么样？"}
+        )
+        assert resp["ok"] is True
+        runtime.send_text.assert_awaited_once_with("今天天气怎么样？")
+
+    async def test_send_text_requires_valid_text(self, bridge: ControlBridge) -> None:
+        resp = await bridge.handle({"request_id": "txt-2", "cmd": "send_text"})
+        assert resp["ok"] is False
+        resp = await bridge.handle({"request_id": "txt-3", "cmd": "send_text", "text": "   "})
+        assert resp["ok"] is False
+
 
 class TestSetVoice:
     def _http_client_mock(self) -> AsyncMock:
@@ -241,4 +258,8 @@ class TestProtocol:
                 }
             ),
             EndMeetingCommand,
+        )
+        assert isinstance(
+            parse_command({"request_id": "5", "cmd": "send_text", "text": "测试文本"}),
+            SendTextCommand,
         )

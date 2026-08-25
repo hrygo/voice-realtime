@@ -12,6 +12,7 @@ import { useUISettingsStore } from "../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import { showToast } from "./Toast";
 import "./SubtitleStream.css";
+import "./ModeSidebar.css";
 
 type FontSizeMode = "normal" | "medium" | "large";
 
@@ -212,14 +213,6 @@ export default function SubtitleStream({
     showToast("字幕记录已清空", "info");
   }, [commandSocket]);
 
-  const cycleFontSize = useCallback(() => {
-    setFontSizeMode((prev) => {
-      if (prev === "normal") return "medium";
-      if (prev === "medium") return "large";
-      return "normal";
-    });
-  }, []);
-
   // Keyboard Shortcuts
   useEffect(() => {
     const handleShortcuts = (e: KeyboardEvent) => {
@@ -248,212 +241,277 @@ export default function SubtitleStream({
       className="panel subtitle-panel"
       aria-label="实时字幕"
     >
-      {/* 头部 */}
-      <header className="panel-header subtitle-header">
-        <div className="subtitle-header-left">
-          <h2>
-            <span>📝</span> 实时字幕
-          </h2>
-          <span className={`subtitle-status-pill ${connected ? "connected" : ""}`}>
-            <span className="subtitle-status-dot" />
-            {connected ? "WhisperLiveKit 已连接" : "等待连接"}
-          </span>
-          <span className="subtitle-mode-pill" title="处于实时字幕 Tab 时，AI 语音交互已自动挂起，麦克风仅用于字幕转录">
-            <span>🛡️ 纯净字幕 (AI 助手已挂起)</span>
-          </span>
-        </div>
+      <div className="subtitle-workspace">
+        <aside className="mode-sidebar subtitle-sidebar" aria-label="字幕控制">
+          <div className="mode-sidebar-scroll">
+            <section className="mode-sidebar-group subtitle-sidebar-group subtitle-sidebar-group-status">
+              <div className="mode-sidebar-group-header">
+                <span className="mode-sidebar-group-title">
+                  <span className="mode-sidebar-group-icon">◉</span>
+                  字幕状态
+                </span>
+                <span className="mode-sidebar-group-meta">实时</span>
+              </div>
 
-        <div className="subtitle-header-right">
-          {isMeetingRecording && (
-            <span className="subtitle-sync-chip" title="当前会议正在录制中，字幕流与会议声纹分轨保持同步">
-              <span className="subtitle-sync-dot" />
-              <span>与会议录制同步中</span>
-              {onNavigateMeeting && (
+              <span className={`subtitle-status-pill ${connected ? "connected" : ""}`}>
+                <span className="subtitle-status-dot" />
+                {connected ? "WhisperLiveKit 已连接" : "等待连接"}
+              </span>
+              <span
+                className="subtitle-mode-pill"
+                title="处于实时字幕 Tab 时，AI 语音交互已自动挂起，麦克风仅用于字幕转录"
+              >
+                <span>🛡️ 纯净字幕</span>
+                <small>AI 助手已挂起</small>
+              </span>
+
+              {isMeetingRecording && (
+                <div
+                  className="subtitle-sidebar-sync-card"
+                  title="当前会议正在录制中，字幕流与会议声纹分轨保持同步"
+                >
+                  <div className="subtitle-sidebar-sync-title">
+                    <span className="subtitle-sync-dot" />
+                    <span>与会议录制同步中</span>
+                  </div>
+                  {onNavigateMeeting && (
+                    <button
+                      type="button"
+                      className="subtitle-jump-btn"
+                      onClick={onNavigateMeeting}
+                      title="转到会议助手面板"
+                    >
+                      查看会议 →
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="mode-sidebar-group subtitle-sidebar-group subtitle-sidebar-group-display">
+              <div className="mode-sidebar-group-header">
+                <span className="mode-sidebar-group-title">
+                  <span className="mode-sidebar-group-icon">⌕</span>
+                  显示与筛选
+                </span>
+              </div>
+
+              <div className="subtitle-search-wrap">
+                <span className="subtitle-search-icon">🔍</span>
+                <input
+                  id="subtitle-search-input"
+                  type="text"
+                  className="subtitle-search-input"
+                  placeholder="搜索字幕文本..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className="subtitle-search-clear"
+                    onClick={() => setSearchQuery("")}
+                    title="清空搜索"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <label className="subtitle-sidebar-field-label" htmlFor="subtitle-speaker-select">
+                说话人与重点
+              </label>
+              <select
+                id="subtitle-speaker-select"
+                className="subtitle-speaker-select"
+                value={speakerFilter}
+                onChange={(e) => setSpeakerFilter(e.target.value)}
+                aria-label="筛选说话人或星标"
+              >
+                <option value="all">全部说话人</option>
+                <option value="starred">⭐ 仅看星标重点 ({starredIndices.size})</option>
+                {availableSpeakers.map((spk) => (
+                  <option key={spk} value={String(spk)}>
+                    👤 说话人 {spk}
+                  </option>
+                ))}
+              </select>
+
+              <div className="subtitle-sidebar-field-label">字幕字号</div>
+              <div className="subtitle-font-size-control" role="group" aria-label="调节字幕字号">
+                {(
+                  [
+                    ["normal", "A 小"],
+                    ["medium", "A+ 中"],
+                    ["large", "A++ 大"],
+                  ] as const
+                ).map(([size, label]) => (
+                  <button
+                    key={size}
+                    type="button"
+                    className={`subtitle-font-size-btn ${fontSizeMode === size ? "active" : ""}`}
+                    aria-pressed={fontSizeMode === size}
+                    onClick={() => setFontSizeMode(size)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="mode-sidebar-group subtitle-sidebar-group subtitle-sidebar-group-actions">
+              <div className="mode-sidebar-group-header">
+                <span className="mode-sidebar-group-title">
+                  <span className="mode-sidebar-group-icon">↗</span>
+                  输出与操作
+                </span>
+              </div>
+
+              <button
+                type="button"
+                className="presentation-mode-btn subtitle-sidebar-presentation-btn"
+                onClick={() => setPresentationMode(true)}
+                title="进入舞台提词大字/光学镜像模式 (Cmd+Shift+P)"
+              >
+                <span>📺</span> 提词大字
+                <kbd>⌘⇧P</kbd>
+              </button>
+
+              <div className="mode-sidebar-action-grid subtitle-sidebar-actions">
                 <button
                   type="button"
-                  className="subtitle-jump-btn"
-                  onClick={onNavigateMeeting}
-                  title="转到会议助手面板"
+                  className="btn-ctrl subtitle-sidebar-action"
+                  onClick={handleCopyAll}
+                  disabled={!lines.length}
+                  title="一键复制全部纯文本字幕"
                 >
-                  查看会议 →
+                  <span>📋</span> 复制
                 </button>
-              )}
-            </span>
-          )}
+                <button
+                  type="button"
+                  className="btn-ctrl subtitle-sidebar-action"
+                  onClick={handleExportMarkdown}
+                  disabled={!lines.length}
+                  title="导出为结构化 Markdown 会议纪要 (Cmd+Shift+M)"
+                >
+                  <span>📝</span> 纪要
+                </button>
+                <button
+                  type="button"
+                  className="btn-ctrl subtitle-sidebar-action"
+                  onClick={handleExportSRT}
+                  disabled={!lines.length}
+                  title="导出为标准 SRT 字幕文件 (Cmd+Shift+S)"
+                >
+                  <span>💾</span> SRT
+                </button>
+                <button
+                  type="button"
+                  className="btn-ctrl subtitle-sidebar-action"
+                  onClick={handleExportTXT}
+                  disabled={!lines.length}
+                  title="导出为纯文本文件"
+                >
+                  <span>📄</span> TXT
+                </button>
+                <button
+                  type="button"
+                  className="btn-ctrl subtitle-sidebar-action"
+                  onClick={handleExportJSON}
+                  disabled={!lines.length}
+                  title="导出为 JSON 时序数据"
+                >
+                  <span>📊</span> JSON
+                </button>
+                <button
+                  type="button"
+                  className="btn-ctrl btn-ctrl-danger subtitle-sidebar-action"
+                  onClick={handleClear}
+                  disabled={!lines.length}
+                  title="清空当前字幕列表"
+                >
+                  <span>🗑️</span> 清空
+                </button>
+              </div>
 
-          <button
-            type="button"
-            className="presentation-mode-btn"
-            onClick={() => setPresentationMode(true)}
-            title="进入舞台提词大字/光学镜像模式 (Cmd+Shift+P)"
+              <div className="subtitle-sidebar-stats">
+                <span>{lines.length} 条字幕</span>
+                {starredIndices.size > 0 && <span>⭐ {starredIndices.size} 重点</span>}
+              </div>
+            </section>
+          </div>
+        </aside>
+
+        <main className="subtitle-main-stage">
+          <header className="panel-header subtitle-header">
+            <div className="subtitle-header-left">
+              <h2>
+                <span>📝</span> 实时字幕
+              </h2>
+              <span className="subtitle-header-context">
+                {isMeetingRecording ? "会议转录同步中" : "本地实时转写工作区"}
+              </span>
+            </div>
+            <div className="subtitle-header-right">
+              <span className="subtitle-header-hint">双击字幕可复制 · Cmd+Shift+P 提词</span>
+            </div>
+          </header>
+
+          <div
+            className={`subtitle-stream-body font-${fontSizeMode}`}
+            ref={scrollRef}
+            onScroll={handleScroll}
+            aria-live="polite"
           >
-            <span>📺</span> 提词大字
-          </button>
-        </div>
-      </header>
-
-      {/* 搜索与过滤工具栏 */}
-      <div className="subtitle-tools-bar">
-        <div className="subtitle-search-wrap">
-          <span className="subtitle-search-icon">🔍</span>
-          <input
-            type="text"
-            className="subtitle-search-input"
-            placeholder="搜索字幕文本..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              className="subtitle-search-clear"
-              onClick={() => setSearchQuery("")}
-            >
-              ✕
-            </button>
-          )}
-        </div>
-
-        <div className="subtitle-filter-group">
-          <select
-            className="subtitle-speaker-select"
-            value={speakerFilter}
-            onChange={(e) => setSpeakerFilter(e.target.value)}
-            aria-label="筛选说话人或星标"
-          >
-            <option value="all">全部说话人</option>
-            <option value="starred">⭐ 仅看星标重点 ({starredIndices.size})</option>
-            {availableSpeakers.map((spk) => (
-              <option key={spk} value={String(spk)}>
-                👤 说话人 {spk}
-              </option>
+            {filteredLines.map(({ line, originalIndex }) => (
+              <SubtitleRow
+                key={originalIndex}
+                line={line}
+                query={searchQuery}
+                isStarred={starredIndices.has(originalIndex)}
+                onToggleStar={() => toggleStar(originalIndex)}
+              />
             ))}
-          </select>
 
-          <button
-            type="button"
-            className="font-size-toggle-btn"
-            onClick={cycleFontSize}
-            title="调节字幕字号大小"
-          >
-            {fontSizeMode === "normal" && "A (小)"}
-            {fontSizeMode === "medium" && "A+ (中)"}
-            {fontSizeMode === "large" && "A++ (大)"}
-          </button>
-        </div>
-      </div>
+            {partial && (
+              <div className="subtitle-partial-row">
+                <span className="partial-pulse-indicator" />
+                <p className="subtitle-partial-text">{partial}</p>
+              </div>
+            )}
 
-      {/* 字幕内容流 */}
-      <div
-        className={`subtitle-stream-body font-${fontSizeMode}`}
-        ref={scrollRef}
-        onScroll={handleScroll}
-        aria-live="polite"
-      >
-        {filteredLines.map(({ line, originalIndex }) => (
-          <SubtitleRow
-            key={originalIndex}
-            line={line}
-            query={searchQuery}
-            isStarred={starredIndices.has(originalIndex)}
-            onToggleStar={() => toggleStar(originalIndex)}
-          />
-        ))}
+            {!lines.length && !partial && (
+              <div className="subtitle-empty-wrap">
+                <span className="subtitle-empty-icon">🎙️</span>
+                <p className="subtitle-empty-title">等待语音字幕...</p>
+                <p className="subtitle-empty-desc">
+                  WhisperLiveKit 流式 ASR 正在监听，系统检测到发言后将实时输出带说话人分离的字幕。
+                </p>
+              </div>
+            )}
 
-        {partial && (
-          <div className="subtitle-partial-row">
-            <span className="partial-pulse-indicator" />
-            <p className="subtitle-partial-text">{partial}</p>
+            {/* 智能贴底悬浮按钮 */}
+            {isScrolledUp && (
+              <button
+                type="button"
+                className="subtitle-scroll-bottom-btn"
+                onClick={scrollToBottom}
+                aria-label="回到底部"
+              >
+                <span>↓</span> 恢复跟随最新字幕
+              </button>
+            )}
           </div>
-        )}
 
-        {!lines.length && !partial && (
-          <div className="subtitle-empty-wrap">
-            <span className="subtitle-empty-icon">🎙️</span>
-            <p className="subtitle-empty-title">等待语音字幕...</p>
-            <p className="subtitle-empty-desc">
-              WhisperLiveKit 流式 ASR 正在监听，系统检测到发言后将实时输出带说话人分离的字幕。
-            </p>
-          </div>
-        )}
-
-        {/* 智能贴底悬浮按钮 */}
-        {isScrolledUp && (
-          <button
-            type="button"
-            className="subtitle-scroll-bottom-btn"
-            onClick={scrollToBottom}
-            aria-label="回到底部"
-          >
-            <span>↓</span> 恢复跟随最新字幕
-          </button>
-        )}
+          <footer className="subtitle-bottom-toolbar">
+            <div className="subtitle-meta-stats">
+              <span>当前显示 {filteredLines.length} / {lines.length} 条字幕</span>
+              {starredIndices.size > 0 && <span>· {starredIndices.size} 条重点</span>}
+            </div>
+            <span className="subtitle-footer-hint">滚动可查看历史，字幕会自动跟随最新内容</span>
+          </footer>
+        </main>
       </div>
-
-      {/* 底部操作栏 */}
-      <footer className="subtitle-bottom-toolbar">
-        <div className="subtitle-actions-group">
-          <button
-            type="button"
-            className="btn-ctrl"
-            onClick={handleCopyAll}
-            disabled={!lines.length}
-            title="一键复制全部纯文本字幕"
-          >
-            <span>📋</span> 复制
-          </button>
-          <button
-            type="button"
-            className="btn-ctrl"
-            onClick={handleExportMarkdown}
-            disabled={!lines.length}
-            title="导出为结构化 Markdown 会议纪要 (Cmd+Shift+M)"
-          >
-            <span>📝</span> 纪要 (MD)
-          </button>
-          <button
-            type="button"
-            className="btn-ctrl"
-            onClick={handleExportSRT}
-            disabled={!lines.length}
-            title="导出为标准 SRT 字幕文件 (Cmd+Shift+S)"
-          >
-            <span>💾</span> SRT
-          </button>
-          <button
-            type="button"
-            className="btn-ctrl"
-            onClick={handleExportTXT}
-            disabled={!lines.length}
-            title="导出为纯文本文件"
-          >
-            <span>📄</span> TXT
-          </button>
-          <button
-            type="button"
-            className="btn-ctrl"
-            onClick={handleExportJSON}
-            disabled={!lines.length}
-            title="导出为 JSON 时序数据"
-          >
-            <span>📊</span> JSON
-          </button>
-          <button
-            type="button"
-            className="btn-ctrl btn-ctrl-danger"
-            onClick={handleClear}
-            disabled={!lines.length}
-            title="清空当前字幕列表"
-          >
-            <span>🗑️</span> 清空
-          </button>
-        </div>
-
-        <div className="subtitle-meta-stats">
-          <span>{lines.length} 条字幕</span>
-          {starredIndices.size > 0 && <span>· (⭐ {starredIndices.size} 重点)</span>}
-        </div>
-      </footer>
 
       {/* 演讲/提词器光学镜像大字模式 Modal */}
       {presentationMode && (

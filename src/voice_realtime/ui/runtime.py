@@ -48,7 +48,10 @@ class UIRuntime:
         self._sinks_wired = False
         self.observer = StatusBridgeObserver()
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
-        self.hub = AudioHub(device_index=settings.interaction.input_device)
+        self.hub = AudioHub(
+            device_index=settings.interaction.input_device,
+            device_name=settings.interaction.input_device_name,
+        )
         subtitle_proxy_kwargs: dict[str, Any] = {}
         if asr_registry is not None:
             subtitle_proxy_kwargs["registry"] = asr_registry
@@ -146,6 +149,13 @@ class UIRuntime:
 
     async def clear_context(self) -> None:
         await self.session.clear_context()
+
+    async def send_text(self, text: str) -> None:
+        if self.mode_coordinator is not None and self.mode_coordinator.mode is RuntimeMode.MEETING:
+            raise ModeConflictError("会议录制期间不能向语音助手发送文本")
+        if not self.session.active:
+            raise RuntimeError("语音助手会话未在运行中")
+        await self.session.send_text(text)
 
     async def clear_subtitles(self) -> None:
         await self.subtitle_proxy.clear_subtitles()

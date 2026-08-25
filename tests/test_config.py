@@ -25,6 +25,16 @@ def test_interaction_vad_defaults() -> None:
     assert settings.vad_min_volume == 0.65
 
 
+def test_interaction_input_device_name_is_stripped() -> None:
+    settings = InteractionSettings(input_device_name="  MacBook Pro  ")
+    assert settings.input_device_name == "MacBook Pro"
+
+
+def test_interaction_rejects_input_device_name_and_index_together() -> None:
+    with pytest.raises(ValidationError, match="不能同时配置"):
+        InteractionSettings(input_device=3, input_device_name="MacBook Pro")
+
+
 def test_interaction_context_compaction_defaults() -> None:
     settings = InteractionSettings()
     config = settings.context_compaction_config()
