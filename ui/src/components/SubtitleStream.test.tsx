@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import SubtitleStream from "./SubtitleStream";
@@ -13,6 +13,20 @@ declare global {
 }
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
+
+const originalClipboard = navigator.clipboard;
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
+const originalAnchorClick = HTMLAnchorElement.prototype.click;
+
+const sampleLines = [
+  {
+    speaker: 0,
+    text: "这是一条测试字幕",
+    start: "00:00:01",
+    end: "00:00:02",
+  },
+];
 
 describe("SubtitleStream workspace layout", () => {
   let container: HTMLDivElement;
@@ -42,6 +56,26 @@ describe("SubtitleStream workspace layout", () => {
     };
   });
 
+  afterEach(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: originalClipboard,
+    });
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: originalCreateObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: originalRevokeObjectURL,
+    });
+    Object.defineProperty(HTMLAnchorElement.prototype, "click", {
+      configurable: true,
+      value: originalAnchorClick,
+    });
+    vi.restoreAllMocks();
+  });
+
   it("renders unified status, display, and export groups in the left sidebar", () => {
     act(() => {
       root.render(<SubtitleStream />);
@@ -66,5 +100,67 @@ describe("SubtitleStream workspace layout", () => {
     expect(settingsGroup?.querySelector(".subtitle-search-input")).not.toBeNull();
     expect(settingsGroup?.querySelector(".subtitle-speaker-select")).not.toBeNull();
     expect(settingsGroup?.querySelector(".subtitle-font-size-control")).not.toBeNull();
+  });
+
+  it("shows local feedback after copying all subtitles", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    useSubtitleStore.setState({ lines: sampleLines, rawLines: sampleLines });
+
+    act(() => {
+      root.render(<SubtitleStream />);
+    });
+
+    const copyButton = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("复制"),
+    ) as HTMLButtonElement;
+
+    await act(async () => {
+      copyButton.click();
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledWith("说话人 0: 这是一条测试字幕");
+    expect(copyButton.textContent).toContain("已复制");
+    expect(container.querySelector('[role="status"]')?.textContent).toContain("已复制");
+  });
+
+  it("shows local feedback after starting an SRT download", () => {
+    const createObjectURL = vi.fn().mockReturnValue("blob:subtitle");
+    const revokeObjectURL = vi.fn();
+    const anchorClick = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    Object.defineProperty(HTMLAnchorElement.prototype, "click", {
+      configurable: true,
+      value: anchorClick,
+    });
+    useSubtitleStore.setState({ lines: sampleLines, rawLines: sampleLines });
+
+    act(() => {
+      root.render(<SubtitleStream />);
+    });
+
+    const srtButton = Array.from(container.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("SRT"),
+    ) as HTMLButtonElement;
+
+    act(() => {
+      srtButton.click();
+    });
+
+    expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(anchorClick).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:subtitle");
+    expect(srtButton.textContent).toContain("已下载");
   });
 });

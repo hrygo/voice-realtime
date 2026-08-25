@@ -11,6 +11,7 @@ import {
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import { showToast } from "./Toast";
+import { copyTextToClipboard } from "../utils/clipboard";
 import "./SubtitleStream.css";
 import "./ModeSidebar.css";
 
@@ -22,9 +23,26 @@ function downloadBlob(content: string, filename: string, mime: string) {
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  document.body.appendChild(a);
+  try {
+    a.click();
+  } finally {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 }
+
+type SubtitleAction = "copy" | "markdown" | "srt" | "txt" | "json";
+
+const ACTION_FEEDBACK_LABELS: Record<SubtitleAction, string> = {
+  copy: "已复制到剪贴板",
+  markdown: "已开始下载 Markdown 会议纪要",
+  srt: "已开始下载 SRT 字幕文件",
+  txt: "已开始下载纯文本字幕",
+  json: "已开始下载 JSON 时序数据",
+};
+
+const ACTION_FEEDBACK_DURATION_MS = 1800;
 
 interface SubtitleStreamProps {
   readonly isMeetingRecording?: boolean;
@@ -51,6 +69,27 @@ export default function SubtitleStream({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showGuideLine, setShowGuideLine] = useState(true);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
+  const [feedbackAction, setFeedbackAction] = useState<SubtitleAction | null>(null);
+  const feedbackTimerRef = useRef<number | null>(null);
+
+  const markActionSuccess = useCallback((action: SubtitleAction) => {
+    if (feedbackTimerRef.current !== null) {
+      window.clearTimeout(feedbackTimerRef.current);
+    }
+    setFeedbackAction(action);
+    feedbackTimerRef.current = window.setTimeout(() => {
+      setFeedbackAction(null);
+      feedbackTimerRef.current = null;
+    }, ACTION_FEEDBACK_DURATION_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current !== null) {
+        window.clearTimeout(feedbackTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -149,57 +188,80 @@ export default function SubtitleStream({
   const handleExportMarkdown = useCallback(() => {
     if (!lines.length) return;
     const content = toMarkdownNotes(lines, starredIndices);
-    downloadBlob(
-      content,
-      `meeting-notes-${new Date().toISOString().substring(0, 10)}.md`,
-      "text/markdown",
-    );
-    showToast("Markdown 会议纪要已成功导出", "success");
-  }, [lines, starredIndices]);
+    try {
+      downloadBlob(
+        content,
+        `meeting-notes-${new Date().toISOString().substring(0, 10)}.md`,
+        "text/markdown",
+      );
+      markActionSuccess("markdown");
+      showToast("Markdown 会议纪要已开始下载", "success");
+    } catch {
+      showToast("Markdown 会议纪要下载失败", "error");
+    }
+  }, [lines, markActionSuccess, starredIndices]);
 
   const handleExportSRT = useCallback(() => {
     if (!lines.length) return;
     const content = toSRT(lines);
-    downloadBlob(
-      content,
-      `subtitles-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.srt`,
-      "application/x-subrip",
-    );
-    showToast("SRT 字幕文件已成功导出", "success");
-  }, [lines]);
+    try {
+      downloadBlob(
+        content,
+        `subtitles-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.srt`,
+        "application/x-subrip",
+      );
+      markActionSuccess("srt");
+      showToast("SRT 字幕文件已开始下载", "success");
+    } catch {
+      showToast("SRT 字幕文件下载失败", "error");
+    }
+  }, [lines, markActionSuccess]);
 
   const handleExportTXT = useCallback(() => {
     if (!lines.length) return;
     const content = lines
       .map((l) => `[${l.start} - ${l.end}] ${formatSpeaker(l.speaker)}: ${l.text}`)
       .join("\n");
-    downloadBlob(
-      content,
-      `transcript-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.txt`,
-      "text/plain",
-    );
-    showToast("纯文本字幕已成功导出", "success");
-  }, [lines]);
+    try {
+      downloadBlob(
+        content,
+        `transcript-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.txt`,
+        "text/plain",
+      );
+      markActionSuccess("txt");
+      showToast("纯文本字幕已开始下载", "success");
+    } catch {
+      showToast("纯文本字幕下载失败", "error");
+    }
+  }, [lines, markActionSuccess]);
 
   const handleExportJSON = useCallback(() => {
     if (!lines.length) return;
     const content = JSON.stringify(lines, null, 2);
-    downloadBlob(
-      content,
-      `subtitles-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.json`,
-      "application/json",
-    );
-    showToast("JSON 时序数据已成功导出", "success");
-  }, [lines]);
+    try {
+      downloadBlob(
+        content,
+        `subtitles-${new Date().toISOString().substring(0, 19).replace(/:/g, "-")}.json`,
+        "application/json",
+      );
+      markActionSuccess("json");
+      showToast("JSON 时序数据已开始下载", "success");
+    } catch {
+      showToast("JSON 时序数据下载失败", "error");
+    }
+  }, [lines, markActionSuccess]);
 
-  const handleCopyAll = useCallback(() => {
+  const handleCopyAll = useCallback(async () => {
     if (!lines.length) return;
     const content = lines.map((l) => `${formatSpeaker(l.speaker)}: ${l.text}`).join("\n");
-    navigator.clipboard.writeText(content).then(
-      () => showToast("所有字幕文本已复制到剪贴板", "success"),
-      () => showToast("复制失败", "error"),
-    );
-  }, [lines]);
+    try {
+      await copyTextToClipboard(content);
+      markActionSuccess("copy");
+      showToast("所有字幕文本已复制到剪贴板", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "error");
+    }
+  }, [lines, markActionSuccess]);
 
   const handleClear = useCallback(async () => {
     useSubtitleStore.getState().clear();
@@ -380,48 +442,61 @@ export default function SubtitleStream({
               <div className="mode-sidebar-action-grid subtitle-sidebar-actions">
                 <button
                   type="button"
-                  className="btn-ctrl subtitle-sidebar-action"
+                  className={`btn-ctrl subtitle-sidebar-action ${feedbackAction === "copy" ? "is-feedback" : ""}`}
                   onClick={handleCopyAll}
                   disabled={!lines.length}
-                  title="一键复制全部纯文本字幕"
+                  title={feedbackAction === "copy" ? "已复制到剪贴板" : "一键复制全部纯文本字幕"}
                 >
-                  <span>📋</span> 复制
+                  <span>{feedbackAction === "copy" ? "✓" : "📋"}</span>{" "}
+                  {feedbackAction === "copy" ? "已复制" : "复制"}
                 </button>
                 <button
                   type="button"
-                  className="btn-ctrl subtitle-sidebar-action"
+                  className={`btn-ctrl subtitle-sidebar-action ${feedbackAction === "markdown" ? "is-feedback" : ""}`}
                   onClick={handleExportMarkdown}
                   disabled={!lines.length}
-                  title="导出为结构化 Markdown 会议纪要 (Cmd+Shift+M)"
+                  title={
+                    feedbackAction === "markdown"
+                      ? "已开始下载 Markdown 会议纪要"
+                      : "导出为结构化 Markdown 会议纪要 (Cmd+Shift+M)"
+                  }
                 >
-                  <span>📝</span> 纪要
+                  <span>{feedbackAction === "markdown" ? "✓" : "📝"}</span>{" "}
+                  {feedbackAction === "markdown" ? "已下载" : "纪要"}
                 </button>
                 <button
                   type="button"
-                  className="btn-ctrl subtitle-sidebar-action"
+                  className={`btn-ctrl subtitle-sidebar-action ${feedbackAction === "srt" ? "is-feedback" : ""}`}
                   onClick={handleExportSRT}
                   disabled={!lines.length}
-                  title="导出为标准 SRT 字幕文件 (Cmd+Shift+S)"
+                  title={
+                    feedbackAction === "srt"
+                      ? "已开始下载 SRT 字幕文件"
+                      : "导出为标准 SRT 字幕文件 (Cmd+Shift+S)"
+                  }
                 >
-                  <span>💾</span> SRT
+                  <span>{feedbackAction === "srt" ? "✓" : "💾"}</span>{" "}
+                  {feedbackAction === "srt" ? "已下载" : "SRT"}
                 </button>
                 <button
                   type="button"
-                  className="btn-ctrl subtitle-sidebar-action"
+                  className={`btn-ctrl subtitle-sidebar-action ${feedbackAction === "txt" ? "is-feedback" : ""}`}
                   onClick={handleExportTXT}
                   disabled={!lines.length}
-                  title="导出为纯文本文件"
+                  title={feedbackAction === "txt" ? "已开始下载纯文本字幕" : "导出为纯文本文件"}
                 >
-                  <span>📄</span> TXT
+                  <span>{feedbackAction === "txt" ? "✓" : "📄"}</span>{" "}
+                  {feedbackAction === "txt" ? "已下载" : "TXT"}
                 </button>
                 <button
                   type="button"
-                  className="btn-ctrl subtitle-sidebar-action"
+                  className={`btn-ctrl subtitle-sidebar-action ${feedbackAction === "json" ? "is-feedback" : ""}`}
                   onClick={handleExportJSON}
                   disabled={!lines.length}
-                  title="导出为 JSON 时序数据"
+                  title={feedbackAction === "json" ? "已开始下载 JSON 时序数据" : "导出为 JSON 时序数据"}
                 >
-                  <span>📊</span> JSON
+                  <span>{feedbackAction === "json" ? "✓" : "📊"}</span>{" "}
+                  {feedbackAction === "json" ? "已下载" : "JSON"}
                 </button>
                 <button
                   type="button"
@@ -432,6 +507,10 @@ export default function SubtitleStream({
                 >
                   <span>🗑️</span> 清空
                 </button>
+              </div>
+
+              <div className="subtitle-action-status" role="status" aria-live="polite" aria-atomic="true">
+                {feedbackAction ? ACTION_FEEDBACK_LABELS[feedbackAction] : ""}
               </div>
 
               <div className="subtitle-sidebar-stats">
@@ -700,11 +779,13 @@ function SubtitleRow({
     );
   };
 
-  const handleCopySingle = () => {
-    navigator.clipboard.writeText(`[${line.start}] ${formatSpeaker(line.speaker)}: ${line.text}`).then(
-      () => showToast("已复制单条字幕", "success"),
-      () => showToast("复制失败", "error"),
-    );
+  const handleCopySingle = async () => {
+    try {
+      await copyTextToClipboard(`[${line.start}] ${formatSpeaker(line.speaker)}: ${line.text}`);
+      showToast("已复制单条字幕", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "error");
+    }
   };
 
   return (

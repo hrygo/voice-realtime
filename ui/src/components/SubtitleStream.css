@@ -377,6 +377,20 @@
   font-size: 0.66rem;
 }
 
+.subtitle-sidebar-action.is-feedback {
+  border-color: color-mix(in srgb, var(--color-green) 55%, var(--border));
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 10%, var(--bg-secondary));
+}
+
+.subtitle-action-status {
+  min-height: 1rem;
+  margin-top: 5px;
+  color: var(--color-green);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
 .subtitle-sidebar-stats {
   display: flex;
   align-items: center;
