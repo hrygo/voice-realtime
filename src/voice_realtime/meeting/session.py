@@ -286,9 +286,13 @@ class MeetingSession:
         await self._resume_summary_worker()
 
     @staticmethod
-    async def _await_cleanup(final_cleanup: asyncio.Task[None]) -> None:
+    async def _await_cleanup(
+        final_cleanup: asyncio.Task[None],
+        *,
+        initial_cancellation: asyncio.CancelledError | None = None,
+    ) -> None:
         """延迟调用方取消；cleanup 失败优先并保留取消为 cause。"""
-        cancellation: asyncio.CancelledError | None = None
+        cancellation = initial_cancellation
         while not final_cleanup.done():
             try:
                 await asyncio.shield(final_cleanup)
@@ -335,6 +339,8 @@ class MeetingSession:
             if meeting_id is None:
                 return self._record
             interrupted_reason = reason[:128]
+            initial_cancellation: asyncio.CancelledError | None = None
+            result: MeetingRecord | None = None
             try:
                 with contextlib.suppress(Exception):
                     await self.gateway.abort_capture()
@@ -361,10 +367,18 @@ class MeetingSession:
                     meeting_id,
                     self._meeting_state_payload(record),
                 )
-                return cast(MeetingRecord, record)
+                result = cast(MeetingRecord, record)
+            except asyncio.CancelledError as exc:
+                initial_cancellation = exc
             finally:
                 final_cleanup = asyncio.create_task(self._release_stopped_session())
-                await self._await_cleanup(final_cleanup)
+                await self._await_cleanup(
+                    final_cleanup,
+                    initial_cancellation=initial_cancellation,
+                )
+            if initial_cancellation is not None:
+                raise initial_cancellation
+            return result
 
     async def recover_stale(self) -> int:
         recover = getattr(self.repository, "recover_stale", None)

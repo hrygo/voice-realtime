@@ -768,6 +768,89 @@ async def test_interrupt_cleanup_failure_takes_priority_over_cancellation(
     assert exc_info.value.__cause__.args == ("caller cancelled",)
 
 
+async def test_interrupt_preserves_body_cancellation_over_cleanup_cancellation(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    status_started = asyncio.Event()
+    allow_status = asyncio.Event()
+    resume_started = asyncio.Event()
+    allow_resume = asyncio.Event()
+
+    async def gated_set_status(
+        meeting_id: UUID, status: MeetingStatus, *, reason: str | None = None
+    ) -> MeetingRecord:
+        status_started.set()
+        await allow_status.wait()
+        return repository.record
+
+    async def resume_after_recording() -> None:
+        resume_started.set()
+        await allow_resume.wait()
+
+    summary = SimpleNamespace(resume_after_recording=resume_after_recording)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    repository.set_status = gated_set_status  # type: ignore[method-assign]
+    interrupting = asyncio.create_task(session.interrupt("调用方取消"))
+    await status_started.wait()
+
+    interrupting.cancel("first")
+    await resume_started.wait()
+    interrupting.cancel("second")
+    try:
+        await asyncio.sleep(0)
+        assert not interrupting.done()
+    finally:
+        allow_status.set()
+        allow_resume.set()
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await interrupting
+
+    assert exc_info.value.args == ("first",)
+
+
+async def test_interrupt_cleanup_failure_chains_body_cancellation(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    status_started = asyncio.Event()
+    allow_status = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    allow_cleanup_failure = asyncio.Event()
+
+    async def gated_set_status(
+        meeting_id: UUID, status: MeetingStatus, *, reason: str | None = None
+    ) -> MeetingRecord:
+        status_started.set()
+        await allow_status.wait()
+        return repository.record
+
+    async def fail_cleanup() -> None:
+        cleanup_started.set()
+        await allow_cleanup_failure.wait()
+        raise RuntimeError("cleanup failed after body cancellation")
+
+    session = MeetingSession(repository, gateway)
+    await _start_session(session)
+    repository.set_status = gated_set_status  # type: ignore[method-assign]
+    session._release_stopped_session = fail_cleanup  # type: ignore[method-assign]
+    interrupting = asyncio.create_task(session.interrupt("调用方取消"))
+    await status_started.wait()
+
+    interrupting.cancel("first")
+    await cleanup_started.wait()
+    allow_status.set()
+    allow_cleanup_failure.set()
+
+    with pytest.raises(
+        RuntimeError, match="cleanup failed after body cancellation"
+    ) as exc_info:
+        await interrupting
+
+    assert isinstance(exc_info.value.__cause__, asyncio.CancelledError)
+    assert exc_info.value.__cause__.args == ("first",)
+
+
 async def test_recover_stale_delegates_and_defaults_without_method(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
