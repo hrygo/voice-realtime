@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -31,16 +31,23 @@ from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
 from voice_realtime.meeting.migrations import run_migrations
+from voice_realtime.meeting.models import RuntimeMode
 from voice_realtime.meeting.recovery import RecoveryJournal
 from voice_realtime.meeting.repository import PostgresMeetingRepository
 from voice_realtime.meeting.session import MeetingSession
 from voice_realtime.meeting.summary import MeetingSummaryClient, MeetingSummaryService
 from voice_realtime.network import local_async_client
 from voice_realtime.ui.control import ControlBridge
-from voice_realtime.ui.protocol import RuntimeStateEvent
+from voice_realtime.ui.protocol import ErrorCode, RuntimeStateEvent, RuntimeStateSnapshot
 from voice_realtime.ui.runtime import UIRuntime
+from voice_realtime.ui.runtime_events import RuntimeStateClient
 
 logger = logging.getLogger(__name__)
+
+_CONTROL_RESPONSE_QUEUE_SIZE = 8
+_SUBTITLE_INACTIVE_CODE = 4409
+_SUBTITLE_INACTIVE_REASON = "字幕模式未激活"
+_SUBTITLE_ELIGIBLE_MODES = frozenset({RuntimeMode.SUBTITLES, RuntimeMode.MEETING})
 
 
 def _probe_url(host: str, port: int, path: str = "/health") -> str:
@@ -111,6 +118,7 @@ def create_app(
                 await repository.close()
 
     app = FastAPI(title="Voice Studio", version="1.1.0", lifespan=lifespan)
+    app.state.accepted_control_tasks = set()
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -275,14 +283,7 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
         if runtime is None:
             await websocket.close(code=1011, reason="runtime 未就绪")
             return
-        await websocket.accept()
-        ws_send = websocket.send_text
-        runtime.subtitle_proxy.add_client(ws_send)
-        try:
-            while True:
-                await websocket.receive_text()
-        except WebSocketDisconnect:
-            runtime.subtitle_proxy.remove_client(ws_send)
+        await _serve_subtitle_websocket(websocket, runtime)
 
     @app.websocket("/ws/assistant")
     async def ws_assistant(websocket: WebSocket) -> None:
@@ -309,20 +310,7 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
         if runtime is None:
             await websocket.close(code=1011, reason="runtime 未就绪")
             return
-        bridge = ControlBridge(runtime, cfg.bridge)
-        await websocket.accept()
-        event = RuntimeStateEvent(state=runtime.snapshot())
-        await websocket.send_json(event.model_dump(mode="json"))
-        try:
-            while True:
-                text = await websocket.receive_text()
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    payload = {}
-                await websocket.send_json(await bridge.handle(payload))
-        except WebSocketDisconnect:
-            return
+        await _serve_control_websocket(websocket, runtime, cfg)
 
     @app.websocket("/ws/v1/meetings")
     async def ws_v1_meetings(websocket: WebSocket) -> None:
@@ -357,33 +345,218 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
         if not await _allow_websocket(websocket, cfg):
             return
         runtime = _get_runtime(websocket.app)
-        bridge = ControlBridge(runtime, cfg.bridge) if runtime is not None else None
-        await websocket.accept()
-        await websocket.send_json(
-            {
-                "contract_version": "1",
-                "event": "runtime_state",
-                "state": _runtime_state_json(runtime),
-            }
-        )
-        cache: dict[str, dict[str, Any]] = {}
-        try:
-            while True:
-                text = await websocket.receive_text()
-                try:
-                    payload = json.loads(text)
-                except json.JSONDecodeError:
-                    payload = {}
-                if not isinstance(payload, dict):
-                    payload = {}
-                response = (
-                    await bridge.handle(payload)
-                    if bridge is not None
-                    else await _handle_v1_control(runtime, cfg, payload, cache)
-                )
-                await websocket.send_json(response)
-        except WebSocketDisconnect:
+        if runtime is None:
+            await websocket.close(code=1011, reason="runtime 未就绪")
             return
+        await _serve_control_websocket(websocket, runtime, cfg)
+
+
+async def _serve_control_websocket(
+    websocket: WebSocket,
+    runtime: UIRuntime,
+    cfg: Settings,
+) -> None:
+    """用单 writer 合并命令响应与 latest-only 运行时广播。"""
+
+    bridge = ControlBridge(runtime, cfg.bridge)
+    runtime_client = runtime.runtime_events.add_client()
+    responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_CONTROL_RESPONSE_QUEUE_SIZE)
+    sender: asyncio.Task[None] | None = None
+    try:
+        await websocket.accept()
+        sender = asyncio.create_task(
+            _send_control_messages(websocket, responses, runtime_client),
+            name="control-websocket-sender",
+        )
+        while True:
+            payload = _decode_control_payload(await websocket.receive_text())
+            command_task = asyncio.create_task(
+                bridge.handle(payload),
+                name="accepted-control-command",
+            )
+            _track_accepted_control_task(websocket.app, command_task)
+            try:
+                response = await asyncio.shield(command_task)
+            except Exception:
+                if sender is not None:
+                    await _cancel_background_task(sender)
+                    sender = None
+                await websocket.close(code=1011, reason="控制命令执行失败")
+                return
+            await responses.put(response)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if sender is not None:
+            await _cancel_background_task(sender)
+        runtime.runtime_events.remove_client(runtime_client)
+
+
+async def _send_control_messages(
+    websocket: WebSocket,
+    responses: asyncio.Queue[dict[str, Any]],
+    runtime_client: RuntimeStateClient,
+) -> None:
+    """唯一写协程；每轮都回收未完成的临时 queue.get task。"""
+
+    while True:
+        response_get = asyncio.create_task(
+            responses.get(),
+            name="control-response-get",
+        )
+        runtime_get = asyncio.create_task(
+            runtime_client.receive(),
+            name="control-runtime-state-get",
+        )
+        get_tasks = {response_get, runtime_get}
+        try:
+            done, pending = await asyncio.wait(
+                get_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            for task in get_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*get_tasks, return_exceptions=True)
+            raise
+
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+
+        if runtime_get in done:
+            event = RuntimeStateEvent(
+                contract_version="1",
+                state=runtime_get.result(),
+            )
+            await websocket.send_json(event.model_dump(mode="json"))
+        if response_get in done:
+            await websocket.send_json(response_get.result())
+
+
+async def _serve_subtitle_websocket(websocket: WebSocket, runtime: UIRuntime) -> None:
+    """仅在字幕/会议模式维持只读字幕订阅，并随模式变化撤销。"""
+
+    runtime_client = runtime.runtime_events.add_client()
+    initial = runtime_client.latest_nowait()
+    ws_send = websocket.send_text
+    proxy_registered = False
+    revoker: asyncio.Task[None] | None = None
+    try:
+        if not _subtitle_mode_is_eligible(initial):
+            await websocket.close(
+                code=_SUBTITLE_INACTIVE_CODE,
+                reason=_SUBTITLE_INACTIVE_REASON,
+            )
+            return
+
+        await websocket.accept()
+        latest = initial
+        with contextlib.suppress(asyncio.QueueEmpty):
+            latest = runtime_client.latest_nowait()
+        if not _subtitle_mode_is_eligible(latest):
+            await websocket.close(
+                code=_SUBTITLE_INACTIVE_CODE,
+                reason=_SUBTITLE_INACTIVE_REASON,
+            )
+            return
+
+        runtime.subtitle_proxy.add_client(ws_send)
+        proxy_registered = True
+        revoker = asyncio.create_task(
+            _revoke_ineligible_subtitle(websocket, runtime_client),
+            name="subtitle-mode-revoker",
+        )
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        if revoker is not None:
+            await _cancel_background_task(revoker)
+        if proxy_registered:
+            runtime.subtitle_proxy.remove_client(ws_send)
+        runtime.runtime_events.remove_client(runtime_client)
+
+
+async def _revoke_ineligible_subtitle(
+    websocket: WebSocket,
+    runtime_client: RuntimeStateClient,
+) -> None:
+    while True:
+        state = await runtime_client.receive()
+        if not _subtitle_mode_is_eligible(state):
+            await websocket.close(
+                code=_SUBTITLE_INACTIVE_CODE,
+                reason=_SUBTITLE_INACTIVE_REASON,
+            )
+            return
+
+
+def _subtitle_mode_is_eligible(state: RuntimeStateSnapshot) -> bool:
+    return state.mode in _SUBTITLE_ELIGIBLE_MODES
+
+
+def _decode_control_payload(text: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _track_accepted_control_task(
+    app: FastAPI,
+    task: asyncio.Task[dict[str, Any]],
+) -> None:
+    tasks = _accepted_control_tasks(app)
+    tasks.add(task)
+    task.add_done_callback(lambda completed: _accepted_control_task_done(app, completed))
+
+
+def _accepted_control_tasks(app: FastAPI) -> set[asyncio.Task[dict[str, Any]]]:
+    return cast(set[asyncio.Task[dict[str, Any]]], app.state.accepted_control_tasks)
+
+
+def _accepted_control_task_done(
+    app: FastAPI,
+    task: asyncio.Task[dict[str, Any]],
+) -> None:
+    _accepted_control_tasks(app).discard(task)
+    if task.cancelled():
+        logger.error(
+            "已接受控制事务异常结束 (type=CancelledError code=%s)",
+            ErrorCode.COMMAND_FAILED.value,
+        )
+        return
+    try:
+        task.result()
+    except Exception as exc:
+        error_code = _stable_control_error_code(exc)
+        logger.error(
+            "已接受控制事务异常结束 (type=%s code=%s)",
+            type(exc).__name__,
+            error_code,
+        )
+
+
+def _stable_control_error_code(exc: Exception) -> str:
+    raw_code = getattr(exc, "code", ErrorCode.COMMAND_FAILED)
+    try:
+        return ErrorCode(raw_code).value
+    except (TypeError, ValueError):
+        return ErrorCode.COMMAND_FAILED.value
+
+
+async def _cancel_background_task(task: asyncio.Task[Any]) -> None:
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:
+        logger.debug("WebSocket 后台任务已结束 (type=%s)", type(exc).__name__)
 
 
 async def _forward_meeting_events(websocket: WebSocket, client: MeetingEventClient) -> None:

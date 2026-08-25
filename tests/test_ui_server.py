@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from voice_realtime.config import Settings, SubtitleSettings
+from voice_realtime.meeting.models import PCMOwner, RuntimeMode
+from voice_realtime.ui import server as server_module
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
 from voice_realtime.ui.server import _initialize_meeting_backend, create_app
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
@@ -20,21 +31,26 @@ from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 class _FakeRuntime:
     """轻量 runtime：真实 observer/proxy（本测试不触发 lifespan）。"""
 
-    def __init__(self) -> None:
+    def __init__(self, *, mode: RuntimeMode = RuntimeMode.ASSISTANT) -> None:
         self.observer = StatusBridgeObserver()
         self.subtitle_proxy = SubtitleProxy(
             SubtitleSettings(host="127.0.0.1", port=9998)
         )
+        self.start = AsyncMock()
+        self.stop = AsyncMock()
         self.clear_context = AsyncMock()
+        self.clear_subtitles = AsyncMock()
         self.stop_session = AsyncMock()
         self.restart_pipeline = AsyncMock()
         self.set_mic_muted = AsyncMock()
+        self.start_subtitles = AsyncMock(side_effect=self._start_subtitles)
+        self.stop_active_mode = AsyncMock(side_effect=self._stop_active_mode)
+        self.send_text = AsyncMock()
         self.set_persona = Mock()
         self.set_duplex_mode = Mock()
         self.set_voice = Mock()
-
-    def snapshot(self) -> RuntimeStateSnapshot:
-        return RuntimeStateSnapshot(
+        owner = PCMOwner.NONE if mode is RuntimeMode.IDLE else PCMOwner(mode.value)
+        self._state = RuntimeStateSnapshot(
             pipeline="running",
             subtitle="connected",
             mic_muted=False,
@@ -42,7 +58,110 @@ class _FakeRuntime:
             voice="default",
             duplex_mode=DuplexMode.SPEAKER_FOCUS,
             session_started_at="2026-08-21T00:00:00+00:00",
+            mode=mode,
+            pcm_owner=owner,
+            runtime_revision=1,
         )
+        self.runtime_events = RuntimeStateBroadcaster(self.snapshot)
+
+    def snapshot(self) -> RuntimeStateSnapshot:
+        return self._state
+
+    def force_state(
+        self,
+        mode: RuntimeMode,
+        owner: PCMOwner,
+        revision: int,
+    ) -> None:
+        self._state = self._state.model_copy(
+            update={
+                "mode": mode,
+                "pcm_owner": owner,
+                "runtime_revision": revision,
+            }
+        )
+        self.runtime_events.publish(self._state)
+
+    async def _start_subtitles(self) -> None:
+        self.force_state(
+            RuntimeMode.SUBTITLES,
+            PCMOwner.SUBTITLES,
+            self._state.runtime_revision + 1,
+        )
+
+    async def _stop_active_mode(self) -> None:
+        self.force_state(
+            RuntimeMode.IDLE,
+            PCMOwner.NONE,
+            self._state.runtime_revision + 1,
+        )
+
+
+class _BlockingRuntime(_FakeRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.command_accepted = threading.Event()
+        self.release_command = threading.Event()
+        self.start_subtitles = AsyncMock(side_effect=self._blocking_start_subtitles)
+
+    async def _blocking_start_subtitles(self) -> None:
+        self.command_accepted.set()
+        await asyncio.to_thread(self.release_command.wait)
+        await self._start_subtitles()
+
+
+class _RecordingWebSocket:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, Any]] = []
+        self.active_sends = 0
+        self.max_active_sends = 0
+        self.changed = asyncio.Condition()
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        self.active_sends += 1
+        self.max_active_sends = max(self.max_active_sends, self.active_sends)
+        try:
+            await asyncio.sleep(0)
+            self.messages.append(payload)
+            async with self.changed:
+                self.changed.notify_all()
+        finally:
+            self.active_sends -= 1
+
+    async def wait_for_messages(self, count: int) -> None:
+        async with self.changed:
+            await self.changed.wait_for(lambda: len(self.messages) >= count)
+
+
+def _settings() -> Settings:
+    return Settings(
+        bridge={"host": "127.0.0.1", "port": 9999},
+        subtitles={"host": "127.0.0.1", "port": 9998},
+        interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+    )
+
+
+@contextmanager
+def _running_client(runtime: _FakeRuntime) -> Iterator[TestClient]:
+    application = create_app(_settings(), initialize_meeting=False)
+    with (
+        patch("voice_realtime.ui.server.UIRuntime", return_value=runtime),
+        TestClient(
+            application,
+            raise_server_exceptions=False,
+        ) as client,
+    ):
+        yield client
+
+
+def _receive_ack_and_runtime_state(
+    websocket: Any,
+    request_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    messages = [websocket.receive_json(), websocket.receive_json()]
+    ack = next(message for message in messages if message.get("request_id") == request_id)
+    state = next(message for message in messages if message.get("event") == "runtime_state")
+    return ack, state
 
 
 @pytest.fixture()
@@ -282,6 +401,11 @@ class TestWebSocketGateways:
     def test_subtitles_connection_registers_and_unregisters(self) -> None:
         """/ws/subtitles：连接加入 proxy 广播，断开移除。"""
         client = self._app_with_runtime()
+        client.app.state.runtime.force_state(
+            RuntimeMode.SUBTITLES,
+            PCMOwner.SUBTITLES,
+            2,
+        )
         with client.websocket_connect("/ws/subtitles"):
             assert client.app.state.runtime.subtitle_proxy.has_clients
         assert not client.app.state.runtime.subtitle_proxy.has_clients
@@ -337,7 +461,7 @@ class TestCommandGateway:
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant/cmd") as ws:
             handshake = ws.receive_json()
-            assert handshake["event"] == "state"
+            assert handshake["event"] == "runtime_state"
             ws.send_json({"request_id": "1", "cmd": "clear_context"})
             resp = ws.receive_json()
         assert resp["ok"] is True
@@ -415,3 +539,309 @@ class TestMeetingV1Gateway:
             response = ws.receive_json()
         assert response["ok"] is False
         assert response["error"]["code"] == "invalid_payload"
+
+
+class TestRuntimeControlBroadcast:
+    def test_v1_control_broadcasts_to_all_and_acks_only_requester(self) -> None:
+        runtime = _FakeRuntime()
+        with (
+            _running_client(runtime) as client,
+            client.websocket_connect("/ws/v1/control") as requesting,
+            client.websocket_connect("/ws/v1/control") as observing,
+        ):
+            assert len(runtime.runtime_events._clients) == 2
+            request_handshake = requesting.receive_json()
+            observer_handshake = observing.receive_json()
+            assert request_handshake["event"] == "runtime_state"
+            assert observer_handshake["event"] == "runtime_state"
+            assert request_handshake["state"] == runtime.snapshot().model_dump(mode="json")
+            assert observer_handshake["state"] == runtime.snapshot().model_dump(mode="json")
+            assert request_handshake["state"]["runtime_revision"] == 1
+            assert observer_handshake["state"]["runtime_revision"] == 1
+
+            requesting.send_json(
+                {
+                    "contract_version": "1",
+                    "request_id": "subtitles-1",
+                    "cmd": "start_subtitles",
+                }
+            )
+            ack, request_broadcast = _receive_ack_and_runtime_state(
+                requesting,
+                "subtitles-1",
+            )
+            observer_broadcast = observing.receive_json()
+
+        assert ack["ok"] is True
+        assert ack["state"]["runtime_revision"] == 2
+        assert request_broadcast["state"]["runtime_revision"] == 2
+        assert observer_broadcast["event"] == "runtime_state"
+        assert observer_broadcast["state"]["runtime_revision"] == 2
+        assert "request_id" not in observer_broadcast
+        assert not runtime.runtime_events._clients
+
+    def test_legacy_control_receives_continuous_runtime_broadcasts(self) -> None:
+        runtime = _FakeRuntime()
+        with (
+            _running_client(runtime) as client,
+            client.websocket_connect("/ws/assistant/cmd") as websocket,
+        ):
+            assert len(runtime.runtime_events._clients) == 1
+            handshake = websocket.receive_json()
+            assert handshake["event"] == "runtime_state"
+
+            assert client.portal is not None
+            client.portal.call(
+                runtime.force_state,
+                RuntimeMode.SUBTITLES,
+                PCMOwner.SUBTITLES,
+                2,
+            )
+            broadcast = websocket.receive_json()
+
+        assert broadcast["event"] == "runtime_state"
+        assert broadcast["state"]["runtime_revision"] == 2
+        assert not runtime.runtime_events._clients
+
+    def test_accepted_command_survives_request_socket_disconnect(self) -> None:
+        runtime = _BlockingRuntime()
+        try:
+            with (
+                _running_client(runtime) as client,
+                client.websocket_connect("/ws/v1/control") as observing,
+                client.websocket_connect("/ws/v1/control") as requesting,
+            ):
+                observing.receive_json()
+                requesting.receive_json()
+                requesting.send_json(
+                    {
+                        "contract_version": "1",
+                        "request_id": "blocking-1",
+                        "cmd": "start_subtitles",
+                    }
+                )
+                assert runtime.command_accepted.wait(timeout=1.0)
+                if not hasattr(client.app.state, "accepted_control_tasks"):
+                    runtime.release_command.set()
+                assert client.app.state.accepted_control_tasks
+
+                requesting.close()
+                runtime.release_command.set()
+                committed = observing.receive_json()
+        finally:
+            runtime.release_command.set()
+
+        assert committed["event"] == "runtime_state"
+        assert committed["state"]["mode"] == "subtitles"
+        assert committed["state"]["runtime_revision"] == 2
+        assert not runtime.runtime_events._clients
+        assert not client.app.state.accepted_control_tasks
+
+    async def test_control_sender_is_single_writer_and_cleans_pending_gets(self) -> None:
+        runtime = _FakeRuntime()
+        runtime_client = runtime.runtime_events.add_client()
+        responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
+        websocket = _RecordingWebSocket()
+        sender = asyncio.create_task(
+            server_module._send_control_messages(websocket, responses, runtime_client)
+        )
+        await asyncio.wait_for(websocket.wait_for_messages(1), timeout=1.0)
+
+        responses.put_nowait({"request_id": "r1", "ok": True})
+        runtime.force_state(RuntimeMode.SUBTITLES, PCMOwner.SUBTITLES, 2)
+        await asyncio.wait_for(websocket.wait_for_messages(3), timeout=1.0)
+
+        sender.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sender
+
+        pending_response = {"request_id": "after-cancel", "ok": True}
+        responses.put_nowait(pending_response)
+        runtime.force_state(RuntimeMode.MEETING, PCMOwner.MEETING, 3)
+
+        assert responses.get_nowait() == pending_response
+        assert runtime_client.latest_nowait().runtime_revision == 3
+        assert websocket.max_active_sends == 1
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"cmd": "clear_context"},
+            {"request_id": "   ", "cmd": "clear_context"},
+            {"request_id": "x" * 65, "cmd": "clear_context"},
+        ],
+    )
+    def test_control_socket_strictly_validates_request_id(
+        self,
+        payload: dict[str, Any],
+    ) -> None:
+        runtime = _FakeRuntime()
+        with (
+            _running_client(runtime) as client,
+            client.websocket_connect("/ws/v1/control") as websocket,
+        ):
+            websocket.receive_json()
+            websocket.send_json(payload)
+            response = websocket.receive_json()
+
+        assert response["ok"] is False
+        assert response["error_code"] == "invalid_payload"
+        assert response["error"]["code"] == "invalid_payload"
+        assert response["error"]["message"] == "控制命令无效"
+
+    @pytest.mark.parametrize(
+        "origin",
+        ["https://evil.example", "http://localhost:9999"],
+    )
+    def test_control_socket_rejects_untrusted_origin_host(self, origin: str) -> None:
+        runtime = _FakeRuntime()
+        with (
+            _running_client(runtime) as client,
+            pytest.raises(WebSocketDisconnect) as caught,
+            client.websocket_connect(
+                "/ws/v1/control",
+                headers={"origin": origin},
+            ) as websocket,
+        ):
+            websocket.receive_text()
+
+        assert caught.value.code == 1008
+        assert caught.value.reason == "Origin 不受信任"
+
+    def test_accepted_task_error_log_redacts_exception_body(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runtime = _FakeRuntime()
+        secret = "external-payload-must-not-leak"
+        with (
+            caplog.at_level(logging.ERROR, logger="voice_realtime.ui.server"),
+            patch(
+                "voice_realtime.ui.server.ControlBridge.handle",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError(secret),
+            ),
+            _running_client(runtime) as client,
+            pytest.raises(WebSocketDisconnect),
+            client.websocket_connect("/ws/v1/control") as websocket,
+        ):
+            websocket.receive_json()
+            websocket.send_json({"request_id": "error-1", "cmd": "clear_context"})
+            websocket.receive_json()
+
+        assert "RuntimeError" in caplog.text
+        assert "command_failed" in caplog.text
+        assert secret not in caplog.text
+
+
+class TestSubtitleEligibility:
+    @pytest.mark.parametrize(
+        ("mode", "owner"),
+        [
+            (RuntimeMode.ASSISTANT, PCMOwner.ASSISTANT),
+            (RuntimeMode.IDLE, PCMOwner.NONE),
+        ],
+    )
+    def test_subtitles_socket_rejected_when_mode_is_ineligible(
+        self,
+        mode: RuntimeMode,
+        owner: PCMOwner,
+    ) -> None:
+        runtime = _FakeRuntime(mode=mode)
+        runtime.force_state(mode, owner, 2)
+        with (
+            _running_client(runtime) as client,
+            pytest.raises(WebSocketDisconnect) as caught,
+            client.websocket_connect("/ws/subtitles") as websocket,
+        ):
+            assert not runtime.subtitle_proxy.has_clients
+            websocket.receive_text()
+
+        assert caught.value.code == 4409
+        assert caught.value.reason == "字幕模式未激活"
+        assert not runtime.subtitle_proxy.has_clients
+        assert not runtime.runtime_events._clients
+
+    def test_existing_subtitle_socket_is_revoked_on_idle(self) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
+        with (
+            _running_client(runtime) as client,
+            client.websocket_connect("/ws/subtitles") as websocket,
+        ):
+            assert runtime.subtitle_proxy.has_clients
+            assert client.portal is not None
+            client.portal.call(
+                runtime.force_state,
+                RuntimeMode.IDLE,
+                PCMOwner.NONE,
+                2,
+            )
+            with pytest.raises(WebSocketDisconnect) as caught:
+                websocket.receive_text()
+
+        assert caught.value.code == 4409
+        assert caught.value.reason == "字幕模式未激活"
+        assert not runtime.subtitle_proxy.has_clients
+        assert not runtime.runtime_events._clients
+
+    def test_subtitles_to_meeting_stays_then_meeting_to_idle_revokes(self) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
+        with (
+            _running_client(runtime) as client,
+            client.websocket_connect("/ws/subtitles") as websocket,
+        ):
+            assert client.portal is not None
+            client.portal.call(
+                runtime.force_state,
+                RuntimeMode.MEETING,
+                PCMOwner.MEETING,
+                2,
+            )
+            websocket.send_json({"request_id": "must-not-route", "cmd": "start_subtitles"})
+            client.portal.call(
+                runtime.subtitle_proxy._broadcast_untracked,
+                {"event": "subtitle", "text": "会议字幕"},
+            )
+            assert websocket.receive_json() == {"event": "subtitle", "text": "会议字幕"}
+            runtime.start_subtitles.assert_not_awaited()
+
+            client.portal.call(
+                runtime.force_state,
+                RuntimeMode.IDLE,
+                PCMOwner.NONE,
+                3,
+            )
+            with pytest.raises(WebSocketDisconnect) as caught:
+                websocket.receive_text()
+
+        assert caught.value.code == 4409
+        assert not runtime.subtitle_proxy.has_clients
+        assert not runtime.runtime_events._clients
+
+    def test_mode_change_between_initial_and_second_check_never_registers_proxy(
+        self,
+    ) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
+        original_accept = WebSocket.accept
+        runtime.subtitle_proxy.add_client = Mock(wraps=runtime.subtitle_proxy.add_client)
+
+        async def accept_then_change_mode(
+            websocket: WebSocket,
+            subprotocol: str | None = None,
+            headers: list[tuple[bytes, bytes]] | None = None,
+        ) -> None:
+            await original_accept(websocket, subprotocol=subprotocol, headers=headers)
+            runtime.force_state(RuntimeMode.IDLE, PCMOwner.NONE, 2)
+
+        with (
+            patch.object(WebSocket, "accept", new=accept_then_change_mode),
+            _running_client(runtime) as client,
+            pytest.raises(WebSocketDisconnect) as caught,
+            client.websocket_connect("/ws/subtitles") as websocket,
+        ):
+            websocket.receive_text()
+
+        assert caught.value.code == 4409
+        runtime.subtitle_proxy.add_client.assert_not_called()
+        assert not runtime.subtitle_proxy.has_clients
+        assert not runtime.runtime_events._clients
