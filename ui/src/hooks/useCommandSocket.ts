@@ -21,6 +21,7 @@ interface PendingRequest {
 interface CommandChannelOptions {
   readonly applyState: (state: RuntimeStateSnapshot) => void;
   readonly onReady?: (ready: boolean) => void;
+  readonly onProtocolError?: (error: CommandError) => void;
   readonly timeoutMs?: number;
 }
 
@@ -34,13 +35,66 @@ export class CommandError extends Error {
   }
 }
 
+export const OWNERSHIP_KEYS = [
+  "mode",
+  "pcm_owner",
+  "active_meeting_id",
+  "meeting_state",
+  "meeting_started_at",
+  "runtime_revision",
+] as const satisfies readonly (keyof RuntimeStateSnapshot)[];
+
+function hasSameOwnership(
+  current: RuntimeStateSnapshot,
+  incoming: RuntimeStateSnapshot,
+): boolean {
+  return OWNERSHIP_KEYS.every((key) => current[key] === incoming[key]);
+}
+
+export function mergeRuntimeState(
+  current: RuntimeStateSnapshot | null,
+  incoming: RuntimeStateSnapshot,
+): RuntimeStateSnapshot {
+  if (!current || incoming.runtime_revision > current.runtime_revision) return incoming;
+  if (
+    incoming.runtime_revision === current.runtime_revision
+    && hasSameOwnership(current, incoming)
+  ) {
+    return incoming;
+  }
+  return {
+    ...incoming,
+    mode: current.mode,
+    pcm_owner: current.pcm_owner,
+    active_meeting_id: current.active_meeting_id,
+    meeting_state: current.meeting_state,
+    meeting_started_at: current.meeting_started_at,
+    runtime_revision: current.runtime_revision,
+  };
+}
+
 /** 控制面的协议状态机：握手、request_id 关联、超时与服务端权威状态。 */
 export class CommandChannel {
   private socket: WebSocket | null = null;
   private ready = false;
   private readonly pending = new Map<string, PendingRequest>();
+  private currentState: RuntimeStateSnapshot | null = null;
+  private currentHighestRuntimeRevision: number | null = null;
+  private reconcileRequest: Promise<RuntimeStateSnapshot> | null = null;
 
   constructor(private readonly options: CommandChannelOptions) {}
+
+  get latestState(): RuntimeStateSnapshot | null {
+    return this.currentState;
+  }
+
+  get highestRuntimeRevision(): number | null {
+    return this.currentHighestRuntimeRevision;
+  }
+
+  get reconciling(): boolean {
+    return this.reconcileRequest !== null;
+  }
 
   attach(socket: WebSocket): void {
     this.rejectPending("控制连接已重建", "service_unavailable");
@@ -70,7 +124,7 @@ export class CommandChannel {
     if (!isRecord(value)) return;
 
     if ((value.event === "state" || value.event === "runtime_state") && isRuntimeState(value.state)) {
-      this.options.applyState(value.state);
+      this.receiveState(value.state);
       this.setReady(true);
       return;
     }
@@ -79,16 +133,17 @@ export class CommandChannel {
       return;
     }
     const response = value as unknown as CommandResponse;
+    let mergedState: RuntimeStateSnapshot | null = null;
     if (isRuntimeState(response.state)) {
-      this.options.applyState(response.state);
+      mergedState = this.receiveState(response.state);
     }
     const request = this.pending.get(response.request_id);
     if (!request) return;
     clearTimeout(request.timer);
     this.pending.delete(response.request_id);
     if (response.ok) {
-      if (isRuntimeState(response.state)) {
-        request.resolve(response.state);
+      if (mergedState) {
+        request.resolve(mergedState);
       } else {
         request.reject(new CommandError("服务端状态快照格式无效", "invalid_response"));
       }
@@ -98,6 +153,33 @@ export class CommandChannel {
       const errCode = errObj?.code || response.error_code || "command_failed";
       request.reject(new CommandError(errMsg, errCode));
     }
+  }
+
+  receiveState(incoming: RuntimeStateSnapshot): RuntimeStateSnapshot {
+    const current = this.currentState;
+    if (
+      current
+      && incoming.runtime_revision === current.runtime_revision
+      && !hasSameOwnership(current, incoming)
+    ) {
+      this.options.onProtocolError?.(
+        new CommandError("相同 runtime_revision 的所有权字段不一致", "protocol_error"),
+      );
+    }
+    const merged = mergeRuntimeState(current, incoming);
+    this.currentState = merged;
+    this.currentHighestRuntimeRevision = merged.runtime_revision;
+    this.options.applyState(merged);
+    return merged;
+  }
+
+  reconcileRuntime(): Promise<RuntimeStateSnapshot> {
+    if (this.reconcileRequest) return this.reconcileRequest;
+    const request = this.fetchRuntimeState();
+    this.reconcileRequest = request.finally(() => {
+      this.reconcileRequest = null;
+    });
+    return this.reconcileRequest;
   }
 
   send(command: ControlCommand, timeoutMs?: number): Promise<RuntimeStateSnapshot> {
@@ -136,6 +218,7 @@ export class CommandChannel {
           command.cmd === "start_meeting" ||
           command.cmd === "end_meeting" ||
           command.cmd === "start_assistant" ||
+          command.cmd === "start_subtitles" ||
           command.cmd === "stop_active_mode"
         ) {
           payload.contract_version = "1";
@@ -153,6 +236,29 @@ export class CommandChannel {
     if (this.ready === value) return;
     this.ready = value;
     this.options.onReady?.(value);
+  }
+
+  private async fetchRuntimeState(): Promise<RuntimeStateSnapshot> {
+    let response: Response;
+    try {
+      response = await fetch("/api/runtime");
+    } catch {
+      throw new CommandError("运行时状态对账失败", "service_unavailable");
+    }
+    if (!response.ok) {
+      throw new CommandError("运行时状态对账失败", "service_unavailable");
+    }
+
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new CommandError("服务端状态快照格式无效", "invalid_response");
+    }
+    if (!isRuntimeState(value)) {
+      throw new CommandError("服务端状态快照格式无效", "invalid_response");
+    }
+    return this.receiveState(value);
   }
 
   private rejectPending(message: string, code: string): void {
@@ -174,16 +280,23 @@ function makeRequestId(): string {
 export interface CommandSocketApi {
   readonly state: ConnectionState;
   readonly ready: boolean;
+  readonly snapshot: RuntimeStateSnapshot | null;
+  readonly highestRuntimeRevision: number | null;
   readonly sendCommand: (command: ControlCommand, timeoutMs?: number) => Promise<RuntimeStateSnapshot>;
+  readonly reconcileRuntime: () => Promise<RuntimeStateSnapshot>;
 }
 
 export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
   const [state, setState] = useState<ConnectionState>("connecting");
   const [ready, setReady] = useState(false);
+  const [snapshot, setSnapshot] = useState<RuntimeStateSnapshot | null>(null);
+  const [highestRuntimeRevision, setHighestRuntimeRevision] = useState<number | null>(null);
   const channelRef = useRef<CommandChannel | null>(null);
   if (channelRef.current === null) {
     channelRef.current = new CommandChannel({
       applyState: (snapshot) => {
+        setSnapshot(snapshot);
+        setHighestRuntimeRevision(snapshot.runtime_revision);
         useUISettingsStore.getState().applyRuntimeState(snapshot);
         useAssistantStore.getState().syncPipelineState(snapshot.pipeline);
         if (snapshot.active_meeting_id) {
@@ -231,5 +344,19 @@ export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
       : Promise.reject(new CommandError("控制端尚未初始化", "service_unavailable"));
   }, []);
 
-  return { state, ready: ready && state === "open", sendCommand };
+  const reconcileRuntime = useCallback(() => {
+    const channel = channelRef.current;
+    return channel
+      ? channel.reconcileRuntime()
+      : Promise.reject(new CommandError("控制端尚未初始化", "service_unavailable"));
+  }, []);
+
+  return {
+    state,
+    ready: ready && state === "open",
+    snapshot,
+    highestRuntimeRevision,
+    sendCommand,
+    reconcileRuntime,
+  };
 }

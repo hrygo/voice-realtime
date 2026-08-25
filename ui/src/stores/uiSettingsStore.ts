@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { RuntimeMode } from "../contracts/meetingContract";
 import type { DuplexMode, RuntimeStateSnapshot } from "../protocol";
 
 export type { DuplexMode } from "../protocol";
@@ -116,7 +117,7 @@ export function applyTheme(theme: Theme): void {
 
 interface UISettingsState {
   theme: Theme;
-  mode: "assistant" | "meeting" | "idle";
+  mode: RuntimeMode;
   activeMeetingId: string | null;
   storageHealth: string;
   persona: string;
@@ -131,7 +132,7 @@ interface UISettingsState {
   teleprompterSettings: TeleprompterSettings;
 
   setTheme: (theme: Theme) => void;
-  setMode: (mode: "assistant" | "meeting" | "idle") => void;
+  setMode: (mode: RuntimeMode) => void;
   applyRuntimeState: (state: RuntimeStateSnapshot) => void;
   setTeleprompterSettings: (settings: Partial<TeleprompterSettings>) => void;
   addCustomPersona: (name: string, prompt: string) => void;
@@ -173,7 +174,7 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
   applyRuntimeState: (state) => {
     const persona = state.persona ?? BUILTIN_PERSONAS[0]?.prompt ?? "";
     set({
-      mode: state.mode || (state.active_meeting_id ? "meeting" : "assistant"),
+      mode: state.mode,
       activeMeetingId: state.active_meeting_id || null,
       storageHealth: state.storage || "ok",
       persona,

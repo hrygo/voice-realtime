@@ -3,7 +3,9 @@
  * 依据 docs/superpowers/specs/2026-08-21-meeting-assistant-design.md
  */
 
-export type RuntimeMode = "assistant" | "meeting" | "idle";
+export type RuntimeMode = "assistant" | "subtitles" | "meeting" | "idle";
+
+export type PCMOwner = "assistant" | "subtitles" | "meeting" | "none";
 
 export type MeetingStatus =
   | "recording"
