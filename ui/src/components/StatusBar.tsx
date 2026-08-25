@@ -12,10 +12,25 @@ interface ServiceInfo {
   name: string;
   status: ServiceStatus;
   url: string;
+  workload?: string | null;
+  ws_state?: string | null;
+  reconnect_count?: number | null;
+  last_event_age_ms?: number | null;
+  dropped_chunks?: number | null;
+  gap_count?: number | null;
 }
 
 interface ServicesResponse {
   services: ServiceInfo[];
+  diagnostics?: unknown;
+}
+
+interface HealthItem {
+  id: string;
+  name: string;
+  status: ServiceStatus;
+  statusLabel?: string;
+  details?: string[];
 }
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
@@ -51,6 +66,37 @@ const THEME_TITLES: Record<Theme, string> = {
 };
 
 const THEME_CYCLE: readonly Theme[] = ["dark", "light", "system"];
+
+function formatDiagnosticText(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : "未知";
+}
+
+function formatDiagnosticNumber(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "未知";
+}
+
+function serviceDiagnosticDetails(service: ServiceInfo): string[] {
+  const details: string[] = [];
+  if (service.workload !== undefined) {
+    details.push(`语音工作负载：${formatDiagnosticText(service.workload)}`);
+  }
+  if (service.ws_state !== undefined) {
+    details.push(`WebSocket 状态：${formatDiagnosticText(service.ws_state)}`);
+  }
+  if (service.reconnect_count !== undefined) {
+    details.push(`重连次数：${formatDiagnosticNumber(service.reconnect_count)}`);
+  }
+  if (service.last_event_age_ms !== undefined) {
+    details.push(`距最近事件：${formatDiagnosticNumber(service.last_event_age_ms)} ms`);
+  }
+  if (service.dropped_chunks !== undefined) {
+    details.push(`丢弃音频块：${formatDiagnosticNumber(service.dropped_chunks)}`);
+  }
+  if (service.gap_count !== undefined) {
+    details.push(`音频缺口：${formatDiagnosticNumber(service.gap_count)}`);
+  }
+  return details;
+}
 
 export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now()): number {
   if (!startedAt) return 0;
@@ -256,37 +302,39 @@ export default function StatusBar({
   const storageStatus: ServiceStatus =
     storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error";
 
-  const healthItems = [
+  const healthItems: HealthItem[] = [
     {
       id: "ws",
       name: "控制 WebSocket",
       status: commandSocket.ready ? "ok" : "checking",
-      detail: commandSocket.state,
     },
     {
       id: "pipeline",
       name: "交互管道 (Pipecat)",
       status: pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking",
-      detail: pipelineStatus,
     },
     {
       id: "subtitle",
       name: "字幕代理 (SubtitleProxy)",
       status: subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
-      detail: subtitleStatus,
     },
     {
       id: "storage",
       name: "PostgreSQL 知识库",
       status: storageStatus,
-      detail: storageHealth,
     },
-    ...services.map((s) => ({
-      id: s.name,
-      name: SERVICE_DISPLAY_NAMES[s.name] || s.name,
-      status: s.status,
-      detail: `${s.url} (${STATUS_LABELS[s.status] || s.status})`,
-    })),
+    ...services.map((s): HealthItem => {
+      const details = serviceDiagnosticDetails(s);
+      return {
+        id: s.name,
+        name: SERVICE_DISPLAY_NAMES[s.name] || s.name,
+        status: s.status,
+        statusLabel: s.name === "wlk" || details.length > 0
+          ? `HTTP 进程状态：${STATUS_LABELS[s.status] || s.status}`
+          : undefined,
+        details,
+      };
+    }),
   ];
 
   const okCount = healthItems.filter((h) => h.status === "ok").length;
@@ -493,11 +541,18 @@ export default function StatusBar({
                   <div key={item.id} className="health-popover-row">
                     <div className="health-row-left">
                       <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
-                      <span className="health-row-name">{item.name}</span>
+                      <div>
+                        <span className="health-row-name">{item.name}</span>
+                        {item.details?.map((detail) => (
+                          <div key={detail} className="health-row-detail">
+                            {detail}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                     <div className="health-row-right">
                       <span className={`health-row-status status-${item.status}`}>
-                        {STATUS_LABELS[item.status as ServiceStatus] || item.status}
+                        {item.statusLabel || STATUS_LABELS[item.status] || item.status}
                       </span>
                       {item.status !== "ok" && SERVICE_DIAGNOSTIC_COMMANDS[item.id] && (
                         <button

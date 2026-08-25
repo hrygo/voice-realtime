@@ -110,3 +110,140 @@ describe("StatusBar workspace switching state", () => {
     expect(container.querySelector("[role='alert']")?.textContent).toContain("模式已被占用");
   });
 });
+
+describe("StatusBar service diagnostics", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  async function renderServices(services: readonly object[]): Promise<void> {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ services }),
+    }));
+
+    await act(async () => {
+      root.render(createElement(StatusBar, { commandSocket }));
+    });
+
+    const healthButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.title.includes("点击查看全系统"));
+    expect(healthButton).toBeDefined();
+    act(() => {
+      healthButton?.click();
+    });
+  }
+
+  function findServiceRow(name: string): HTMLDivElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes(name));
+  }
+
+  it("shows WLK process and voice workload diagnostics without changing the process light", async () => {
+    await renderServices([
+      {
+        name: "wlk",
+        status: "ok",
+        url: "http://127.0.0.1:8001",
+        workload: "degraded",
+        ws_state: "reconnecting",
+        reconnect_count: 3,
+        last_event_age_ms: 12500,
+        dropped_chunks: 4,
+        gap_count: 2,
+      },
+    ]);
+
+    const row = findServiceRow("WhisperLiveKit");
+    expect(row?.textContent).toContain("HTTP 进程状态：运行正常");
+    expect(row?.textContent).toContain("语音工作负载：degraded");
+    expect(row?.textContent).toContain("WebSocket 状态：reconnecting");
+    expect(row?.textContent).toContain("重连次数：3");
+    expect(row?.textContent).toContain("距最近事件：12500 ms");
+    expect(row?.textContent).toContain("丢弃音频块：4");
+    expect(row?.textContent).toContain("音频缺口：2");
+    expect(row?.querySelector(".light-dot")?.classList.contains("dot-ok")).toBe(true);
+  });
+
+  it("shows a long last-event age as an unclassified raw value", async () => {
+    await renderServices([
+      {
+        name: "wlk",
+        status: "ok",
+        url: "http://127.0.0.1:8001",
+        workload: "degraded",
+        last_event_age_ms: 987654,
+      },
+    ]);
+
+    const row = findServiceRow("WhisperLiveKit");
+    const ageDetail = Array.from(row?.querySelectorAll<HTMLElement>(".health-row-detail") ?? [])
+      .find((detail) => detail.textContent?.includes("距最近事件：987654 ms"));
+    expect(ageDetail).toBeDefined();
+    expect(ageDetail?.className).not.toContain("error");
+    expect(row?.textContent).not.toContain("关闭游戏");
+    expect(row?.textContent).not.toContain("CPU");
+    expect(row?.textContent).not.toContain("GPU");
+  });
+
+  it("keeps rendering the legacy three-service response", async () => {
+    await renderServices([
+      { name: "wlk", status: "ok", url: "http://127.0.0.1:8001" },
+      { name: "tts", status: "timeout", url: "http://127.0.0.1:8765" },
+      { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
+    ]);
+
+    expect(findServiceRow("WhisperLiveKit")?.textContent).toContain("HTTP 进程状态：运行正常");
+    expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("连接超时");
+    expect(findServiceRow("LM Studio")?.textContent).toContain("服务未启动");
+    expect(container.querySelectorAll(".health-popover-row")).toHaveLength(7);
+  });
+
+  it("renders null and unknown workload states defensively", async () => {
+    await renderServices([
+      {
+        name: "wlk",
+        status: "ok",
+        url: "http://127.0.0.1:8001",
+        workload: null,
+        ws_state: null,
+      },
+      {
+        name: "wlk-future",
+        status: "ok",
+        url: "http://127.0.0.1:8002",
+        workload: "future-workload",
+        ws_state: "future-ws-state",
+      },
+    ]);
+
+    const wlkRow = findServiceRow("WhisperLiveKit");
+    expect(wlkRow?.textContent).toContain("语音工作负载：未知");
+    expect(wlkRow?.textContent).toContain("WebSocket 状态：未知");
+
+    const futureRow = findServiceRow("wlk-future");
+    expect(futureRow?.textContent).toContain("语音工作负载：future-workload");
+    expect(futureRow?.textContent).toContain("WebSocket 状态：future-ws-state");
+  });
+});
