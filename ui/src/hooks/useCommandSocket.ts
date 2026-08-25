@@ -99,6 +99,8 @@ export class CommandChannel {
   attach(socket: WebSocket): void {
     this.rejectPending("控制连接已重建", "service_unavailable");
     this.socket = socket;
+    this.currentState = null;
+    this.currentHighestRuntimeRevision = null;
     this.setReady(false);
   }
 

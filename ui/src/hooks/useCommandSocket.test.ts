@@ -148,6 +148,36 @@ describe("CommandChannel", () => {
     },
   );
 
+  it("resets the revision baseline when a new socket takes ownership", () => {
+    const applyState = vi.fn();
+    const channel = new CommandChannel({ applyState });
+    channel.attach(new OpenSocket() as unknown as WebSocket);
+    channel.receive(runtimeEvent(snapshot({
+      mode: "subtitles",
+      pcm_owner: "subtitles",
+      runtime_revision: 9,
+    })));
+
+    channel.attach(new OpenSocket() as unknown as WebSocket);
+    channel.receive(runtimeEvent(snapshot({
+      mode: "assistant",
+      pcm_owner: "assistant",
+      runtime_revision: 0,
+    })));
+
+    expect(channel.latestState).toMatchObject({
+      mode: "assistant",
+      pcm_owner: "assistant",
+      runtime_revision: 0,
+    });
+    expect(channel.highestRuntimeRevision).toBe(0);
+    expect(applyState).toHaveBeenLastCalledWith(expect.objectContaining({
+      mode: "assistant",
+      pcm_owner: "assistant",
+      runtime_revision: 0,
+    }));
+  });
+
   it("keeps ownership from the highest revision while accepting fresh UI fields", async () => {
     const socket = new OpenSocket();
     const applyState = vi.fn();
