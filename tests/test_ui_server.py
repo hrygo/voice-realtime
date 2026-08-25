@@ -625,11 +625,21 @@ class TestStaticMount:
 class TestWebSocketGateways:
     """WS 事件网关：连接注册到 observer/proxy，断开移除；未就绪时关闭。"""
 
-    def _app_with_runtime(self) -> TestClient:
+    def _app_with_runtime(
+        self,
+        *,
+        allowed_origins: list[str] | None = None,
+    ) -> TestClient:
+        meeting = (
+            {"allowed_origins": allowed_origins}
+            if allowed_origins is not None
+            else {}
+        )
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9998},
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+            meeting=meeting,
         )
         app = create_app(mock_settings, initialize_meeting=False)
         app.state.runtime = _FakeRuntime()
@@ -679,12 +689,75 @@ class TestWebSocketGateways:
         ):
             assert client.app.state.runtime.observer.has_clients
 
-    def test_lan_origin_is_allowed(self) -> None:
-        client = self._app_with_runtime()
+    @pytest.mark.parametrize(
+        ("request_host", "origin"),
+        [
+            ("192.168.1.10:8100", "http://192.168.1.100:8100"),
+            ("192.168.1.10:8100", "http://192.168.1.100:5173"),
+            ("192.168.1.10:8100", "http://192.168.1.10:5173"),
+            ("[fd00::10]:8100", "http://[fd00::100]:8100"),
+        ],
+    )
+    def test_other_private_origin_is_rejected(
+        self,
+        request_host: str,
+        origin: str,
+    ) -> None:
+        client = self._app_with_runtime(allowed_origins=[])
+        with pytest.raises(WebSocketDisconnect) as caught, client.websocket_connect(
+            "/ws/assistant",
+            headers={"host": request_host, "origin": origin},
+        ) as websocket:
+            websocket.close()
+
+        assert caught.value.code == 1008
+        assert caught.value.reason == "Origin 不受信任"
+
+    @pytest.mark.parametrize(
+        ("request_host", "origin"),
+        [
+            ("192.168.1.10:8100", "http://192.168.1.10:8100"),
+            ("[fd00::10]:8100", "http://[fd00::10]:8100"),
+        ],
+    )
+    def test_lan_same_origin_is_allowed(
+        self,
+        request_host: str,
+        origin: str,
+    ) -> None:
+        client = self._app_with_runtime(allowed_origins=[])
         with client.websocket_connect(
-            "/ws/assistant", headers={"origin": "http://192.168.1.100:8100"}
+            "/ws/assistant",
+            headers={"host": request_host, "origin": origin},
         ):
             assert client.app.state.runtime.observer.has_clients
+
+    def test_explicit_lan_origin_is_allowed(self) -> None:
+        origin = "http://192.168.1.100:5173"
+        client = self._app_with_runtime(
+            allowed_origins=[origin],
+        )
+        with client.websocket_connect(
+            "/ws/assistant",
+            headers={"host": "192.168.1.10:8100", "origin": origin},
+        ):
+            assert client.app.state.runtime.observer.has_clients
+
+    def test_forwarded_host_does_not_override_request_host(self) -> None:
+        client = self._app_with_runtime(
+            allowed_origins=[],
+        )
+        with pytest.raises(WebSocketDisconnect) as caught, client.websocket_connect(
+            "/ws/assistant",
+            headers={
+                "host": "192.168.1.10:8100",
+                "origin": "http://192.168.1.100:8100",
+                "x-forwarded-host": "192.168.1.100:8100",
+            },
+        ) as websocket:
+            websocket.close()
+
+        assert caught.value.code == 1008
 
 
 class TestCommandGateway:

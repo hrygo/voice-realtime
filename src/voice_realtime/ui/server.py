@@ -15,8 +15,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import is_dataclass
 from datetime import UTC, datetime
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -764,30 +766,71 @@ async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
         f"http://localhost:{cfg.ui.port}",
         "http://127.0.0.1:5173",
         "http://localhost:5173",
+        f"http://[::1]:{cfg.ui.port}",
+        "http://[::1]:5173",
     }
     meeting_cfg = getattr(cfg, "meeting", None)
     configured_origins = getattr(meeting_cfg, "allowed_origins", ()) if meeting_cfg else ()
     allowed.update(str(item) for item in configured_origins)
-    if origin in allowed:
+    if origin in allowed or _origin_matches_websocket_host(websocket, origin):
         return True
-    try:
-        from ipaddress import ip_address
-        from urllib.parse import urlsplit
 
-        parsed = urlsplit(origin)
-        if parsed.scheme in {"http", "https"} and parsed.hostname:
-            host = parsed.hostname.strip().removeprefix("[").removesuffix("]")
-            port = parsed.port or (443 if parsed.scheme == "https" else 80)
-            if port in {cfg.ui.port, 5173}:
-                if host.lower() == "localhost":
-                    return True
-                addr = ip_address(host)
-                if addr.is_loopback or addr.is_private:
-                    return True
-    except Exception:
-        pass
     await websocket.close(code=1008, reason="Origin 不受信任")
     return False
+
+
+def _origin_matches_websocket_host(websocket: WebSocket, origin: str) -> bool:
+    """仅接受与实际 WebSocket 请求目标同源的浏览器 Origin。"""
+    try:
+        parsed = urlsplit(origin)
+        expected_scheme = {"ws": "http", "wss": "https"}.get(
+            websocket.url.scheme.lower()
+        )
+        if (
+            expected_scheme is None
+            or parsed.scheme.lower() != expected_scheme
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            return False
+        origin_port = parsed.port or (443 if expected_scheme == "https" else 80)
+
+        request_host = websocket.headers.get("host")
+        if request_host is None:
+            return False
+        request_authority = urlsplit(f"//{request_host}")
+        if (
+            request_authority.hostname is None
+            or request_authority.username is not None
+            or request_authority.password is not None
+            or request_authority.path
+            or request_authority.query
+            or request_authority.fragment
+        ):
+            return False
+        request_port = request_authority.port or (
+            443 if expected_scheme == "https" else 80
+        )
+    except ValueError:
+        return False
+
+    return (
+        _canonical_hostname(parsed.hostname)
+        == _canonical_hostname(request_authority.hostname)
+        and origin_port == request_port
+    )
+
+
+def _canonical_hostname(hostname: str) -> str:
+    """按 URL 主机语义规范化大小写与 IPv4/IPv6 文本形式。"""
+    try:
+        return ip_address(hostname).compressed
+    except ValueError:
+        return hostname.casefold()
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
