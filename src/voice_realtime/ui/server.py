@@ -550,6 +550,7 @@ async def _serve_subtitle_websocket(websocket: WebSocket, runtime: UIRuntime) ->
     proxy_registered = False
     revoker: asyncio.Task[None] | None = None
     try:
+        await websocket.accept()
         if not _subtitle_mode_is_eligible(initial):
             await websocket.close(
                 code=_SUBTITLE_INACTIVE_CODE,
@@ -557,7 +558,6 @@ async def _serve_subtitle_websocket(websocket: WebSocket, runtime: UIRuntime) ->
             )
             return
 
-        await websocket.accept()
         latest = initial
         with contextlib.suppress(asyncio.QueueEmpty):
             latest = runtime_client.latest_nowait()

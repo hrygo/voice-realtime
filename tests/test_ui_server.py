@@ -135,6 +135,21 @@ class _RecordingWebSocket:
             await self.changed.wait_for(lambda: len(self.messages) >= count)
 
 
+class _HandshakeRecordingWebSocket:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, int | None]] = []
+
+    async def accept(self) -> None:
+        self.events.append(("accept", None))
+
+    async def close(self, *, code: int, reason: str) -> None:
+        del reason
+        self.events.append(("close", code))
+
+    async def send_text(self, payload: str) -> None:
+        del payload
+
+
 def _settings() -> Settings:
     return Settings(
         bridge={"host": "127.0.0.1", "port": 9999},
@@ -974,6 +989,15 @@ class TestRuntimeControlBroadcast:
 
 
 class TestSubtitleEligibility:
+    async def test_ineligible_socket_completes_handshake_before_stable_close(self) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.ASSISTANT)
+        websocket = _HandshakeRecordingWebSocket()
+
+        await server_module._serve_subtitle_websocket(websocket, runtime)  # type: ignore[arg-type]
+
+        assert websocket.events == [("accept", None), ("close", 4409)]
+        assert not runtime.runtime_events._clients
+
     @pytest.mark.parametrize(
         ("mode", "owner"),
         [
