@@ -4,15 +4,23 @@ from __future__ import annotations
 
 import json
 import multiprocessing
+import os
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from voice_realtime.benchmarks import resource_lock as resource_lock_module
+from voice_realtime.benchmarks.asr.stage_executors import CloseObservation
 from voice_realtime.benchmarks.resource_lock import (
     ResourceBusyError,
+    ResourceQuarantinedError,
+    ResourceReleaseAudit,
+    clear_resource_quarantine,
     exclusive_resource_lock,
+    require_no_resource_quarantine,
+    write_resource_quarantine,
 )
 
 
@@ -100,3 +108,83 @@ def test_resource_lock_rejects_negative_timeout(tmp_path: Path) -> None:
         exclusive_resource_lock(tmp_path / "lock", timeout_secs=-0.1),
     ):
         pytest.fail("negative timeout unexpectedly accepted")
+
+
+def test_resource_quarantine_requires_clean_release_audit(tmp_path: Path) -> None:
+    marker = tmp_path / "resource-quarantine.json"
+    write_resource_quarantine(
+        marker,
+        run_id="run-001",
+        executor_id="meeting-test",
+        observation=CloseObservation(released=False, remaining_process_ids=(123,)),
+    )
+    assert marker.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(ResourceQuarantinedError, match="RESOURCE_QUARANTINED"):
+        require_no_resource_quarantine(marker)
+    with pytest.raises(ValueError, match="clean release audit"):
+        clear_resource_quarantine(
+            marker,
+            ResourceReleaseAudit(
+                released=False,
+                remaining_process_ids=(123,),
+                remaining_ports=(),
+                remaining_tasks=0,
+                remaining_connections=0,
+            ),
+        )
+    clear_resource_quarantine(
+        marker,
+        ResourceReleaseAudit(
+            released=True,
+            remaining_process_ids=(),
+            remaining_ports=(),
+            remaining_tasks=0,
+            remaining_connections=0,
+        ),
+    )
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "fifo"])
+def test_resource_quarantine_rejects_nonregular_marker(tmp_path: Path, kind: str) -> None:
+    marker = tmp_path / "resource-quarantine.json"
+    if kind == "symlink":
+        target = tmp_path / "target"
+        target.write_text("{}\n", encoding="utf-8")
+        marker.symlink_to(target)
+    elif kind == "directory":
+        marker.mkdir()
+    else:
+        os.mkfifo(marker)
+    with pytest.raises(ResourceQuarantinedError, match="RESOURCE_QUARANTINED"):
+        require_no_resource_quarantine(marker)
+
+
+def test_clear_quarantine_propagates_directory_fsync_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "resource-quarantine.json"
+    write_resource_quarantine(
+        marker,
+        run_id="run-001",
+        executor_id="meeting-test",
+        observation=CloseObservation(released=False, remaining_process_ids=(123,)),
+    )
+
+    def fail_fsync(_: int) -> None:
+        raise OSError("directory fsync failed")
+
+    monkeypatch.setattr(resource_lock_module.os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="directory fsync failed"):
+        clear_resource_quarantine(
+            marker,
+            ResourceReleaseAudit(
+                released=True,
+                remaining_process_ids=(),
+                remaining_ports=(),
+                remaining_tasks=0,
+                remaining_connections=0,
+            ),
+        )
+    assert not marker.exists()

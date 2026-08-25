@@ -6,9 +6,30 @@ import it or silently fall back to a synthetic runtime.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
 
-from voice_realtime.benchmarks.asr.stage_contracts import FaultEvent, ScheduleSegment
+from voice_realtime.benchmarks.asr.stage_contracts import (
+    FaultEvent,
+    FaultPlan,
+    PCMInputBinding,
+    ScheduleManifest,
+    SchedulePurpose,
+    ScheduleSegment,
+    StageInputManifest,
+    StageModelFile,
+    StageModelManifest,
+    StageNumber,
+    StagePhase,
+)
+from voice_realtime.benchmarks.asr.stage_evaluators import (
+    ScreenDecision,
+    StagePolicy,
+)
 from voice_realtime.benchmarks.asr.stage_executors import (
     CloseObservation,
     CursorRange,
@@ -22,6 +43,7 @@ from voice_realtime.benchmarks.asr.stage_executors import (
     StageExecutorCapabilities,
 )
 from voice_realtime.benchmarks.asr.stage_inputs import ResolvedStageInput
+from voice_realtime.benchmarks.asr.stage_runner import StageRunRequest
 
 
 class SyntheticStageExecutor:
@@ -215,4 +237,162 @@ class SyntheticStageExecutor:
         return self._close_observation
 
 
-__all__ = ["SyntheticStageExecutor"]
+
+@dataclass(frozen=True)
+class StageFixture:
+    request: StageRunRequest
+    policy: StagePolicy
+
+
+@dataclass(frozen=True)
+class TestStagePolicy:
+    __test__ = False
+
+    pass_screen: bool = True
+
+    def phase_for(self, segment: ScheduleSegment) -> StagePhase:
+        return cast(StagePhase, segment.purpose)
+
+    def evaluate_screen(
+        self, observations: tuple[SegmentObservation, ...]
+    ) -> ScreenDecision:
+        del observations
+        return ScreenDecision.PASS if self.pass_screen else ScreenDecision.FAIL
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_private_json(path: Path, payload: object) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+
+DEFAULT_SEGMENTS: tuple[tuple[str, SchedulePurpose, int], ...] = (
+    ("screen-001", "screen", 1_000),
+    ("confirm-001", "confirm", 1_000),
+)
+
+
+def build_stage_fixture(
+    tmp_path: Path,
+    *,
+    lock_path: Path | None = None,
+    stage: StageNumber = 2,
+    covered_stages: tuple[StageNumber, ...] = (2,),
+    segment_specs: tuple[tuple[str, SchedulePurpose, int], ...] = DEFAULT_SEGMENTS,
+    fault_plan: FaultPlan | None = None,
+) -> StageFixture:
+    repo = tmp_path / "repo"
+    external = tmp_path / "external"
+    input_root = external / "inputs"
+    output_root = external / "runs"
+    repo.mkdir()
+    input_root.mkdir(parents=True)
+    output_root.mkdir()
+    segments: list[ScheduleSegment] = []
+    bindings: list[PCMInputBinding] = []
+    for segment_id, purpose, duration_ms in segment_specs:
+        path = input_root / f"{segment_id}.pcm"
+        with path.open("wb") as stream:
+            stream.truncate(duration_ms * 32)
+        digest = _sha256(path)
+        segments.append(
+            ScheduleSegment(
+                segment_id=segment_id,
+                purpose=purpose,
+                input_sha256=digest,
+                duration_ms=duration_ms,
+                repetition=1,
+            )
+        )
+        bindings.append(
+            PCMInputBinding(
+                segment_id=segment_id,
+                relative_path=path.name,
+                input_sha256=digest,
+                size_bytes=duration_ms * 32,
+                duration_ms=duration_ms,
+            )
+        )
+    schedule = ScheduleManifest(stage=stage, family_id="meeting", segments=tuple(segments))
+    schedule_path = external / "schedule.json"
+    _write_private_json(schedule_path, schedule.model_dump(mode="json"))
+    schedule_hash = _sha256(schedule_path)
+    input_manifest_path = external / "inputs.json"
+    _write_private_json(
+        input_manifest_path,
+        StageInputManifest(
+            schedule_sha256=schedule_hash,
+            bindings=tuple(bindings),
+        ).model_dump(mode="json"),
+    )
+    model_root = external / "model"
+    model_root.mkdir()
+    model_file = model_root / "weights.bin"
+    model_file.write_bytes(b"test-model")
+    model_file.chmod(0o600)
+    model_manifest_path = external / "model-manifest.json"
+    _write_private_json(
+        model_manifest_path,
+        StageModelManifest(
+            model_id="test/model",
+            model_revision="test-revision",
+            files=(
+                StageModelFile(
+                    relative_path="weights.bin",
+                    sha256=_sha256(model_file),
+                    size_bytes=model_file.stat().st_size,
+                ),
+            ),
+        ).model_dump(mode="json"),
+    )
+    identity_paths = {
+        name: external / f"{name}.json"
+        for name in ("profile", "runtime-config")
+    }
+    for name, path in identity_paths.items():
+        _write_private_json(path, {"identity": name})
+    fault_plan_path = external / "fault-plan.json" if fault_plan is not None else None
+    if fault_plan_path is not None:
+        _write_private_json(fault_plan_path, fault_plan.model_dump(mode="json"))
+    request = StageRunRequest(
+        run_id=f"stage{stage}-meeting-test",
+        stage=stage,
+        covered_stages=covered_stages,
+        family_id="meeting",
+        arm="finalist" if stage == 5 else "baseline",
+        candidate_id="qwen",
+        evidence_tier="experimental",
+        executor_id="test-synthetic",
+        model_manifest_path=model_manifest_path,
+        model_root=model_root,
+        profile_path=identity_paths["profile"],
+        runtime_config_path=identity_paths["runtime-config"],
+        schedule_path=schedule_path,
+        input_manifest_path=input_manifest_path,
+        input_root=input_root,
+        output_root=output_root,
+        repository_root=repo,
+        fault_plan_path=fault_plan_path,
+        lock_path=lock_path or external / "host.lock",
+        lock_timeout_secs=0.0,
+    )
+    return StageFixture(request=request, policy=TestStagePolicy())
+
+
+__all__ = [
+    "DEFAULT_SEGMENTS",
+    "StageFixture",
+    "SyntheticStageExecutor",
+    "TestStagePolicy",
+    "build_stage_fixture",
+]
