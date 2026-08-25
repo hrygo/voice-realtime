@@ -200,12 +200,6 @@ class MeetingSession:
                     self._active_meeting_id = None
                     self._committed_preparation = None
 
-    async def start(self, title: str | None = None) -> MeetingRecord:
-        preparation = await self.prepare_start(title)
-        record = self.commit_start(preparation)
-        await self.publish_started(preparation)
-        return record
-
     async def stop(self) -> MeetingRecord:
         async with self._lock:
             meeting_id = self._active_meeting_id

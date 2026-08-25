@@ -426,18 +426,6 @@ class SubtitleProxy:
         """停用普通字幕，关闭任务与流并清空待发 PCM。"""
         await self._close_browser_connection()
 
-    async def begin_capture(self, owner: str) -> None:
-        """兼容旧调用：准备会议流后立即提交。"""
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("capture owner 不能为空")
-        if self._capture_owner is not None:
-            if self._capture_owner == owner and self._capture_accept_audio:
-                return
-            raise RuntimeError("已有会议采集租约")
-        preparation = await self.prepare_capture(owner, timeout_secs=5.0)
-        self.commit_capture(preparation)
-
     async def prepare_capture(
         self, owner: str, *, timeout_secs: float
     ) -> CapturePreparation:

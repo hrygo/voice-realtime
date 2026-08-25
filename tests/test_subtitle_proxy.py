@@ -205,6 +205,13 @@ async def _wait_until(predicate: Callable[[], bool], *, attempts: int = 50) -> N
     raise AssertionError("condition was not met")
 
 
+async def _start_meeting_capture(
+    proxy: SubtitleProxy, owner: str = "meeting:test"
+) -> None:
+    preparation = await proxy.prepare_capture(owner, timeout_secs=5.0)
+    proxy.commit_capture(preparation)
+
+
 @pytest.fixture()
 def settings(tmp_path: Path) -> SubtitleSettings:
     model_dir = tmp_path / "model"
@@ -436,6 +443,9 @@ class TestPreparedLifecycle:
         await proxy.stop()
 
 class TestMeetingCapture:
+    def test_subtitle_proxy_has_no_implicit_begin_capture_api(self) -> None:
+        assert not hasattr(SubtitleProxy, "begin_capture")
+
     async def test_meeting_prepare_timeout_closes_prepared_stream(
         self, settings: SubtitleSettings
     ) -> None:
@@ -638,7 +648,7 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         await proxy.finish_capture(timeout_secs=1)
         await asyncio.sleep(0)
 
@@ -657,7 +667,7 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         await proxy.abort_capture()
         await asyncio.sleep(0)
 
@@ -677,7 +687,7 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         capture._events_queue = asyncio.Queue()
         with pytest.raises(FinalizationTimeout):
             await proxy.finish_capture(timeout_secs=0.01)
@@ -698,7 +708,7 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         await proxy.stop()
 
         assert proxy.capture_owner is None
@@ -712,7 +722,7 @@ class TestMeetingCapture:
         stream = FlushableFakeStream(_snapshot("只写 PostgreSQL"))
         proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
         await proxy.start()
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         await asyncio.sleep(0)
         await proxy.finish_capture(timeout_secs=1)
 
@@ -725,7 +735,7 @@ class TestMeetingCapture:
         stream = FlushableFakeStream(_snapshot("尾句"))
         proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
         await proxy.start()
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
 
         final = await proxy.finish_capture(timeout_secs=1)
 
@@ -778,7 +788,7 @@ class TestMeetingCapture:
         stream = FlushableFakeStream(_snapshot("持续记录"))
         proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
         await proxy.start()
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         assert not proxy.is_paused
         await proxy.push_audio(b"pcm")
         await asyncio.sleep(0)
@@ -793,7 +803,7 @@ class TestMeetingCapture:
         stream = FlushableFakeStream(_snapshot("不会 ready"))
         proxy = SubtitleProxy(settings, stream_factory=lambda **_: stream)
         await proxy.start()
-        await proxy.begin_capture("meeting:test")
+        await _start_meeting_capture(proxy)
         proxy._capture_last_window = TranscriptNormalizer().normalize(
             _snapshot("上一句"), 1, 0
         )

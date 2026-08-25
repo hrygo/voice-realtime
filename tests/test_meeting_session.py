@@ -136,6 +136,15 @@ def gateway() -> FakeGateway:
     return FakeGateway()
 
 
+async def _start_session(
+    session: MeetingSession, title: str | None = "周会"
+) -> MeetingRecord:
+    preparation = await session.prepare_start(title)
+    record = session.commit_start(preparation)
+    await session.publish_started(preparation)
+    return record
+
+
 async def test_prepare_creates_record_and_listeners_without_activating_or_publishing(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
@@ -255,27 +264,15 @@ async def test_preparation_tokens_reject_stale_and_repeated_operations(
         await session.publish_started(second)
 
 
-async def test_start_compatibility_wrapper_prepares_commits_and_publishes(
-    repository: FakeRepository, gateway: FakeGateway
-) -> None:
-    publish = AsyncMock()
-    session = MeetingSession(repository, gateway, event_publisher=publish)
-
-    record = await session.start("周会")
-
-    assert session.active_meeting_id == record.id
-    gateway.prepare_capture.assert_awaited_once_with(
-        f"meeting:{record.id}", timeout_secs=5.0
-    )
-    gateway.commit_capture.assert_called_once_with(gateway.capture)
-    publish.assert_awaited_once()
+def test_meeting_session_has_no_implicit_start_api() -> None:
+    assert not hasattr(MeetingSession, "start")
 
 
 async def test_stop_flushes_transcript_and_returns_completed(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
 
     result = await session.stop()
 
@@ -290,7 +287,7 @@ async def test_partial_only_updates_do_not_reconcile_again(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
     segment = NormalizedSegment(
         order=0,
         source_epoch=1,
@@ -319,7 +316,7 @@ async def test_session_publishes_partial_and_durable_transcript_events(
         events.append((event_type, meeting_id, payload))
 
     session = MeetingSession(repository, gateway, event_publisher=publish)
-    await session.start("周会")
+    await _start_session(session)
     segment = NormalizedSegment(
         order=0,
         source_epoch=1,
@@ -348,7 +345,7 @@ async def test_start_rejects_unwritable_storage(
     session = MeetingSession(repository, gateway)
 
     with pytest.raises(RuntimeError, match="storage"):
-        await session.start("周会")
+        await session.prepare_start("周会")
 
     gateway.prepare_capture.assert_not_awaited()
 
@@ -360,7 +357,7 @@ async def test_start_maps_create_failure_to_storage_unavailable(
     session = MeetingSession(repository, gateway)
 
     with pytest.raises(RuntimeError) as exc_info:
-        await session.start("周会")
+        await session.prepare_start("周会")
 
     assert getattr(exc_info.value, "code", None) == "storage_unavailable"
     gateway.prepare_capture.assert_not_awaited()
@@ -378,7 +375,7 @@ async def test_start_accepts_subtitle_proxy_and_generates_title(
 ) -> None:
     session = MeetingSession(repository, subtitle_proxy=gateway)
 
-    record = await session.start("   ")
+    record = await _start_session(session, "   ")
 
     assert record.title.startswith("会议-")
     assert session.storage_health is StorageHealth.OK
@@ -391,10 +388,10 @@ async def test_start_rejects_second_active_meeting(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
 
     with pytest.raises(RuntimeError, match="已经在录制"):
-        await session.start("第二场")
+        await session.prepare_start("第二场")
 
     assert repository.calls.count("create") == 1
 
@@ -406,7 +403,9 @@ async def test_start_requeues_summary_and_swallows_requeue_failure(
     summary = SimpleNamespace(requeue_for_recording=requeue)
     session = MeetingSession(repository, gateway, summary_service=summary)
 
-    record = await session.start("周会")
+    preparation = await session.prepare_start("周会")
+    record = session.commit_start(preparation)
+    await session.publish_started(preparation)
 
     assert session.active_meeting_id == record.id
     requeue.assert_awaited_once_with()
@@ -420,7 +419,9 @@ async def test_start_supports_sync_summary_requeue_and_gateway_without_gap_hooks
     summary = SimpleNamespace(requeue_for_recording=lambda: None)
     session = MeetingSession(repository, gateway, summary_service=summary)
 
-    await session.start("周会")
+    preparation = await session.prepare_start("周会")
+    session.commit_start(preparation)
+    await session.publish_started(preparation)
     await session._release_listener()
 
     assert gateway.listeners == []
@@ -474,7 +475,7 @@ async def test_stop_timeout_persists_last_window_and_marks_interrupted(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway, finalization_timeout_secs=0.25)
-    await session.start("周会")
+    await _start_session(session)
     segment = NormalizedSegment(
         order=0,
         source_epoch=1,
@@ -505,7 +506,7 @@ async def test_stop_failure_marks_interrupted_and_releases_listeners(
     repository: FakeRepository, gateway: FakeGateway, failure: Exception
 ) -> None:
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
     if "flush" in str(failure):
         gateway.finish_capture.side_effect = failure
     else:
@@ -532,7 +533,7 @@ async def test_interrupt_suppresses_abort_failure_and_truncates_reason(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
     gateway.abort_capture.side_effect = RuntimeError("abort failed")
     reason = "x" * 200
 
@@ -569,7 +570,7 @@ async def test_window_without_segments_only_emits_partial(
         events.append((event_type, meeting_id, payload))
 
     session = MeetingSession(repository, gateway, event_publisher=publish)
-    await session.start("周会")
+    await _start_session(session)
     await session._on_window(TranscriptWindow(source_epoch=1, partial="只显示临时文本"))
 
     assert [event[0] for event in events].count("transcript_partial") == 1
@@ -590,7 +591,7 @@ async def test_window_without_partial_still_reconciles_and_inactive_window_is_ig
     )
 
     await session._on_window(TranscriptWindow(source_epoch=1, segments=(segment,)))
-    await session.start("周会")
+    await _start_session(session)
     await session._on_window(TranscriptWindow(source_epoch=1, segments=(segment,)))
     await session.interrupt("测试结束")
     await session._on_window(TranscriptWindow(source_epoch=2, segments=(segment,)))
@@ -611,7 +612,7 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
     journal = SyncJournal()
     repository.reconcile_error = RuntimeError("database unavailable")
     session = MeetingSession(repository, gateway, recovery_journal=journal)
-    await session.start("周会")
+    await _start_session(session)
     window = TranscriptWindow(source_epoch=1, segments=(
         NormalizedSegment(
             order=0,
@@ -634,7 +635,7 @@ async def test_window_persistence_failure_without_journal_aborts_capture(
 ) -> None:
     repository.reconcile_error = RuntimeError("database unavailable")
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
     window = TranscriptWindow(source_epoch=1, segments=(
         NormalizedSegment(
             order=0,
@@ -658,7 +659,7 @@ async def test_stop_without_final_window_completes_normally(
 ) -> None:
     gateway.finish_capture.return_value = None
     session = MeetingSession(repository, gateway)
-    await session.start("周会")
+    await _start_session(session)
 
     result = await session.stop()
 
@@ -672,7 +673,7 @@ async def test_stop_resumes_summary_worker_and_swallows_resume_failure(
     resume = AsyncMock(side_effect=RuntimeError("worker unavailable"))
     summary = SimpleNamespace(resume_after_recording=resume)
     session = MeetingSession(repository, gateway, summary_service=summary)
-    await session.start("周会")
+    await _start_session(session)
 
     await session.stop()
 
@@ -684,7 +685,7 @@ async def test_interrupt_supports_sync_summary_resume_callback(
 ) -> None:
     summary = SimpleNamespace(resume_after_recording=lambda: None)
     session = MeetingSession(repository, gateway, summary_service=summary)
-    await session.start("周会")
+    await _start_session(session)
 
     result = await session.interrupt("测试结束")
 
@@ -699,7 +700,7 @@ async def test_window_persistence_failure_with_unusable_journal_aborts_capture(
 ) -> None:
     repository.reconcile_error = RuntimeError("database unavailable")
     session = MeetingSession(repository, gateway, recovery_journal=journal)
-    await session.start("周会")
+    await _start_session(session)
     window = TranscriptWindow(source_epoch=1, segments=(
         NormalizedSegment(
             order=0,
@@ -728,7 +729,7 @@ async def test_gap_emits_reconnect_event_and_ignores_inactive_session(
     session = MeetingSession(repository, gateway, event_publisher=publish)
     await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
     assert events == []
-    await session.start("周会")
+    await _start_session(session)
     await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
 
     assert events[-1][0] == "transcription_gap"
@@ -742,7 +743,7 @@ async def test_event_publisher_errors_are_logged_and_ignored(
         raise RuntimeError("client disconnected")
 
     session = MeetingSession(repository, gateway, event_publisher=publish)
-    await session.start("周会")
+    await _start_session(session)
 
     assert session.active_meeting_id is not None
     assert "会议实时事件广播失败" in caplog.text
@@ -773,6 +774,6 @@ async def test_start_storage_error_uses_stable_exception(
     repository.writable = False
 
     with pytest.raises(MeetingStorageUnavailableError) as error:
-        await MeetingSession(repository, gateway).start("周会")
+        await MeetingSession(repository, gateway).prepare_start("周会")
 
     assert error.value.code == "storage_unavailable"
