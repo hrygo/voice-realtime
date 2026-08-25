@@ -683,6 +683,91 @@ async def test_interrupt_status_failure_releases_local_session_and_allows_restar
     assert restarted.status is MeetingStatus.RECORDING
 
 
+async def test_interrupt_cancellation_waits_for_cleanup_before_restart(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    resume_started = asyncio.Event()
+    allow_resume = asyncio.Event()
+    events: list[str] = []
+
+    async def resume_after_recording() -> None:
+        events.append("resume_started")
+        resume_started.set()
+        await allow_resume.wait()
+        events.append("resume_finished")
+
+    async def prepare_next(session: MeetingSession):
+        preparation = await session.prepare_start("取消后的会议")
+        events.append("prepare_finished")
+        return preparation
+
+    summary = SimpleNamespace(resume_after_recording=resume_after_recording)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    interrupting = asyncio.create_task(session.interrupt("调用方取消"))
+    await resume_started.wait()
+
+    interrupting.cancel("first cancellation")
+    preparing = asyncio.create_task(prepare_next(session))
+    interrupt_result: asyncio.CancelledError | None = None
+    try:
+        await asyncio.sleep(0)
+        assert not interrupting.done()
+        assert not preparing.done()
+        interrupting.cancel("second cancellation")
+        await asyncio.sleep(0)
+        assert not interrupting.done()
+        assert not preparing.done()
+    finally:
+        allow_resume.set()
+        try:
+            await interrupting
+        except asyncio.CancelledError as exc:
+            interrupt_result = exc
+        finally:
+            preparation = await preparing
+
+    assert isinstance(interrupt_result, asyncio.CancelledError)
+    assert interrupt_result.args == ("first cancellation",)
+    assert events == ["resume_started", "resume_finished", "prepare_finished"]
+    restarted = session.commit_start(preparation)
+    await session.publish_started(preparation)
+    assert session.active_meeting_id == restarted.id
+
+
+async def test_interrupt_cleanup_failure_takes_priority_over_cancellation(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    cleanup_started = asyncio.Event()
+    allow_cleanup_failure = asyncio.Event()
+    cleanup_tasks: list[asyncio.Task[None]] = []
+
+    async def fail_cleanup() -> None:
+        cleanup_task = asyncio.current_task()
+        assert cleanup_task is not None
+        cleanup_tasks.append(cleanup_task)
+        cleanup_started.set()
+        await allow_cleanup_failure.wait()
+        raise RuntimeError("cleanup failed")
+
+    session = MeetingSession(repository, gateway)
+    await _start_session(session)
+    session._release_stopped_session = fail_cleanup  # type: ignore[method-assign]
+    interrupting = asyncio.create_task(session.interrupt("调用方取消"))
+    await cleanup_started.wait()
+
+    interrupting.cancel("caller cancelled")
+    allow_cleanup_failure.set()
+    try:
+        with pytest.raises(RuntimeError, match="cleanup failed") as exc_info:
+            await interrupting
+    finally:
+        await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+
+    assert isinstance(exc_info.value.__cause__, asyncio.CancelledError)
+    assert exc_info.value.__cause__.args == ("caller cancelled",)
+
+
 async def test_recover_stale_delegates_and_defaults_without_method(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:

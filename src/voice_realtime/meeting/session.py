@@ -285,6 +285,27 @@ class MeetingSession:
         self._committed_preparation = None
         await self._resume_summary_worker()
 
+    @staticmethod
+    async def _await_cleanup(final_cleanup: asyncio.Task[None]) -> None:
+        """延迟调用方取消；cleanup 失败优先并保留取消为 cause。"""
+        cancellation: asyncio.CancelledError | None = None
+        while not final_cleanup.done():
+            try:
+                await asyncio.shield(final_cleanup)
+            except asyncio.CancelledError as exc:
+                if not final_cleanup.cancelled() and cancellation is None:
+                    cancellation = exc
+            except BaseException:
+                break
+        try:
+            final_cleanup.result()
+        except BaseException as cleanup_error:
+            if cancellation is not None:
+                raise cleanup_error from cancellation
+            raise
+        if cancellation is not None:
+            raise cancellation
+
     async def _mark_stop_interrupted(self, meeting_id: UUID) -> None:
         """尽力持久化 stop 失败；DB 失败时仍收敛本地稳定状态。"""
         current = self._record
@@ -343,7 +364,7 @@ class MeetingSession:
                 return cast(MeetingRecord, record)
             finally:
                 final_cleanup = asyncio.create_task(self._release_stopped_session())
-                await asyncio.shield(final_cleanup)
+                await self._await_cleanup(final_cleanup)
 
     async def recover_stale(self) -> int:
         recover = getattr(self.repository, "recover_stale", None)
