@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import inspect
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -646,86 +645,6 @@ async def _meeting_snapshot(app: FastAPI, broadcaster: MeetingEventBroadcaster) 
         "content_revision": 0,
     }
     return make_event("meeting_snapshot", meeting_id, payload)
-
-
-async def _handle_v1_control(
-    runtime: Any,
-    cfg: Settings,
-    payload: dict[str, Any],
-    cache: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    request_id = payload.get("request_id") if isinstance(payload.get("request_id"), str) else ""
-    cmd = payload.get("cmd") if isinstance(payload.get("cmd"), str) else ""
-    if request_id and request_id in cache:
-        return cache[request_id]
-    base = {
-        "contract_version": "1",
-        "request_id": request_id,
-        "cmd": cmd,
-        "ok": False,
-        "state": _runtime_state_json(runtime),
-        "error": None,
-    }
-    if not request_id or not cmd:
-        base["error"] = {
-            "code": "invalid_request",
-            "message": "控制命令无效",
-        }
-        return base
-    try:
-        if runtime is None:
-            raise RuntimeError("runtime unavailable")
-        if hasattr(runtime, "handle_meeting_command"):
-            result = runtime.handle_meeting_command(payload)
-            if inspect.isawaitable(result):
-                result = await result
-            if isinstance(result, dict):
-                base.update(result)
-        elif cmd == "start_meeting" and hasattr(runtime, "start_meeting"):
-            result = runtime.start_meeting(payload.get("title"))
-            if inspect.isawaitable(result):
-                await result
-        elif cmd == "end_meeting" and hasattr(runtime, "end_meeting"):
-            result = runtime.end_meeting(payload.get("meeting_id"))
-            if inspect.isawaitable(result):
-                await result
-        elif cmd == "start_assistant" and hasattr(runtime, "start_assistant"):
-            result = runtime.start_assistant()
-            if inspect.isawaitable(result):
-                await result
-        elif cmd == "stop_active_mode" and hasattr(runtime, "stop_active_mode"):
-            result = runtime.stop_active_mode()
-            if inspect.isawaitable(result):
-                await result
-        else:
-            raise ValueError("unsupported command")
-        base["ok"] = True
-        base["state"] = _runtime_state_json(runtime)
-    except ValueError:
-        base["error"] = {"code": "invalid_request", "message": "控制命令无效"}
-    except Exception as exc:
-        error_code = str(getattr(exc, "code", "command_failed"))
-        allowed_codes = {
-            "conflict",
-            "mode_conflict",
-            "meeting_not_active",
-            "storage_unavailable",
-            "transcription_unavailable",
-            "summary_unavailable",
-            "service_unavailable",
-            "command_failed",
-        }
-        if error_code not in allowed_codes:
-            error_code = "command_failed"
-        base["error"] = {
-            "code": error_code,
-            "message": "命令执行失败，请检查相关服务状态",
-        }
-    if request_id:
-        if len(cache) >= 256:
-            cache.pop(next(iter(cache)))
-        cache[request_id] = base
-    return base
 
 
 async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:

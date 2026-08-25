@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import threading
 from collections.abc import Iterator
@@ -542,6 +543,16 @@ class TestMeetingV1Gateway:
 
 
 class TestRuntimeControlBroadcast:
+    def test_control_routes_share_only_control_bridge_dispatch(self) -> None:
+        route_source = inspect.getsource(server_module._mount_websocket_routes)
+        handler_source = inspect.getsource(server_module._serve_control_websocket)
+
+        assert route_source.count(
+            "await _serve_control_websocket(websocket, runtime, cfg)"
+        ) == 2
+        assert handler_source.count("ControlBridge(runtime, cfg.bridge)") == 1
+        assert not hasattr(server_module, "_handle_v1_control")
+
     def test_v1_control_broadcasts_to_all_and_acks_only_requester(self) -> None:
         runtime = _FakeRuntime()
         with (
