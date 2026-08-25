@@ -58,9 +58,20 @@ export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now
   return Number.isFinite(started) ? Math.max(0, Math.floor((nowMs - started) / 1000)) : 0;
 }
 
+export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
+
+function formatTabTimer(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 interface StatusBarProps {
   commandSocket: CommandSocketApi;
   onOpenShortcuts?: () => void;
+  activeTab?: WorkspaceTab;
+  onTabChange?: (tab: WorkspaceTab) => void;
+  recordingElapsed?: number;
 }
 
 function ThemeToggle() {
@@ -86,7 +97,13 @@ function ThemeToggle() {
   );
 }
 
-export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarProps) {
+export default function StatusBar({
+  commandSocket,
+  onOpenShortcuts,
+  activeTab = "assistant",
+  onTabChange,
+  recordingElapsed = 0,
+}: StatusBarProps) {
   const [services, setServices] = useState<ServiceInfo[]>([
     { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
@@ -140,6 +157,29 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     }
     return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
+
+  /** 键盘快捷键监听：M 键麦克风静音切换 */
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl?.tagName === "INPUT" ||
+        activeEl?.tagName === "TEXTAREA" ||
+        (activeEl as HTMLElement)?.isContentEditable;
+      if (isInput) return;
+
+      if ((e.key === "m" || e.key === "M") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        void setMicMuted(!micMuted, true);
+      }
+    },
+    [micMuted, setMicMuted],
+  );
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   /** Theme listener */
   useEffect(() => {
@@ -203,25 +243,13 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     return () => window.removeEventListener("mousedown", handleClickOutside);
   }, [healthPopoverOpen]);
 
-  // Global 'M' shortcut for Mute
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const isInput =
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
-      if (!isInput && e.key.toLowerCase() === "m" && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-        void setMicMuted(!micMuted, true);
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [micMuted, setMicMuted]);
-
   const meetingStatus = useMeetingStore((s) => s.status);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 
-  // Compute aggregate system health (7 checkpoints)
+  // Compute aggregate system health
+  const storageStatus: ServiceStatus =
+    storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error";
+
   const healthItems = [
     {
       id: "ws",
@@ -244,7 +272,7 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
     {
       id: "storage",
       name: "PostgreSQL 知识库",
-      status: storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error",
+      status: storageStatus,
       detail: storageHealth,
     },
     ...services.map((s) => ({
@@ -263,12 +291,103 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
   return (
     <header className="status-bar">
       <div className="status-left">
-        <div className="status-brand">
-          <span className="status-logo-icon">🎙️</span>
+        <div className="status-brand" title="Voice Studio">
+          <span className="status-logo-icon" role="img" aria-label="Voice Studio">
+            🎙️
+          </span>
           <h1 className="status-title">Voice Studio</h1>
         </div>
         <span className="status-badge-chip">Apple Silicon / MLX</span>
 
+        {/* 麦克风电平 & 静音控件 */}
+        <button
+          type="button"
+          className={`mic-vu-widget ${micMuted ? "muted" : ""}`}
+          onClick={() => {
+            void setMicMuted(!micMuted);
+          }}
+          disabled={!commandSocket.ready}
+          title={micMuted ? "麦克风已静音 (按 M 恢复)" : "麦克风采集中 (按 M 静音)"}
+        >
+          <span>{micMuted ? "🔇" : "🎙️"}</span>
+          <div className="vu-bars" aria-hidden="true">
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "10px" : "4px",
+              }}
+            />
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "12px" : "7px",
+              }}
+            />
+            <span
+              className="vu-bar"
+              style={{
+                height: micMuted ? "2px" : phase === "listening" ? "8px" : "3px",
+              }}
+            />
+          </div>
+          <span>{micMuted ? "已静音" : "16kHz"}</span>
+        </button>
+      </div>
+
+      {/* 居中核心三种模式切换 (Segmented Control Navigation) */}
+      {onTabChange && (
+        <div className="status-center">
+          <nav className="status-workspace-tabs" aria-label="工作区模式切换">
+            <button
+              type="button"
+              className={`status-tab-btn ${activeTab === "assistant" ? "active" : ""}`}
+              onClick={() => onTabChange("assistant")}
+              title="切换至语音助手 (快捷键 Cmd+1)"
+            >
+              <span className="tab-icon">🤖</span>
+              <span className="tab-label">语音助手</span>
+              <kbd className="tab-kbd">⌘1</kbd>
+              {isMeetingRecording && (
+                <span className="tab-status-chip suspended" title="会议录制中，语音交互已挂起以防回声">
+                  已挂起
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`status-tab-btn ${activeTab === "meeting" ? "active" : ""}`}
+              onClick={() => onTabChange("meeting")}
+              title="切换至会议助手 (快捷键 Cmd+2)"
+            >
+              <span className="tab-icon">🎙️</span>
+              <span className="tab-label">会议助手</span>
+              <kbd className="tab-kbd">⌘2</kbd>
+              {isMeetingRecording && (
+                <span className="tab-status-chip recording" title="会议录制进行中">
+                  <span className="tab-recording-dot" /> 录制中 {recordingElapsed > 0 ? `(${formatTabTimer(recordingElapsed)})` : ""}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className={`status-tab-btn ${activeTab === "subtitles" ? "active" : ""}`}
+              onClick={() => onTabChange("subtitles")}
+              title="切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"
+            >
+              <span className="tab-icon">📝</span>
+              <span className="tab-label">实时字幕</span>
+              <kbd className="tab-kbd">⌘3</kbd>
+              {isMeetingRecording && (
+                <span className="tab-status-chip sync" title="与会议转录同步中">
+                  同步中
+                </span>
+              )}
+            </button>
+          </nav>
+        </div>
+      )}
+
+      <div className="status-right">
         {/* 全局互斥模式指示器 (防抖固定尺寸胶囊) */}
         {(() => {
           let className = "mode-idle";
@@ -311,42 +430,6 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
           );
         })()}
 
-        {/* 麦克风电平 & 静音控件 */}
-        <button
-          type="button"
-          className={`mic-vu-widget ${micMuted ? "muted" : ""}`}
-          onClick={() => {
-            void setMicMuted(!micMuted);
-          }}
-          disabled={!commandSocket.ready}
-          title={micMuted ? "麦克风已静音 (按 M 恢复)" : "麦克风采集中 (按 M 静音)"}
-        >
-          <span>{micMuted ? "🔇" : "🎙️"}</span>
-          <div className="vu-bars" aria-hidden="true">
-            <span
-              className="vu-bar"
-              style={{
-                height: micMuted ? "2px" : phase === "listening" ? "10px" : "4px",
-              }}
-            />
-            <span
-              className="vu-bar"
-              style={{
-                height: micMuted ? "2px" : phase === "listening" ? "12px" : "7px",
-              }}
-            />
-            <span
-              className="vu-bar"
-              style={{
-                height: micMuted ? "2px" : phase === "listening" ? "8px" : "3px",
-              }}
-            />
-          </div>
-          <span>{micMuted ? "已静音" : "16kHz"}</span>
-        </button>
-      </div>
-
-      <div className="status-right">
         {/* 系统健康中心 Popover 触发器 (右侧自然流) */}
         <div className="status-health-container" ref={popoverRef}>
           <button

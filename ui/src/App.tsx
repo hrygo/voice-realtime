@@ -115,12 +115,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isMeetingRecording, sessionStartedAt]);
 
-  const formatTabTimer = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  };
-
   /** Tab 智能联动：切换到「实时字幕」时自动挂起 AI 助手；切回「语音助手」时自动恢复 */
   const handleTabChange = useCallback(
     (newTab: WorkspaceTab) => {
@@ -179,54 +173,10 @@ export default function App() {
       <StatusBar
         commandSocket={commandSocket}
         onOpenShortcuts={() => setShortcutsOpen(true)}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        recordingElapsed={recordingElapsed}
       />
-
-      <div className="workspace-tabs-container">
-        <nav className="workspace-tabs" aria-label="工作区切换">
-          <button
-            type="button"
-            className={`workspace-tab-btn ${activeTab === "assistant" ? "active" : ""}`}
-            onClick={() => handleTabChange("assistant")}
-            title="切换至语音助手 (快捷键 Cmd+1)"
-          >
-            <span>🤖</span> 语音助手
-            <kbd className="tab-kbd">⌘1</kbd>
-            {isMeetingRecording && (
-              <span className="tab-status-chip suspended" title="会议录制中，语音交互已挂起以防回声">
-                已挂起
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            className={`workspace-tab-btn ${activeTab === "meeting" ? "active" : ""}`}
-            onClick={() => handleTabChange("meeting")}
-            title="切换至会议助手 (快捷键 Cmd+2)"
-          >
-            <span>🎙️</span> 会议助手
-            <kbd className="tab-kbd">⌘2</kbd>
-            {isMeetingRecording && (
-              <span className="tab-status-chip recording" title="会议录制进行中">
-                <span className="tab-recording-dot" /> 录制中 {recordingElapsed > 0 && `(${formatTabTimer(recordingElapsed)})`}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            className={`workspace-tab-btn ${activeTab === "subtitles" ? "active" : ""}`}
-            onClick={() => handleTabChange("subtitles")}
-            title="切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"
-          >
-            <span>📝</span> 实时字幕
-            <kbd className="tab-kbd">⌘3</kbd>
-            {isMeetingRecording && (
-              <span className="tab-status-chip sync" title="与会议转录同步中">
-                同步中
-              </span>
-            )}
-          </button>
-        </nav>
-      </div>
 
       <main className="app-main">
         {activeTab === "assistant" && (

@@ -485,27 +485,70 @@ export default function AssistantPanel({
 
   return (
     <div className="assistant-workspace">
-      {/* 左侧控制与人设侧边栏 (紧凑无滚动条设计) */}
+      {/* 左侧控制与人设侧边栏 (合理充分利用空间、流线型模块化设计) */}
       <aside className="assistant-sidebar">
-        {/* 1. 人设提示词 (下拉选择 + 快速编辑) */}
-        <div className="assistant-sidebar-section persona-section-compact">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">
-              <span className="sidebar-title-icon">🎭</span> 助手人设
+        {/* Group 1: 声学交互模式 */}
+        <div className="sidebar-group">
+          <div className="sidebar-group-header">
+            <span className="sidebar-group-title">
+              <span className="group-title-icon">🎧</span> 声学交互模式
             </span>
+          </div>
+
+          <div className="duplex-sidebar-selector" role="radiogroup" aria-label="交互打断模式">
             <button
               type="button"
-              className="sidebar-action-btn"
-              onClick={openPersona}
-              title="管理与定制人设提示词 (快捷键 Cmd+K)"
+              className={`duplex-sidebar-btn ${duplexMode === "speaker_focus" ? "active speaker" : ""}`}
+              onClick={() => handleDuplexModeChange("speaker_focus")}
+              disabled={!commandSocket.ready}
+              title="外放保护模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
             >
-              ✏️ 编辑 / 新增
+              <span className="duplex-btn-icon">🔊</span>
+              <span className="duplex-btn-text">外放保护</span>
+            </button>
+            <button
+              type="button"
+              className={`duplex-sidebar-btn ${duplexMode === "headphone_duplex" ? "active headphone" : ""}`}
+              onClick={() => handleDuplexModeChange("headphone_duplex")}
+              disabled={!commandSocket.ready}
+              title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
+            >
+              <span className="duplex-btn-icon">🎧</span>
+              <span className="duplex-btn-text">耳机打断</span>
             </button>
           </div>
 
-          <div className="persona-select-container">
+          <div className={`duplex-sidebar-tip mode-${duplexMode}`}>
+            <span className="tip-dot" />
+            <span className="tip-text">{duplexPresentation.summary}</span>
+          </div>
+        </div>
+
+        {/* Group 2: 角色与声音配置 */}
+        <div className="sidebar-group">
+          <div className="sidebar-group-header">
+            <span className="sidebar-group-title">
+              <span className="group-title-icon">🎭</span> 角色与声音
+            </span>
+          </div>
+
+          <div className="sidebar-field-block">
+            <div className="sidebar-field-label-row">
+              <label htmlFor="assistant-persona-select" className="sidebar-field-label">
+                助手人设
+              </label>
+              <button
+                type="button"
+                className="sidebar-link-btn"
+                onClick={openPersona}
+                title="管理与定制人设提示词 (快捷键 Cmd+K)"
+              >
+                ✏️ 管理
+              </button>
+            </div>
             <select
-              className="persona-dropdown-sidebar"
+              id="assistant-persona-select"
+              className="sidebar-select"
               value={isCustomActive ? "__custom__" : persona}
               onChange={(e) => {
                 if (e.target.value === "__custom__") {
@@ -525,115 +568,111 @@ export default function AssistantPanel({
               ))}
               {isCustomActive && <option value="__custom__">当前自定义人设 (编辑中)</option>}
             </select>
+            <p className="persona-preview-card" onClick={openPersona} title="点击展开编辑系统提示词">
+              {persona || "你是一个聪明的全本地语音助手。"}
+            </p>
           </div>
 
-          <p className="persona-prompt-preview" onClick={openPersona} title="点击展开编辑系统提示词">
-            {persona || "你是一个聪明的全本地语音助手。"}
-          </p>
-        </div>
-
-        {/* 2. TTS 播报音色 (空间高度压缩) */}
-        <div className="assistant-sidebar-section voice-section-compact">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">
-              <span className="sidebar-title-icon">🔊</span> 播报音色
-            </span>
-            {VOICE_CONFIGS[voice] && (
-              <span className="voice-timbre-badge">
-                {VOICE_CONFIGS[voice].label} · {VOICE_CONFIGS[voice].tag}
-              </span>
-            )}
-          </div>
-
-          <div className="voice-compact-row">
-            <select
-              id="assistant-voice"
-              className="voice-select-dropdown-sidebar"
-              value={voice}
-              onChange={(e) => void handleVoiceChange(e.target.value)}
-              disabled={!commandSocket.ready}
-            >
-              {availableVoices.map((v) => {
-                const desc = VOICE_CONFIGS[v];
-                return (
-                  <option key={v} value={v}>
-                    {desc ? `${desc.label} (${v})` : v}
-                  </option>
-                );
-              })}
-            </select>
-            <button
-              type="button"
-              className={`btn-voice-preview ${isPreviewPlaying ? "playing" : ""}`}
-              onClick={() => void handlePreviewVoice(voice)}
-              disabled={isPreviewPlaying}
-              title="生成并播放当前音色试听"
-            >
-              {isPreviewPlaying ? "🔊 播放中..." : "🔊 试听"}
-            </button>
+          <div className="sidebar-field-block">
+            <div className="sidebar-field-label-row">
+              <label htmlFor="assistant-voice-select" className="sidebar-field-label">
+                播报音色
+              </label>
+              {VOICE_CONFIGS[voice] && (
+                <span className="sidebar-field-badge">
+                  {VOICE_CONFIGS[voice].tag}
+                </span>
+              )}
+            </div>
+            <div className="voice-input-group">
+              <select
+                id="assistant-voice-select"
+                className="sidebar-select voice-select"
+                value={voice}
+                onChange={(e) => void handleVoiceChange(e.target.value)}
+                disabled={!commandSocket.ready}
+              >
+                {availableVoices.map((v) => {
+                  const desc = VOICE_CONFIGS[v];
+                  return (
+                    <option key={v} value={v}>
+                      {desc ? `${desc.label} (${v})` : v}
+                    </option>
+                  );
+                })}
+              </select>
+              <button
+                type="button"
+                className={`btn-voice-audition ${isPreviewPlaying ? "playing" : ""}`}
+                onClick={() => void handlePreviewVoice(voice)}
+                disabled={isPreviewPlaying}
+                title="生成并播放当前音色试听"
+              >
+                {isPreviewPlaying ? "🔊" : "🔊 试听"}
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* 3. 交互时延监控 (流水线高科技 HUD) */}
-        <div className="assistant-sidebar-section telemetry-section-modern">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">
-              <span className="sidebar-title-icon">⚡</span> 交互时延监控
+        {/* Group 3: 交互时延遥测 */}
+        <div className="sidebar-group">
+          <div className="sidebar-group-header">
+            <span className="sidebar-group-title">
+              <span className="group-title-icon">⚡</span> 交互时延遥测
             </span>
             {latestMetrics && latestMetrics.e2eMs !== null ? (
-              <span className={`telemetry-grade-badge ${latestMetrics.e2eMs < 1200 ? "fast" : latestMetrics.e2eMs < 2500 ? "good" : "slow"}`}>
-                {latestMetrics.e2eMs < 1200 ? "极速响应" : latestMetrics.e2eMs < 2500 ? "性能良好" : "时延偏高"}
+              <span
+                className={`telemetry-grade-pill ${
+                  latestMetrics.e2eMs < 1200 ? "fast" : latestMetrics.e2eMs < 2500 ? "good" : "slow"
+                }`}
+              >
+                {latestMetrics.e2eMs < 1200 ? "极速" : latestMetrics.e2eMs < 2500 ? "良好" : "偏高"} · {formatMetric(latestMetrics.e2eMs)}
               </span>
             ) : (
-              <span className="telemetry-grade-badge idle">待命中</span>
+              <span className="telemetry-grade-pill idle">待命中</span>
             )}
           </div>
 
           {latestMetrics ? (
-            <div className="telemetry-pipeline-hud">
-              {/* 3步微流水线 */}
-              <div className="telemetry-flow-grid">
-                <div className="telemetry-flow-node">
-                  <span className="flow-step-tag">1. STT 识别</span>
-                  <span className="flow-step-val">{formatMetric(latestMetrics.sttMs)}</span>
-                </div>
-                <div className="telemetry-flow-arrow">➔</div>
-                <div className="telemetry-flow-node">
-                  <span className="flow-step-tag">2. LLM 首字</span>
-                  <span className="flow-step-val">{formatMetric(latestMetrics.llmTtftMs)}</span>
-                </div>
-                <div className="telemetry-flow-arrow">➔</div>
-                <div className="telemetry-flow-node">
-                  <span className="flow-step-tag">3. TTS 首包</span>
-                  <span className="flow-step-val">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
-                </div>
+            <div className="telemetry-compact-flow">
+              <div className="flow-step">
+                <span className="step-num">1</span>
+                <span className="step-name">STT</span>
+                <span className="step-time">{formatMetric(latestMetrics.sttMs)}</span>
               </div>
-
-              {/* 端到端总时延高亮条 */}
-              <div className="telemetry-e2e-strip">
-                <span className="e2e-label">⚡ 端到端总时延 (E2E)</span>
-                <span className="e2e-val">{formatMetric(latestMetrics.e2eMs)}</span>
+              <span className="flow-sep">→</span>
+              <div className="flow-step">
+                <span className="step-num">2</span>
+                <span className="step-name">LLM</span>
+                <span className="step-time">{formatMetric(latestMetrics.llmTtftMs)}</span>
+              </div>
+              <span className="flow-sep">→</span>
+              <div className="flow-step">
+                <span className="step-num">3</span>
+                <span className="step-name">TTS</span>
+                <span className="step-time">{formatMetric(latestMetrics.ttsTtfbMs)}</span>
               </div>
             </div>
           ) : (
-            <div className="telemetry-placeholder-compact">
-              <span>🎙️ 对话后实时呈现全链路耗时</span>
+            <div className="telemetry-idle-notice">
+              <span className="idle-dot" />
+              <span>对话后实时呈现全链路耗时</span>
             </div>
           )}
         </div>
 
-        {/* 4. 会话控制 */}
-        <div className="assistant-sidebar-section controls-section-compact">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">
-              <span className="sidebar-title-icon">🛠️</span> 会话控制
+        {/* Group 4: 会话与记录操作 */}
+        <div className="sidebar-group">
+          <div className="sidebar-group-header">
+            <span className="sidebar-group-title">
+              <span className="group-title-icon">🛠️</span> 会话与记录
             </span>
           </div>
 
-          <div className="sidebar-ctrl-buttons">
+          <div className="session-action-grid">
             <button
               type="button"
-              className="btn-sidebar-ctrl"
+              className="btn-action-ghost"
               onClick={() => sendCommand("clear_context")}
               disabled={!commandSocket.ready}
               title="清空 LLM 上下文记忆 (快捷键 Cmd+Shift+C)"
@@ -642,7 +681,7 @@ export default function AssistantPanel({
             </button>
             <button
               type="button"
-              className="btn-sidebar-ctrl"
+              className="btn-action-ghost"
               onClick={() => {
                 clearTranscript();
                 showToast("对话记录已清空", "info");
@@ -654,7 +693,7 @@ export default function AssistantPanel({
             </button>
             <button
               type="button"
-              className="btn-sidebar-ctrl"
+              className="btn-action-ghost"
               onClick={() => sendCommand("restart")}
               disabled={!commandSocket.ready}
               title="重启后端交互管道"
@@ -663,7 +702,7 @@ export default function AssistantPanel({
             </button>
             <button
               type="button"
-              className="btn-sidebar-ctrl danger"
+              className="btn-action-ghost danger"
               onClick={() => sendCommand("stop_session")}
               disabled={!commandSocket.ready}
               title="停止语音会话"
@@ -671,34 +710,29 @@ export default function AssistantPanel({
               <span>⏹️</span> 停止会话
             </button>
           </div>
-        </div>
 
-        {/* 5. 记录导出 */}
-        <div className="assistant-sidebar-section export-section-compact">
-          <div className="sidebar-section-header">
-            <span className="sidebar-section-title">
-              <span className="sidebar-title-icon">📥</span> 导出对话
-            </span>
-          </div>
-          <div className="export-btn-group">
-            <button
-              type="button"
-              className="btn-export-pill"
-              onClick={() => handleExportChat("md")}
-              disabled={!transcript.length}
-              title="导出为 Markdown 格式"
-            >
-              <span>📄</span> Markdown
-            </button>
-            <button
-              type="button"
-              className="btn-export-pill"
-              onClick={() => handleExportChat("txt")}
-              disabled={!transcript.length}
-              title="导出为纯文本格式"
-            >
-              <span>📑</span> 纯文本
-            </button>
+          <div className="sidebar-export-row">
+            <span className="export-label">导出记录</span>
+            <div className="export-chips">
+              <button
+                type="button"
+                className="btn-chip"
+                onClick={() => handleExportChat("md")}
+                disabled={!transcript.length}
+                title="导出为 Markdown 格式"
+              >
+                Markdown
+              </button>
+              <button
+                type="button"
+                className="btn-chip"
+                onClick={() => handleExportChat("txt")}
+                disabled={!transcript.length}
+                title="导出为纯文本格式"
+              >
+                纯文本
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -715,30 +749,6 @@ export default function AssistantPanel({
               <span className="assistant-connection-dot" />
               {connected ? "状态桥已连接" : "连接中..."}
             </span>
-          </div>
-
-          <div className="duplex-mode-selector" role="radiogroup" aria-label="交互打断模式">
-            <button
-              type="button"
-              className={`duplex-mode-btn ${duplexMode === "speaker_focus" ? "active speaker" : ""}`}
-              onClick={() => handleDuplexModeChange("speaker_focus")}
-              disabled={!commandSocket.ready}
-              title="外放专注模式：播报期间物理闭麦，彻底阻断扬声器自回声与自打断（推荐外放使用）"
-            >
-              <span className="duplex-mode-icon">🔊</span>
-              <span className="duplex-mode-label">外放 · 不可打断</span>
-            </button>
-            <button
-              type="button"
-              className={`duplex-mode-btn ${duplexMode === "headphone_duplex" ? "active headphone" : ""}`}
-              onClick={() => handleDuplexModeChange("headphone_duplex")}
-              disabled={!commandSocket.ready}
-              title="耳机打断模式：高灵敏即时插话（⚠️ 仅限佩戴耳机时使用，扬声器外放可能引起自打断）"
-            >
-              <span className="duplex-mode-icon">🎧</span>
-              <span className="duplex-mode-label">耳机 · 可插话</span>
-              <span className="duplex-caution-badge">仅限耳机</span>
-            </button>
           </div>
 
           <div
@@ -783,18 +793,6 @@ export default function AssistantPanel({
             </div>
           </div>
         )}
-
-        <div
-          className={`duplex-mode-explainer mode-${duplexMode}`}
-          role="status"
-          aria-live="polite"
-        >
-          <span className="duplex-mode-current">
-            {duplexPresentation.icon} 当前：{duplexPresentation.label}
-          </span>
-          <strong>{duplexPresentation.summary}</strong>
-          <span>{duplexPresentation.detail}</span>
-        </div>
 
         {/* 状态步骤指示栏 + 打断插话指示 */}
         <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">

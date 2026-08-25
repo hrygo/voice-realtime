@@ -6,8 +6,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 18px;
+  gap: 16px;
+  padding: 6px 18px;
+  min-height: 48px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
   backdrop-filter: blur(20px);
@@ -20,7 +21,130 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: 1;
+  justify-content: flex-start;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.status-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+}
+
+/* ==========================================================================
+   StatusBar Centered Workspace Tabs (Segmented Control Pill)
+   ========================================================================== */
+
+.status-workspace-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.status-tab-btn {
+  padding: 4px 14px;
+  height: 28px;
+  box-sizing: border-box;
+  border-radius: var(--radius-pill);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.status-tab-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.status-tab-btn.active {
+  background: color-mix(in srgb, var(--color-accent) 20%, var(--bg-card-solid));
+  color: var(--color-accent-light);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 0 10px var(--color-accent-glow);
+}
+
+.status-tab-btn .tab-icon {
+  font-size: 0.85rem;
+  line-height: 1;
+}
+
+.status-tab-btn .tab-label {
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.status-tab-btn .tab-kbd {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-family: var(--font-mono);
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+.status-tab-btn.active .tab-kbd {
+  color: var(--color-accent-light);
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.status-tab-btn .tab-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
+.status-tab-btn .tab-status-chip.recording {
+  background: color-mix(in srgb, var(--color-red) 22%, transparent);
+  color: var(--color-red);
+  border: 1px solid color-mix(in srgb, var(--color-red) 45%, transparent);
+  box-shadow: 0 0 6px var(--color-red-glow);
+}
+
+.status-tab-btn .tab-recording-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-red);
+  box-shadow: 0 0 5px var(--color-red-glow);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.status-tab-btn .tab-status-chip.suspended {
+  background: color-mix(in srgb, var(--color-yellow) 18%, transparent);
+  color: var(--color-yellow);
+  border: 1px solid color-mix(in srgb, var(--color-yellow) 35%, transparent);
+}
+
+.status-tab-btn .tab-status-chip.sync {
+  background: color-mix(in srgb, var(--color-green) 18%, transparent);
+  color: var(--color-green);
+  border: 1px solid color-mix(in srgb, var(--color-green) 35%, transparent);
 }
 
 .status-brand {
@@ -29,22 +153,93 @@
   gap: 8px;
   text-decoration: none;
   flex-shrink: 0;
+  cursor: default;
+  user-select: none;
 }
 
 .status-logo-icon {
   font-size: 1.25rem;
   line-height: 1;
-  filter: drop-shadow(0 2px 6px var(--color-accent-glow));
+  filter: drop-shadow(0 2px 6px rgba(99, 102, 241, 0.25));
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.status-brand:hover .status-logo-icon {
+  transform: scale(1.08);
+}
+
+/* ==========================================================================
+   Voice Studio Title - Premium Silver & Blue Dynamic Gradient Animation
+   ========================================================================== */
+
 .status-title {
-  font-size: 1.02rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  background: linear-gradient(135deg, var(--text-primary) 30%, var(--color-accent-light) 100%);
+  font-size: 1.05rem;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+  background: linear-gradient(
+    120deg,
+    #94a3b8 0%,
+    #f8fafc 15%,
+    #cbd5e1 28%,
+    #38bdf8 45%,
+    #60a5fa 58%,
+    #818cf8 72%,
+    #f8fafc 86%,
+    #94a3b8 100%
+  );
+  background-size: 260% 100%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  white-space: nowrap;
+  animation: silver-blue-flow 5s ease-in-out infinite;
+  filter: drop-shadow(0 1px 8px rgba(56, 189, 248, 0.15));
+  transition: filter 0.3s ease;
+}
+
+.status-brand:hover .status-title {
+  filter: drop-shadow(0 2px 12px rgba(96, 165, 250, 0.45));
+}
+
+@keyframes silver-blue-flow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Explicit Light Theme Adaptive Gradient */
+[data-theme="light"] .status-title {
+  background: linear-gradient(
+    120deg,
+    #475569 0%,
+    #0f172a 18%,
+    #1e293b 30%,
+    #0284c7 48%,
+    #2563eb 62%,
+    #4f46e5 75%,
+    #0f172a 88%,
+    #475569 100%
+  );
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 1px 4px rgba(37, 99, 235, 0.12));
+}
+
+[data-theme="light"] .status-brand:hover .status-title {
+  filter: drop-shadow(0 2px 10px rgba(37, 99, 235, 0.3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-title {
+    animation: none;
+    background-position: 50% 50%;
+  }
 }
 
 .status-badge-chip {
@@ -526,10 +721,28 @@
   }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
+  .status-tab-btn .tab-kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 960px) {
   .status-badge-chip,
   .session-timer {
     display: none;
+  }
+  .status-tab-btn {
+    padding: 4px 10px;
+  }
+}
+
+@media (max-width: 800px) {
+  .status-tab-btn .tab-label {
+    display: none;
+  }
+  .status-tab-btn {
+    padding: 4px 10px;
   }
   .status-bar {
     padding: 6px 12px;
