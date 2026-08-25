@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -16,7 +16,9 @@ from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import TranscriptWindow
 from voice_realtime.subtitles.events import SubtitleEvent
 from voice_realtime.ui.subtitle_proxy import (
+    CapturePreparation,
     FinalizationTimeout,
+    SubtitlePreparation,
     SubtitleProxy,
     SubtitleProxyState,
     TranscriptionGap,
@@ -114,6 +116,60 @@ class StreamSequence:
         return stream
 
 
+class ControlledTranscriber:
+    """可显式发送 ready/断线的后端无关流。"""
+
+    def __init__(self) -> None:
+        self.connected = asyncio.Event()
+        self.sent_audio: list[bytes] = []
+        self.closed = False
+        self._events: asyncio.Queue[ASREvent | None] = asyncio.Queue()
+
+    @property
+    def uri(self) -> str:
+        return "ws://mock/asr"
+
+    async def connect(self) -> None:
+        self.closed = False
+        self.connected.set()
+
+    async def send_audio(self, chunk: bytes) -> None:
+        self.sent_audio.append(chunk)
+
+    async def events(self) -> AsyncIterator[ASREvent]:
+        while True:
+            event = await self._events.get()
+            if event is None:
+                return
+            yield event
+
+    async def finish(self) -> TranscriptWindow:
+        await self.send_audio(b"")
+        return TranscriptWindow(source_epoch=0)
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self._events.put_nowait(None)
+
+    async def emit(self, event: ASREvent) -> None:
+        self._events.put_nowait(event)
+        await asyncio.sleep(0)
+
+    async def disconnect(self) -> None:
+        self._events.put_nowait(None)
+        await asyncio.sleep(0)
+
+
+async def _wait_until(predicate: Callable[[], bool], *, attempts: int = 50) -> None:
+    for _ in range(attempts):
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("condition was not met")
+
+
 @pytest.fixture()
 def settings(tmp_path: Path) -> SubtitleSettings:
     model_dir = tmp_path / "model"
@@ -168,7 +224,274 @@ class TestClientManagement:
         await proxy.stop()
 
 
+class TestPreparedLifecycle:
+    async def test_start_initializes_without_connecting(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        factory = Mock(return_value=stream)
+        proxy = SubtitleProxy(settings, transcriber_factory=factory)
+
+        await proxy.start()
+
+        assert factory.call_count == 0
+        assert proxy.state == "paused"
+        assert proxy.browser_capture_active is False
+        assert proxy._supervisor_task is None
+        await proxy.stop()
+
+    async def test_prepare_waits_ready_but_rejects_pcm_until_commit(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        proxy.add_client(AsyncMock())
+        await proxy.start()
+
+        task = asyncio.create_task(proxy.prepare_browser_capture(timeout_secs=0.2))
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await task
+        assert isinstance(preparation, SubtitlePreparation)
+
+        await proxy.push_audio(b"before")
+        await asyncio.sleep(0)
+        assert stream.sent_audio == []
+        assert proxy.browser_capture_active is False
+
+        proxy.commit_browser_capture(preparation)
+        await proxy.push_audio(b"after")
+        await _wait_until(lambda: stream.sent_audio == [b"after"])
+        assert proxy.browser_capture_active is True
+        await proxy.deactivate_browser_capture()
+        await proxy.stop()
+
+    async def test_prepare_timeout_closes_stream_and_returns_to_paused(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+
+        with pytest.raises(RuntimeError, match="未发送 config"):
+            await proxy.prepare_browser_capture(timeout_secs=0.01)
+
+        assert stream.closed
+        assert proxy.state == "paused"
+        assert proxy.browser_capture_active is False
+        assert proxy._supervisor_task is None
+        await proxy.stop()
+
+    async def test_browser_preparation_token_is_single_use_and_abortable(
+        self, settings: SubtitleSettings
+    ) -> None:
+        first = ControlledTranscriber()
+        second = ControlledTranscriber()
+        streams = iter((first, second))
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=lambda _context: next(streams),
+        )
+        await proxy.start()
+
+        first_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        first_preparation = await first_task
+        proxy.commit_browser_capture(first_preparation)
+
+        with pytest.raises(RuntimeError, match="preparation"):
+            proxy.commit_browser_capture(first_preparation)
+        with pytest.raises(RuntimeError, match="preparation"):
+            await proxy.abort_browser_capture(first_preparation)
+
+        await proxy.deactivate_browser_capture()
+        second_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await second.connected.wait()
+        await second.emit(ASREvent(kind="ready"))
+        second_preparation = await second_task
+        await proxy.abort_browser_capture(second_preparation)
+
+        assert second.closed
+        with pytest.raises(RuntimeError, match="preparation"):
+            await proxy.abort_browser_capture(second_preparation)
+        with pytest.raises(RuntimeError, match="preparation"):
+            proxy.commit_browser_capture(first_preparation)
+        await proxy.stop()
+
+    async def test_deactivate_closes_tasks_stream_and_clears_audio(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        proxy.add_client(AsyncMock())
+        await proxy.start()
+        task = asyncio.create_task(proxy.prepare_browser_capture(timeout_secs=0.2))
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await task
+        proxy.commit_browser_capture(preparation)
+        proxy._audio_buffer.put_nowait(b"queued")
+
+        await proxy.deactivate_browser_capture()
+
+        assert stream.closed
+        assert proxy.browser_capture_active is False
+        assert proxy.state == "paused"
+        assert proxy._supervisor_task is None
+        assert proxy._audio_buffer.empty()
+        assert not proxy._browser_ready.is_set()
+        await proxy.stop()
+
+    async def test_browser_reconnects_only_after_commit(
+        self, settings: SubtitleSettings
+    ) -> None:
+        prepared = ControlledTranscriber()
+        active = ControlledTranscriber()
+        reconnected = ControlledTranscriber()
+        streams = iter((prepared, active, reconnected))
+        factory = Mock(side_effect=lambda _context: next(streams))
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=factory,
+            backoff_delays=(0.01,),
+        )
+        await proxy.start()
+
+        prepared_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await prepared.connected.wait()
+        await prepared.emit(ASREvent(kind="ready"))
+        prepared_token = await prepared_task
+        await prepared.disconnect()
+        await _wait_until(lambda: proxy.state == "paused")
+        assert factory.call_count == 1
+        await proxy.abort_browser_capture(prepared_token)
+
+        active_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await active.connected.wait()
+        await active.emit(ASREvent(kind="ready"))
+        active_token = await active_task
+        proxy.commit_browser_capture(active_token)
+        await active.disconnect()
+
+        await reconnected.connected.wait()
+        await reconnected.emit(ASREvent(kind="ready"))
+        await _wait_until(lambda: proxy.state == "connected")
+        assert factory.call_count == 3
+        await proxy.deactivate_browser_capture()
+        await proxy.stop()
+
 class TestMeetingCapture:
+    async def test_meeting_prepare_timeout_closes_prepared_stream(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+
+        with pytest.raises(RuntimeError, match="未发送 config"):
+            await proxy.prepare_capture("meeting:timeout", timeout_secs=0.01)
+
+        assert stream.closed
+        assert proxy.capture_owner is None
+        assert proxy.state == "paused"
+        await proxy.stop()
+
+    async def test_meeting_capture_preparation_is_silent_until_commit(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+
+        task = asyncio.create_task(
+            proxy.prepare_capture("meeting:abc", timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await task
+        assert isinstance(preparation, CapturePreparation)
+
+        await proxy.push_audio(b"before")
+        await asyncio.sleep(0)
+        assert stream.sent_audio == []
+
+        proxy.commit_capture(preparation)
+        await proxy.push_audio(b"after")
+        await _wait_until(lambda: stream.sent_audio == [b"after"])
+        await proxy.abort_capture()
+
+        assert proxy.capture_owner is None
+        assert proxy.browser_capture_active is False
+        assert proxy.state == "paused"
+        assert proxy._supervisor_task is None
+        await proxy.stop()
+
+    async def test_capture_preparation_token_is_single_use_and_abortable(
+        self, settings: SubtitleSettings
+    ) -> None:
+        first = ControlledTranscriber()
+        second = ControlledTranscriber()
+        streams = iter((first, second))
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=lambda _context: next(streams),
+        )
+        await proxy.start()
+
+        first_task = asyncio.create_task(
+            proxy.prepare_capture("meeting:first", timeout_secs=0.2)
+        )
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        first_preparation = await first_task
+        proxy.commit_capture(first_preparation)
+        with pytest.raises(RuntimeError, match="preparation"):
+            proxy.commit_capture(first_preparation)
+        with pytest.raises(RuntimeError, match="preparation"):
+            await proxy.abort_prepared_capture(first_preparation)
+        await proxy.abort_capture()
+
+        second_task = asyncio.create_task(
+            proxy.prepare_capture("meeting:second", timeout_secs=0.2)
+        )
+        await second.connected.wait()
+        await second.emit(ASREvent(kind="ready"))
+        second_preparation = await second_task
+        await proxy.abort_prepared_capture(second_preparation)
+
+        assert second.closed
+        with pytest.raises(RuntimeError, match="preparation"):
+            await proxy.abort_prepared_capture(second_preparation)
+        with pytest.raises(RuntimeError, match="preparation"):
+            proxy.commit_capture(first_preparation)
+        assert proxy.capture_owner is None
+        assert proxy.state == "paused"
+        await proxy.stop()
+
     async def test_send_loop_waits_for_reconnected_stream_with_pending_audio(
         self,
         settings: SubtitleSettings,
@@ -178,12 +501,13 @@ class TestMeetingCapture:
         proxy = SubtitleProxy(settings)
         proxy._capture_owner = "meeting:test"
         proxy._capture_accept_audio = True
-        proxy._stream = old_stream  # type: ignore[assignment]
+        proxy._capture_active.set()
+        proxy._capture_stream = old_stream  # type: ignore[assignment]
         proxy._capture_stream_available.set()
 
         task = asyncio.create_task(proxy._capture_send_loop(old_stream))  # type: ignore[arg-type]
         await asyncio.sleep(0)
-        proxy._stream = None
+        proxy._capture_stream = None
         proxy._capture_stream_available.clear()
         chunk = b"\x00" * 3_200
         proxy._audio_buffer.put_nowait(chunk)
@@ -191,7 +515,7 @@ class TestMeetingCapture:
 
         assert not task.done()
 
-        proxy._stream = new_stream  # type: ignore[assignment]
+        proxy._capture_stream = new_stream  # type: ignore[assignment]
         proxy._capture_stream_available.set()
         await asyncio.wait_for(proxy._audio_buffer.join(), timeout=1)
         assert new_stream.sent == [chunk]
@@ -231,7 +555,7 @@ class TestMeetingCapture:
         proxy._capture_offset_ms = 0
         proxy._capture_audio_ms = 1_000
         proxy._capture_input_ms = 1_000
-        proxy._stream = old_stream  # type: ignore[assignment]
+        proxy._capture_stream = old_stream  # type: ignore[assignment]
 
         reconnect = asyncio.create_task(proxy._reconnect_capture(old_stream))  # type: ignore[arg-type]
         for _ in range(20):
@@ -263,19 +587,17 @@ class TestMeetingCapture:
         proxy._capture_accept_audio = True
         proxy._capture_audio_ms = 1_000
         proxy._capture_input_ms = 1_000
-        proxy._stream = old_stream  # type: ignore[assignment]
+        proxy._capture_stream = old_stream  # type: ignore[assignment]
 
         await proxy._reconnect_capture(old_stream)  # type: ignore[arg-type]
 
         listener.assert_not_awaited()
 
-    async def test_finish_capture_resumes_browser_supervisor(
+    async def test_finish_capture_does_not_resume_browser_supervisor(
         self, settings: SubtitleSettings
     ) -> None:
-        initial = FakeStream([])
         capture = FlushableFakeStream(_snapshot("尾句"))
-        resumed = FakeStream([])
-        factory = StreamSequence(initial, capture, resumed)
+        factory = StreamSequence(capture)
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
@@ -284,18 +606,17 @@ class TestMeetingCapture:
         await asyncio.sleep(0)
 
         assert proxy.capture_owner is None
-        assert proxy.state == "connected"
-        assert proxy._supervisor_task is not None
-        assert factory.created == [initial, capture, resumed]
+        assert proxy.browser_capture_active is False
+        assert proxy.state == "paused"
+        assert proxy._supervisor_task is None
+        assert factory.created == [capture]
         await proxy.stop()
 
-    async def test_abort_capture_resumes_browser_supervisor(
+    async def test_abort_capture_does_not_resume_browser_supervisor(
         self, settings: SubtitleSettings
     ) -> None:
-        initial = FakeStream([])
         capture = FlushableFakeStream(_snapshot("中止"))
-        resumed = FakeStream([])
-        factory = StreamSequence(initial, capture, resumed)
+        factory = StreamSequence(capture)
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
@@ -304,19 +625,18 @@ class TestMeetingCapture:
         await asyncio.sleep(0)
 
         assert proxy.capture_owner is None
-        assert proxy.state == "connected"
-        assert proxy._supervisor_task is not None
-        assert factory.created == [initial, capture, resumed]
+        assert proxy.browser_capture_active is False
+        assert proxy.state == "paused"
+        assert proxy._supervisor_task is None
+        assert factory.created == [capture]
         await proxy.stop()
 
-    async def test_capture_timeout_resumes_browser_supervisor(
+    async def test_capture_timeout_does_not_resume_browser_supervisor(
         self, settings: SubtitleSettings
     ) -> None:
-        initial = FakeStream([])
         capture = FlushableFakeStream(_snapshot("不会 ready"))
         capture._events_queue = asyncio.Queue()
-        resumed = FakeStream([])
-        factory = StreamSequence(initial, capture, resumed)
+        factory = StreamSequence(capture)
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
@@ -327,17 +647,17 @@ class TestMeetingCapture:
         await asyncio.sleep(0)
 
         assert proxy.capture_owner is None
-        assert proxy.state == "connected"
-        assert proxy._supervisor_task is not None
-        assert factory.created == [initial, capture, resumed]
+        assert proxy.browser_capture_active is False
+        assert proxy.state == "paused"
+        assert proxy._supervisor_task is None
+        assert factory.created == [capture]
         await proxy.stop()
 
     async def test_stop_during_capture_does_not_resume_browser_supervisor(
         self, settings: SubtitleSettings
     ) -> None:
-        initial = FakeStream([])
         capture = FlushableFakeStream(_snapshot("关闭"))
-        factory = StreamSequence(initial, capture)
+        factory = StreamSequence(capture)
         proxy = SubtitleProxy(settings, stream_factory=factory)
         await proxy.start()
 
@@ -347,7 +667,7 @@ class TestMeetingCapture:
         assert proxy.capture_owner is None
         assert proxy.state == "stopped"
         assert proxy._supervisor_task is None
-        assert factory.created == [initial, capture]
+        assert factory.created == [capture]
 
     async def test_capture_does_not_write_legacy_srt(
         self, settings: SubtitleSettings
@@ -529,7 +849,7 @@ class TestBroadcast:
 
 
 class TestStreamConnection:
-    async def test_start_uses_ws_scheme(self, settings: SubtitleSettings) -> None:
+    async def test_prepare_uses_ws_scheme(self, settings: SubtitleSettings) -> None:
         """回归：wlk WS 连接必须用 ws:// scheme（http:// 会被 websockets 拒绝，
         此前导致 SubtitleStream.connect 抛 InvalidURI、字幕链路全断）。"""
         with patch("voice_realtime.asr.adapters.wlk.SubtitleStream") as mock_stream:
@@ -537,18 +857,21 @@ class TestStreamConnection:
             mock_stream.return_value.connect = AsyncMock()
             mock_stream.return_value.close = AsyncMock()
 
-            async def no_events() -> AsyncIterator[SubtitleEvent]:
+            async def ready_events() -> AsyncIterator[SubtitleEvent]:
+                yield SubtitleEvent(kind="config", raw={"type": "config"})
                 await asyncio.Event().wait()
                 if False:  # pragma: no cover - 仅用于把该挂起协程声明为 async generator
                     yield SubtitleEvent(kind="other")
 
-            mock_stream.return_value.events = no_events
+            mock_stream.return_value.events = ready_events
             await proxy.start()
             try:
+                preparation = await proxy.prepare_browser_capture(timeout_secs=0.2)
                 mock_stream.assert_called_once()
                 url = mock_stream.call_args.kwargs["url"]
                 assert url == f"ws://{settings.host}:{settings.port}"
                 mock_stream.return_value.connect.assert_awaited_once()
+                await proxy.abort_browser_capture(preparation)
             finally:
                 await proxy.stop()
             mock_stream.return_value.close.assert_awaited_once()
@@ -556,53 +879,57 @@ class TestStreamConnection:
     async def test_disconnect_reconnects_without_replacing_browser_clients(
         self, settings: SubtitleSettings
     ) -> None:
-        attempts = 0
-
-        class ReconnectingStream(FakeStream):
-            async def connect(self) -> None:
-                nonlocal attempts
-                attempts += 1
-                if attempts == 1:
-                    raise ConnectionRefusedError("wlk down")
-
-        streams: list[ReconnectingStream] = []
-
-        def factory(**_kwargs: object) -> ReconnectingStream:
-            stream = ReconnectingStream([])
-            streams.append(stream)
-            return stream
-
-        proxy = SubtitleProxy(settings, stream_factory=factory, backoff_delays=(0.01,))
+        first = ControlledTranscriber()
+        second = ControlledTranscriber()
+        streams = iter((first, second))
+        factory = Mock(side_effect=lambda _context: next(streams))
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=factory,
+            backoff_delays=(0.01,),
+        )
         client = AsyncMock()
         proxy.add_client(client)
 
         await proxy.start()
-        for _ in range(20):
-            if attempts >= 2 and proxy.state == "connected":
-                break
-            await asyncio.sleep(0.01)
+        task = asyncio.create_task(proxy.prepare_browser_capture(timeout_secs=0.2))
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        preparation = await task
+        proxy.commit_browser_capture(preparation)
+        await first.disconnect()
+        await second.connected.wait()
+        await second.emit(ASREvent(kind="ready"))
+        await _wait_until(lambda: proxy.state == "connected")
 
-        assert attempts >= 2
+        assert factory.call_count == 2
         assert proxy.state == "connected"
         assert proxy.has_clients
+        await proxy.deactivate_browser_capture()
         await proxy.stop()
         assert proxy.state == "stopped"
 
     async def test_stop_cancels_backoff_immediately(self, settings: SubtitleSettings) -> None:
-        class OfflineStream(FakeStream):
+        first = ControlledTranscriber()
+
+        class OfflineStream(ControlledTranscriber):
             async def connect(self) -> None:
                 raise ConnectionRefusedError("wlk down")
 
+        streams = iter((first, OfflineStream()))
         proxy = SubtitleProxy(
             settings,
-            stream_factory=lambda **_kwargs: OfflineStream([]),
+            transcriber_factory=lambda _context: next(streams),
             backoff_delays=(30.0,),
         )
         await proxy.start()
-        for _ in range(20):
-            if proxy.state == "backoff":
-                break
-            await asyncio.sleep(0)
+        task = asyncio.create_task(proxy.prepare_browser_capture(timeout_secs=0.2))
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        preparation = await task
+        proxy.commit_browser_capture(preparation)
+        await first.disconnect()
+        await _wait_until(lambda: proxy.state == "backoff")
 
         await asyncio.wait_for(proxy.stop(), timeout=0.1)
 
@@ -614,7 +941,7 @@ class TestAudioPush:
         """无浏览器订阅时丢弃音频，恢复订阅后不发送历史帧。"""
         fake = FakeStream([])
         proxy = SubtitleProxy(settings)
-        proxy._stream = fake  # type: ignore[assignment]
+        proxy._browser_stream = fake  # type: ignore[assignment]
         await proxy.push_audio(b"\x00" * 512)
         assert proxy._audio_buffer.qsize() == 0
 
@@ -622,7 +949,9 @@ class TestAudioPush:
         """有浏览器订阅时，音频经 _push_audio_batch 送到 wlk。"""
         fake = FakeStream([])
         proxy = SubtitleProxy(settings)
-        proxy._stream = fake  # type: ignore[assignment]
+        proxy._browser_stream = fake  # type: ignore[assignment]
+        proxy._browser_capture_active = True
+        proxy._browser_ready.set()
         proxy._running = True
         proxy._state = SubtitleProxyState.CONNECTED
         proxy.add_client(AsyncMock())

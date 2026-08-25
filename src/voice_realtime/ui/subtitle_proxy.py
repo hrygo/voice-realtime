@@ -43,6 +43,21 @@ class FinalizationTimeoutError(TimeoutError):
 FinalizationTimeout = FinalizationTimeoutError
 
 
+@dataclass(frozen=True, slots=True)
+class SubtitlePreparation:
+    """普通字幕连接已 ready、尚未接收 PCM 的一次性凭证。"""
+
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class CapturePreparation:
+    """会议采集连接已 ready、尚未接收 PCM 的一次性凭证。"""
+
+    owner: str
+    generation: int
+
+
 @dataclass(frozen=True)
 class TranscriptionGap:
     """WLK 重连期间无法转录的样本时钟区间。"""
@@ -56,6 +71,7 @@ class SubtitleProxyState(StrEnum):
     """字幕代理对外可观察状态。"""
 
     STOPPED = "stopped"
+    PAUSED = "paused"
     CONNECTING = "connecting"
     CONNECTED = "connected"
     BACKOFF = "backoff"
@@ -69,7 +85,7 @@ class _ClientChannel:
 
 
 class SubtitleProxy:
-    """在一个后台 supervisor 中维持 WLK 连接并广播全量字幕快照。"""
+    """显式准备并激活普通字幕或会议 WLK 流。"""
 
     _CLIENT_QUEUE_SIZE = 8
     _AUDIO_QUEUE_SIZE = 512
@@ -96,7 +112,8 @@ class SubtitleProxy:
         )
         self._transcriber_factory = transcriber_factory
         self._backoff_delays = tuple(backoff_delays)
-        self._stream: StreamingTranscriber | None = None
+        self._browser_stream: StreamingTranscriber | None = None
+        self._capture_stream: StreamingTranscriber | None = None
         self._clients: dict[ClientSender, _ClientChannel] = {}
         self._client_sequence = 0
         self._running = False
@@ -104,6 +121,11 @@ class SubtitleProxy:
         self._last_error: str | None = None
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
+        self._browser_generation = 0
+        self._browser_prepared: SubtitlePreparation | None = None
+        self._browser_capture_active = False
+        self._browser_ready = asyncio.Event()
+        self._browser_active = asyncio.Event()
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self._AUDIO_QUEUE_SIZE)
         self._last_payload: dict[str, Any] | None = None
         self._snapshot_signature: tuple[tuple[tuple[str, ...], ...], str] | None = None
@@ -111,11 +133,14 @@ class SubtitleProxy:
         self._archived = False
         self._session_has_confirmed = False
         self._capture_owner: str | None = None
+        self._capture_generation = 0
+        self._capture_prepared: CapturePreparation | None = None
         self._capture_epoch = 0
         self._capture_offset_ms = 0
         self._capture_audio_ms = 0
         self._capture_input_ms = 0
         self._capture_accept_audio = False
+        self._capture_active = asyncio.Event()
         self._capture_ready = asyncio.Event()
         self._capture_stream_available = asyncio.Event()
         self._capture_ready_to_stop = asyncio.Event()
@@ -144,6 +169,11 @@ class SubtitleProxy:
     def capture_owner(self) -> str | None:
         """返回当前会议采集租约持有者；浏览器订阅不影响该租约。"""
         return self._capture_owner
+
+    @property
+    def browser_capture_active(self) -> bool:
+        """普通字幕是否已提交并可接收 PCM。"""
+        return self._browser_capture_active
 
     @property
     def capture_epoch(self) -> int:
@@ -198,10 +228,10 @@ class SubtitleProxy:
 
     @property
     def is_paused(self) -> bool:
-        return not self.has_clients and self._capture_owner is None
+        return not self._browser_capture_active and not self._capture_accept_audio
 
     async def start(self) -> None:
-        """启动可取消的连接 supervisor；WLK 离线时在后台持续退避重连。"""
+        """初始化代理；不建立 WLK 连接。"""
         if self._running:
             return
         try:
@@ -216,25 +246,19 @@ class SubtitleProxy:
         self._persisted_confirmed_signature = None
         self._last_error = None
         self._stop_event.clear()
-        await self._resume_browser_connection()
+        self._browser_ready.clear()
+        self._browser_active.clear()
+        self._capture_ready.clear()
+        self._capture_active.clear()
+        self._state = SubtitleProxyState.PAUSED
 
     async def stop(self) -> None:
         """停止重连、关闭流和客户端 worker，并归档本次 SRT。"""
         self._running = False
         self._stop_event.set()
         if self._capture_owner is not None:
-            await self.abort_capture()
-        if self._supervisor_task is not None:
-            self._supervisor_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._supervisor_task
-            self._supervisor_task = None
-        stream = self._stream
-        if stream is not None:
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(stream.close(), timeout=2.0)
-        self._stream = None
-        self._drain_audio_buffer()
+            await self._close_capture()
+        await self._close_browser_connection(archive=False)
         channels = list(self._clients.values())
         self._clients.clear()
         for channel in channels:
@@ -245,26 +269,119 @@ class SubtitleProxy:
         self._state = SubtitleProxyState.STOPPED
         logger.info("SubtitleProxy: 已停止")
 
+    async def prepare_browser_capture(
+        self, *, timeout_secs: float
+    ) -> SubtitlePreparation:
+        """建立普通字幕流并等待 ready，但不接收 PCM。"""
+        if timeout_secs <= 0:
+            raise ValueError("timeout_secs 必须大于 0")
+        if not self._running:
+            await self.start()
+        if self._capture_owner is not None:
+            raise RuntimeError("会议采集租约存在，无法准备普通字幕")
+        if self._browser_capture_active or self._browser_prepared is not None:
+            raise RuntimeError("普通字幕已活动或正在准备")
+
+        self._browser_generation += 1
+        preparation = SubtitlePreparation(generation=self._browser_generation)
+        self._browser_prepared = preparation
+        self._browser_ready.clear()
+        self._browser_active.clear()
+        self._drain_audio_buffer()
+        self._state = SubtitleProxyState.CONNECTING
+        stream = self._create_transcriber(
+            ASRSessionContext(source_epoch=0, offset_ms=0, purpose="subtitles")
+        )
+        self._browser_stream = stream
+        try:
+            async with asyncio.timeout(timeout_secs):
+                await stream.connect()
+                if not self._running or self._browser_prepared is not preparation:
+                    raise RuntimeError("普通字幕 preparation 已取消")
+                self._last_error = None
+                self._state = SubtitleProxyState.CONNECTED
+                self._supervisor_task = asyncio.create_task(
+                    self._supervise_connection(stream)
+                )
+                await self._browser_ready.wait()
+        except TimeoutError as exc:
+            await self._close_browser_connection(archive=False)
+            raise RuntimeError("WhisperLiveKit 未发送 config") from exc
+        except BaseException:
+            await self._close_browser_connection(archive=False)
+            raise
+        return preparation
+
+    def commit_browser_capture(self, preparation: SubtitlePreparation) -> None:
+        """同步提升 ready 的普通字幕 preparation。"""
+        if self._browser_prepared is not preparation:
+            raise RuntimeError("无效或已消费的 browser preparation")
+        task = self._supervisor_task
+        if (
+            not self._running
+            or self._browser_stream is None
+            or not self._browser_ready.is_set()
+            or task is None
+            or task.done()
+        ):
+            raise RuntimeError("browser preparation 未 ready")
+        if self._capture_owner is not None:
+            raise RuntimeError("会议采集租约仍存在")
+        self._browser_prepared = None
+        self._browser_capture_active = True
+        self._browser_active.set()
+        self._state = SubtitleProxyState.CONNECTED
+
+    async def abort_browser_capture(self, preparation: SubtitlePreparation) -> None:
+        """消费并关闭尚未提交的普通字幕 preparation。"""
+        if self._browser_prepared is not preparation:
+            raise RuntimeError("无效或已消费的 browser preparation")
+        await self._close_browser_connection(archive=False)
+
+    async def deactivate_browser_capture(self) -> None:
+        """停用普通字幕，关闭任务与流并清空待发 PCM。"""
+        await self._close_browser_connection(archive=True)
+
     async def begin_capture(self, owner: str) -> None:
-        """创建与浏览器无关的独立 WLK 采集租约。"""
+        """兼容旧调用：准备会议流后立即提交。"""
         owner = owner.strip()
         if not owner:
             raise ValueError("capture owner 不能为空")
         if self._capture_owner is not None:
-            if self._capture_owner == owner:
+            if self._capture_owner == owner and self._capture_accept_audio:
                 return
+            raise RuntimeError("已有会议采集租约")
+        preparation = await self.prepare_capture(owner, timeout_secs=5.0)
+        self.commit_capture(preparation)
+
+    async def prepare_capture(
+        self, owner: str, *, timeout_secs: float
+    ) -> CapturePreparation:
+        """建立会议流并等待 ready，但不接收 PCM。"""
+        owner = owner.strip()
+        if not owner:
+            raise ValueError("capture owner 不能为空")
+        if timeout_secs <= 0:
+            raise ValueError("timeout_secs 必须大于 0")
+        if self._capture_owner is not None:
             raise RuntimeError("已有会议采集租约")
         if not self._running:
             await self.start()
-        await self._stop_browser_connection()
-        self._drain_audio_buffer()
+
         self._snapshot_signature = None
+        self._capture_generation += 1
+        preparation = CapturePreparation(
+            owner=owner,
+            generation=self._capture_generation,
+        )
+        self._capture_prepared = preparation
         self._capture_epoch += 1
         self._capture_offset_ms = 0
         self._capture_audio_ms = 0
         self._capture_input_ms = 0
         self._capture_owner = owner
-        self._capture_accept_audio = True
+        self._capture_accept_audio = False
+        self._capture_active.clear()
         self._capture_ready.clear()
         self._capture_stream_available.clear()
         self._capture_ready_to_stop.clear()
@@ -278,35 +395,71 @@ class SubtitleProxy:
                     purpose="meeting",
                 )
             )
-            self._stream = stream
-            await stream.connect()
-            self._state = SubtitleProxyState.CONNECTED
-            self._capture_stream_available.set()
-            self._capture_event_task = asyncio.create_task(self._capture_event_loop(stream))
-            self._capture_send_task = asyncio.create_task(self._capture_send_loop(stream))
-            try:
-                await asyncio.wait_for(self._capture_ready.wait(), timeout=5.0)
-            except TimeoutError as exc:
-                raise RuntimeError("WhisperLiveKit 未发送 config") from exc
+            self._capture_stream = stream
+            async with asyncio.timeout(timeout_secs):
+                await stream.connect()
+                self._state = SubtitleProxyState.CONNECTED
+                self._capture_stream_available.set()
+                self._capture_event_task = asyncio.create_task(
+                    self._capture_event_loop(stream)
+                )
+                self._capture_send_task = asyncio.create_task(
+                    self._capture_send_loop(stream)
+                )
+                await self._capture_ready.wait()
+        except TimeoutError as exc:
+            await self._close_capture()
+            raise RuntimeError("WhisperLiveKit 未发送 config") from exc
         except BaseException:
-            await self.abort_capture()
+            await self._close_capture()
             raise
+        return preparation
+
+    def commit_capture(self, preparation: CapturePreparation) -> None:
+        """同步提升 ready 的会议 preparation。"""
+        if self._capture_prepared is not preparation:
+            raise RuntimeError("无效或已消费的 capture preparation")
+        if (
+            self._capture_stream is None
+            or not self._capture_ready.is_set()
+            or self._capture_event_task is None
+            or self._capture_event_task.done()
+            or self._capture_send_task is None
+            or self._capture_send_task.done()
+        ):
+            raise RuntimeError("capture preparation 未 ready")
+        if self._browser_capture_active:
+            raise RuntimeError("普通字幕仍处于活动状态")
+        self._capture_prepared = None
+        self._capture_accept_audio = True
+        self._capture_active.set()
+        self._state = SubtitleProxyState.CONNECTED
+
+    async def abort_prepared_capture(self, preparation: CapturePreparation) -> None:
+        """消费并关闭尚未提交的会议 preparation。"""
+        if self._capture_prepared is not preparation:
+            raise RuntimeError("无效或已消费的 capture preparation")
+        await self._close_capture()
 
     async def finish_capture(self, *, timeout_secs: float) -> TranscriptWindow:
         """发送空 PCM EOF，等待最终快照和 ready_to_stop，再关闭 epoch。"""
-        if self._capture_owner is None or self._stream is None:
+        stream = self._capture_stream
+        if (
+            self._capture_owner is None
+            or stream is None
+            or not self._capture_accept_audio
+        ):
             raise RuntimeError("没有活动的会议采集租约")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
         start_time = perf_counter()
         logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
-        self._capture_accept_audio = False
         try:
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._audio_buffer.join(), timeout=timeout_secs)
-            final_window = await asyncio.wait_for(
-                self._stream.finish(), timeout=timeout_secs
-            )
+            self._capture_accept_audio = False
+            self._capture_active.clear()
+            final_window = await asyncio.wait_for(stream.finish(), timeout=timeout_secs)
             self._capture_last_window = final_window
             elapsed_ms = (perf_counter() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
@@ -330,34 +483,34 @@ class SubtitleProxy:
     async def abort_capture(self) -> None:
         """取消会议采集，不发送 EOF；已确认窗口仍由上层保留。"""
         self._capture_accept_audio = False
+        self._capture_active.clear()
         await self._close_capture()
 
-    async def _stop_browser_connection(self) -> None:
+    async def _close_browser_connection(self, *, archive: bool) -> None:
+        self._browser_capture_active = False
+        self._browser_prepared = None
+        self._browser_active.clear()
         task = self._supervisor_task
         self._supervisor_task = None
-        if task is not None:
+        if task is not None and task is not asyncio.current_task():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-        stream = self._stream
+        stream = self._browser_stream
+        self._browser_stream = None
         if stream is not None:
             with contextlib.suppress(Exception):
                 await stream.close()
-        self._stream = None
-
-    async def _resume_browser_connection(self) -> None:
-        """会议流释放后恢复应用级字幕连接，不参与应用 shutdown。"""
-        if (
-            not self._running
-            or self._capture_owner is not None
-            or self._supervisor_task is not None
-        ):
-            return
-        self._stop_event.clear()
-        self._state = SubtitleProxyState.CONNECTING
-        self._supervisor_task = asyncio.create_task(self._supervise_connection())
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        self._browser_ready.clear()
+        self._drain_audio_buffer()
+        if archive:
+            self._archive_current_srt()
+        if self._running:
+            self._state = (
+                SubtitleProxyState.CONNECTED
+                if self._capture_accept_audio
+                else SubtitleProxyState.PAUSED
+            )
 
     async def _capture_event_loop(self, stream: StreamingTranscriber) -> None:
         active_stream = stream
@@ -393,10 +546,13 @@ class SubtitleProxy:
         try:
             while self._capture_owner is not None:
                 if pending is None:
+                    await self._capture_active.wait()
+                    if self._capture_owner is None:
+                        return
                     await self._capture_stream_available.wait()
                     if self._capture_owner is None:
                         return
-                    if self._stream is None:
+                    if self._capture_stream is None:
                         self._capture_stream_available.clear()
                         continue
                     pending = await self._audio_buffer.get()
@@ -404,7 +560,7 @@ class SubtitleProxy:
                     self._audio_buffer.task_done()
                     pending = None
                     continue
-                active_stream = self._stream
+                active_stream = self._capture_stream
                 if active_stream is None:
                     self._capture_stream_available.clear()
                     await self._capture_stream_available.wait()
@@ -416,8 +572,8 @@ class SubtitleProxy:
                     await active_stream.send_audio(chunk)
                 except Exception as exc:
                     self._last_error = f"{type(exc).__name__}: {exc}"
-                    if self._stream is active_stream:
-                        self._stream = None
+                    if self._capture_stream is active_stream:
+                        self._capture_stream = None
                     self._capture_stream_available.clear()
                     with contextlib.suppress(Exception):
                         await active_stream.close()
@@ -456,8 +612,8 @@ class SubtitleProxy:
         """建立新 ASR epoch，并显式通知无法补录的间隔。"""
         with contextlib.suppress(Exception):
             await old_stream.close()
-        if self._stream is old_stream:
-            self._stream = None
+        if self._capture_stream is old_stream:
+            self._capture_stream = None
         self._capture_stream_available.clear()
         self._capture_offset_ms += self._capture_audio_ms
         self._capture_audio_ms = 0
@@ -484,7 +640,7 @@ class SubtitleProxy:
                     )
                 )
                 await stream.connect()
-                self._stream = stream
+                self._capture_stream = stream
                 self._state = SubtitleProxyState.CONNECTED
                 self._capture_stream_available.set()
                 self._capture_ready.clear()
@@ -506,7 +662,8 @@ class SubtitleProxy:
         if event.kind == "error":
             self._last_error = event.error_message
             await self._broadcast_payload(
-                {"type": "error", "error": event.error_message or "ASR error"}
+                {"type": "error", "error": event.error_message or "ASR error"},
+                persist=False,
             )
             return
         window = event.window
@@ -521,27 +678,32 @@ class SubtitleProxy:
                 await listener(window)
             except Exception:
                 logger.exception("SubtitleProxy: 会议转录监听器失败")
-        await self._broadcast_payload(legacy_subtitle_payload(window))
+        await self._broadcast_payload(legacy_subtitle_payload(window), persist=False)
 
-    async def _supervise_connection(self) -> None:
+    async def _supervise_connection(
+        self, initial_stream: StreamingTranscriber
+    ) -> None:
         attempt = 0
-        while self._running:
-            self._state = SubtitleProxyState.CONNECTING
-            stream: StreamingTranscriber | None = None
+        stream: StreamingTranscriber | None = initial_stream
+        while self._running and (
+            self._browser_prepared is not None or self._browser_capture_active
+        ):
             try:
-                stream = self._create_transcriber(
-                    ASRSessionContext(
-                        source_epoch=0,
-                        offset_ms=0,
-                        purpose="subtitles",
+                if stream is None:
+                    self._state = SubtitleProxyState.CONNECTING
+                    stream = self._create_transcriber(
+                        ASRSessionContext(
+                            source_epoch=0,
+                            offset_ms=0,
+                            purpose="subtitles",
+                        )
                     )
-                )
-                self._stream = stream
-                await stream.connect()
-                if not self._running:
-                    break
-                self._last_error = None
-                self._state = SubtitleProxyState.CONNECTED
+                    self._browser_stream = stream
+                    await stream.connect()
+                    if not self._running or not self._browser_capture_active:
+                        break
+                    self._last_error = None
+                    self._state = SubtitleProxyState.CONNECTED
                 attempt = 0
                 logger.info("SubtitleProxy: 已连接 wlk %s", stream.uri)
                 await self._serve_connection(stream)
@@ -556,11 +718,14 @@ class SubtitleProxy:
                 if stream is not None:
                     with contextlib.suppress(Exception):
                         await stream.close()
-                if self._stream is stream:
-                    self._stream = None
+                if self._browser_stream is stream:
+                    self._browser_stream = None
+                self._browser_ready.clear()
                 self._drain_audio_buffer()
 
-            if not self._running:
+            if not self._running or not self._browser_capture_active:
+                if self._running and not self._capture_accept_audio:
+                    self._state = SubtitleProxyState.PAUSED
                 break
             delay = self._backoff_delays[min(attempt, len(self._backoff_delays) - 1)]
             attempt += 1
@@ -568,6 +733,7 @@ class SubtitleProxy:
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
             except TimeoutError:
+                stream = None
                 continue
             break
 
@@ -586,16 +752,19 @@ class SubtitleProxy:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _audio_send_loop(self, stream: StreamingTranscriber) -> None:
-        while self._running and self._stream is stream:
+        while self._running and self._browser_stream is stream:
+            await self._browser_active.wait()
+            if not self._running or self._browser_stream is not stream:
+                return
             chunk = await self._audio_buffer.get()
             try:
-                if self.has_clients:
+                if self._browser_capture_active and self.has_clients:
                     await stream.send_audio(chunk)
             finally:
                 self._audio_buffer.task_done()
 
     async def _event_recv_loop(self, stream: StreamingTranscriber | None = None) -> None:
-        active_stream = stream or self._stream
+        active_stream = stream or self._browser_stream
         if active_stream is None:
             return
         async for event in active_stream.events():
@@ -607,10 +776,8 @@ class SubtitleProxy:
 
     async def _handle_stream_event(self, event: ASREvent) -> None:
         """只消费后端无关事件，并按完整领域窗口广播。"""
-        if self._capture_owner is not None:
-            await self._handle_capture_event(event)
-            return
         if event.kind == "ready":
+            self._browser_ready.set()
             await self._broadcast_payload(legacy_ready_payload())
             return
         if event.kind == "error":
@@ -622,14 +789,16 @@ class SubtitleProxy:
         if event.window is not None:
             await self._broadcast_payload(legacy_subtitle_payload(event.window))
 
-    async def _broadcast_payload(self, payload: dict[str, Any]) -> None:
+    async def _broadcast_payload(
+        self, payload: dict[str, Any], *, persist: bool = True
+    ) -> None:
         """广播发生变化的完整快照，并在 confirmed 变化时原子写入 SRT。"""
         self._last_payload = payload
         signature = self._snapshot_key(payload)
         if signature == self._snapshot_signature:
             return
         self._snapshot_signature = signature
-        if self._capture_owner is None:
+        if persist:
             self._persist_confirmed_snapshot(payload, signature[0])
 
         if self._clients:
@@ -653,9 +822,10 @@ class SubtitleProxy:
         if current.exists():
             with contextlib.suppress(OSError):
                 current.unlink()
-        stream = self._stream
-        if stream is not None and self._capture_owner is None:
-            self._stream = None
+        stream = self._browser_stream
+        if stream is not None:
+            self._browser_stream = None
+            self._browser_ready.clear()
             with contextlib.suppress(Exception):
                 await stream.close()
         text = json.dumps(empty_payload, ensure_ascii=False)
@@ -668,13 +838,14 @@ class SubtitleProxy:
 
     async def push_audio(self, data: bytes) -> None:
         """接收 s16le 音频；会议租约存在时不依赖浏览器订阅。"""
-        if self._capture_owner is not None:
-            if not self._capture_accept_audio:
-                return
+        if self._capture_accept_audio:
             duration_ms = len(data) // 32
             start_ms = self._capture_input_ms
             self._capture_input_ms += duration_ms
-            if self._stream is None and self._state is SubtitleProxyState.BACKOFF:
+            if (
+                self._capture_stream is None
+                and self._state is SubtitleProxyState.BACKOFF
+            ):
                 return
             if self._audio_buffer.full():
                 await self._notify_capture_gap(start_ms, self._capture_input_ms)
@@ -685,7 +856,9 @@ class SubtitleProxy:
         if (
             not self.has_clients
             or not self._running
-            or self._state is not SubtitleProxyState.CONNECTED
+            or not self._browser_capture_active
+            or self._browser_stream is None
+            or not self._browser_ready.is_set()
         ):
             return
         if self._audio_buffer.full():
@@ -697,8 +870,8 @@ class SubtitleProxy:
 
     async def _push_audio_batch(self) -> None:
         """兼容性批量发送入口；只发送当前订阅期内已排队的音频。"""
-        stream = self._stream
-        if stream is None or not self.has_clients:
+        stream = self._browser_stream
+        if stream is None or not self.has_clients or not self._browser_capture_active:
             self._drain_audio_buffer()
             return
         while True:
@@ -826,6 +999,8 @@ class SubtitleProxy:
 
     async def _close_capture(self) -> None:
         self._capture_accept_audio = False
+        self._capture_prepared = None
+        self._capture_active.clear()
         event_task = self._capture_event_task
         send_task = self._capture_send_task
         self._capture_event_task = None
@@ -833,16 +1008,26 @@ class SubtitleProxy:
         for task in (event_task, send_task):
             if task is not None and task is not asyncio.current_task():
                 task.cancel()
-        tasks = [task for task in (event_task, send_task) if task is not None]
+        tasks = [
+            task
+            for task in (event_task, send_task)
+            if task is not None and task is not asyncio.current_task()
+        ]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
-        stream = self._stream
-        self._stream = None
+        stream = self._capture_stream
+        self._capture_stream = None
+        self._capture_ready.clear()
+        self._capture_ready_to_stop.clear()
         self._capture_stream_available.clear()
         if stream is not None:
             with contextlib.suppress(Exception):
                 await stream.close()
         self._capture_owner = None
         self._drain_audio_buffer()
-        self._state = SubtitleProxyState.STOPPED
-        await self._resume_browser_connection()
+        if self._running:
+            self._state = (
+                SubtitleProxyState.CONNECTED
+                if self._browser_capture_active
+                else SubtitleProxyState.PAUSED
+            )
