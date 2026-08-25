@@ -1,14 +1,72 @@
-"""语音助手与会议助手的互斥运行模式编排。"""
+"""四种语音工作负载的两阶段互斥运行模式编排。"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
+import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Protocol, TypeVar, cast
 from uuid import UUID
 
-from voice_realtime.meeting.models import MeetingRecord, MeetingStatus, RuntimeMode, StorageHealth
+from voice_realtime.meeting.models import (
+    MeetingRecord,
+    MeetingStatus,
+    PCMOwner,
+    RuntimeMode,
+    StorageHealth,
+)
+
+LOGGER = logging.getLogger(__name__)
+T = TypeVar("T")
+TransitionValue = str | int | float | None
+
+
+class InteractionWorkload(Protocol):
+    """协调器所需的交互会话最小接口。"""
+
+    @property
+    def active(self) -> bool: ...
+
+    async def start(self) -> None: ...
+
+    async def stop(self, *, reason: str) -> None: ...
+
+
+class SubtitleWorkload(Protocol):
+    """普通字幕的无 PCM prepare / 同步 commit 接口。"""
+
+    @property
+    def browser_capture_active(self) -> bool: ...
+
+    async def prepare_browser_capture(self, *, timeout_secs: float) -> Any: ...
+
+    def commit_browser_capture(self, preparation: Any) -> None: ...
+
+    async def abort_browser_capture(self, preparation: Any) -> None: ...
+
+    async def deactivate_browser_capture(self) -> None: ...
+
+
+class MeetingWorkload(Protocol):
+    """会议会话的两阶段启动及 EOF 停止接口。"""
+
+    @property
+    def active_meeting_id(self) -> UUID | None: ...
+
+    async def prepare_start(self, title: str | None = None) -> Any: ...
+
+    def commit_start(self, preparation: Any) -> MeetingRecord: ...
+
+    async def publish_started(self, preparation: Any) -> None: ...
+
+    async def abort_start(self, preparation: Any) -> None: ...
+
+    async def stop(self) -> MeetingRecord: ...
+
+    async def interrupt(self, reason: str) -> None: ...
 
 
 class RuntimeModeError(RuntimeError):
@@ -36,37 +94,84 @@ MeetingUnavailable = MeetingUnavailableError
 
 
 class RuntimeModeCoordinator:
-    """串行协调 InteractionSession 与 MeetingSession 的生命周期。"""
+    """以单锁和两阶段屏障串行仲裁所有麦克风推理工作负载。"""
 
     def __init__(
         self,
-        interaction: Any,
-        meeting: Any | None = None,
+        interaction: InteractionWorkload,
+        subtitles: SubtitleWorkload | MeetingWorkload | None = None,
+        meeting: MeetingWorkload | None = None,
         *,
-        meeting_session: Any | None = None,
+        meeting_session: MeetingWorkload | None = None,
         initial_mode: RuntimeMode | str | None = None,
+        on_owner_changed: Callable[[PCMOwner], None] | None = None,
+        state_publisher: Callable[[], None] | None = None,
+        subtitle_prepare_timeout_secs: float = 5.0,
     ) -> None:
-        if meeting is None:
-            meeting = meeting_session
-        if meeting is None:
-            raise ValueError("meeting session 不能为空")
+        explicit_meeting = meeting_session if meeting_session is not None else meeting
+        subtitle_workload: SubtitleWorkload | None
+        if subtitles is not None and not self._declares_subtitle_interface(subtitles):
+            if explicit_meeting is not None:
+                raise TypeError("meeting session 被重复提供")
+            explicit_meeting = cast(MeetingWorkload, subtitles)
+            subtitle_workload = None
+        else:
+            subtitle_workload = cast(SubtitleWorkload | None, subtitles)
+
+        if subtitle_prepare_timeout_secs <= 0:
+            raise ValueError("subtitle_prepare_timeout_secs 必须大于 0")
         self.interaction = interaction
-        self.meeting = meeting
+        self.subtitles = subtitle_workload
+        self.meeting = explicit_meeting
         if initial_mode is None:
             initial_mode = (
-                RuntimeMode.ASSISTANT
-                if bool(getattr(interaction, "active", False))
-                else RuntimeMode.IDLE
+                RuntimeMode.ASSISTANT if bool(interaction.active) else RuntimeMode.IDLE
             )
         self._mode = RuntimeMode(initial_mode)
+        self._pcm_owner = self._owner_for_mode(self._mode)
         self._active_meeting_id: UUID | None = None
         self._meeting_record: MeetingRecord | None = None
-        self._lock = asyncio.Lock()
+        self._command_lock = asyncio.Lock()
+        self._transition_task: asyncio.Task[Any] | None = None
+        self._prepared_target: tuple[RuntimeMode, Any] | None = None
+        self._closing = False
         self._runtime_revision = 0
+        self._on_owner_changed = on_owner_changed or (lambda _owner: None)
+        self._state_publisher = state_publisher or (lambda: None)
+        self._subtitle_prepare_timeout_secs = subtitle_prepare_timeout_secs
+        self._last_transition: dict[str, TransitionValue] | None = None
+        self._rollback_result: str | None = None
+        self._rollback_error_type: str | None = None
+
+    @staticmethod
+    def _declares_subtitle_interface(workload: object) -> bool:
+        """区分新 subtitle positional 参数与旧 positional meeting 调用。"""
+        method_names = {
+            "prepare_browser_capture",
+            "commit_browser_capture",
+            "abort_browser_capture",
+            "deactivate_browser_capture",
+        }
+        declared = {
+            name
+            for cls in type(workload).__mro__
+            for name in cls.__dict__
+        }
+        return method_names <= declared
+
+    @staticmethod
+    def _owner_for_mode(mode: RuntimeMode) -> PCMOwner:
+        if mode is RuntimeMode.IDLE:
+            return PCMOwner.NONE
+        return PCMOwner(mode.value)
 
     @property
     def mode(self) -> RuntimeMode:
         return self._mode
+
+    @property
+    def pcm_owner(self) -> PCMOwner:
+        return self._pcm_owner
 
     @property
     def active_meeting_id(self) -> UUID | None:
@@ -98,87 +203,412 @@ class RuntimeModeCoordinator:
     def runtime_revision(self) -> int:
         return self._runtime_revision
 
-    async def start_meeting(self, title: str | None = None) -> MeetingRecord:
-        async with self._lock:
-            if self._mode is RuntimeMode.MEETING:
-                raise ModeConflict("meeting 已经在录制")
-            if self._mode is not RuntimeMode.ASSISTANT and self._mode is not RuntimeMode.IDLE:
-                raise ModeConflict("当前模式不可开始会议")
-            was_active = bool(getattr(self.interaction, "active", False))
-            if was_active:
-                await self.interaction.stop(reason="切换至会议模式")
-            try:
-                record = await self.meeting.start(title or "")
-            except Exception:
-                if was_active:
-                    await self.interaction.start()
-                    self._mode = RuntimeMode.ASSISTANT
-                raise
-            self._meeting_record = record
-            self._active_meeting_id = record.id
-            self._mode = RuntimeMode.MEETING
-            self._runtime_revision += 1
-            return cast(MeetingRecord, record)
+    @property
+    def last_transition(self) -> dict[str, TransitionValue] | None:
+        return self._last_transition
 
-    async def end_meeting(self, meeting_id: UUID | str | None = None) -> MeetingRecord:
-        async with self._lock:
-            if self._mode is not RuntimeMode.MEETING or self._active_meeting_id is None:
-                raise MeetingNotActive("没有正在录制的会议")
-            expected = self._active_meeting_id
-            if meeting_id is not None and str(meeting_id) != str(expected):
-                raise MeetingNotActive("会议 ID 不匹配")
-            try:
-                record = await self.meeting.stop()
-            finally:
-                # 会后必须保持 idle；不得因为结束成功而自动重启语音助手。
-                self._mode = RuntimeMode.IDLE
-                self._active_meeting_id = None
-                self._runtime_revision += 1
-            self._meeting_record = record
-            return cast(MeetingRecord, record)
+    def configure_meeting(self, meeting_session: MeetingWorkload) -> None:
+        """后注入一次会议服务，不改变现有仲裁状态或订阅者。"""
+        if self.meeting is not None:
+            raise RuntimeError("meeting runtime 已配置")
+        self.meeting = meeting_session
 
     async def start_assistant(self) -> None:
-        async with self._lock:
-            if self._mode is RuntimeMode.MEETING:
-                raise ModeConflict("会议录制期间不能启动语音助手")
-            if self._mode is RuntimeMode.ASSISTANT and bool(
-                getattr(self.interaction, "active", False)
-            ):
-                return
-            await self.interaction.start()
-            self._mode = RuntimeMode.ASSISTANT
-            self._runtime_revision += 1
+        await self._run_serialized(RuntimeMode.ASSISTANT, self._start_assistant_locked)
+
+    async def start_subtitles(self) -> None:
+        await self._run_serialized(RuntimeMode.SUBTITLES, self._start_subtitles_locked)
+
+    async def start_meeting(self, title: str | None = None) -> MeetingRecord:
+        async def command() -> MeetingRecord:
+            return await self._start_meeting_locked(title)
+
+        return await self._run_serialized(RuntimeMode.MEETING, command)
+
+    async def end_meeting(self, meeting_id: UUID | str | None = None) -> MeetingRecord:
+        async def command() -> MeetingRecord:
+            return await self._end_meeting_locked(meeting_id)
+
+        return await self._run_serialized(RuntimeMode.IDLE, command)
 
     async def stop_active_mode(self) -> None:
-        async with self._lock:
-            if self._mode is RuntimeMode.MEETING:
-                # 避免重新进入锁；当前方法已经负责串行化。
-                expected = self._active_meeting_id
-                record = self._meeting_record
-                try:
-                    record = await self.meeting.stop()
-                finally:
-                    self._mode = RuntimeMode.IDLE
-                    self._active_meeting_id = None
-                    self._runtime_revision += 1
-                if expected is not None:
-                    self._meeting_record = cast(MeetingRecord, record)
-                return
-            if self._mode is RuntimeMode.ASSISTANT or bool(
-                getattr(self.interaction, "active", False)
-            ):
-                await self.interaction.stop(reason="停止当前模式")
-            self._mode = RuntimeMode.IDLE
-            self._runtime_revision += 1
+        await self._run_serialized(RuntimeMode.IDLE, self._stop_active_mode_locked)
+
+    async def _run_serialized(
+        self,
+        target: RuntimeMode,
+        command: Callable[[], Awaitable[T]],
+    ) -> T:
+        async with self._command_lock:
+            if self._closing:
+                raise MeetingUnavailable("runtime 正在关闭")
+            current = asyncio.current_task()
+            if current is None:
+                raise RuntimeError("runtime transition 缺少 asyncio task")
+            self._transition_task = current
+            self._rollback_result = None
+            self._rollback_error_type = None
+            started = time.monotonic()
+            try:
+                result = await command()
+            except asyncio.CancelledError as exc:
+                await self._abort_prepared_target_safely()
+                self._record_transition(target, started, "cancelled", exc)
+                raise
+            except Exception as exc:
+                self._record_transition(target, started, "failed", exc)
+                raise
+            else:
+                self._record_transition(target, started, "success", None)
+                return result
+            finally:
+                if self._transition_task is current:
+                    self._transition_task = None
+
+    def _record_transition(
+        self,
+        target: RuntimeMode,
+        started: float,
+        result: str,
+        error: BaseException | None,
+    ) -> None:
+        snapshot: dict[str, TransitionValue] = {
+            "target": target.value,
+            "duration_ms": round((time.monotonic() - started) * 1000, 3),
+            "result": result,
+            "rollback_result": self._rollback_result,
+        }
+        if error is not None:
+            snapshot["error_type"] = type(error).__name__
+            snapshot["error_code"] = str(
+                getattr(error, "code", MeetingUnavailableError.code)
+            )
+        if self._rollback_error_type is not None:
+            snapshot["rollback_error_type"] = self._rollback_error_type
+        self._last_transition = snapshot
+
+    async def _start_assistant_locked(self) -> None:
+        if self._mode is RuntimeMode.MEETING:
+            raise ModeConflict("会议录制期间不能启动语音助手")
+        if self._mode is RuntimeMode.ASSISTANT and bool(self.interaction.active):
+            return
+
+        async def prepare() -> object:
+            try:
+                await self.interaction.start()
+            except Exception:
+                if bool(self.interaction.active):
+                    with contextlib.suppress(Exception):
+                        await self.interaction.stop(reason="目标准备失败")
+                raise
+            return self.interaction
+
+        def commit(_preparation: object) -> None:
+            return None
+
+        async def abort(_preparation: object) -> None:
+            if bool(self.interaction.active):
+                await self.interaction.stop(reason="取消模式切换")
+
+        await self._switch_workload(
+            RuntimeMode.ASSISTANT,
+            prepare=prepare,
+            commit=commit,
+            abort=abort,
+        )
+
+    async def _start_subtitles_locked(self) -> None:
+        if self._mode is RuntimeMode.MEETING:
+            raise ModeConflict("会议录制期间不能启动普通字幕")
+        subtitles = self.subtitles
+        if subtitles is None:
+            raise MeetingUnavailable("字幕服务不可用")
+        if self._mode is RuntimeMode.SUBTITLES and bool(
+            subtitles.browser_capture_active
+        ):
+            return
+
+        async def prepare() -> Any:
+            return await subtitles.prepare_browser_capture(
+                timeout_secs=self._subtitle_prepare_timeout_secs
+            )
+
+        def commit(preparation: Any) -> None:
+            subtitles.commit_browser_capture(preparation)
+
+        async def abort(preparation: Any) -> None:
+            await subtitles.abort_browser_capture(preparation)
+
+        await self._switch_workload(
+            RuntimeMode.SUBTITLES,
+            prepare=prepare,
+            commit=commit,
+            abort=abort,
+        )
+
+    async def _start_meeting_locked(self, title: str | None) -> MeetingRecord:
+        if self._mode is RuntimeMode.MEETING:
+            raise ModeConflict("meeting 已经在录制")
+        meeting = self.meeting
+        if meeting is None:
+            raise MeetingUnavailable("meeting service unavailable")
+
+        async def prepare() -> Any:
+            return await meeting.prepare_start(title)
+
+        def commit(preparation: Any) -> MeetingRecord:
+            record = meeting.commit_start(preparation)
+            self._meeting_record = record
+            self._active_meeting_id = record.id
+            return record
+
+        async def abort(preparation: Any) -> None:
+            await meeting.abort_start(preparation)
+
+        preparation, record = await self._switch_workload(
+            RuntimeMode.MEETING,
+            prepare=prepare,
+            commit=commit,
+            abort=abort,
+        )
+        try:
+            await meeting.publish_started(preparation)
+        except Exception as exc:
+            LOGGER.error(
+                "meeting started event publish failed",
+                extra={"error_type": type(exc).__name__},
+            )
+        return record
+
+    async def _switch_workload(
+        self,
+        target: RuntimeMode,
+        *,
+        prepare: Callable[[], Awaitable[Any]],
+        commit: Callable[[Any], T],
+        abort: Callable[[Any], Awaitable[None]],
+    ) -> tuple[Any, T]:
+        source = self._mode
+        preparation = await prepare()
+        self._prepared_target = (target, preparation)
+        if source is not RuntimeMode.IDLE:
+            self._set_transition_barrier()
+        try:
+            await self._quiesce_source(source)
+            result = commit(preparation)
+            self._prepared_target = None
+            self._commit_state(target, self._owner_for_mode(target))
+        except asyncio.CancelledError:
+            await self._abort_target(target, preparation, abort, suppress_errors=True)
+            raise
+        except Exception as source_error:
+            abort_error = await self._abort_target(
+                target, preparation, abort, suppress_errors=False
+            )
+            if abort_error is not None:
+                await self._force_idle(source_error, abort_error)
+            await self._recover_source_or_force_idle(source, source_error)
+            raise
+        return preparation, result
+
+    async def _abort_target(
+        self,
+        target: RuntimeMode,
+        preparation: Any,
+        abort: Callable[[Any], Awaitable[None]],
+        *,
+        suppress_errors: bool,
+    ) -> Exception | None:
+        try:
+            await abort(preparation)
+        except Exception as exc:
+            if suppress_errors:
+                LOGGER.error(
+                    "target abort failed",
+                    extra={"target": target.value, "error_type": type(exc).__name__},
+                )
+            return exc
+        finally:
+            self._prepared_target = None
+        return None
+
+    async def _recover_source_or_force_idle(
+        self,
+        source: RuntimeMode,
+        source_error: Exception,
+    ) -> None:
+        try:
+            await self._restore_source(source)
+        except Exception as rollback_error:
+            await self._force_idle(source_error, rollback_error)
+        self._rollback_result = "success"
+        self._commit_state(source, self._owner_for_mode(source))
+
+    async def _force_idle(
+        self,
+        source_error: Exception,
+        rollback_error: Exception,
+    ) -> None:
+        self._rollback_result = "failed"
+        self._rollback_error_type = type(rollback_error).__name__
+        LOGGER.error(
+            "runtime transition recovery failed",
+            extra={
+                "source_error_type": type(source_error).__name__,
+                "rollback_error_type": type(rollback_error).__name__,
+                "error_code": MeetingUnavailableError.code,
+            },
+        )
+        await self._stop_all_workloads()
+        self._active_meeting_id = None
+        self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+        raise MeetingUnavailable("运行时工作负载恢复失败") from source_error
+
+    async def _quiesce_source(self, source: RuntimeMode) -> None:
+        if source is RuntimeMode.ASSISTANT:
+            await self.interaction.stop(reason="切换运行时模式")
+        elif source is RuntimeMode.SUBTITLES:
+            subtitles = self.subtitles
+            if subtitles is None:
+                raise RuntimeError("字幕来源工作负载不存在")
+            await subtitles.deactivate_browser_capture()
+
+    async def _restore_source(self, source: RuntimeMode) -> None:
+        if source is RuntimeMode.ASSISTANT:
+            if not bool(self.interaction.active):
+                await self.interaction.start()
+            if not bool(self.interaction.active):
+                raise RuntimeError("assistant source 未恢复")
+            return
+        if source is RuntimeMode.SUBTITLES:
+            subtitles = self.subtitles
+            if subtitles is None:
+                raise RuntimeError("subtitle source 不存在")
+            if not bool(subtitles.browser_capture_active):
+                preparation = await subtitles.prepare_browser_capture(
+                    timeout_secs=self._subtitle_prepare_timeout_secs
+                )
+                subtitles.commit_browser_capture(preparation)
+            if not bool(subtitles.browser_capture_active):
+                raise RuntimeError("subtitle source 未恢复")
+
+    async def _end_meeting_locked(
+        self, meeting_id: UUID | str | None
+    ) -> MeetingRecord:
+        meeting = self.meeting
+        if (
+            self._mode is not RuntimeMode.MEETING
+            or self._active_meeting_id is None
+            or meeting is None
+        ):
+            raise MeetingNotActive("没有正在录制的会议")
+        expected = self._active_meeting_id
+        if meeting_id is not None and str(meeting_id) != str(expected):
+            raise MeetingNotActive("会议 ID 不匹配")
+        self._set_transition_barrier()
+        try:
+            record = await meeting.stop()
+        finally:
+            self._active_meeting_id = None
+            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+        self._meeting_record = record
+        return record
+
+    async def _stop_active_mode_locked(self) -> None:
+        if self._mode is RuntimeMode.IDLE:
+            return
+        if self._mode is RuntimeMode.MEETING:
+            await self._end_meeting_locked(None)
+            return
+        source = self._mode
+        self._set_transition_barrier()
+        try:
+            await self._quiesce_source(source)
+        except Exception as source_error:
+            if self._source_active(source):
+                self._rollback_result = "success"
+                self._commit_state(source, self._owner_for_mode(source))
+            else:
+                self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+            raise source_error
+        self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+
+    def _source_active(self, source: RuntimeMode) -> bool:
+        if source is RuntimeMode.ASSISTANT:
+            return bool(self.interaction.active)
+        if source is RuntimeMode.SUBTITLES:
+            return self.subtitles is not None and bool(
+                self.subtitles.browser_capture_active
+            )
+        if source is RuntimeMode.MEETING:
+            return self._active_meeting_id is not None
+        return False
+
+    def _set_transition_barrier(self) -> None:
+        self._pcm_owner = PCMOwner.NONE
+        self._on_owner_changed(PCMOwner.NONE)
+
+    def _commit_state(self, mode: RuntimeMode, owner: PCMOwner) -> None:
+        self._mode = mode
+        self._pcm_owner = owner
+        self._on_owner_changed(owner)
+        self._runtime_revision += 1
+        try:
+            self._state_publisher()
+        except Exception as exc:
+            LOGGER.error(
+                "runtime state publish failed",
+                extra={"error_type": type(exc).__name__},
+            )
+
+    async def _abort_prepared_target_safely(self) -> None:
+        prepared = self._prepared_target
+        if prepared is None:
+            return
+        target, preparation = prepared
+        self._prepared_target = None
+        try:
+            if target is RuntimeMode.SUBTITLES and self.subtitles is not None:
+                await self.subtitles.abort_browser_capture(preparation)
+            elif target is RuntimeMode.MEETING and self.meeting is not None:
+                await self.meeting.abort_start(preparation)
+            elif target is RuntimeMode.ASSISTANT and bool(self.interaction.active):
+                await self.interaction.stop(reason="取消模式切换")
+        except Exception as exc:
+            LOGGER.error(
+                "prepared target abort failed",
+                extra={"target": target.value, "error_type": type(exc).__name__},
+            )
+
+    async def _stop_all_workloads(self) -> None:
+        await self._abort_prepared_target_safely()
+        if bool(self.interaction.active):
+            with contextlib.suppress(Exception):
+                await self.interaction.stop(reason="应用停止")
+        if self.subtitles is not None:
+            with contextlib.suppress(Exception):
+                await self.subtitles.deactivate_browser_capture()
+        if self.meeting is not None and (
+            self._active_meeting_id is not None
+            or getattr(self.meeting, "active_meeting_id", None) is not None
+        ):
+            with contextlib.suppress(Exception):
+                await self.meeting.interrupt("应用停止")
 
     async def stop(self) -> None:
-        """应用关闭时释放当前资源；会议中断由 MeetingSession 保留记录。"""
-        async with self._lock:
-            if self._mode is RuntimeMode.MEETING:
-                with contextlib.suppress(Exception):
-                    await self.meeting.interrupt("应用停止")
-                self._mode = RuntimeMode.IDLE
-                self._active_meeting_id = None
-            elif bool(getattr(self.interaction, "active", False)):
-                await self.interaction.stop(reason="应用停止")
-            self._runtime_revision += 1
+        """取消在途 prepare，尽力全停并发布最终 idle/none 快照。"""
+        self._closing = True
+        current = asyncio.current_task()
+        transition = self._transition_task
+        if (
+            transition is not None
+            and transition is not current
+            and not transition.done()
+        ):
+            transition.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await transition
+        async with self._command_lock:
+            await self._stop_all_workloads()
+            self._active_meeting_id = None
+            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)

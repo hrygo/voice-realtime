@@ -1,300 +1,504 @@
-"""助手与会议模式互斥测试。"""
+"""RuntimeModeCoordinator 两阶段工作负载仲裁测试。"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from dataclasses import dataclass
+from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.models import MeetingRecord, MeetingStatus, RuntimeMode, StorageHealth
+from voice_realtime.meeting.models import (
+    MeetingRecord,
+    MeetingStatus,
+    PCMOwner,
+    RuntimeMode,
+    StorageHealth,
+)
 from voice_realtime.meeting.runtime_mode import (
     MeetingNotActiveError,
+    MeetingUnavailableError,
     ModeConflictError,
     RuntimeModeCoordinator,
 )
+from voice_realtime.meeting.session import MeetingPreparation
 
 
-@pytest.fixture()
-def coordinator() -> RuntimeModeCoordinator:
-    interaction = MagicMock()
-    interaction.active = True
-    interaction.stop = AsyncMock()
-    interaction.start = AsyncMock()
-    meeting = MagicMock()
-    meeting.start = AsyncMock(return_value=MeetingRecord(title="周会"))
-    meeting.stop = AsyncMock(return_value=MeetingRecord(title="周会"))
-    meeting.active_meeting_id = None
-    return RuntimeModeCoordinator(interaction, meeting)
+@dataclass(frozen=True, slots=True)
+class FakeSubtitlePreparation:
+    generation: int
 
 
-async def test_start_meeting_stops_interaction_before_capture(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
+class FakeInteraction:
+    def __init__(self, calls: list[str], *, active: bool) -> None:
+        self.calls = calls
+        self.active = active
+        self.fail_start: BaseException | None = None
+        self.fail_stop: BaseException | None = None
+        self.stop_sets_inactive_before_error = False
+        self.block_stop_once = False
+        self.stop_started = asyncio.Event()
+        self.stop_gate = asyncio.Event()
+
+    async def start(self) -> None:
+        self.calls.append("interaction.start")
+        if self.fail_start is not None:
+            raise self.fail_start
+        self.active = True
+
+    async def stop(self, *, reason: str) -> None:
+        del reason
+        self.calls.append("interaction.stop")
+        if self.block_stop_once:
+            self.block_stop_once = False
+            self.stop_started.set()
+            await self.stop_gate.wait()
+        if self.stop_sets_inactive_before_error:
+            self.active = False
+        if self.fail_stop is not None:
+            error = self.fail_stop
+            self.fail_stop = None
+            raise error
+        self.active = False
+
+
+class FakeSubtitles:
+    def __init__(self, calls: list[str], *, active: bool) -> None:
+        self.calls = calls
+        self.browser_capture_active = active
+        self.prepared: FakeSubtitlePreparation | None = None
+        self.generation = 0
+        self.fail_prepare: BaseException | None = None
+        self.fail_deactivate: BaseException | None = None
+        self.prepare_started = asyncio.Event()
+        self.prepare_gate: asyncio.Event | None = None
+
+    async def prepare_browser_capture(
+        self, *, timeout_secs: float
+    ) -> FakeSubtitlePreparation:
+        assert timeout_secs > 0
+        self.calls.append("subtitles.prepare")
+        self.prepare_started.set()
+        if self.fail_prepare is not None:
+            raise self.fail_prepare
+        if self.prepare_gate is not None:
+            await self.prepare_gate.wait()
+        self.generation += 1
+        self.prepared = FakeSubtitlePreparation(self.generation)
+        return self.prepared
+
+    def commit_browser_capture(self, preparation: FakeSubtitlePreparation) -> None:
+        assert self.prepared is preparation
+        self.calls.append("subtitles.commit")
+        self.prepared = None
+        self.browser_capture_active = True
+
+    async def abort_browser_capture(self, preparation: FakeSubtitlePreparation) -> None:
+        assert self.prepared is preparation
+        self.calls.append("subtitles.abort")
+        self.prepared = None
+
+    async def deactivate_browser_capture(self) -> None:
+        self.calls.append("subtitles.deactivate")
+        if self.fail_deactivate is not None:
+            error = self.fail_deactivate
+            self.fail_deactivate = None
+            raise error
+        self.browser_capture_active = False
+        self.prepared = None
+
+
+class FakeMeeting:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+        self.storage_health = StorageHealth.OK
+        self.active_meeting_id = None
+        self.prepared: MeetingPreparation | None = None
+        self.record = MeetingRecord(title="周会")
+        self.fail_prepare: BaseException | None = None
+        self.fail_stop: BaseException | None = None
+        self.fail_publish: BaseException | None = None
+
+    async def prepare_start(self, title: str | None = None) -> MeetingPreparation:
+        self.calls.append("meeting.prepare")
+        if self.fail_prepare is not None:
+            raise self.fail_prepare
+        self.record = MeetingRecord(title=title or "周会")
+        self.prepared = MeetingPreparation(record=self.record, capture=object())
+        return self.prepared
+
+    def commit_start(self, preparation: MeetingPreparation) -> MeetingRecord:
+        assert self.prepared is preparation
+        self.calls.append("meeting.commit")
+        self.prepared = None
+        self.active_meeting_id = preparation.record.id
+        return preparation.record
+
+    async def publish_started(self, preparation: MeetingPreparation) -> None:
+        self.calls.append("meeting.publish")
+        if self.fail_publish is not None:
+            raise self.fail_publish
+        assert self.active_meeting_id == preparation.record.id
+
+    async def abort_start(self, preparation: MeetingPreparation) -> None:
+        assert self.prepared is preparation
+        self.calls.append("meeting.abort")
+        self.prepared = None
+
+    async def stop(self) -> MeetingRecord:
+        self.calls.append("meeting.stop")
+        self.active_meeting_id = None
+        if self.fail_stop is not None:
+            error = self.fail_stop
+            self.fail_stop = None
+            raise error
+        self.record = self.record.model_copy(update={"status": MeetingStatus.COMPLETED})
+        return self.record
+
+    async def interrupt(self, reason: str) -> None:
+        del reason
+        self.calls.append("meeting.interrupt")
+        self.active_meeting_id = None
+
+
+@dataclass(slots=True)
+class Harness:
+    coordinator: RuntimeModeCoordinator
+    interaction: FakeInteraction
+    subtitles: FakeSubtitles
+    meeting: FakeMeeting | None
+    calls: list[str]
+    snapshots: list[tuple[RuntimeMode, PCMOwner, int, UUID | None]]
+
+
+def make_harness(
+    mode: RuntimeMode = RuntimeMode.ASSISTANT,
+    *,
+    with_meeting: bool = True,
+) -> Harness:
     calls: list[str] = []
-    coordinator.interaction.stop.side_effect = lambda **_: calls.append("interaction.stop")
-    coordinator.meeting.start.side_effect = lambda *_: (
-        calls.append("meeting.start") or MeetingRecord(title="周会")
+    snapshots: list[tuple[RuntimeMode, PCMOwner, int, UUID | None]] = []
+    interaction = FakeInteraction(calls, active=mode is RuntimeMode.ASSISTANT)
+    subtitles = FakeSubtitles(calls, active=mode is RuntimeMode.SUBTITLES)
+    meeting = FakeMeeting(calls) if with_meeting else None
+    holder: dict[str, RuntimeModeCoordinator] = {}
+
+    def on_owner_changed(owner: PCMOwner) -> None:
+        calls.append(f"owner.{owner.value}")
+
+    def state_publisher() -> None:
+        coordinator = holder["coordinator"]
+        snapshots.append(
+            (
+                coordinator.mode,
+                coordinator.pcm_owner,
+                coordinator.runtime_revision,
+                coordinator.active_meeting_id,
+            )
+        )
+        calls.append(
+            "state.publish:"
+            f"{coordinator.mode.value}:{coordinator.pcm_owner.value}:"
+            f"{coordinator.runtime_revision}"
+        )
+
+    coordinator = RuntimeModeCoordinator(
+        interaction,
+        subtitles,
+        meeting_session=meeting,
+        initial_mode=mode,
+        on_owner_changed=on_owner_changed,
+        state_publisher=state_publisher,
     )
-
-    await coordinator.start_meeting("周会")
-
-    assert coordinator.mode is RuntimeMode.MEETING
-    assert calls == ["interaction.stop", "meeting.start"]
+    holder["coordinator"] = coordinator
+    return Harness(coordinator, interaction, subtitles, meeting, calls, snapshots)
 
 
-async def test_end_meeting_returns_idle_and_does_not_restart_assistant(
-    coordinator: RuntimeModeCoordinator,
+async def test_assistant_to_subtitles_uses_two_phase_order() -> None:
+    harness = make_harness()
+
+    await harness.coordinator.start_subtitles()
+
+    assert harness.calls == [
+        "subtitles.prepare",
+        "owner.none",
+        "interaction.stop",
+        "subtitles.commit",
+        "owner.subtitles",
+        "state.publish:subtitles:subtitles:1",
+    ]
+    assert harness.coordinator.mode is RuntimeMode.SUBTITLES
+    assert harness.coordinator.pcm_owner is PCMOwner.SUBTITLES
+
+
+async def test_subtitles_to_assistant_uses_two_phase_order() -> None:
+    harness = make_harness(RuntimeMode.SUBTITLES)
+
+    await harness.coordinator.start_assistant()
+
+    assert harness.calls == [
+        "interaction.start",
+        "owner.none",
+        "subtitles.deactivate",
+        "owner.assistant",
+        "state.publish:assistant:assistant:1",
+    ]
+
+
+@pytest.mark.parametrize("source", [RuntimeMode.ASSISTANT, RuntimeMode.SUBTITLES])
+async def test_active_source_to_meeting_publishes_state_before_recording(
+    source: RuntimeMode,
 ) -> None:
-    record = await coordinator.start_meeting("周会")
-    coordinator.meeting.stop.return_value = record.model_copy(update={"status": "completed"})
+    harness = make_harness(source)
+    assert harness.meeting is not None
 
-    await coordinator.end_meeting(record.id)
+    record = await harness.coordinator.start_meeting("设计评审")
 
-    assert coordinator.mode is RuntimeMode.IDLE
-    coordinator.interaction.start.assert_not_awaited()
+    source_stop = (
+        "interaction.stop" if source is RuntimeMode.ASSISTANT else "subtitles.deactivate"
+    )
+    assert harness.calls == [
+        "meeting.prepare",
+        "owner.none",
+        source_stop,
+        "meeting.commit",
+        "owner.meeting",
+        "state.publish:meeting:meeting:1",
+        "meeting.publish",
+    ]
+    assert record.title == "设计评审"
+    assert harness.coordinator.active_meeting_id == record.id
+    assert harness.snapshots == [(RuntimeMode.MEETING, PCMOwner.MEETING, 1, record.id)]
 
 
-async def test_start_assistant_refuses_while_meeting_active(
-    coordinator: RuntimeModeCoordinator,
+@pytest.mark.parametrize("target", [RuntimeMode.ASSISTANT, RuntimeMode.SUBTITLES])
+async def test_idle_starts_target_and_repeated_start_is_idempotent(
+    target: RuntimeMode,
 ) -> None:
-    await coordinator.start_meeting("周会")
+    harness = make_harness(RuntimeMode.IDLE)
 
-    with pytest.raises(RuntimeError, match=r"meeting|会议"):
-        await coordinator.start_assistant()
+    if target is RuntimeMode.ASSISTANT:
+        await harness.coordinator.start_assistant()
+    else:
+        await harness.coordinator.start_subtitles()
+    revision = harness.coordinator.runtime_revision
+    harness.calls.clear()
 
+    if target is RuntimeMode.ASSISTANT:
+        await harness.coordinator.start_assistant()
+    else:
+        await harness.coordinator.start_subtitles()
 
-def test_constructor_accepts_alias_and_requires_meeting_session() -> None:
-    interaction = MagicMock(active=False)
-    meeting = MagicMock()
-    coordinator = RuntimeModeCoordinator(interaction, meeting_session=meeting)
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.runtime_revision == 0
-    with pytest.raises(ValueError, match="meeting session"):
-        RuntimeModeCoordinator(interaction)
-
-
-def test_properties_report_meeting_and_storage_state(coordinator: RuntimeModeCoordinator) -> None:
-    assert coordinator.meeting_state is None
-    assert coordinator.meeting_started_at is None
-    assert coordinator.storage is StorageHealth.OK
-
-    coordinator.meeting.storage_health = StorageHealth.DEGRADED
-    assert coordinator.storage is StorageHealth.DEGRADED
-    coordinator.meeting.storage_health = "not-a-health"
-    assert coordinator.storage is StorageHealth.OK
+    assert revision == 1
+    assert harness.coordinator.runtime_revision == revision
+    assert harness.calls == []
+    assert harness.snapshots == [(target, PCMOwner(target.value), 1, None)]
 
 
-async def test_start_meeting_rejects_duplicate_start(coordinator: RuntimeModeCoordinator) -> None:
-    await coordinator.start_meeting("周会")
+async def test_meeting_to_idle_preserves_eof_failure_semantics() -> None:
+    harness = make_harness()
+    assert harness.meeting is not None
+    record = await harness.coordinator.start_meeting("周会")
+    harness.calls.clear()
+    harness.meeting.fail_stop = RuntimeError("finalization_timeout")
 
-    with pytest.raises(ModeConflictError, match="已经在录制"):
-        await coordinator.start_meeting("第二场")
+    with pytest.raises(RuntimeError, match="finalization_timeout"):
+        await harness.coordinator.end_meeting(record.id)
 
-    coordinator.meeting.start.assert_awaited_once_with("周会")
-
-
-async def test_start_meeting_rejects_unknown_mode_defensively(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    coordinator._mode = object()
-
-    with pytest.raises(ModeConflictError, match="当前模式"):
-        await coordinator.start_meeting("周会")
-
-
-async def test_start_meeting_failure_restores_assistant_mode(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    coordinator.meeting.start.side_effect = RuntimeError("storage unavailable")
-
-    with pytest.raises(RuntimeError, match="storage"):
-        await coordinator.start_meeting("周会")
-
-    assert coordinator.mode is RuntimeMode.ASSISTANT
-    assert coordinator.active_meeting_id is None
-    coordinator.interaction.start.assert_awaited_once_with()
+    assert harness.calls == [
+        "owner.none",
+        "meeting.stop",
+        "owner.none",
+        "state.publish:idle:none:2",
+    ]
+    assert harness.coordinator.mode is RuntimeMode.IDLE
+    assert harness.coordinator.active_meeting_id is None
 
 
-async def test_start_meeting_failure_from_idle_does_not_start_assistant() -> None:
-    interaction = MagicMock(active=False)
-    interaction.start = AsyncMock()
-    meeting = MagicMock()
-    meeting.start = AsyncMock(side_effect=RuntimeError("storage unavailable"))
-    coordinator = RuntimeModeCoordinator(interaction, meeting)
-
-    with pytest.raises(RuntimeError, match="storage"):
-        await coordinator.start_meeting("周会")
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    interaction.start.assert_not_awaited()
-
-
-async def test_end_meeting_validates_id_and_leaves_meeting_active_on_mismatch(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    record = await coordinator.start_meeting("周会")
+async def test_end_meeting_validates_id_and_active_state() -> None:
+    harness = make_harness()
+    record = await harness.coordinator.start_meeting("周会")
 
     with pytest.raises(MeetingNotActiveError, match="不匹配"):
-        await coordinator.end_meeting("00000000-0000-0000-0000-000000000000")
+        await harness.coordinator.end_meeting("00000000-0000-0000-0000-000000000000")
+    assert harness.coordinator.active_meeting_id == record.id
 
-    assert coordinator.mode is RuntimeMode.MEETING
-    assert coordinator.active_meeting_id == record.id
-    coordinator.meeting.stop.assert_not_awaited()
-
-
-async def test_end_meeting_rejects_when_no_meeting_is_active(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
+    await harness.coordinator.end_meeting(record.id)
     with pytest.raises(MeetingNotActiveError, match="没有正在录制"):
-        await coordinator.end_meeting()
+        await harness.coordinator.end_meeting()
 
 
-async def test_end_meeting_failure_still_returns_to_idle(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    await coordinator.start_meeting("周会")
-    coordinator.meeting.stop.side_effect = RuntimeError("finalize failed")
+async def test_meeting_rejects_all_repeated_start_commands() -> None:
+    harness = make_harness()
+    await harness.coordinator.start_meeting("周会")
 
-    with pytest.raises(RuntimeError, match="finalize"):
-        await coordinator.end_meeting()
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.active_meeting_id is None
-    assert coordinator.runtime_revision == 2
-
-
-async def test_start_assistant_is_idempotent_when_already_active(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    await coordinator.start_assistant()
-
-    coordinator.interaction.start.assert_not_awaited()
-    assert coordinator.mode is RuntimeMode.ASSISTANT
-    assert coordinator.runtime_revision == 0
+    for command in (
+        harness.coordinator.start_assistant,
+        harness.coordinator.start_subtitles,
+        harness.coordinator.start_meeting,
+    ):
+        with pytest.raises(ModeConflictError):
+            await command()
 
 
-async def test_start_assistant_recovers_from_idle() -> None:
-    interaction = MagicMock(active=False)
-    interaction.start = AsyncMock()
-    meeting = MagicMock()
+async def test_target_prepare_failure_keeps_assistant_chain_and_revision() -> None:
+    harness = make_harness()
+    harness.subtitles.fail_prepare = RuntimeError("WLK secret response body")
+
+    with pytest.raises(RuntimeError, match="WLK"):
+        await harness.coordinator.start_subtitles()
+
+    assert harness.interaction.active is True
+    assert harness.coordinator.mode is RuntimeMode.ASSISTANT
+    assert harness.coordinator.pcm_owner is PCMOwner.ASSISTANT
+    assert harness.coordinator.runtime_revision == 0
+    assert harness.snapshots == []
+    assert "interaction.stop" not in harness.calls
+    transition = harness.coordinator.last_transition
+    assert transition is not None
+    assert transition["error_type"] == "RuntimeError"
+    assert transition["error_code"] == "service_unavailable"
+    assert "secret" not in repr(transition)
+
+
+async def test_source_quiesce_failure_aborts_target_and_restores_source() -> None:
+    harness = make_harness()
+    harness.interaction.fail_stop = RuntimeError("drain failed")
+
+    with pytest.raises(RuntimeError, match="drain"):
+        await harness.coordinator.start_subtitles()
+
+    assert harness.calls == [
+        "subtitles.prepare",
+        "owner.none",
+        "interaction.stop",
+        "subtitles.abort",
+        "owner.assistant",
+        "state.publish:assistant:assistant:1",
+    ]
+    assert harness.coordinator.mode is RuntimeMode.ASSISTANT
+    assert harness.coordinator.pcm_owner is PCMOwner.ASSISTANT
+    assert harness.coordinator.last_transition is not None
+    assert harness.coordinator.last_transition["rollback_result"] == "success"
+
+
+async def test_failed_source_recovery_forces_all_workloads_idle() -> None:
+    harness = make_harness()
+    harness.interaction.stop_sets_inactive_before_error = True
+    harness.interaction.fail_stop = RuntimeError("drain body")
+    harness.interaction.fail_start = RuntimeError("restore body")
+
+    with pytest.raises(MeetingUnavailableError) as raised:
+        await harness.coordinator.start_subtitles()
+
+    assert raised.value.code == "service_unavailable"
+    assert harness.coordinator.mode is RuntimeMode.IDLE
+    assert harness.coordinator.pcm_owner is PCMOwner.NONE
+    assert harness.coordinator.runtime_revision == 1
+    assert "subtitles.abort" in harness.calls
+    assert "subtitles.deactivate" in harness.calls
+    assert harness.calls[-2:] == ["owner.none", "state.publish:idle:none:1"]
+    transition = harness.coordinator.last_transition
+    assert transition is not None
+    assert transition["rollback_result"] == "failed"
+    assert "body" not in repr(transition)
+
+
+async def test_user_commands_share_one_non_preemptive_lock() -> None:
+    harness = make_harness()
+    harness.subtitles.prepare_gate = asyncio.Event()
+    first = asyncio.create_task(harness.coordinator.start_subtitles())
+    await harness.subtitles.prepare_started.wait()
+    second = asyncio.create_task(harness.coordinator.start_assistant())
+    await asyncio.sleep(0)
+
+    assert "interaction.start" not in harness.calls
+    assert not first.done()
+    assert not second.done()
+
+    harness.subtitles.prepare_gate.set()
+    await asyncio.gather(first, second)
+
+    assert harness.coordinator.mode is RuntimeMode.ASSISTANT
+    assert harness.coordinator.runtime_revision == 2
+    first_publish = harness.calls.index("state.publish:subtitles:subtitles:1")
+    second_prepare = harness.calls.index("interaction.start")
+    assert first_publish < second_prepare
+
+
+async def test_shutdown_cancels_transition_aborts_target_and_stops_everything() -> None:
+    harness = make_harness()
+    harness.interaction.block_stop_once = True
+    transition = asyncio.create_task(harness.coordinator.start_subtitles())
+    await harness.interaction.stop_started.wait()
+
+    await harness.coordinator.stop()
+
+    with pytest.raises(asyncio.CancelledError):
+        await transition
+    assert "subtitles.abort" in harness.calls
+    assert harness.calls.count("interaction.stop") == 2
+    assert "subtitles.deactivate" in harness.calls
+    assert harness.coordinator.mode is RuntimeMode.IDLE
+    assert harness.coordinator.pcm_owner is PCMOwner.NONE
+    assert harness.coordinator.runtime_revision == 1
+    with pytest.raises(MeetingUnavailableError):
+        await harness.coordinator.start_assistant()
+
+
+async def test_stop_active_mode_handles_assistant_subtitles_and_idle() -> None:
+    for mode, expected_stop in (
+        (RuntimeMode.ASSISTANT, "interaction.stop"),
+        (RuntimeMode.SUBTITLES, "subtitles.deactivate"),
+    ):
+        harness = make_harness(mode)
+        await harness.coordinator.stop_active_mode()
+        assert expected_stop in harness.calls
+        assert harness.coordinator.mode is RuntimeMode.IDLE
+        assert harness.coordinator.pcm_owner is PCMOwner.NONE
+
+    idle = make_harness(RuntimeMode.IDLE)
+    await idle.coordinator.stop_active_mode()
+    assert idle.coordinator.runtime_revision == 0
+    assert idle.calls == []
+
+
+async def test_meeting_publish_failure_does_not_rollback_committed_state() -> None:
+    harness = make_harness()
+    assert harness.meeting is not None
+    harness.meeting.fail_publish = RuntimeError("event unavailable")
+
+    record = await harness.coordinator.start_meeting("周会")
+
+    assert harness.coordinator.mode is RuntimeMode.MEETING
+    assert harness.coordinator.active_meeting_id == record.id
+    assert harness.calls.index("state.publish:meeting:meeting:1") < harness.calls.index(
+        "meeting.publish"
+    )
+
+
+async def test_meeting_can_be_configured_once_after_construction() -> None:
+    harness = make_harness(with_meeting=False)
+    meeting = FakeMeeting(harness.calls)
+
+    with pytest.raises(MeetingUnavailableError):
+        await harness.coordinator.start_meeting("周会")
+    assert harness.coordinator.mode is RuntimeMode.ASSISTANT
+
+    harness.coordinator.configure_meeting(meeting)
+    await harness.coordinator.start_meeting("周会")
+    with pytest.raises(RuntimeError, match="已配置"):
+        harness.coordinator.configure_meeting(FakeMeeting(harness.calls))
+
+
+def test_constructor_keeps_legacy_positional_meeting_call_compatible() -> None:
+    calls: list[str] = []
+    interaction = FakeInteraction(calls, active=False)
+    meeting = FakeMeeting(calls)
+
     coordinator = RuntimeModeCoordinator(interaction, meeting)
 
-    await coordinator.start_assistant()
-
-    interaction.start.assert_awaited_once_with()
-    assert coordinator.mode is RuntimeMode.ASSISTANT
-    assert coordinator.runtime_revision == 1
-
-
-async def test_stop_active_mode_stops_meeting_without_restarting_assistant(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    record = await coordinator.start_meeting("周会")
-    stopped_record = coordinator.meeting.stop.return_value
-
-    await coordinator.stop_active_mode()
-
+    assert coordinator.meeting is meeting
     assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.active_meeting_id is None
-    assert record != stopped_record
-    assert coordinator.meeting_record == stopped_record
-    coordinator.meeting.stop.assert_awaited_once_with()
-    coordinator.interaction.start.assert_not_awaited()
-
-
-async def test_stop_active_mode_meeting_failure_still_clears_mode(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    await coordinator.start_meeting("周会")
-    coordinator.meeting.stop.side_effect = RuntimeError("stop failed")
-
-    with pytest.raises(RuntimeError, match="stop"):
-        await coordinator.stop_active_mode()
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.active_meeting_id is None
-
-
-async def test_stop_active_mode_handles_inconsistent_meeting_without_id(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    coordinator._mode = RuntimeMode.MEETING
-    coordinator.meeting.stop.return_value = MeetingRecord(title="孤立会议")
-
-    await coordinator.stop_active_mode()
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.active_meeting_id is None
-    assert coordinator.meeting_record is None
-
-
-@pytest.mark.parametrize(
-    ("initial_mode", "interaction_active", "should_stop"),
-    [
-        (RuntimeMode.ASSISTANT, True, True),
-        (RuntimeMode.ASSISTANT, False, True),
-        (RuntimeMode.IDLE, True, True),
-        (RuntimeMode.IDLE, False, False),
-    ],
-)
-async def test_stop_active_mode_stops_only_when_interaction_is_active(
-    initial_mode: RuntimeMode,
-    interaction_active: bool,
-    should_stop: bool,
-) -> None:
-    interaction = MagicMock(active=interaction_active)
-    interaction.stop = AsyncMock()
-    meeting = MagicMock()
-    coordinator = RuntimeModeCoordinator(interaction, meeting, initial_mode=initial_mode)
-
-    await coordinator.stop_active_mode()
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    if should_stop:
-        interaction.stop.assert_awaited_once_with(reason="停止当前模式")
-    else:
-        interaction.stop.assert_not_awaited()
-
-
-async def test_application_stop_interrupts_meeting_and_swallows_interrupt_failure(
-    coordinator: RuntimeModeCoordinator,
-) -> None:
-    await coordinator.start_meeting("周会")
-    coordinator.meeting.interrupt = AsyncMock(side_effect=RuntimeError("already closed"))
-
-    await coordinator.stop()
-
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.active_meeting_id is None
-    coordinator.meeting.interrupt.assert_awaited_once_with("应用停止")
-
-
-async def test_application_stop_stops_assistant_or_is_noop_when_idle() -> None:
-    interaction = MagicMock(active=True)
-    interaction.stop = AsyncMock()
-    coordinator = RuntimeModeCoordinator(interaction, MagicMock())
-
-    await coordinator.stop()
-
-    interaction.stop.assert_awaited_once_with(reason="应用停止")
-    assert coordinator.runtime_revision == 1
-
-    interaction.stop.reset_mock()
-    interaction.active = False
-    await coordinator.stop()
-    interaction.stop.assert_not_awaited()
-    assert coordinator.runtime_revision == 2
-
-
-async def test_end_meeting_updates_record_and_state(coordinator: RuntimeModeCoordinator) -> None:
-    await coordinator.start_meeting("周会")
-    completed = MeetingRecord(title="周会", status=MeetingStatus.COMPLETED)
-    coordinator.meeting.stop.return_value = completed
-
-    result = await coordinator.end_meeting()
-
-    assert result == completed
-    assert coordinator.meeting_record == completed
-    assert coordinator.meeting_state is MeetingStatus.COMPLETED
-    assert coordinator.meeting_started_at == completed.started_at
+    assert coordinator.pcm_owner is PCMOwner.NONE
+    assert coordinator.storage is StorageHealth.OK
