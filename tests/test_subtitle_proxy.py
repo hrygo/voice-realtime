@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -13,13 +14,14 @@ import pytest
 from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext
 from voice_realtime.config import SubtitleSettings
-from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
 from voice_realtime.subtitles.events import SubtitleEvent
 from voice_realtime.ui.subtitle_proxy import (
     CapturePreparation,
     FinalizationTimeout,
     SubtitlePreparation,
     SubtitleProxy,
+    SubtitleProxyDiagnostics,
     SubtitleProxyState,
     TranscriptionGap,
 )
@@ -182,6 +184,19 @@ class BlockingTranscriber(ControlledTranscriber):
         return TranscriptWindow(source_epoch=0)
 
 
+class FakeClock:
+    """可精确推进的 monotonic clock。"""
+
+    def __init__(self, now: float = 0.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 async def _wait_until(predicate: Callable[[], bool], *, attempts: int = 50) -> None:
     for _ in range(attempts):
         if predicate():
@@ -326,6 +341,7 @@ class TestPreparedLifecycle:
         await first.connected.wait()
         await first.emit(ASREvent(kind="ready"))
         first_preparation = await first_task
+        assert first_preparation.generation == 1
         proxy.commit_browser_capture(first_preparation)
 
         with pytest.raises(RuntimeError, match="preparation"):
@@ -340,6 +356,7 @@ class TestPreparedLifecycle:
         await second.connected.wait()
         await second.emit(ASREvent(kind="ready"))
         second_preparation = await second_task
+        assert second_preparation.generation == 2
         await proxy.abort_browser_capture(second_preparation)
 
         assert second.closed
@@ -994,6 +1011,247 @@ class TestStreamConnection:
         assert proxy.state == "stopped"
 
 
+class TestSubtitleEpoch:
+    async def test_reconnect_archives_resets_and_isolates_zero_timeline(
+        self, settings: SubtitleSettings
+    ) -> None:
+        first = ControlledTranscriber()
+        second = ControlledTranscriber()
+        contexts: list[ASRSessionContext] = []
+        streams = iter((first, second))
+
+        def create(context: ASRSessionContext) -> ControlledTranscriber:
+            contexts.append(context)
+            return next(streams)
+
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=create,
+            backoff_delays=(0.01,),
+        )
+        client_messages: list[dict[str, object]] = []
+
+        async def collect(message: str) -> None:
+            client_messages.append(json.loads(message))
+
+        proxy.add_client(collect)
+        await proxy.start()
+        prepare_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        preparation = await prepare_task
+        proxy.commit_browser_capture(preparation)
+        first_window = TranscriptNormalizer().normalize(
+            _snapshot("第一段"), preparation.generation, 0
+        )
+        await first.emit(ASREvent(kind="snapshot", window=first_window))
+        await first.disconnect()
+        await second.connected.wait()
+
+        archives = list(settings.output_dir.glob("session-*.srt"))
+        assert len(archives) == 1
+        assert "第一段" in archives[0].read_text(encoding="utf-8")
+        assert (settings.output_dir / "current.srt").read_text(encoding="utf-8") == ""
+        assert not (settings.output_dir / "current.srt.tmp").exists()
+        assert {"type": "reset", "source_epoch": preparation.generation} in client_messages
+        assert [context.source_epoch for context in contexts] == [1, 2]
+
+        new_client = AsyncMock()
+        proxy.add_client(new_client)
+        await asyncio.sleep(0)
+        new_client.assert_not_awaited()
+
+        await second.emit(ASREvent(kind="ready"))
+        second_window = TranscriptNormalizer().normalize(_snapshot("第二段"), 2, 0)
+        await second.emit(ASREvent(kind="snapshot", window=second_window))
+        await proxy.deactivate_browser_capture()
+
+        archives = sorted(settings.output_dir.glob("session-*.srt"))
+        assert len(archives) == 2
+        assert sum("第一段" in archive.read_text(encoding="utf-8") for archive in archives) == 1
+        assert sum("第二段" in archive.read_text(encoding="utf-8") for archive in archives) == 1
+        resets = [message for message in client_messages if message.get("type") == "reset"]
+        assert resets == [
+            {"type": "reset", "source_epoch": 1},
+            {"type": "reset", "source_epoch": 2},
+        ]
+        assert (settings.output_dir / "current.srt").read_text(encoding="utf-8") == ""
+        await proxy.stop()
+
+    async def test_epoch_without_confirmed_clears_state_without_empty_archive(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+        prepare_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await prepare_task
+        proxy.commit_browser_capture(preparation)
+        await stream.emit(
+            ASREvent(
+                kind="snapshot",
+                window=TranscriptWindow(
+                    source_epoch=preparation.generation,
+                    partial="未确认",
+                ),
+            )
+        )
+
+        await proxy.deactivate_browser_capture()
+
+        assert list(settings.output_dir.glob("session-*.srt")) == []
+        assert (settings.output_dir / "current.srt").read_text(encoding="utf-8") == ""
+        assert proxy._last_payload is None
+        assert proxy._snapshot_signature is None
+        assert proxy._persisted_confirmed_signature is None
+        assert proxy._session_has_confirmed is False
+        assert not proxy._browser_ready.is_set()
+
+        new_client = AsyncMock()
+        proxy.add_client(new_client)
+        await asyncio.sleep(0)
+        new_client.assert_not_awaited()
+        await proxy.stop()
+
+
+class TestDiagnostics:
+    async def test_frozen_snapshot_tracks_event_age_without_silence_degradation(
+        self, settings: SubtitleSettings
+    ) -> None:
+        clock = FakeClock(10.0)
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+            clock=clock,
+        )
+
+        assert proxy.diagnostics(PCMOwner.NONE) == SubtitleProxyDiagnostics(
+            workload="paused",
+            ws_state="paused",
+            reconnect_count=0,
+            last_event_age_ms=None,
+            dropped_chunks=0,
+            gap_count=0,
+        )
+
+        await proxy.start()
+        prepare_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        starting = proxy.diagnostics(PCMOwner.SUBTITLES)
+        assert starting.workload == "starting"
+        assert starting.ws_state == "connected"
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await prepare_task
+        proxy.commit_browser_capture(preparation)
+        clock.advance(0.5)
+        assert proxy.diagnostics(PCMOwner.SUBTITLES).last_event_age_ms == 500
+        await stream.emit(
+            ASREvent(
+                kind="snapshot",
+                window=TranscriptWindow(
+                    source_epoch=preparation.generation,
+                    partial="事件更新时间",
+                ),
+            )
+        )
+        clock.advance(3_600.25)
+
+        diagnostics = proxy.diagnostics(PCMOwner.SUBTITLES)
+        assert diagnostics.workload == "ready"
+        assert diagnostics.ws_state == "connected"
+        assert diagnostics.last_event_age_ms == 3_600_250
+        assert proxy.diagnostics(PCMOwner.NONE).last_event_age_ms is None
+        with pytest.raises(FrozenInstanceError):
+            diagnostics.workload = "degraded"  # type: ignore[misc]
+
+        proxy._browser_ready.clear()
+        assert proxy.diagnostics(PCMOwner.SUBTITLES).workload == "degraded"
+        proxy._state = SubtitleProxyState.BACKOFF
+        backoff = proxy.diagnostics(PCMOwner.SUBTITLES)
+        assert backoff.workload == "degraded"
+        assert backoff.ws_state == "backoff"
+        proxy._state = SubtitleProxyState.ERROR
+        failed = proxy.diagnostics(PCMOwner.SUBTITLES)
+        assert failed.workload == "error"
+        assert failed.ws_state == "error"
+        await proxy.stop()
+
+    async def test_reconnect_drop_and_gap_counters_are_independent(
+        self, settings: SubtitleSettings
+    ) -> None:
+        first = ControlledTranscriber()
+        second = ControlledTranscriber()
+        meeting = ControlledTranscriber()
+        meeting_reconnected = ControlledTranscriber()
+        streams = iter((first, second, meeting, meeting_reconnected))
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=lambda _context: next(streams),
+            backoff_delays=(0.01,),
+        )
+        await proxy.start()
+
+        browser_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await first.connected.wait()
+        await first.emit(ASREvent(kind="ready"))
+        browser_preparation = await browser_task
+        proxy.commit_browser_capture(browser_preparation)
+        await first.disconnect()
+        await second.connected.wait()
+        await second.emit(ASREvent(kind="ready"))
+        await _wait_until(lambda: proxy.state == "connected")
+        assert proxy.diagnostics(PCMOwner.SUBTITLES).reconnect_count == 1
+        await proxy.deactivate_browser_capture()
+
+        meeting_task = asyncio.create_task(
+            proxy.prepare_capture("meeting:diagnostics", timeout_secs=0.2)
+        )
+        await meeting.connected.wait()
+        await meeting.emit(ASREvent(kind="ready"))
+        meeting_preparation = await meeting_task
+        proxy.commit_capture(meeting_preparation)
+        await meeting.disconnect()
+        await meeting_reconnected.connected.wait()
+        await meeting_reconnected.emit(ASREvent(kind="ready"))
+        await _wait_until(lambda: proxy.state == "connected")
+        meeting_diagnostics = proxy.diagnostics(PCMOwner.MEETING)
+        assert meeting_diagnostics.workload == "ready"
+        assert meeting_diagnostics.ws_state == "meeting"
+        assert meeting_diagnostics.reconnect_count == 2
+        await proxy.abort_capture()
+
+        proxy._audio_buffer = asyncio.Queue(maxsize=1)
+        proxy._audio_buffer.put_nowait(b"old")
+        proxy._browser_capture_active = True
+        proxy._browser_stream = second
+        proxy._browser_ready.set()
+        proxy._state = SubtitleProxyState.CONNECTED
+        await proxy.push_audio(b"new")
+        await proxy._notify_capture_gap(0, 10)
+
+        diagnostics = proxy.diagnostics(PCMOwner.SUBTITLES)
+        assert diagnostics.reconnect_count == 2
+        assert diagnostics.dropped_chunks == 1
+        assert diagnostics.gap_count == 1
+
+        await proxy.deactivate_browser_capture()
+        await proxy.stop()
+
+
 class TestAudioPush:
     async def test_committed_browser_capture_sends_without_clients(
         self, settings: SubtitleSettings
@@ -1102,9 +1360,24 @@ class TestSrtPersistence:
             model_dir=model_dir,
             output_dir=tmp_path / "subtitles",
         )
-        proxy = SubtitleProxy(settings)
+        stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+        prepare_task = asyncio.create_task(
+            proxy.prepare_browser_capture(timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await prepare_task
+        proxy.commit_browser_capture(preparation)
 
-        await proxy._broadcast_payload(_snapshot("你好"))
+        window = TranscriptNormalizer().normalize(
+            _snapshot("你好"), preparation.generation, 0
+        )
+        await stream.emit(ASREvent(kind="snapshot", window=window))
 
         current = settings.output_dir / "current.srt"
         assert current.exists()
@@ -1115,4 +1388,5 @@ class TestSrtPersistence:
 
         archives = list(settings.output_dir.glob("session-*.srt"))
         assert len(archives) == 1
-        assert archives[0].read_text() == current.read_text()
+        assert "你好" in archives[0].read_text(encoding="utf-8")
+        assert current.read_text(encoding="utf-8") == ""

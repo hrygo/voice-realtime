@@ -7,11 +7,11 @@ import contextlib
 import json
 import logging
 import shutil
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from time import perf_counter
 from typing import Any
 
 from voice_realtime.asr.adapters.wlk import WLKStreamFactory
@@ -20,7 +20,7 @@ from voice_realtime.asr.defaults import build_wlk_registry
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.config import SubtitleSettings
-from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,18 @@ class SubtitleProxyState(StrEnum):
     ERROR = "error"
 
 
+@dataclass(frozen=True, slots=True)
+class SubtitleProxyDiagnostics:
+    """字幕代理工作负载诊断快照。"""
+
+    workload: str
+    ws_state: str
+    reconnect_count: int
+    last_event_age_ms: int | None
+    dropped_chunks: int
+    gap_count: int
+
+
 @dataclass
 class _ClientChannel:
     queue: asyncio.Queue[str]
@@ -99,6 +111,7 @@ class SubtitleProxy:
         transcriber_factory: TranscriberFactory | None = None,
         stream_factory: WLKStreamFactory | None = None,
         backoff_delays: Sequence[float] = _DEFAULT_BACKOFF,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not backoff_delays or any(delay <= 0 for delay in backoff_delays):
             raise ValueError("backoff_delays 必须包含正数")
@@ -112,6 +125,7 @@ class SubtitleProxy:
         )
         self._transcriber_factory = transcriber_factory
         self._backoff_delays = tuple(backoff_delays)
+        self._clock = clock
         self._browser_stream: StreamingTranscriber | None = None
         self._capture_stream: StreamingTranscriber | None = None
         self._clients: dict[ClientSender, _ClientChannel] = {}
@@ -121,7 +135,8 @@ class SubtitleProxy:
         self._last_error: str | None = None
         self._supervisor_task: asyncio.Task[None] | None = None
         self._stop_event = asyncio.Event()
-        self._browser_generation = 0
+        self._subtitle_epoch = 0
+        self._subtitle_epoch_open = False
         self._browser_prepared: SubtitlePreparation | None = None
         self._browser_capture_active = False
         self._browser_ready = asyncio.Event()
@@ -149,6 +164,10 @@ class SubtitleProxy:
         self._capture_last_window: TranscriptWindow | None = None
         self._event_listeners: list[CaptureListener] = []
         self._gap_listeners: list[GapListener] = []
+        self._last_event_at: float | None = None
+        self._reconnect_count = 0
+        self._dropped_chunks = 0
+        self._gap_count = 0
 
     def _create_transcriber(self, context: ASRSessionContext) -> StreamingTranscriber:
         if self._transcriber_factory is not None:
@@ -174,6 +193,10 @@ class SubtitleProxy:
     def browser_capture_active(self) -> bool:
         """普通字幕是否已提交并可接收 PCM。"""
         return self._browser_capture_active
+
+    @property
+    def subtitle_epoch(self) -> int:
+        return self._subtitle_epoch
 
     @property
     def capture_epoch(self) -> int:
@@ -234,6 +257,63 @@ class SubtitleProxy:
     def is_paused(self) -> bool:
         return not self._browser_capture_active and not self._capture_accept_audio
 
+    def diagnostics(self, expected_owner: PCMOwner) -> SubtitleProxyDiagnostics:
+        """返回不以静音时长推断降级的原始工作负载诊断。"""
+        active_owner = expected_owner in {PCMOwner.SUBTITLES, PCMOwner.MEETING}
+        if not active_owner:
+            workload = "paused"
+            ws_state = "paused"
+        else:
+            ws_state = self._diagnostic_ws_state(expected_owner)
+            committed = (
+                self._browser_capture_active
+                if expected_owner is PCMOwner.SUBTITLES
+                else self._capture_accept_audio
+            )
+            ready = self._diagnostic_ready(expected_owner)
+            if self._state is SubtitleProxyState.ERROR:
+                workload = "error"
+            elif self._state is SubtitleProxyState.BACKOFF or (committed and not ready):
+                workload = "degraded"
+            elif ready:
+                workload = "ready"
+            else:
+                workload = "starting"
+
+        last_event_age_ms = None
+        if active_owner and self._last_event_at is not None:
+            elapsed = max(0.0, self._clock() - self._last_event_at)
+            last_event_age_ms = int(elapsed * 1000)
+        return SubtitleProxyDiagnostics(
+            workload=workload,
+            ws_state=ws_state,
+            reconnect_count=self._reconnect_count,
+            last_event_age_ms=last_event_age_ms,
+            dropped_chunks=self._dropped_chunks,
+            gap_count=self._gap_count,
+        )
+
+    def _diagnostic_ready(self, expected_owner: PCMOwner) -> bool:
+        if expected_owner is PCMOwner.SUBTITLES:
+            return (
+                self._browser_stream is not None
+                and self._browser_ready.is_set()
+                and self._state is SubtitleProxyState.CONNECTED
+            )
+        return (
+            self._capture_stream is not None
+            and self._capture_ready.is_set()
+            and self._capture_stream_available.is_set()
+            and self._state is SubtitleProxyState.CONNECTED
+        )
+
+    def _diagnostic_ws_state(self, expected_owner: PCMOwner) -> str:
+        if self._state is SubtitleProxyState.STOPPED:
+            return "paused"
+        if self._state is SubtitleProxyState.CONNECTED:
+            return "meeting" if expected_owner is PCMOwner.MEETING else "connected"
+        return self._state.value
+
     async def start(self) -> None:
         """初始化代理；不建立 WLK 连接。"""
         if self._running:
@@ -249,6 +329,7 @@ class SubtitleProxy:
         self._snapshot_signature = None
         self._persisted_confirmed_signature = None
         self._last_error = None
+        self._last_event_at = None
         self._stop_event.clear()
         self._browser_ready.clear()
         self._browser_active.clear()
@@ -262,14 +343,13 @@ class SubtitleProxy:
         self._stop_event.set()
         if self._capture_owner is not None:
             await self._close_capture()
-        await self._close_browser_connection(archive=False)
+        await self._close_browser_connection()
         channels = list(self._clients.values())
         self._clients.clear()
         for channel in channels:
             channel.task.cancel()
         if channels:
             await asyncio.gather(*(channel.task for channel in channels), return_exceptions=True)
-        self._archive_current_srt()
         self._state = SubtitleProxyState.STOPPED
         logger.info("SubtitleProxy: 已停止")
 
@@ -286,15 +366,15 @@ class SubtitleProxy:
         if self._browser_capture_active or self._browser_prepared is not None:
             raise RuntimeError("普通字幕已活动或正在准备")
 
-        self._browser_generation += 1
-        preparation = SubtitlePreparation(generation=self._browser_generation)
+        epoch = await self._open_subtitle_epoch()
+        preparation = SubtitlePreparation(generation=epoch)
         self._browser_prepared = preparation
         self._browser_ready.clear()
         self._browser_active.clear()
         self._drain_audio_buffer()
         self._state = SubtitleProxyState.CONNECTING
         stream = self._create_transcriber(
-            ASRSessionContext(source_epoch=0, offset_ms=0, purpose="subtitles")
+            ASRSessionContext(source_epoch=epoch, offset_ms=0, purpose="subtitles")
         )
         self._browser_stream = stream
         try:
@@ -309,10 +389,10 @@ class SubtitleProxy:
                 )
                 await self._browser_ready.wait()
         except TimeoutError as exc:
-            await self._close_browser_connection(archive=False)
+            await self._close_browser_connection()
             raise RuntimeError("WhisperLiveKit 未发送 config") from exc
         except BaseException:
-            await self._close_browser_connection(archive=False)
+            await self._close_browser_connection()
             raise
         return preparation
 
@@ -340,11 +420,11 @@ class SubtitleProxy:
         """消费并关闭尚未提交的普通字幕 preparation。"""
         if self._browser_prepared is not preparation:
             raise RuntimeError("无效或已消费的 browser preparation")
-        await self._close_browser_connection(archive=False)
+        await self._close_browser_connection()
 
     async def deactivate_browser_capture(self) -> None:
         """停用普通字幕，关闭任务与流并清空待发 PCM。"""
-        await self._close_browser_connection(archive=True)
+        await self._close_browser_connection()
 
     async def begin_capture(self, owner: str) -> None:
         """兼容旧调用：准备会议流后立即提交。"""
@@ -373,6 +453,7 @@ class SubtitleProxy:
             await self.start()
 
         self._snapshot_signature = None
+        self._last_event_at = None
         self._capture_generation += 1
         preparation = CapturePreparation(
             owner=owner,
@@ -456,7 +537,7 @@ class SubtitleProxy:
             raise RuntimeError("没有活动的会议采集租约")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
-        start_time = perf_counter()
+        start_time = time.perf_counter()
         logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
         self._capture_accept_audio = False
         try:
@@ -465,10 +546,10 @@ class SubtitleProxy:
             self._capture_active.clear()
             final_window = await asyncio.wait_for(stream.finish(), timeout=timeout_secs)
             self._capture_last_window = final_window
-            elapsed_ms = (perf_counter() - start_time) * 1000
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
         except TimeoutError as exc:
-            elapsed_ms = (perf_counter() - start_time) * 1000
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
             logger.warning(
                 "会议 ASR 优雅冲刷超时 (%.1f ms > %.1fs)，执行强制截断封存",
                 elapsed_ms,
@@ -490,7 +571,40 @@ class SubtitleProxy:
         self._capture_active.clear()
         await self._close_capture()
 
-    async def _close_browser_connection(self, *, archive: bool) -> None:
+    async def _open_subtitle_epoch(self) -> int:
+        """关闭旧边界并建立一个不复用时间轴的新普通字幕 epoch。"""
+        await self._close_subtitle_epoch()
+        self._subtitle_epoch += 1
+        self._subtitle_epoch_open = True
+        self._archived = False
+        self._last_payload = None
+        self._snapshot_signature = None
+        self._persisted_confirmed_signature = None
+        self._session_has_confirmed = False
+        self._browser_ready.clear()
+        self._last_event_at = None
+        return self._subtitle_epoch
+
+    async def _close_subtitle_epoch(self) -> None:
+        """归档并原子清空当前普通字幕 epoch，随后通知合法客户端。"""
+        if not self._subtitle_epoch_open:
+            return
+        epoch = self._subtitle_epoch
+        self._archive_current_srt()
+        self._atomic_clear_current_srt()
+        self._last_payload = None
+        self._snapshot_signature = None
+        self._persisted_confirmed_signature = None
+        self._session_has_confirmed = False
+        self._browser_ready.clear()
+        self._last_event_at = None
+        self._subtitle_epoch_open = False
+        if epoch > 0 and self._clients:
+            await self._broadcast_untracked(
+                {"type": "reset", "source_epoch": epoch}
+            )
+
+    async def _close_browser_connection(self) -> None:
         self._browser_capture_active = False
         self._browser_prepared = None
         self._browser_active.clear()
@@ -505,10 +619,8 @@ class SubtitleProxy:
         if stream is not None:
             with contextlib.suppress(Exception):
                 await stream.close()
-        self._browser_ready.clear()
+        await self._close_subtitle_epoch()
         self._drain_audio_buffer()
-        if archive:
-            self._archive_current_srt()
         if self._running:
             self._state = (
                 SubtitleProxyState.CONNECTED
@@ -597,6 +709,7 @@ class SubtitleProxy:
     async def _notify_capture_gap(self, start_ms: int, end_ms: int) -> None:
         if end_ms <= start_ms:
             return
+        self._gap_count += 1
         gap = TranscriptionGap(
             source_epoch=self._capture_epoch,
             start_ms=start_ms,
@@ -610,6 +723,7 @@ class SubtitleProxy:
         self, old_stream: StreamingTranscriber
     ) -> StreamingTranscriber | None:
         """建立新 ASR epoch，并显式通知无法补录的间隔。"""
+        self._reconnect_count += 1
         with contextlib.suppress(Exception):
             await old_stream.close()
         if self._capture_stream is old_stream:
@@ -656,6 +770,7 @@ class SubtitleProxy:
         return None
 
     async def _handle_capture_event(self, event: ASREvent) -> None:
+        self._last_event_at = self._clock()
         if event.kind == "ready":
             self._capture_ready.set()
             return
@@ -690,10 +805,12 @@ class SubtitleProxy:
         ):
             try:
                 if stream is None:
+                    self._reconnect_count += 1
+                    epoch = await self._open_subtitle_epoch()
                     self._state = SubtitleProxyState.CONNECTING
                     stream = self._create_transcriber(
                         ASRSessionContext(
-                            source_epoch=0,
+                            source_epoch=epoch,
                             offset_ms=0,
                             purpose="subtitles",
                         )
@@ -720,7 +837,7 @@ class SubtitleProxy:
                         await stream.close()
                 if self._browser_stream is stream:
                     self._browser_stream = None
-                self._browser_ready.clear()
+                await self._close_subtitle_epoch()
                 self._drain_audio_buffer()
 
             if not self._running or not self._browser_capture_active:
@@ -776,6 +893,7 @@ class SubtitleProxy:
 
     async def _handle_stream_event(self, event: ASREvent) -> None:
         """只消费后端无关事件，并按完整领域窗口广播。"""
+        self._last_event_at = self._clock()
         if event.kind == "ready":
             self._browser_ready.set()
             await self._broadcast_payload(legacy_ready_payload())
@@ -801,15 +919,20 @@ class SubtitleProxy:
         if persist:
             self._persist_confirmed_snapshot(payload, signature[0])
 
-        if self._clients:
-            text = json.dumps(payload, ensure_ascii=False)
-            for channel in tuple(self._clients.values()):
-                if channel.queue.full():
-                    with contextlib.suppress(asyncio.QueueEmpty):
-                        channel.queue.get_nowait()
-                with contextlib.suppress(asyncio.QueueFull):
-                    channel.queue.put_nowait(text)
-            await asyncio.sleep(0)
+        await self._broadcast_untracked(payload)
+
+    async def _broadcast_untracked(self, payload: dict[str, Any]) -> None:
+        """广播控制或快照 payload，但不让它成为可回放字幕状态。"""
+        if not self._clients:
+            return
+        text = json.dumps(payload, ensure_ascii=False)
+        for channel in tuple(self._clients.values()):
+            if channel.queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    channel.queue.get_nowait()
+            with contextlib.suppress(asyncio.QueueFull):
+                channel.queue.put_nowait(text)
+        await asyncio.sleep(0)
 
     async def clear_subtitles(self) -> None:
         """清空当前字幕快照并重置服务端会话。"""
@@ -818,10 +941,7 @@ class SubtitleProxy:
         self._snapshot_signature = None
         self._persisted_confirmed_signature = None
         self._session_has_confirmed = False
-        current = self._settings.output_dir / "current.srt"
-        if current.exists():
-            with contextlib.suppress(OSError):
-                current.unlink()
+        self._atomic_clear_current_srt()
         stream = self._browser_stream
         if stream is not None:
             self._browser_stream = None
@@ -864,6 +984,7 @@ class SubtitleProxy:
             with contextlib.suppress(asyncio.QueueEmpty):
                 self._audio_buffer.get_nowait()
                 self._audio_buffer.task_done()
+                self._dropped_chunks += 1
         with contextlib.suppress(asyncio.QueueFull):
             self._audio_buffer.put_nowait(data)
 
@@ -962,6 +1083,14 @@ class SubtitleProxy:
         temporary.replace(current)
         self._persisted_confirmed_signature = signature
         self._session_has_confirmed = True
+
+    def _atomic_clear_current_srt(self) -> None:
+        output_dir = self._settings.output_dir
+        output_dir.mkdir(parents=True, exist_ok=True)
+        temporary = output_dir / "current.srt.tmp"
+        current = output_dir / "current.srt"
+        temporary.write_text("", encoding="utf-8")
+        temporary.replace(current)
 
     def _archive_current_srt(self) -> None:
         if self._archived or not self._session_has_confirmed:
