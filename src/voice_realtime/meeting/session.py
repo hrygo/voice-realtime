@@ -205,21 +205,27 @@ class MeetingSession:
             meeting_id = self._active_meeting_id
             if meeting_id is None:
                 raise RuntimeError("meeting not active")
-            record = await self.repository.set_status(meeting_id, MeetingStatus.FINALIZING)
-            await self._emit(
-                "meeting_state_changed",
-                meeting_id,
-                self._meeting_state_payload(record),
-            )
-            timed_out = False
-            timeout_window: TranscriptWindow | None = None
+            capture_closed = False
             try:
+                record = await self.repository.set_status(
+                    meeting_id, MeetingStatus.FINALIZING
+                )
+                self._record = record
+                await self._emit(
+                    "meeting_state_changed",
+                    meeting_id,
+                    self._meeting_state_payload(record),
+                )
+                timed_out = False
+                timeout_window: TranscriptWindow | None = None
                 try:
                     timeout_window = await self.gateway.finish_capture(
                         timeout_secs=self.finalization_timeout_secs
                     )
+                    capture_closed = True
                 except TimeoutError as exc:
                     timed_out = True
+                    capture_closed = True
                     timeout_window = getattr(exc, "last_window", None)
                 if timeout_window is not None:
                     await self._persist_window(meeting_id, timeout_window)
@@ -230,11 +236,11 @@ class MeetingSession:
                     ),
                     reason="finalization_timeout" if timed_out else None,
                 )
+                self._record = record
                 minutes = await self.repository.create_minutes(
                     meeting_id,
                     idempotency_key=f"meeting:{meeting_id}:minutes:v1",
                 )
-                self._record = record
                 minutes_status = getattr(minutes, "status", "queued")
                 await self._emit(
                     "meeting_state_changed",
@@ -254,19 +260,53 @@ class MeetingSession:
                     },
                 )
                 return cast(MeetingRecord, record)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    await self.repository.set_status(
-                        meeting_id,
-                        MeetingStatus.INTERRUPTED,
-                        reason="meeting_stop_failed",
-                    )
+            except BaseException:
+                failure_cleanup = asyncio.create_task(
+                    self._settle_failed_stop(meeting_id, capture_closed=capture_closed)
+                )
+                await asyncio.shield(failure_cleanup)
                 raise
             finally:
-                await self._release_listener()
-                self._active_meeting_id = None
-                self._committed_preparation = None
-                await self._resume_summary_worker()
+                final_cleanup = asyncio.create_task(self._release_stopped_session())
+                await asyncio.shield(final_cleanup)
+
+    async def _settle_failed_stop(
+        self, meeting_id: UUID, *, capture_closed: bool
+    ) -> None:
+        if not capture_closed:
+            with contextlib.suppress(Exception):
+                await self.gateway.abort_capture()
+        await self._mark_stop_interrupted(meeting_id)
+
+    async def _release_stopped_session(self) -> None:
+        await self._release_listener()
+        self._active_meeting_id = None
+        self._preparation = None
+        self._committed_preparation = None
+        await self._resume_summary_worker()
+
+    async def _mark_stop_interrupted(self, meeting_id: UUID) -> None:
+        """尽力持久化 stop 失败；DB 失败时仍收敛本地稳定状态。"""
+        current = self._record
+        if current is not None and current.status is MeetingStatus.COMPLETED:
+            return
+        if current is not None:
+            self._record = current.model_copy(
+                update={
+                    "status": MeetingStatus.INTERRUPTED,
+                    "interruption_reason": "meeting_stop_failed",
+                }
+            )
+        try:
+            record = await self.repository.set_status(
+                meeting_id,
+                MeetingStatus.INTERRUPTED,
+                reason="meeting_stop_failed",
+            )
+        except Exception:
+            self._storage_degraded = True
+        else:
+            self._record = record
 
     async def interrupt(self, reason: str) -> MeetingRecord | None:
         async with self._lock:

@@ -56,6 +56,9 @@ class MeetingWorkload(Protocol):
     @property
     def active_meeting_id(self) -> UUID | None: ...
 
+    @property
+    def record(self) -> MeetingRecord | None: ...
+
     async def prepare_start(self, title: str | None = None) -> Any: ...
 
     def commit_start(self, preparation: Any) -> MeetingRecord: ...
@@ -133,8 +136,10 @@ class RuntimeModeCoordinator:
         self._meeting_record: MeetingRecord | None = None
         self._command_lock = asyncio.Lock()
         self._transition_task: asyncio.Task[Any] | None = None
-        self._prepared_target: tuple[RuntimeMode, Any] | None = None
+        self._prepared_target: tuple[RuntimeMode, Any, bool] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
         self._closing = False
+        self._stopped = False
         self._runtime_revision = 0
         self._on_owner_changed = on_owner_changed or (lambda _owner: None)
         self._state_publisher = state_publisher or (lambda: None)
@@ -146,18 +151,13 @@ class RuntimeModeCoordinator:
     @staticmethod
     def _declares_subtitle_interface(workload: object) -> bool:
         """区分新 subtitle positional 参数与旧 positional meeting 调用。"""
-        method_names = {
+        method_names = (
             "prepare_browser_capture",
             "commit_browser_capture",
             "abort_browser_capture",
             "deactivate_browser_capture",
-        }
-        declared = {
-            name
-            for cls in type(workload).__mro__
-            for name in cls.__dict__
-        }
-        return method_names <= declared
+        )
+        return all(callable(getattr(workload, name, None)) for name in method_names)
 
     @staticmethod
     def _owner_for_mode(mode: RuntimeMode) -> PCMOwner:
@@ -401,20 +401,44 @@ class RuntimeModeCoordinator:
         abort: Callable[[Any], Awaitable[None]],
     ) -> tuple[Any, T]:
         preparation = await prepare()
-        self._prepared_target = (target, preparation)
-        if source is not RuntimeMode.IDLE:
-            self._set_transition_barrier()
+        target_committed = False
+        self._prepared_target = (target, preparation, target_committed)
         try:
+            if source is not RuntimeMode.IDLE:
+                self._set_transition_barrier()
             await self._quiesce_source(source)
             result = commit(preparation)
-            self._prepared_target = None
+            target_committed = True
+            self._prepared_target = (target, preparation, target_committed)
             self._commit_state(target, self._owner_for_mode(target))
-        except asyncio.CancelledError:
-            await self._abort_target(target, preparation, abort, suppress_errors=True)
+            self._prepared_target = None
+        except asyncio.CancelledError as cancellation:
+            abort_error = await self._abort_target(
+                target,
+                preparation,
+                abort,
+                committed=target_committed,
+                suppress_errors=True,
+            )
+            if self._closing:
+                raise
+            if abort_error is not None:
+                await self._force_idle_state(cancellation, abort_error)
+                raise
+            try:
+                await self._restore_source(source)
+                self._rollback_result = "success"
+                self._commit_state(source, self._owner_for_mode(source))
+            except Exception as rollback_error:
+                await self._force_idle_state(cancellation, rollback_error)
             raise
         except Exception as source_error:
             abort_error = await self._abort_target(
-                target, preparation, abort, suppress_errors=False
+                target,
+                preparation,
+                abort,
+                committed=target_committed,
+                suppress_errors=False,
             )
             if abort_error is not None:
                 await self._force_idle(source_error, abort_error)
@@ -428,10 +452,14 @@ class RuntimeModeCoordinator:
         preparation: Any,
         abort: Callable[[Any], Awaitable[None]],
         *,
+        committed: bool,
         suppress_errors: bool,
     ) -> Exception | None:
         try:
-            await abort(preparation)
+            if committed:
+                await self._deactivate_target(target)
+            else:
+                await abort(preparation)
         except Exception as exc:
             if suppress_errors:
                 LOGGER.error(
@@ -439,9 +467,24 @@ class RuntimeModeCoordinator:
                     extra={"target": target.value, "error_type": type(exc).__name__},
                 )
             return exc
-        finally:
-            self._prepared_target = None
+        self._prepared_target = None
         return None
+
+    async def _deactivate_target(self, target: RuntimeMode) -> None:
+        if target is RuntimeMode.ASSISTANT:
+            if bool(self.interaction.active):
+                await self.interaction.stop(reason="取消模式切换")
+            return
+        if target is RuntimeMode.SUBTITLES:
+            if self.subtitles is not None:
+                await self.subtitles.deactivate_browser_capture()
+            return
+        if target is RuntimeMode.MEETING and self.meeting is not None:
+            await self.meeting.interrupt("mode_switch_aborted")
+            self._active_meeting_id = None
+            latest_record = getattr(self.meeting, "record", None)
+            if latest_record is not None:
+                self._meeting_record = latest_record
 
     async def _recover_source_or_force_idle(
         self,
@@ -450,14 +493,22 @@ class RuntimeModeCoordinator:
     ) -> None:
         try:
             await self._restore_source(source)
+            self._rollback_result = "success"
+            self._commit_state(source, self._owner_for_mode(source))
         except Exception as rollback_error:
             await self._force_idle(source_error, rollback_error)
-        self._rollback_result = "success"
-        self._commit_state(source, self._owner_for_mode(source))
 
     async def _force_idle(
         self,
-        source_error: Exception,
+        source_error: BaseException,
+        rollback_error: Exception,
+    ) -> None:
+        await self._force_idle_state(source_error, rollback_error)
+        raise MeetingUnavailable("运行时工作负载恢复失败") from source_error
+
+    async def _force_idle_state(
+        self,
+        source_error: BaseException,
         rollback_error: Exception,
     ) -> None:
         self._rollback_result = "failed"
@@ -472,8 +523,7 @@ class RuntimeModeCoordinator:
         )
         await self._stop_all_workloads()
         self._active_meeting_id = None
-        self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
-        raise MeetingUnavailable("运行时工作负载恢复失败") from source_error
+        self._force_commit_idle()
 
     async def _quiesce_source(self, source: RuntimeMode) -> None:
         if source is RuntimeMode.ASSISTANT:
@@ -516,13 +566,40 @@ class RuntimeModeCoordinator:
         expected = self._active_meeting_id
         if meeting_id is not None and str(meeting_id) != str(expected):
             raise MeetingNotActive("会议 ID 不匹配")
-        self._set_transition_barrier()
+        try:
+            self._set_transition_barrier()
+        except Exception as barrier_error:
+            self._rollback_result = "success"
+            try:
+                self._commit_state(RuntimeMode.MEETING, PCMOwner.MEETING)
+            except Exception as rollback_error:
+                await self._force_idle(barrier_error, rollback_error)
+            raise
         try:
             record = await meeting.stop()
-        finally:
+        except BaseException as stop_error:
+            latest_record = getattr(meeting, "record", None)
+            if latest_record is not None:
+                self._meeting_record = latest_record
+            elif self._meeting_record is not None:
+                self._meeting_record = self._meeting_record.model_copy(
+                    update={
+                        "status": MeetingStatus.INTERRUPTED,
+                        "interruption_reason": "meeting_stop_failed",
+                    }
+                )
             self._active_meeting_id = None
-            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+            try:
+                self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+            except Exception as callback_error:
+                await self._force_idle_state(stop_error, callback_error)
+            raise
         self._meeting_record = record
+        self._active_meeting_id = None
+        try:
+            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+        except Exception as callback_error:
+            await self._force_idle(callback_error, callback_error)
         return record
 
     async def _stop_active_mode_locked(self) -> None:
@@ -532,17 +609,30 @@ class RuntimeModeCoordinator:
             await self._end_meeting_locked(None)
             return
         source = self._mode
-        self._set_transition_barrier()
         try:
+            self._set_transition_barrier()
             await self._quiesce_source(source)
+            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+        except asyncio.CancelledError as cancellation:
+            if self._closing:
+                raise
+            try:
+                await self._restore_source(source)
+                self._rollback_result = "success"
+                self._commit_state(source, self._owner_for_mode(source))
+            except Exception as rollback_error:
+                await self._force_idle_state(cancellation, rollback_error)
+            raise
         except Exception as source_error:
             if self._source_active(source):
                 self._rollback_result = "success"
-                self._commit_state(source, self._owner_for_mode(source))
+                try:
+                    self._commit_state(source, self._owner_for_mode(source))
+                except Exception as rollback_error:
+                    await self._force_idle(source_error, rollback_error)
             else:
-                self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+                await self._force_idle_state(source_error, source_error)
             raise source_error
-        self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
 
     def _source_active(self, source: RuntimeMode) -> bool:
         if source is RuntimeMode.ASSISTANT:
@@ -556,14 +646,53 @@ class RuntimeModeCoordinator:
         return False
 
     def _set_transition_barrier(self) -> None:
+        previous_owner = self._pcm_owner
         self._pcm_owner = PCMOwner.NONE
-        self._on_owner_changed(PCMOwner.NONE)
+        try:
+            self._on_owner_changed(PCMOwner.NONE)
+        except Exception:
+            self._pcm_owner = previous_owner
+            self._restore_owner_callback(previous_owner)
+            raise
 
     def _commit_state(self, mode: RuntimeMode, owner: PCMOwner) -> None:
+        previous_mode = self._mode
+        previous_owner = self._pcm_owner
         self._mode = mode
         self._pcm_owner = owner
-        self._on_owner_changed(owner)
+        try:
+            self._on_owner_changed(owner)
+        except Exception:
+            self._mode = previous_mode
+            self._pcm_owner = previous_owner
+            self._restore_owner_callback(previous_owner)
+            raise
         self._runtime_revision += 1
+        self._publish_state()
+
+    def _force_commit_idle(self) -> None:
+        self._mode = RuntimeMode.IDLE
+        self._pcm_owner = PCMOwner.NONE
+        try:
+            self._on_owner_changed(PCMOwner.NONE)
+        except Exception as exc:
+            LOGGER.error(
+                "runtime owner callback failed during forced idle",
+                extra={"error_type": type(exc).__name__},
+            )
+        self._runtime_revision += 1
+        self._publish_state()
+
+    def _restore_owner_callback(self, owner: PCMOwner) -> None:
+        try:
+            self._on_owner_changed(owner)
+        except Exception as exc:
+            LOGGER.error(
+                "runtime owner callback rollback failed",
+                extra={"error_type": type(exc).__name__},
+            )
+
+    def _publish_state(self) -> None:
         try:
             self._state_publisher()
         except Exception as exc:
@@ -576,10 +705,11 @@ class RuntimeModeCoordinator:
         prepared = self._prepared_target
         if prepared is None:
             return
-        target, preparation = prepared
-        self._prepared_target = None
+        target, preparation, committed = prepared
         try:
-            if target is RuntimeMode.SUBTITLES and self.subtitles is not None:
+            if committed:
+                await self._deactivate_target(target)
+            elif target is RuntimeMode.SUBTITLES and self.subtitles is not None:
                 await self.subtitles.abort_browser_capture(preparation)
             elif target is RuntimeMode.MEETING and self.meeting is not None:
                 await self.meeting.abort_start(preparation)
@@ -590,6 +720,8 @@ class RuntimeModeCoordinator:
                 "prepared target abort failed",
                 extra={"target": target.value, "error_type": type(exc).__name__},
             )
+        else:
+            self._prepared_target = None
 
     async def _stop_all_workloads(self) -> None:
         await self._abort_prepared_target_safely()
@@ -608,6 +740,18 @@ class RuntimeModeCoordinator:
 
     async def stop(self) -> None:
         """取消在途 prepare，尽力全停并发布最终 idle/none 快照。"""
+        if self._stopped:
+            return
+        shutdown = self._shutdown_task
+        if shutdown is None:
+            self._closing = True
+            shutdown = asyncio.create_task(self._stop_once())
+            self._shutdown_task = shutdown
+        await asyncio.shield(shutdown)
+
+    async def _stop_once(self) -> None:
+        """执行唯一一次关闭，供所有并发 stop 调用共享。"""
+        revision_before_shutdown = self._runtime_revision
         self._closing = True
         current = asyncio.current_task()
         transition = self._transition_task
@@ -622,4 +766,11 @@ class RuntimeModeCoordinator:
         async with self._command_lock:
             await self._stop_all_workloads()
             self._active_meeting_id = None
-            self._commit_state(RuntimeMode.IDLE, PCMOwner.NONE)
+            shutdown_already_committed = (
+                self._mode is RuntimeMode.IDLE
+                and self._pcm_owner is PCMOwner.NONE
+                and self._runtime_revision > revision_before_shutdown
+            )
+            if not shutdown_already_committed:
+                self._force_commit_idle()
+            self._stopped = True

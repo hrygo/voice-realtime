@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -501,16 +502,12 @@ async def test_stop_timeout_persists_last_window_and_marks_interrupted(
     assert gateway.gap_listeners == []
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("flush failed"), RuntimeError("minutes failed")])
 async def test_stop_failure_marks_interrupted_and_releases_listeners(
-    repository: FakeRepository, gateway: FakeGateway, failure: Exception
+    repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
     await _start_session(session)
-    if "flush" in str(failure):
-        gateway.finish_capture.side_effect = failure
-    else:
-        repository.minutes_error = failure
+    gateway.finish_capture.side_effect = RuntimeError("flush failed")
 
     with pytest.raises(RuntimeError, match="failed"):
         await session.stop()
@@ -519,6 +516,114 @@ async def test_stop_failure_marks_interrupted_and_releases_listeners(
     assert gateway.listeners == []
     assert gateway.gap_listeners == []
     assert repository.calls[-1] == "interrupted"
+
+
+async def test_stop_minutes_failure_does_not_overwrite_completed_record(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    session = MeetingSession(repository, gateway)
+    await _start_session(session)
+    repository.minutes_error = RuntimeError("minutes failed")
+
+    with pytest.raises(RuntimeError, match="minutes failed"):
+        await session.stop()
+
+    assert repository.record.status is MeetingStatus.COMPLETED
+    assert session.record is repository.record
+    assert "interrupted" not in repository.calls
+    assert session.active_meeting_id is None
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+
+
+async def test_stop_finalizing_failure_aborts_capture_and_persists_interrupted(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    resume = AsyncMock()
+    summary = SimpleNamespace(resume_after_recording=resume)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    original_set_status = repository.set_status
+
+    async def fail_finalizing_once(meeting_id, status, *, reason=None):
+        if status is MeetingStatus.FINALIZING:
+            raise RuntimeError("finalizing unavailable")
+        return await original_set_status(meeting_id, status, reason=reason)
+
+    repository.set_status = AsyncMock(side_effect=fail_finalizing_once)
+
+    with pytest.raises(RuntimeError, match="finalizing"):
+        await session.stop()
+
+    gateway.finish_capture.assert_not_awaited()
+    gateway.abort_capture.assert_awaited_once_with()
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+    assert session.active_meeting_id is None
+    assert session.record is repository.record
+    assert session.record is not None
+    assert session.record.status is MeetingStatus.INTERRUPTED
+    assert repository.calls[-1] == "interrupted"
+    resume.assert_awaited_once_with()
+
+
+async def test_stop_finalizing_and_interrupted_write_fail_still_closes_capture(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    resume = AsyncMock()
+    summary = SimpleNamespace(resume_after_recording=resume)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    repository.status_error = RuntimeError("storage unavailable")
+
+    with pytest.raises(RuntimeError, match="storage"):
+        await session.stop()
+
+    gateway.finish_capture.assert_not_awaited()
+    gateway.abort_capture.assert_awaited_once_with()
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+    assert session.active_meeting_id is None
+    assert session.record is not None
+    assert session.record.status is MeetingStatus.INTERRUPTED
+    assert session.storage_health is StorageHealth.DEGRADED
+    resume.assert_awaited_once_with()
+
+
+async def test_stop_cancellation_marks_interrupted_and_releases_capture(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    resume = AsyncMock()
+    summary = SimpleNamespace(resume_after_recording=resume)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    finalizing_started = asyncio.Event()
+    never_finish = asyncio.Event()
+    original_set_status = repository.set_status
+
+    async def block_finalizing(meeting_id, status, *, reason=None):
+        if status is MeetingStatus.FINALIZING:
+            finalizing_started.set()
+            await never_finish.wait()
+        return await original_set_status(meeting_id, status, reason=reason)
+
+    repository.set_status = AsyncMock(side_effect=block_finalizing)
+    stopping = asyncio.create_task(session.stop())
+    await finalizing_started.wait()
+
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+
+    gateway.finish_capture.assert_not_awaited()
+    gateway.abort_capture.assert_awaited_once_with()
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+    assert session.active_meeting_id is None
+    assert session.record is repository.record
+    assert session.record is not None
+    assert session.record.status is MeetingStatus.INTERRUPTED
+    resume.assert_awaited_once_with()
 
 
 async def test_interrupt_is_idempotent_when_inactive(
