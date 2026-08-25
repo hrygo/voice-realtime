@@ -20,11 +20,13 @@ Qwen3-ASR-1.7B MPS、SenseVoiceSmall CPU 与 Fun-ASR-Nano-2512 MPS 均完成 10/
 
 ## 聚合结果
 
+> 表中加粗表示该指标的观测优势；RTF、墙钟、冷启动与可比 RSS 均按“越低越好”判断，完成数相同则不加粗。
+
 | 实验臂 | 状态 | 完成/失败 | 首条冷启动 wall | Warm RTF P50 / P95 | Warm wall P50 / P95 | Gate-only macro / micro CER | 峰值 RSS |
 |:---|:---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-ASR-1.7B MPS | feasible | 10 / 0 | 3.747s | 0.0619 / 0.0783 | 266 / 422ms | 0.0971 / 0.0872 | 不可比¹ |
-| SenseVoiceSmall CPU | feasible | 10 / 0 | 3.351s | 0.1080 / 0.1481 | 478 / 505ms | 0.1620 / 0.1831 | 3.11 GiB |
-| Fun-ASR-Nano-2512 MPS | feasible | 10 / 0 | 10.850s | 0.0573 / 0.0710 | 242 / 388ms | 0.0699 / 0.1192 | 6.92 GiB |
+| Qwen3-ASR-1.7B MPS | feasible | 10 / 0 | 3.747s | 0.0619 / 0.0783 | 266 / 422ms | 0.0971 / **0.0872** | 不可比¹ |
+| SenseVoiceSmall CPU | feasible | 10 / 0 | **3.351s** | 0.1080 / 0.1481 | 478 / 505ms | 0.1620 / 0.1831 | **3.11 GiB** |
+| Fun-ASR-Nano-2512 MPS | feasible | 10 / 0 | 10.850s | **0.0573 / 0.0710** | **242 / 388ms** | **0.0699 / 0.1192** | 6.92 GiB |
 | Fun-ASR-Nano-2512 CPU | reused / Stage 0-only | 10 / 0 | 12.859s² | 0.5924 / 0.7561² | 2623 / 2930ms² | 0.0699 / 0.1192² | 约 6.91 GiB² |
 
 ¹ Qwen 模型运行在隔离子进程，Stage 0 产物的 `resources.csv` 只采样父进程，记录的约 43 MiB 不能代表模型内存，故不参与资源比较。后续 runner 已增加子进程树 RSS 采样；Stage 1 必须产生新资源证据，不得回填或改写本轮历史结果。

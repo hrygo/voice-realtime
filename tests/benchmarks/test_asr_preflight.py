@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -27,6 +28,16 @@ def _source(source_token: str) -> SourceCatalogEntry:
         authorization_status="approved",
         deidentification_status="verified",
         human_reviewed=True,
+    )
+
+
+def _publisher_source(source_token: str) -> SourceCatalogEntry:
+    return SourceCatalogEntry.model_validate(
+        {
+            **_source(source_token).model_dump(),
+            "human_reviewed": False,
+            "review_basis": "publisher-corpus",
+        }
     )
 
 
@@ -70,6 +81,18 @@ def _reference(sample_id: str) -> ReferenceCatalogEntry:
     )
 
 
+def _publisher_reference(sample_id: str) -> ReferenceCatalogEntry:
+    return ReferenceCatalogEntry(
+        sample_id=sample_id,
+        reference_sha256="d" * 64,
+        reference_revision="publisher-openslr-v1",
+        normalization_version="nfkc-casefold-punct-space-v1",
+        annotation_status="publisher_verified",
+        annotator_count=0,
+        adjudicated=False,
+    )
+
+
 def _spec() -> BlindPreflightSpec:
     core = _candidate("core_001", split="blind-core", duration_ms=60_000)
     reserve = _candidate("reserve_001", split="blind-reserve", duration_ms=45_000)
@@ -97,6 +120,55 @@ def test_metadata_only_preflight_can_be_ready_without_reading_audio() -> None:
         "blind-reserve": 45_000,
     }
     assert "blind_ready" not in report.model_dump_json()
+
+
+def test_public_proxy_accepts_publisher_references_without_weakening_target_domain() -> None:
+    target = _spec()
+    publisher_references = tuple(
+        _publisher_reference(candidate.sample_id) for candidate in target.candidates
+    )
+    public_proxy = target.model_copy(
+        update={
+            "evidence_class": "public-operational-proxy",
+            "sources": tuple(
+                _publisher_source(source.source_token) for source in target.sources
+            ),
+            "references": publisher_references,
+        }
+    )
+
+    public_report = evaluate_blind_preflight(public_proxy, metadata_sha256="c" * 64)
+    target_report = evaluate_blind_preflight(
+        target.model_copy(update={"references": publisher_references}),
+        metadata_sha256="c" * 64,
+    )
+
+    assert public_report.status == "metadata_ready"
+    assert public_report.evidence_class == "public-operational-proxy"
+    assert public_report.cluster_set_sha256 == hashlib.sha256(
+        b"core-001\nreserve-001"
+    ).hexdigest()
+    assert target_report.status == "incomplete"
+    assert "reference_adjudication_incomplete" in target_report.blockers
+
+
+def test_only_negative_candidates_may_omit_speaker_tokens() -> None:
+    speech = _candidate("speech", split="blind-core", duration_ms=1_000)
+    negative_payload = {
+        **speech.model_dump(),
+        "sample_id": "negative",
+        "speaker_tokens": (),
+        "scenario": "public-negative",
+        "tags": ("negative", "real-background"),
+    }
+
+    negative = BlindCandidateMetadata.model_validate(negative_payload)
+
+    assert negative.speaker_tokens == ()
+    with pytest.raises(ValidationError, match="speaker"):
+        BlindCandidateMetadata.model_validate(
+            {**negative_payload, "scenario": "near-field", "tags": ("clean",)}
+        )
 
 
 def test_preflight_reports_reference_authorization_and_cross_look_gaps() -> None:

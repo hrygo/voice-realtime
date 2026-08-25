@@ -8,14 +8,15 @@ interface ShortcutsModalProps {
 const SHORTCUTS = [
   { key: "Cmd / Ctrl + 1 / 2 / 3", desc: "快速切换「语音助手」/「会议助手」/「实时字幕」" },
   { key: "M", desc: "切换麦克风静音 / 恢复录音" },
-  { key: "Cmd / Ctrl + K", desc: "打开 / 关闭人设提示词库" },
+  { key: "S", desc: "会议录制中：一键标记当前最新段落为重点" },
+  { key: "Cmd / Ctrl + K", desc: "打开 / 关闭人设提示词定制库" },
   { key: "Cmd / Ctrl + Shift + C", desc: "清空 LLM 上下文记忆" },
   { key: "Cmd / Ctrl + Shift + M", desc: "快速导出 Markdown 结构化会议纪要" },
   { key: "Cmd / Ctrl + Shift + S", desc: "快速导出 SRT 标准字幕" },
   { key: "Cmd / Ctrl + Shift + P", desc: "开启 / 退出舞台提词与大屏模式" },
   { key: "Cmd / Ctrl + Enter", desc: "在人设编辑器中快速保存并生效" },
   { key: "?", desc: "打开快捷键速查面板" },
-  { key: "Esc", desc: "关闭弹窗 / 退出全屏提词大字模式" },
+  { key: "Esc", desc: "关闭弹窗 / 退出全屏提词 / 从历史会议返回实时工作台" },
 ];
 
 export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps) {

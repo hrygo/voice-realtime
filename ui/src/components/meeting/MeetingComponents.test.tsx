@@ -8,6 +8,7 @@ import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
 import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingIdleView } from "./MeetingIdleView";
 import { MeetingDetailView } from "./MeetingDetailView";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import {
   mockMeetingDetailCompleted,
   mockMeetingSummaryCompleted,
@@ -372,6 +373,51 @@ describe("Meeting React Components DOM Rendering", () => {
     });
 
     expect(handleReturnToActive).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders MarkdownRenderer with fenced code blocks and copy button", () => {
+    const markdownSample = "### 代码示例\n\n```python\ndef hello_world():\n    print('Hello Voice Studio')\n```\n\n- [ ] 待办事项";
+
+    act(() => {
+      root.render(<MarkdownRenderer content={markdownSample} />);
+    });
+
+    expect(container.textContent).toContain("代码示例");
+    expect(container.textContent).toContain("PYTHON");
+    expect(container.textContent).toContain("def hello_world():");
+    expect(container.textContent).toContain("📋 复制");
+    expect(container.textContent).toContain("待办事项");
+  });
+
+  it("renders speaker distribution bar with percentage chips and supports filtering", () => {
+    const handleRename = vi.fn();
+
+    act(() => {
+      root.render(
+        <MeetingTranscriptViewer
+          segments={mockSegments}
+          highlightedSegmentId={null}
+          onRenameSpeaker={handleRename}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("张三 (架构师)");
+    expect(container.textContent).toContain("李四 (前端负责人)");
+
+    // Speaker distribution bar and chips
+    const distributionBar = container.querySelector(".speaker-distribution-bar");
+    expect(distributionBar).not.toBeNull();
+
+    const chips = container.querySelectorAll(".speaker-stat-chip");
+    expect(chips.length).toBeGreaterThanOrEqual(2);
+
+    // Click a speaker chip to filter
+    const firstChip = chips[0] as HTMLButtonElement;
+    act(() => {
+      firstChip.click();
+    });
+    expect(firstChip.classList.contains("selected")).toBe(true);
   });
 });
 

@@ -211,6 +211,43 @@ def test_comparison_uses_declared_cluster_ids_for_bootstrap() -> None:
     assert 0.9 < comparison["ci_high"] < 1.0
 
 
+def test_comparison_cluster_map_allows_unscored_manifest_samples() -> None:
+    baseline = [
+        {"sample_id": "speech", "scenario": "meeting", "cer_status": "supported", "cer": 0.1},
+        {"sample_id": "negative", "scenario": "negative", "cer_status": "unsupported", "cer": None},
+    ]
+    candidate = [
+        {"sample_id": "speech", "scenario": "meeting", "cer_status": "supported", "cer": 0.2},
+        {"sample_id": "negative", "scenario": "negative", "cer_status": "unsupported", "cer": None},
+    ]
+
+    comparison = compare_hypotheses(
+        baseline,
+        candidate,
+        iterations=100,
+        seed=7,
+        cluster_by_sample={"speech": "session-a", "negative": "session-a"},
+    )
+
+    assert comparison["paired_samples"] == 1
+    assert comparison["paired_clusters"] == 1
+
+
+def test_comparison_cluster_map_rejects_missing_scored_sample() -> None:
+    rows = [
+        {"sample_id": "speech", "scenario": "meeting", "cer_status": "supported", "cer": 0.1}
+    ]
+
+    with pytest.raises(ValueError, match="cover all paired sample IDs"):
+        compare_hypotheses(
+            rows,
+            rows,
+            iterations=100,
+            seed=7,
+            cluster_by_sample={"negative": "session-a"},
+        )
+
+
 def test_cross_scenario_observations_share_one_cluster_sign_flip() -> None:
     baseline = [
         {"sample_id": "near", "scenario": "near", "cer_status": "supported", "cer": 0.0},

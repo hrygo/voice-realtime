@@ -332,6 +332,47 @@ export default function AssistantPanel({
   }, [sendCommandWith]);
 
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [playingBubbleKey, setPlayingBubbleKey] = useState<string | null>(null);
+
+  /** 重新朗读气泡文本 */
+  const handleReplayBubbleVoice = useCallback(
+    async (text: string, key: string) => {
+      if (playingBubbleKey) return;
+      setPlayingBubbleKey(key);
+      showToast("🔊 正在合成语音并朗读...", "info");
+
+      try {
+        const res = await fetch("/v1/audio/speech", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "VoiceDesign",
+            input: text.slice(0, 500),
+            voice,
+            response_format: "wav",
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const audioUrl = URL.createObjectURL(blob);
+        const audio = new Audio(audioUrl);
+        audio.onended = () => {
+          setPlayingBubbleKey(null);
+          URL.revokeObjectURL(audioUrl);
+        };
+        audio.onerror = () => {
+          setPlayingBubbleKey(null);
+          URL.revokeObjectURL(audioUrl);
+          showToast("语音播放失败", "error");
+        };
+        await audio.play();
+      } catch {
+        setPlayingBubbleKey(null);
+        showToast("语音朗读请求失败，请确保 TTS 桥已启动", "error");
+      }
+    },
+    [playingBubbleKey, voice],
+  );
 
   /** 复制气泡文本 */
   const handleCopyBubble = useCallback((text: string, key: string) => {
@@ -813,12 +854,23 @@ export default function AssistantPanel({
                     )}
                   </div>
                   <div className={`bubble-card ${bubble.final ? "final" : "streaming"}`}>
-                    {bubble.role === "assistant" && bubble.final ? (
+                    {bubble.role === "assistant" ? (
                       <MarkdownRenderer content={bubble.text} />
                     ) : (
                       <span>{bubble.text}</span>
                     )}
                     <div className="bubble-actions-group">
+                      {bubble.role === "assistant" && bubble.final && (
+                        <button
+                          type="button"
+                          className={`bubble-action-btn ${playingBubbleKey === bubbleKey ? "playing" : ""}`}
+                          onClick={() => void handleReplayBubbleVoice(bubble.text, bubbleKey)}
+                          disabled={playingBubbleKey !== null}
+                          title="使用当前音色重新朗读此条回复"
+                        >
+                          {playingBubbleKey === bubbleKey ? "🔊 播报中..." : "🔊 朗读"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className={`bubble-action-btn ${isCopied ? "copied" : ""}`}

@@ -37,9 +37,11 @@ Fun-ASR 相对 SenseVoice 的 macro CER 低 `0.36` 个百分点，但 95% CI 为
 
 ### 质量
 
+> 表中加粗表示该指标的观测优势；CER、RTF、墙钟与 RSS 均按“越低越好”判断，失败数相同则不加粗。
+
 | 实验臂 | Macro CER | Micro CER | 样本 Macro CER | Clean | Code-switch | Meeting | 失败 |
 |:---|---:|---:|---:|---:|---:|---:|---:|
-| Qwen3-ASR MPS | 10.11% | 9.09% | 9.93% | 8.86% | 10.92% | 10.54% | 0/1,185 |
+| Qwen3-ASR MPS | **10.11%** | **9.09%** | **9.93%** | **8.86%** | **10.92%** | **10.54%** | 0/1,185 |
 | SenseVoice CPU | 13.69% | 12.09% | 12.96% | 11.58% | 16.22% | 13.28% | 0/1,185 |
 | Fun-ASR MPS | 13.34% | 11.35% | 12.88% | 11.37% | 15.08% | 13.56% | 0/1,185 |
 
@@ -48,8 +50,8 @@ Fun-ASR 相对 SenseVoice 的 macro CER 低 `0.36` 个百分点，但 95% CI 为
 | 实验臂 | RTF P50 | RTF P95 | 回放墙钟 | 进程树峰值 RSS |
 |:---|---:|---:|---:|---:|
 | Qwen3-ASR MPS | 0.0704 | 0.1075 | 4.27 min | 5.06 GB |
-| SenseVoice CPU | 0.1889 | 0.3857 | 8.66 min | 3.34 GB |
-| Fun-ASR MPS | 0.0650 | 0.1036 | 3.72 min | 7.43 GB |
+| SenseVoice CPU | 0.1889 | 0.3857 | 8.66 min | **3.34 GB** |
+| Fun-ASR MPS | **0.0650** | **0.1036** | **3.72 min** | 7.43 GB |
 
 回放墙钟包含 1,185 个短片段的 adapter 调度、收尾和资源采样，不等于纯模型推理时间。RTF 是逐样本
 推理时长与音频时长之比；Qwen RSS 覆盖隔离 worker 子进程树。
@@ -60,13 +62,15 @@ Fun-ASR 相对 SenseVoice 的 macro CER 低 `0.36` 个百分点，但 95% CI 为
 
 | Baseline | Candidate | Macro CER 差 | 95% CI | Cluster / 样本 | 判断 |
 |:---|:---|---:|---:|---:|:---|
-| Qwen3-ASR | Fun-ASR | +3.23pp | [+2.31pp, +3.85pp] | 8 / 1,185 | Public Proxy 上 Fun-ASR 明确更差 |
-| SenseVoice | Fun-ASR | -0.36pp | [-1.60pp, +0.63pp] | 8 / 1,185 | CI 跨 0，不能区分 |
+| **Qwen3-ASR** | Fun-ASR | +3.23pp | [+2.31pp, +3.85pp] | 8 / 1,185 | Public Proxy 上 Fun-ASR 明确更差 |
+| SenseVoice | **Fun-ASR** | **-0.36pp** | [-1.60pp, +0.63pp] | 8 / 1,185 | CI 跨 0，不能区分 |
 
 bootstrap 在 `public-clean`、`public-code-switch`、`public-meeting` 三层内分别以
 `content_group_id` 重采样完整 cluster，再对三层样本均值等权汇总；每层 4 个 cluster。旧的无
 `--corpus` 样本级 CI 只保留为敏感性分析，不作为本报告主 CI。总计只有 8 个独立内容组且每层仅
 4 个 cluster，因此这些 CI 仍属于公共代理探索性证据，不外推到目标域。
+
+配对表中的加粗仅表示观测点估计方向上的 CER 优势，不等于统计显著或晋级。
 
 ## 运行异常与修复
 

@@ -1005,6 +1005,14 @@
   border-color: color-mix(in srgb, var(--color-green) 40%, transparent);
 }
 
+.bubble-action-btn.playing {
+  background: color-mix(in srgb, var(--color-accent) 20%, var(--bg-card));
+  color: var(--color-accent-light);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent-glow);
+  animation: pulse-dot 1.2s infinite;
+}
+
 /* Floating Scroll to Bottom Button */
 .scroll-to-bottom-btn {
   position: absolute;

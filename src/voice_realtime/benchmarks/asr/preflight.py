@@ -14,6 +14,7 @@ from pydantic_core.core_schema import ValidationInfo
 from voice_realtime.benchmarks.asr.manifest import sha256_file
 
 BlindSplit = Literal["blind-core", "blind-reserve"]
+EvidenceClass = Literal["target-domain", "public-operational-proxy"]
 _SHA256_LENGTH = 64
 _MAX_METADATA_BYTES = 64 * 1024 * 1024
 
@@ -81,6 +82,7 @@ class SourceCatalogEntry(_FrozenModel):
     authorization_status: Literal["approved", "pending", "expired", "rejected"]
     deidentification_status: Literal["verified", "pending", "rejected"]
     human_reviewed: bool
+    review_basis: Literal["local-human", "publisher-corpus"] = "local-human"
 
     @field_validator("source_token")
     @classmethod
@@ -113,7 +115,7 @@ class BlindCandidateMetadata(_FrozenModel):
     session_token: str
     content_group_token: str
     analysis_cluster_token: str
-    speaker_tokens: tuple[str, ...] = Field(min_length=1)
+    speaker_tokens: tuple[str, ...] = ()
     source_sample_rate_hz: Literal[16000] = 16000
     start_frame: int = Field(ge=0)
     end_frame: int = Field(gt=0)
@@ -175,6 +177,8 @@ class BlindCandidateMetadata(_FrozenModel):
             raise ValueError("frame interval must be positive")
         if self.end_frame - self.start_frame != self.duration_ms * 16:
             raise ValueError("frame interval must exactly match duration_ms")
+        if not self.speaker_tokens and "negative" not in self.tags:
+            raise ValueError("speaker tokens may be empty only for negative samples")
         return self
 
 
@@ -185,7 +189,9 @@ class ReferenceCatalogEntry(_FrozenModel):
     reference_sha256: str
     reference_revision: str = Field(min_length=1, max_length=200)
     normalization_version: Literal["nfkc-casefold-punct-space-v1"]
-    annotation_status: Literal["pending", "double_annotated", "adjudicated"]
+    annotation_status: Literal[
+        "pending", "double_annotated", "adjudicated", "publisher_verified"
+    ]
     annotator_count: int = Field(ge=0)
     adjudicated: bool
 
@@ -200,6 +206,7 @@ class BlindPreflightSpec(_FrozenModel):
 
     schema_version: Literal["1.0"] = "1.0"
     corpus_version: str = Field(min_length=1, max_length=200)
+    evidence_class: EvidenceClass = "target-domain"
     normalization_version: Literal["nfkc-casefold-punct-space-v1"] = (
         "nfkc-casefold-punct-space-v1"
     )
@@ -232,6 +239,7 @@ class BlindPreflightReport(_FrozenModel):
     """metadata 就绪状态；刻意不提供 blind_ready。"""
 
     schema_version: Literal["1.0"] = "1.0"
+    evidence_class: EvidenceClass = "target-domain"
     status: Literal["metadata_ready", "incomplete"]
     metadata_sha256: str
     blockers: tuple[str, ...]
@@ -325,19 +333,45 @@ def evaluate_blind_preflight(
         blockers.append("source_authorization_not_approved")
     if any(item.deidentification_status != "verified" for item in sources.values()):
         blockers.append("source_deidentification_not_verified")
-    if any(not item.human_reviewed for item in sources.values()):
+    if spec.evidence_class == "target-domain":
+        sources_reviewed = all(
+            item.human_reviewed and item.review_basis == "local-human"
+            for item in sources.values()
+        )
+    else:
+        sources_reviewed = all(
+            item.human_reviewed or item.review_basis == "publisher-corpus"
+            for item in sources.values()
+        )
+    if not sources_reviewed:
         blockers.append("source_human_review_missing")
 
     candidate_ids = {sample.sample_id for sample in spec.candidates}
     references = {item.sample_id: item for item in spec.references}
     if candidate_ids != set(references):
         blockers.append("reference_sample_set_mismatch")
-    if any(
-        item.annotation_status != "adjudicated"
-        or item.annotator_count < 2
-        or not item.adjudicated
-        for item in references.values()
-    ):
+    if spec.evidence_class == "target-domain":
+        references_ready = all(
+            item.annotation_status == "adjudicated"
+            and item.annotator_count >= 2
+            and item.adjudicated
+            for item in references.values()
+        )
+    else:
+        references_ready = all(
+            (
+                item.annotation_status == "publisher_verified"
+                and item.annotator_count == 0
+                and not item.adjudicated
+            )
+            or (
+                item.annotation_status == "adjudicated"
+                and item.annotator_count >= 2
+                and item.adjudicated
+            )
+            for item in references.values()
+        )
+    if not references_ready:
         blockers.append("reference_adjudication_incomplete")
     if any(
         item.normalization_version != spec.normalization_version
@@ -346,8 +380,11 @@ def evaluate_blind_preflight(
         blockers.append("reference_normalization_mismatch")
 
     clusters = {sample.analysis_cluster_token for sample in spec.candidates}
+    if spec.evidence_class == "public-operational-proxy":
+        clusters = {cluster.removeprefix("cluster:") for cluster in clusters}
     unique_blockers = tuple(dict.fromkeys(blockers))
     return BlindPreflightReport(
+        evidence_class=spec.evidence_class,
         status="metadata_ready" if not unique_blockers else "incomplete",
         metadata_sha256=metadata_sha256,
         blockers=unique_blockers,

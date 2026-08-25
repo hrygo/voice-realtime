@@ -2,8 +2,8 @@
 
 > **环境基准**：Apple M5 Max / 128GB 统一内存 / macOS 26.6.2 / Python 3.12.14 / PyTorch 2.13.0 (MPS)
 > **核心决策**：(1) 字幕/会议 ASR 选型 (`Qwen3-ASR` vs `Fun-ASR-Nano`)；(2) 交互 STT 选型 (`SenseVoiceSmall` vs `Fun-ASR-Nano`)
-> **方案版本**：v1.2（`60 min Core + 45 min Reserve` 序贯盲测与 finalist-only 验收）
-> **状态**：**执行中（v1.2 设计已批准；须在 blind 开封前冻结 manifests 与 `analysis-plan.json`）**
+> **方案版本**：v1.3（`60 min Core + 45 min Reserve` 序贯盲测；允许明确降级的公共运营代理证据）
+> **状态**：**Core 已完成（2026-08-25）；Fun-ASR 两个 family 均触发 futility，Reserve 不启封；生产默认不变**
 
 > **v1.2 修订摘要**：v1.1 的 105 分钟完整 Blind Set 保留为最大证据集，但拆为预冻结的 60 分钟
 > Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；三个 primary
@@ -11,12 +11,19 @@
 > reliability 长跑共用同一连续会话；Stage 5 只由每个决策方向的最终候选执行；生产收敛不重复已有
 > Stage 3/4/5 主测量。决策理由见 [ADR-004](decisions/0004-asr-sequential-evaluation.md)。
 
+> **v1.3 执行摘要**：由于本机没有已授权的私有目标域录音，采用 AISHELL-4 Test + ASCEND 构建
+> `public-operational-proxy-v2-20260825`。它满足预冻结、互斥 cluster、盲推理、显式开盲和程序化决策
+> 契约，但证据类别明确为 `public-operational-proxy`，不冒充目标域。三臂 Core 严格串行完成后，
+> Fun-ASR 相对 Qwen 与 SenseVoice 的条件功效分别约为 `3.8e-12` 与 `7.1e-6`，均低于 0.20；程序化
+> 结论为 `futility_rejected=true`，同时因完整设计功效不足而降级为 `Experimental / No decision`。
+> 因此停止 Reserve 与 Stage 2–5，不替换现有后端。
+
 ---
 
 ## 📑 方案目录
 
 1. [目的与决策对象](#1-目的与决策对象)
-   - 1.1 [当前落地状态（2026-08-24）](#11-当前落地状态2026-08-24)
+   - 1.1 [当前落地状态（2026-08-25）](#11-当前落地状态2026-08-25)
    - 1.2 [本机执行顺序修订（2026-08-24）](#12-本机执行顺序修订2026-08-24)
    - 1.3 [选型后的收敛与清理原则](#13-选型后的收敛与清理原则)
 2. [已知事实、假设与待检验项](#2-已知事实假设与待检验项)
@@ -87,7 +94,7 @@
 
 ---
 
-### 1.1 当前落地状态（2026-08-24）
+### 1.1 当前落地状态（2026-08-25）
 
 - **统一契约与接入边界**：ASR 契约、WLK 适配器、profile/registry、字幕注入边界和交互 STT factory 已合入 `main`。
 - **可复现实验 Runner**：已在 `feature/asr-benchmark-runner` 分支实现 `run`、`score`、`compare`，并完成
@@ -104,7 +111,11 @@
   - Fun-ASR-Nano-2512 已迁移至项目外的 ModelScope cache。`modelscope scan-cache` 能正确识别该 `FunAudioLLM/Fun-ASR-Nano-2512@master` 快照（21 个文件，约 2.0 GiB）；20 个非隐藏远端文件已通过 `modelscope cache verify`。校验器虽报告 `.gitattributes` 缺失，但文件实测存在，系工具对隐藏文件覆盖差异，快照完整性确认无误。
   - 当前 Qwen3-ASR 1.7B 已迁移至 ModelScope cache，Sortformer 已迁移至 Hugging Face cache 的固定 revision；项目 `runtime/` 不再包含模型文件或兼容 symlink。
   - 上游完整性核验失败的非默认 Qwen3-ASR 0.6B ModelScope 旧快照已删除，不作为实验臂或回退来源。
-- **阶段门禁状态**：三个 primary 离线实验臂已完成 Stage 0 本机功能门禁；尚未启动固定官方 WebSocket 服务、开封 blind set 或产生任何选型结论。Stage 0 通过不等于正式准确率比较或实时链路已通过。
+- **阶段门禁状态**：三个 primary 离线实验臂已完成 Stage 0；Public Operational Proxy v2 的 Core
+  三臂、评分、10,000 次 cluster bootstrap、三项非劣门禁和程序化决策均已完成。Fun-ASR 在两个
+  family 均触发 futility；Reserve、Stage 2–5 与生产切换均未执行。
+- **证据边界**：本轮是协议上 formal、数据域上 public operational proxy 的证据。它足以停止当前
+  Fun-ASR 候选的追加投入，但不足以宣称目标域正式劣势或删除现有生产基线。
 
 > [!NOTE]
 > Runner 的 `--mode offline` 只表示“不等待 wall-clock 的 PCM 回放时序”：
@@ -319,7 +330,7 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 | 语料分层 | 用途 | 推荐精简规模 | 说明 |
 |:---|:---|---:|:---|
 | **Public Reproducibility** | 与公开研究可对照 | $\approx 1 \sim 2\text{ 小时}$ | 版本、许可和 checksum 先冻结；完整运行延后到最终 baseline + winner，不阻塞选型 |
-| **Target-domain Blind Set** | 生产选型主依据 | **$60\text{ min Core} + 45\text{ min Reserve}$** | 最大 105 min、约 98–105 个预分配切片、约 2.2 万字；两个 look 均在开封前冻结 |
+| **Formal Evidence Set** | 候选筛选；目标域数据才可支持生产选型 | **$60\text{ min Core} + 45\text{ min Reserve}$** | 目标域优先；缺失时允许明确标记的公共运营代理，两个 look 均须在开封前冻结 |
 | **Reliability Set** | 最终候选长会与故障注入 | **$1 \times 60\text{min}$** | 每个决策方向只由一个 finalist 执行；会议候选与 Stage 3 共用同一连续会话 |
 
 > [!IMPORTANT]
@@ -327,44 +338,48 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 > 不参与 Stage 1 早停。涉及真实会议时需取得授权、脱敏并将语料保存在项目目录外；项目只保存
 > 不可逆样本 ID、元数据和 SHA-256，不保存音频副本。
 
-截至 2026-08-25，已获取并校验最小公共代理候选池：AliMeeting Eval、ASCEND 与 HI-MIA-CW，原始制品
-均位于项目外；来源、许可冲突处理、SHA-256、speaker/session 实测与预分配见
-[`source-inventory.md`](benchmarks/asr/corpus-v12-20260825/source-inventory.md)。该组合用于与本项目用途相近
-的公共代理集，只用于管线验收、Dev/标注校准、资源与公开代理证据，不冒充未见数据或真实用户域，
-也不与正式 Core/Reserve 指标合并。生产选型仍须补充并预冻结已授权目标域 blind；在此之前结论保持
-`Experimental`。
+截至 2026-08-25，已获取并校验 AliMeeting Eval、ASCEND、HI-MIA-CW 与 AISHELL-4 Test，原始制品
+均位于项目外；来源、许可、SHA-256、speaker/session 实测与预分配见
+[`source-inventory.md`](benchmarks/asr/corpus-v12-20260825/source-inventory.md)。Public Proxy v1 继续作为
+runner 校准历史；Public Operational Proxy v2 使用 AISHELL-4 Test + ASCEND，在缺少私有目标域数据时
+承担候选筛选。后者虽然绑定 `formal` analysis plan，仍必须以 `evidence_class=public-operational-proxy`
+报告，不能据此产生生产 `Promote`。
 
 公共代理执行集 `public-proxy-v1-20260825` 已完成三臂串行 Core 回放：Qwen、SenseVoice、Fun-ASR
 均为 1,185/1,185、0 失败；macro CER 分别为 10.11%、13.69%、13.34%。Fun-ASR 相对 Qwen 的
 配对 cluster-bootstrap CER 差为 +3.23pp，95% CI [+2.31pp, +3.85pp]；相对 SenseVoice 为
 -0.36pp，95% CI [-1.60pp, +0.63pp]。完整结果与污染边界见
 [`public-proxy-v1-20260825/report.md`](benchmarks/asr/public-proxy-v1-20260825/report.md)。Proxy Reserve
-保持封存。该结果不触发 Stage 1 的 `Advance/Continue/Reject`，也不替代 §4.2 的目标域 blind。
+保持封存。该结果不触发 Stage 1 的 `Advance/Continue/Reject`，也不与 §4.2 的 v2 序贯证据合并。
+
+Public Operational Proxy v2 随后按 v1.3 规则完成 Core：Qwen、SenseVoice、Fun-ASR 均为
+802/802、0 失败；宏平均 CER 分别为 11.47%、13.90%、14.39%，RTF P95 分别为 0.173、0.352、
+0.092。Fun-ASR 的 57 条负样本非空率为 15.79%，低于 Qwen 的 100% 与 SenseVoice 的 33.33%，
+因此三项已可测非劣门禁通过；但两个质量 family 都触发 futility。完整聚合结果见
+[`public-operational-proxy-v2-20260825/report.md`](benchmarks/asr/public-operational-proxy-v2-20260825/report.md)。
 
 ---
 
-### 4.2 目标域序贯正交配额（60 min Core + 45 min Reserve）
+### 4.2 v1.3 公共运营代理序贯配额（60 min Core + 45 min Reserve）
 
-保留 v1.1 的**正交多标签切片架构（Multi-label Orthogonal Slicing）**，但在开封前把全部样本
-不可变地分配到 `blind-core` 与 `blind-reserve`。一段多人会议可同时带有 `[远场, 重叠说话,
-领域词, 数字]` 标签，唯一音频时长只计一次；Core/Reserve 均覆盖所有主层，Reserve 不是按模型错误
-挑出的“困难集”。两个 look 使用互不重叠的完整 `analysis_cluster_id`，session 和说话人均不得跨 look。
+在没有私有目标域数据的前提下，v1.3 保留 v1.2 的序贯统计结构，但把场景压缩为公开语料可可靠
+支持的四层。全部样本在任何模型输出产生前不可变地分配到 `blind-core` 与 `blind-reserve`；Reserve
+不是按模型错误挑出的困难集。两个 look 的 session、speaker、content group 与 analysis cluster
+交集均为空。
 
-| 主层场景分类 | Core 时长 / 目标切片 | Reserve 时长 / 目标切片 | 最大总时长 | 核心考察变量与正交标签 |
+| 主层场景分类 | Core 时长 | Reserve 时长 | 最大总时长 | 来源与作用 |
 |:---|---:|---:|---:|:---|
-| **近讲清晰普通话** | 9 min / 10 | 6 min / 6 | 15 min | 基础声学上限、高信噪比纯净语音 |
-| **远场多人自然会议** | 17 min / 3 | 13 min / 2 | 30 min | 麦克风距离、自然轮换、重叠说话、停顿 |
-| **普英混说 (Code-Switch)** | 9 min / 10 | 6 min / 7 | 15 min | 中英混说、技术产品名、英文术语 |
-| **方言与地区口音** | 11 min / 14 | 9 min / 10 | 20 min | 西南、粤普、江浙、北方四组均进入 Core |
-| **噪声与混响环境** | 6 min / 7 | 4 min / 5 | 10 min | 键盘、风扇、开放办公区背景音 |
-| **数字、日期与实体专项** | 6 min / 10 | 4 min / 7 | 10 min | ITN 双计分、人名、项目缩写、时间金额 |
-| **静音/非语音负样本** | 2 min / 4 | 3 min / 3 | 5 min | 音乐、敲击声、绝对静音；不进入 CER 分母 |
-| **合计** | **60 min / 约 58** | **45 min / 约 40** | **105 min** | **约 98 个目标切片；容许转码边界造成小幅数量变化，但时长与分层不得漂移** |
+| **多人会议** | 42 min | 31.5 min | 73.5 min | AISHELL-4 Test；自然会议、多人和远场代理 |
+| **普英混说** | 9 min | 6.75 min | 15.75 min | ASCEND；普通话-英语 code-switch |
+| **清晰语音** | 6 min | 4.5 min | 10.5 min | ASCEND；近讲/较清晰对照 |
+| **真实非语音间隙** | 3 min | 2.25 min | 5.25 min | AISHELL-4 标注间隙；只计幻觉，不进入 CER |
+| **合计** | **60 min / 802 样本** | **45 min / 541 样本** | **105 min / 1,343 样本** | Core/Reserve 各 14 个独立 analysis cluster |
 
-全局唯一说话人不少于 20 人；分层人数是覆盖要求而非可相加人数。Core 目标不少于 14 名、Reserve
-目标不少于 6 名互不重叠说话人。`analysis-plan.json` 必须冻结两个 manifest SHA-256、每层配额、
-`analysis_cluster_id`、样本顺序和停止边界。Core 提前停止时，报告只能声明“在 60 分钟 look 停止”，
-不得声称完成 105 分钟全量证据。
+Core 使用 10 个 AISHELL-4 session 与 ASCEND train，含 14 个 session、72 个 speaker；Reserve 使用
+其余 10 个 AISHELL-4 session 与 ASCEND validation，含 14 个 session、57 个 speaker。两段 manifest
+SHA-256 分别为 `21bced1787d7924805d3e2729ab19a4281367abcba3c67316db69902b32cafcb` 与
+`5c4b26908abfb787442be67d64bcbb6a0342b21605bcf55ff9a32cf12f8e2d32`。本轮在 Core 提前停止，
+只能声明完成 60 分钟 look；Reserve reference 仍为 `000`，不得声称完成 105 分钟证据。
 
 ---
 
@@ -379,6 +394,11 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 7. **一致性前置验证**：先运行 5 分钟分层 `label-calibration-pilot`；normalized CER 差异超过
    1.0 个绝对百分点时扩展至 15 分钟并修订规范。完整 Core 与 Reserve reference 必须在首次 Core
    模型输出可见前全部冻结；不得看完 Core 后再标 Reserve。
+
+Public Operational Proxy v2 不伪造本地双标：AISHELL-4/ASCEND 的发布方 reference 以
+`publisher_verified` 状态进入 preflight，文本规范化只删除发布方控制标记并对 reference/hypothesis
+对称应用。这一例外只适用于 `evidence_class=public-operational-proxy`；若将来执行私有目标域选型，
+仍必须满足上述本地双盲、裁决和授权要求。
 
 ---
 
@@ -560,7 +580,8 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
 
 ### 7.3 样本量与检验功效（Power 校验）
 
-105 分钟目标域 Blind Set 是**最大设计信息量**，不是未经 pilot 验证即可宣称充分的既成事实：
+105 分钟 Formal Evidence Set 是**最大设计信息量**，不是未经 pilot 验证即可宣称充分的既成事实；
+只有已授权目标域数据才能把候选筛选升级为生产选型证据：
 - **效应量假设**：预注册最小相关效应为 **相对 CER 改善 $\ge 5\%$**（如从基线 7.0% 降至 6.65%）。
 - **功效模拟验证**：在 blind 开封前，用 dev/pilot 的 session 级方差对 Core 和完整 105 分钟分别做
   10,000 次模拟；完整设计目标为 $\text{power}>0.85$、双侧 family-wise $\alpha\le0.05$。
@@ -568,6 +589,11 @@ $$\text{RTF} = \frac{\text{ASR Wall Time}}{\text{Audio Duration}}, \quad \text{R
   估计方差，不能假设分钟数与统计信息严格线性。
 - **证据降级**：如 pilot 显示完整 105 分钟仍不足以检出 5% 相对改善，不扩大开封后的语料；结论
   降级为 `Experimental / No decision`，不得把预计 power 写成实测 power。
+
+v1.3 在开盲前以 v1 公共代理 bootstrap 方差作保守输入，完成 10,000 次模拟：Core power=`0.0656`，
+完整 105 分钟 power=`0.3095`，模拟 family-wise alpha=`0.024`。因此本轮从一开始就不具备确认 5%
+相对改善的充分功效；该事实已冻结到 `analysis-plan.json`，不能在看到 Core 结果后改阈值。Core 实测
+条件功效进一步降至会议族约 `3.8e-12`、交互族约 `7.1e-6`，两者均触发 futility。
 
 ---
 
@@ -639,6 +665,11 @@ $$T_{Full}=105(0.0619+0.1080+0.0573)\approx23.9\text{ min}$$
 其中实时链路与可靠性长跑已成为机器墙钟主体。这些仍是排程估算，不是质量或实时性能结论。完整
 reference 仍须在 Core 前冻结，10–15 人工工时不因离线回放加速而自动减少。
 
+v1.3 Core 的实际离线 RTF P50/P95 为：Qwen `0.098/0.173`、SenseVoice `0.135/0.352`、Fun-ASR
+`0.059/0.092`。三臂严格串行推理约在 18 分钟内完成；Core 决策触发 futility 后，省去三臂 Reserve
+约 135 音频分钟及全部 finalist-only 实时链路/长跑。这里的“省时”来自预注册停止规则，不是删减失败
+样本或事后挑选子集。
+
 ```mermaid
 flowchart TD
     A[Stage 1A: 三 primary 臂 60m Core] --> B{每个 family 的冻结状态}
@@ -674,6 +705,11 @@ Stage 1 只运行三个 primary 臂：Qwen MPS、SenseVoice CPU、Fun-ASR MPS。
 - **生产 context**：只对 finalist 测真实收益，不得替代基础比较。
 
 **输出物**：`raw/normalized hypothesis`、`CER/WER`、`S/D/I`、实体和语义错误、每段耗时与系统资源。
+
+**v1.3 实际状态**：三臂 Core 已完成且无失败。两族候选均 `futility_rejected=true`，没有任何
+`Continue` 或 `Advance-Early` family；因此不运行 Reserve，也不注册 Stage 2–5 finalist executor。
+当前 Qwen（会议/字幕）与 SenseVoice（交互）继续保持既有默认身份，Fun-ASR 仅保留 benchmark 证据与
+模型快照，等待未来模型 revision 或已授权目标域新实验，不进入生产链。
 
 ---
 
@@ -908,8 +944,10 @@ Screen→Confirm 连续执行、失败保留、资源释放审计与封存；存
 固定故障的完整恢复证据。
 
 截至 2026-08-25，`preflight-corpus`、`prepare-corpus` 与正式 `freeze-analysis` 已实现：metadata-only
-预检不读取音频或逐字稿，只核验匿名 token、授权/脱敏/人工复核状态、配额、跨 look 隔离和 reference
-制品状态；WAV/FLAC 只经固定 `ffmpeg` argv 转换一次为 16 kHz mono s16le，记录 source/PCM SHA-256
+预检不读取音频或逐字稿，只核验匿名 token、授权/脱敏/reference review 状态、配额、跨 look 隔离和
+reference 制品状态。目标域证据仍严格要求本地双人标注与裁决；公共运营代理允许发布方 reference 的
+`publisher_verified`，但报告必须携带 `evidence_class=public-operational-proxy`。WAV/FLAC 只经固定
+`ffmpeg` argv 转换一次为 16 kHz mono s16le，记录 source/PCM SHA-256
 与实际时长，且 source/output root 均必须在项目外；Core/Reserve 输入清单不含参考，两份 reference
 manifest 同时以 mode `000` 封存。`freeze-analysis` 仅在两份 reference 均已封存、preflight 为
 `metadata_ready`、reference 与 input 的 split/version/hash/sample set 全部一致、显式 cluster 与时长
@@ -1107,26 +1145,25 @@ uv run vr-asr-benchmark decide-stage \
 
 ## 11. 执行顺序与停止规则
 
-1. **Stage 0 已完成**：Qwen3 MPS、SenseVoice CPU 与 Fun-ASR MPS 已按同一 v1.2 协议串行完成；
-   Fun-ASR CPU 复用历史设备兼容证据，后续不排名。
-2. **Public Proxy Core 校准已完成**：三个 primary 臂依次回放同一 60 分钟公共代理 Core；只验证
-   管线、资源与公开代理质量，Reserve 保持封存，不产生生产选型状态。
-3. **Adapter 与两段计划冻结**：完成三个原生离线 adapter，同时冻结 dev、目标域 Core、Reserve、两个
-   manifest hash、分析 cluster、候选集合、MDE、alpha spending、模型 revision 和 primary profile。
-4. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
-5. **Stage 1A Core**：依次运行 Qwen、SenseVoice、Fun MPS 的 60 分钟目标域 Core；Fun 输出复用到两个 family。
-6. **Stage 1B Reserve**：只对 `Continue` family 追加 45 分钟；禁止在两个固定 look 之外查看并停止。
-7. **注册真实 executor 并完成 preflight**：只为 Stage 1 已保留的 family/baseline/finalist 注册对应
-   真实 executor；先核验 request、输入、模型、schedule、lock 与 quarantine，不启动其他模型或服务。
-8. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
-   8–10 分钟是 Screen，通过后原 run 继续到 Confirm 总时长。
-9. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
-   Stage 3 主会议和 Stage 5 可靠性。
-10. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
-   通过后原 session 继续到 Confirm 总轮数；只有交互 finalist 再运行 1×60 分钟可靠性。
-11. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时额外 Public；不阻塞生产选型。
-12. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
-    EOF/外放恢复抽查；随后固定唯一后端并清理落选模型与专用接入。
+1. **Stage 0 已完成**：Qwen3 MPS、SenseVoice CPU 与 Fun-ASR MPS 已按统一协议串行通过功能门禁。
+2. **语料已外置并冻结**：Dev 为 99 条合成专项样本；Public Operational Proxy v2 的 Core/Reserve
+   分别为 60/45 分钟，所有 session、speaker、content group 与 cluster 跨 look 互斥。
+3. **分析计划已预冻结**：`analysis-plan.json` 在任何 Core 输出可见前绑定语料、reference、profile、
+   MDE、alpha、bootstrap seed 与功效模拟；SHA-256 为
+   `43dd4888d5d505a7b1f670b475db8e4985116ba9e921e698678311fc87eb8dda`。
+4. **Stage 1A Core 已完成**：在同一主机级资源锁下按 Qwen → SenseVoice → Fun-ASR 严格串行运行；
+   每臂 802/802 完成、0 失败，没有模型或服务并发。
+5. **Core 已统一开盲与复封**：三臂全部推理结束后才把 Core reference 从 `000` 显式打开为 `0600`
+   评分；完成后 Core 与 Reserve reference 均恢复为 `000`。
+6. **程序化决策已完成**：会议与交互 family 的 `futility_rejected` 均为 `true`，三项已可测
+   non-inferiority gate 均通过；因预注册完整设计功效不足，状态统一降级为
+   `Experimental / No decision`，不宣称正式劣势。
+7. **Stage 1B 停止**：没有 `Continue` family，Reserve 不运行、不启封；停止原因来自 Core 固定 look，
+   不是人工查看单条错误后的临时决定。
+8. **Stage 2–5 不启动**：没有 finalist，继续建设/运行流式、会议、交互与 60 分钟可靠性 executor
+   不再具有当前实验价值，也避免额外资源竞争。
+9. **后续系统动作**：保持 Qwen 与 SenseVoice 当前默认后端；不执行生产切换或模型删除。只有出现新的
+   Fun-ASR revision、显著不同的解码方案，或取得已授权目标域 blind 时，才建立新的 experiment family。
 
 > [!WARNING]
 > **提前停止规则**：除 Stage 0/硬门禁外，Stage 1 只允许在 Core=60 分钟与 Final=105 分钟两个固定
@@ -1142,27 +1179,30 @@ uv run vr-asr-benchmark decide-stage \
 
 ## 12. 验收清单
 
-- [ ] 每个实验臂的模型、运行时和设备身份可验证。
-- [ ] 同一 block 的音频 bytes、切块和发送时间表一致。
-- [ ] Core/Reserve reference、cluster、manifest 与停止边界在任何 Core 输出可见前同时冻结。
-- [ ] 只在 60/105 分钟两个固定 look 决策，Core 提前停止没有被误报为完整 105 分钟证据。
-- [ ] 原始与 normalized 指标并列，S/D/I 可追溯。
-- [ ] macro、micro、分层、失败率和 95% CI 均完整报告。
-- [ ] `unsupported` 与 `infeasible` 状态不被错误填成 0。
-- [ ] Sortformer 在主比较中固定。
+- [x] 每个实验臂的模型、运行时和设备身份可验证。
+- [x] 同一 block 的音频 bytes、切块和发送时间表一致。
+- [x] Core/Reserve reference、cluster、manifest 与停止边界在任何 Core 输出可见前同时冻结。
+- [x] 只在 60/105 分钟两个固定 look 决策，Core 提前停止没有被误报为完整 105 分钟证据。
+- [x] 原始与 normalized 指标并列，S/D/I 可追溯。
+- [x] macro、micro、分层、失败率和 decision CI 均完整报告。
+- [x] `unsupported` 与 `infeasible` 状态不被错误填成 0；57 条负样本未进入 CER 分母。
+- [ ] Sortformer 在主比较中固定（本轮为模型核心离线阶段，未进入 diarization 系统实验）。
 - [ ] EOF、重连、长会、静音和隐私硬门禁均严格执行。
 - [ ] Stage 2–5 request、run、gate、upstream、selection 与 decision 均在项目外且身份 hash 可闭环。
 - [ ] `state.json` 为 terminal，`artifact-index.json` 最后封存并覆盖全部必需制品；失败 run 仍保留证据。
 - [ ] Stage 3/5 候选只有一个 60 分钟 session，Stage 3 checkpoint/slice 与 Stage 5 使用同一 manifest。
-- [ ] 主机排他锁覆盖完整 executor 生命周期；无并发模型/服务，quarantine 未清除时不启动下一 run。
-- [ ] Formal run 不使用 synthetic/未知 executor；Stage 5 的时长、五故障、八门禁和唯一 finalist 均由源制品推导。
-- [ ] 字幕/会议与交互助手分别做独立决策。
-- [ ] 报告包含负面结果和失败样本类别，不只展示平均值。
+- [x] 主机排他锁覆盖完整 Core run 生命周期；无并发模型或服务。
+- [x] Core formal run 不使用 synthetic；合成 Dev 明确排除在 blind 之外。
+- [x] 字幕/会议与交互助手分别做独立决策。
+- [x] 报告包含负面结果、负样本与证据降级，不只展示平均值。
 
 ---
 
 ## 13. 外部依据
 
+- [AISHELL-4 Test（OpenSLR SLR111）](https://www.openslr.org/111/)
+- [AISHELL-4 官方仓库](https://github.com/felixfuyihui/AISHELL-4)
+- [ASCEND 固定数据源](https://huggingface.co/datasets/CAiRE/ASCEND)
 - [QwenAudio/Fun-ASR 固定 commit](https://github.com/QwenAudio/Fun-ASR/tree/53a56d80667320b44a7dd779f5bf8c024b6c30a8)
 - [Fun-ASR 官方实时 WebSocket 服务 (`serve_realtime_ws.py`)](https://github.com/QwenAudio/Fun-ASR/blob/53a56d80667320b44a7dd779f5bf8c024b6c30a8/serve_realtime_ws.py)
 - [Fun-ASR vLLM 指南](https://github.com/QwenAudio/Fun-ASR/blob/53a56d80667320b44a7dd779f5bf8c024b6c30a8/docs/vllm_guide.md)

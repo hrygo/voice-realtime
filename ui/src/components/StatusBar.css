@@ -321,6 +321,12 @@
   color: var(--text-primary);
 }
 
+.health-row-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .health-row-status {
   font-size: 0.68rem;
   font-weight: 600;
@@ -342,6 +348,24 @@
 .health-row-status.status-unreachable {
   color: var(--color-red);
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
+}
+
+.health-cmd-copy-btn {
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border-radius: var(--radius-xs);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-light);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.health-cmd-copy-btn:hover {
+  background: var(--color-accent);
+  color: #fff;
 }
 
 .health-popover-footer {

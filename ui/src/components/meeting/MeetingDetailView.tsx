@@ -187,6 +187,19 @@ export function MeetingDetailView({
     showToast("会议汇报排版已成功复制到剪贴板", "success");
   };
 
+  const handleCopyChecklist = async () => {
+    setIsExportMenuOpen(false);
+    if (!minutes?.content_json?.action_items?.length) {
+      showToast("暂无可复制的待办事项", "warning");
+      return;
+    }
+    const text = minutes.content_json.action_items
+      .map((item) => `- [ ] ${item.task}${item.owner ? ` (@${item.owner})` : ""}${item.due_date ? ` (截止: ${item.due_date})` : ""}`)
+      .join("\n");
+    await navigator.clipboard.writeText(text);
+    showToast("待办事项清单 (Checklist) 已复制到剪贴板", "success");
+  };
+
   const handleRegenerate = async () => {
     setIsRegenerating(true);
     try {
@@ -284,6 +297,13 @@ export function MeetingDetailView({
                   onClick={() => void handleCopyReport()}
                 >
                   📋 复制汇报格式
+                </button>
+                <button
+                  type="button"
+                  className="export-item"
+                  onClick={() => void handleCopyChecklist()}
+                >
+                  ☑️ 复制待办清单 (Checklist)
                 </button>
                 <button
                   type="button"

@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import type { TranscriptSegment } from "../../contracts/meetingContract";
 import { formatTimeRange, MeetingGapAlert } from "./MeetingGapAlert";
 import type { TranscriptionGap } from "../../stores/meetingStore";
+import { showToast } from "../Toast";
 
 export function formatElapsed(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -39,6 +40,7 @@ export function MeetingRecordingView({
   isEnding,
 }: MeetingRecordingViewProps) {
   const [elapsed, setElapsed] = useState(0);
+  const [starredIds, setStarredIds] = useState<Set<string>>(() => new Set());
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -55,7 +57,30 @@ export function MeetingRecordingView({
     return () => clearInterval(interval);
   }, [startedAt]);
 
-  // Keyboard shortcut: 'm' / 'M' to toggle mic when not typing in an input
+  const toggleStarSegment = useCallback((id: string) => {
+    setStarredIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+        showToast("已取消重点标记", "info");
+      } else {
+        next.add(id);
+        showToast("⭐ 已标记为此段落为重点", "success");
+      }
+      return next;
+    });
+  }, []);
+
+  const handleStarLatest = useCallback(() => {
+    if (segments.length === 0) {
+      showToast("暂无转录段落可标记", "warning");
+      return;
+    }
+    const latest = segments[segments.length - 1];
+    toggleStarSegment(latest.id);
+  }, [segments, toggleStarSegment]);
+
+  // Keyboard shortcut: 'm' / 'M' to toggle mic, 's' / 'S' to star latest segment
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -65,11 +90,16 @@ export function MeetingRecordingView({
       if (e.key === "m" || e.key === "M") {
         e.preventDefault();
         onToggleMic();
+      } else if (e.key === "s" || e.key === "S") {
+        if (!e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          handleStarLatest();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onToggleMic]);
+  }, [onToggleMic, handleStarLatest]);
 
   // Auto-scroll on new segments / partial
   useEffect(() => {
@@ -114,8 +144,19 @@ export function MeetingRecordingView({
             <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "14px" }} />
           </div>
           <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-            已记录 {segments.length} 个转录段落
+            已记录 {segments.length} 个段落
+            {starredIds.size > 0 && ` · ⭐ ${starredIds.size} 重点`}
           </span>
+
+          <button
+            type="button"
+            className="btn-secondary btn-star-latest"
+            onClick={handleStarLatest}
+            title="将当前最新段落标为重点 (快捷键 S)"
+            style={{ fontSize: "0.72rem", padding: "2px 8px", marginLeft: "4px" }}
+          >
+            <span>⭐ 标记重点 (S)</span>
+          </button>
         </div>
 
         <button
@@ -144,26 +185,45 @@ export function MeetingRecordingView({
           </div>
         )}
 
-        {segments.map((seg) => (
-          <div key={seg.id} className="segment-card">
-            <div className="segment-top">
-              <button
-                type="button"
-                className="speaker-tag-btn"
-                title="点击修改此说话人名称"
-                onClick={() => onRenameSpeaker(seg.speaker_key, seg.speaker_name)}
-              >
-                <span>👤</span>
-                <span>{seg.speaker_name}</span>
-                <span style={{ opacity: 0.6, fontSize: "0.68rem" }}>✎</span>
-              </button>
-              <span className="segment-time">
-                {formatTimeRange(seg.start_ms, seg.end_ms)}
-              </span>
+        {segments.map((seg) => {
+          const isStarred = starredIds.has(seg.id);
+          return (
+            <div key={seg.id} className={`segment-card ${isStarred ? "is-starred" : ""}`}>
+              <div className="segment-top">
+                <button
+                  type="button"
+                  className="speaker-tag-btn"
+                  title="点击修改此说话人名称"
+                  onClick={() => onRenameSpeaker(seg.speaker_key, seg.speaker_name)}
+                >
+                  <span>👤</span>
+                  <span>{seg.speaker_name}</span>
+                  <span style={{ opacity: 0.6, fontSize: "0.68rem" }}>✎</span>
+                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  {isStarred && (
+                    <span className="segment-starred-badge" title="重点发言段落">
+                      ⭐ 重点
+                    </span>
+                  )}
+                  <span className="segment-time">
+                    {formatTimeRange(seg.start_ms, seg.end_ms)}
+                  </span>
+                  <button
+                    type="button"
+                    className="status-icon-btn"
+                    style={{ fontSize: "0.72rem", padding: "1px 4px", opacity: isStarred ? 1 : 0.6 }}
+                    title={isStarred ? "取消重点标记" : "标为此段为重点 (S)"}
+                    onClick={() => toggleStarSegment(seg.id)}
+                  >
+                    {isStarred ? "⭐" : "✩"}
+                  </button>
+                </div>
+              </div>
+              <p className="segment-text">{seg.text}</p>
             </div>
-            <p className="segment-text">{seg.text}</p>
-          </div>
-        ))}
+          );
+        })}
 
         {partialText && (
           <div className="partial-card">

@@ -5,8 +5,11 @@ from __future__ import annotations
 import pytest
 
 from voice_realtime.benchmarks.asr.public_proxy_sources import (
+    NonSpeechCandidate,
     SpeakerTurnCandidate,
+    generate_non_speech_candidates,
     generate_speaker_turn_candidates,
+    normalize_aishell4_reference,
     parse_long_textgrid,
 )
 
@@ -115,6 +118,133 @@ def test_cross_speaker_overlap_is_reported_and_overlapping_turns_are_excluded() 
     assert (overlap.start_frame, overlap.end_frame) == (8_000, 16_000)
     candidates = generate_speaker_turn_candidates(parsed)
     assert [(item.speaker, item.reference) for item in candidates] == [("spk2", "tail")]
+
+
+def test_non_speech_candidates_are_real_all_speaker_gaps_and_split_deterministically() -> None:
+    parsed = parse_long_textgrid(
+        _two_tiers(
+            _tier("spk1", ("0", "1", "left"), ("1", "6", "")),
+            _tier("spk2", ("0", "4", ""), ("4", "5", "right"), ("5", "6", "")),
+        ),
+        session="eval-negative",
+        content_group="eval-negative-far",
+    )
+
+    assert [item.reference for item in generate_speaker_turn_candidates(parsed)] == [
+        "left",
+        "right",
+    ]
+
+    candidates = generate_non_speech_candidates(
+        parsed,
+        min_duration_ms=500,
+        max_duration_ms=1_500,
+    )
+
+    assert candidates == (
+        NonSpeechCandidate(
+            candidate_id=candidates[0].candidate_id,
+            session="eval-negative",
+            content_group="eval-negative-far",
+            start_frame=16_000,
+            end_frame=40_000,
+            duration_ms=1_500,
+        ),
+        NonSpeechCandidate(
+            candidate_id=candidates[1].candidate_id,
+            session="eval-negative",
+            content_group="eval-negative-far",
+            start_frame=40_000,
+            end_frame=64_000,
+            duration_ms=1_500,
+        ),
+        NonSpeechCandidate(
+            candidate_id=candidates[2].candidate_id,
+            session="eval-negative",
+            content_group="eval-negative-far",
+            start_frame=80_000,
+            end_frame=96_000,
+            duration_ms=1_000,
+        ),
+    )
+
+
+def test_non_speech_chunks_never_exceed_maximum_when_remainder_is_short() -> None:
+    parsed = parse_long_textgrid(
+        _tier_textgrid(("0", "1", "speech"), ("1", "2.8", "")),
+        session="eval-negative-remainder",
+        content_group="eval-negative-remainder-far",
+    )
+
+    candidates = generate_non_speech_candidates(
+        parsed,
+        min_duration_ms=500,
+        max_duration_ms=1_500,
+    )
+
+    assert [item.duration_ms for item in candidates] == [1_300, 500]
+
+
+def test_non_lexical_noise_markers_are_not_positive_transcripts() -> None:
+    parsed = parse_long_textgrid(
+        _tier_textgrid(
+            ("0", "1", "<%>"),
+            ("1", "2", "<$>"),
+            ("2", "3", "lexical"),
+        ),
+        session="eval-markers",
+        content_group="eval-markers-far",
+    )
+
+    assert [item.reference for item in generate_speaker_turn_candidates(parsed)] == [
+        "lexical"
+    ]
+    assert [item.duration_ms for item in generate_non_speech_candidates(parsed)] == [
+        2_000
+    ]
+
+
+def test_aishell_boundary_policy_quantizes_to_nearest_millisecond_explicitly() -> None:
+    text = _tier_textgrid(("0", "0.00129", "short"))
+
+    with pytest.raises(ValueError, match="sample frame"):
+        parse_long_textgrid(
+            text,
+            session="aishell-strict",
+            content_group="aishell-strict-far",
+        )
+
+    parsed = parse_long_textgrid(
+        text,
+        session="aishell-quantized",
+        content_group="aishell-quantized-far",
+        boundary_policy="nearest-ms",
+    )
+
+    assert (parsed.intervals[0].start_frame, parsed.intervals[0].end_frame) == (0, 16)
+
+
+def test_aishell_boundary_policy_drops_only_intervals_collapsed_by_quantization() -> None:
+    parsed = parse_long_textgrid(
+        _tier_textgrid(
+            ("0", "0.0004", ""),
+            ("0.0004", "0.0014", "word"),
+        ),
+        session="aishell-collapsed",
+        content_group="aishell-collapsed-far",
+        boundary_policy="nearest-ms",
+    )
+
+    assert [(item.start_frame, item.end_frame, item.reference) for item in parsed.intervals] == [
+        (0, 16, "word")
+    ]
+    assert parsed.collapsed_interval_count == 1
+
+
+def test_aishell_reference_normalization_removes_only_annotation_controls() -> None:
+    assert normalize_aishell4_reference(
+        "今天<sil>&开会&<#><-><$><%><_><space>`，保留标点"
+    ) == "今天开会，保留标点"
 
 
 def test_candidates_require_integer_millisecond_duration_and_never_trim() -> None:

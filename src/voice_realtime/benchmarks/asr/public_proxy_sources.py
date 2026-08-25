@@ -5,13 +5,24 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Literal
 
 _SAMPLE_RATE = 16_000
 _FRAMES_PER_MILLISECOND = _SAMPLE_RATE // 1000
 _IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _ITEM = re.compile(r"(?m)^\s*item \[\d+\]:\s*$")
 _INTERVAL = re.compile(r"(?m)^\s*intervals \[\d+\]:\s*$")
+_AISHELL4_CONTROL_MARKERS = (
+    "<sil>",
+    "<%>",
+    "<->",
+    "<$>",
+    "<#>",
+    "<_>",
+    "<space>",
+)
+BoundaryPolicy = Literal["exact-frame", "nearest-ms"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +58,7 @@ class ParsedTextGrid:
     content_group: str
     intervals: tuple[TextGridInterval, ...]
     overlaps: tuple[SpeakerOverlap, ...]
+    collapsed_interval_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +73,35 @@ class SpeakerTurnCandidate:
     reference: str
 
 
+@dataclass(frozen=True, slots=True)
+class NonSpeechCandidate:
+    candidate_id: str
+    session: str
+    content_group: str
+    start_frame: int
+    end_frame: int
+    duration_ms: int
+
+
+def normalize_aishell4_reference(reference: str) -> str:
+    """移除 AISHELL-4 标注控制符，保留真实词汇与语言标点。"""
+    normalized = reference
+    for marker in _AISHELL4_CONTROL_MARKERS:
+        normalized = normalized.replace(marker, "")
+    return normalized.replace("&", "").replace("`", "").strip()
+
+
+def _is_lexical_reference(reference: str) -> bool:
+    return bool(normalize_aishell4_reference(reference))
+
+
+def _non_speech_candidate_id(
+    *, session: str, content_group: str, start_frame: int, end_frame: int
+) -> str:
+    payload = f"{session}\0{content_group}\0{start_frame}\0{end_frame}"
+    return f"neg-{hashlib.sha256(payload.encode()).hexdigest()[:24]}"
+
+
 def _require_identity(value: str) -> str:
     normalized = value.strip()
     if not _IDENTITY.fullmatch(normalized):
@@ -68,11 +109,15 @@ def _require_identity(value: str) -> str:
     return normalized
 
 
-def _seconds_to_frame(raw: str) -> int:
+def _seconds_to_frame(raw: str, *, boundary_policy: BoundaryPolicy) -> int:
     try:
-        frames = Decimal(raw.strip()) * _SAMPLE_RATE
+        seconds = Decimal(raw.strip())
     except InvalidOperation as exc:
         raise ValueError("TextGrid timestamp is invalid") from exc
+    if boundary_policy == "nearest-ms":
+        milliseconds = (seconds * 1000).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return int(milliseconds) * _FRAMES_PER_MILLISECOND
+    frames = seconds * _SAMPLE_RATE
     integral = frames.to_integral_value()
     if frames != integral:
         raise ValueError("TextGrid timestamp must align to a 16 kHz sample frame")
@@ -86,9 +131,17 @@ def _required_value(block: str, name: str) -> str:
     return match.group(1).strip()
 
 
-def _parse_interval(block: str, *, speaker: str) -> TextGridInterval:
-    start = _seconds_to_frame(_required_value(block, "xmin"))
-    end = _seconds_to_frame(_required_value(block, "xmax"))
+def _parse_interval(
+    block: str, *, speaker: str, boundary_policy: BoundaryPolicy
+) -> TextGridInterval | None:
+    start = _seconds_to_frame(
+        _required_value(block, "xmin"), boundary_policy=boundary_policy
+    )
+    end = _seconds_to_frame(
+        _required_value(block, "xmax"), boundary_policy=boundary_policy
+    )
+    if end == start and boundary_policy == "nearest-ms":
+        return None
     if end <= start:
         raise ValueError("TextGrid interval end must be greater than start")
     raw_text = _required_value(block, "text")
@@ -106,8 +159,12 @@ def _find_overlaps(
 ) -> tuple[SpeakerOverlap, ...]:
     overlaps: list[SpeakerOverlap] = []
     for index, left in enumerate(intervals):
+        if not _is_lexical_reference(left.reference):
+            continue
         for right in intervals[index + 1 :]:
-            if left.speaker == right.speaker:
+            if left.speaker == right.speaker or not _is_lexical_reference(
+                right.reference
+            ):
                 continue
             start = max(left.start_frame, right.start_frame)
             end = min(left.end_frame, right.end_frame)
@@ -140,6 +197,7 @@ def parse_long_textgrid(
     *,
     session: str,
     content_group: str,
+    boundary_policy: BoundaryPolicy = "exact-frame",
 ) -> ParsedTextGrid:
     """解析 long TextGrid；时间统一成 16 kHz 半开 frame 区间。"""
     if 'Object class = "TextGrid"' not in text:
@@ -150,6 +208,7 @@ def parse_long_textgrid(
     if not item_matches:
         raise ValueError("TextGrid contains no interval tiers")
     intervals: list[TextGridInterval] = []
+    collapsed_interval_count = 0
     for item_index, item_match in enumerate(item_matches):
         item_end = (
             item_matches[item_index + 1].start()
@@ -169,12 +228,15 @@ def parse_long_textgrid(
                 if interval_index + 1 < len(interval_matches)
                 else len(item)
             )
-            intervals.append(
-                _parse_interval(
-                    item[interval_match.end() : interval_end],
-                    speaker=speaker,
-                )
+            interval = _parse_interval(
+                item[interval_match.end() : interval_end],
+                speaker=speaker,
+                boundary_policy=boundary_policy,
             )
+            if interval is None:
+                collapsed_interval_count += 1
+            else:
+                intervals.append(interval)
     ordered = tuple(
         sorted(
             intervals,
@@ -191,6 +253,7 @@ def parse_long_textgrid(
         content_group=safe_content_group,
         intervals=ordered,
         overlaps=_find_overlaps(ordered),
+        collapsed_interval_count=collapsed_interval_count,
     )
 
 
@@ -200,7 +263,7 @@ def generate_speaker_turn_candidates(
     """仅生成完整、非空、无跨说话人 overlap、整数毫秒的 turn。"""
     candidates: list[SpeakerTurnCandidate] = []
     for interval in parsed.intervals:
-        if interval.is_empty:
+        if not _is_lexical_reference(interval.reference):
             continue
         if (interval.end_frame - interval.start_frame) % _FRAMES_PER_MILLISECOND:
             continue
@@ -239,3 +302,78 @@ def generate_speaker_turn_candidates(
             ),
         )
     )
+
+
+def generate_non_speech_candidates(
+    parsed: ParsedTextGrid,
+    *,
+    min_duration_ms: int = 1_000,
+    max_duration_ms: int = 20_000,
+) -> tuple[NonSpeechCandidate, ...]:
+    """生成所有说话人均无词汇内容的真实背景区间。"""
+    if min_duration_ms <= 0 or max_duration_ms < min_duration_ms:
+        raise ValueError("non-speech duration bounds are invalid")
+    if not parsed.intervals:
+        return ()
+
+    timeline_start = min(interval.start_frame for interval in parsed.intervals)
+    timeline_end = max(interval.end_frame for interval in parsed.intervals)
+    lexical = sorted(
+        (
+            (interval.start_frame, interval.end_frame)
+            for interval in parsed.intervals
+            if _is_lexical_reference(interval.reference)
+        ),
+        key=lambda bounds: (bounds[0], bounds[1]),
+    )
+    merged: list[tuple[int, int]] = []
+    for start_frame, end_frame in lexical:
+        if not merged or start_frame > merged[-1][1]:
+            merged.append((start_frame, end_frame))
+            continue
+        previous_start, previous_end = merged[-1]
+        merged[-1] = (previous_start, max(previous_end, end_frame))
+
+    gaps: list[tuple[int, int]] = []
+    cursor = timeline_start
+    for start_frame, end_frame in merged:
+        if cursor < start_frame:
+            gaps.append((cursor, start_frame))
+        cursor = max(cursor, end_frame)
+    if cursor < timeline_end:
+        gaps.append((cursor, timeline_end))
+
+    minimum_frames = min_duration_ms * _FRAMES_PER_MILLISECOND
+    maximum_frames = max_duration_ms * _FRAMES_PER_MILLISECOND
+    candidates: list[NonSpeechCandidate] = []
+    for gap_start, gap_end in gaps:
+        if (gap_end - gap_start) % _FRAMES_PER_MILLISECOND:
+            continue
+        chunk_start = gap_start
+        while gap_end - chunk_start >= minimum_frames:
+            remaining_frames = gap_end - chunk_start
+            chunk_frames = min(maximum_frames, remaining_frames)
+            remainder_frames = remaining_frames - chunk_frames
+            if 0 < remainder_frames < minimum_frames:
+                adjusted_frames = remaining_frames - minimum_frames
+                if adjusted_frames >= minimum_frames:
+                    chunk_frames = adjusted_frames
+            chunk_end = chunk_start + chunk_frames
+            duration_ms = (chunk_end - chunk_start) // _FRAMES_PER_MILLISECOND
+            candidates.append(
+                NonSpeechCandidate(
+                    candidate_id=_non_speech_candidate_id(
+                        session=parsed.session,
+                        content_group=parsed.content_group,
+                        start_frame=chunk_start,
+                        end_frame=chunk_end,
+                    ),
+                    session=parsed.session,
+                    content_group=parsed.content_group,
+                    start_frame=chunk_start,
+                    end_frame=chunk_end,
+                    duration_ms=duration_ms,
+                )
+            )
+            chunk_start = chunk_end
+    return tuple(candidates)

@@ -711,8 +711,8 @@ def compare_hypotheses(
     candidate_by_scenario: dict[str, list[float]] = {}
     sample_differences: list[float] = []
     paired_cluster_ids: set[str] = set()
-    if cluster_by_sample is not None and set(cluster_by_sample) != set(paired_ids):
-        raise ValueError("cluster manifest and paired hypotheses must have identical sample IDs")
+    if cluster_by_sample is not None and not set(paired_ids).issubset(cluster_by_sample):
+        raise ValueError("cluster manifest must cover all paired sample IDs")
     for sample_id in paired_ids:
         baseline_scenario, baseline_value = baseline[sample_id]
         candidate_scenario, candidate_value = candidate[sample_id]

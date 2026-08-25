@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import type { TranscriptSegment } from "../../contracts/meetingContract";
 import { formatTimeRange } from "./MeetingGapAlert";
 import { showToast } from "../Toast";
@@ -7,6 +7,34 @@ interface MeetingTranscriptViewerProps {
   segments: readonly TranscriptSegment[];
   highlightedSegmentId: string | null;
   onRenameSpeaker: (speakerKey: string, currentName: string) => void;
+}
+
+const SPEAKER_COLORS = [
+  "#6366f1", // indigo
+  "#10b981", // emerald
+  "#f59e0b", // amber
+  "#ec4899", // pink
+  "#06b6d4", // cyan
+  "#8b5cf6", // purple
+];
+
+function highlightMatch(text: string, query: string) {
+  if (!query.trim()) return text;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = text.split(new RegExp(`(${escaped})`, "gi"));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+          <mark key={i} className="transcript-search-highlight">
+            {part}
+          </mark>
+        ) : (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ),
+      )}
+    </>
+  );
 }
 
 export function MeetingTranscriptViewer({
@@ -18,15 +46,27 @@ export function MeetingTranscriptViewer({
   const [selectedSpeaker, setSelectedSpeaker] = useState<string>("all");
   const segmentRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Unique speakers
-  const speakers = useMemo(() => {
-    const map = new Map<string, string>();
+  // Unique speakers and their statistics
+  const speakerStats = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; count: number; chars: number }>();
+    let totalSegments = segments.length;
+
     for (const seg of segments) {
       if (!map.has(seg.speaker_key)) {
-        map.set(seg.speaker_key, seg.speaker_name);
+        map.set(seg.speaker_key, { key: seg.speaker_key, name: seg.speaker_name, count: 0, chars: 0 });
       }
+      const item = map.get(seg.speaker_key)!;
+      item.count += 1;
+      item.chars += seg.text.length;
     }
-    return Array.from(map.entries()).map(([key, name]) => ({ key, name }));
+
+    const list = Array.from(map.values()).map((spk, idx) => ({
+      ...spk,
+      color: SPEAKER_COLORS[idx % SPEAKER_COLORS.length],
+      percent: totalSegments > 0 ? Math.round((spk.count / totalSegments) * 100) : 0,
+    }));
+
+    return list;
   }, [segments]);
 
   // Filtered segments
@@ -83,8 +123,45 @@ export function MeetingTranscriptViewer({
         </button>
       </div>
 
-      {/* §9 说话人通道超限提示 (超过 4 位说话人) */}
-      {speakers.length > 4 && (
+      {/* 说话人发言占比分布条 (Speaker Distribution Bar) */}
+      {speakerStats.length > 0 && (
+        <div className="speaker-distribution-container">
+          <div className="speaker-distribution-bar" title="说话人发言段落占比">
+            {speakerStats.map((spk) => (
+              <div
+                key={spk.key}
+                className="distribution-segment"
+                style={{
+                  width: `${spk.percent}%`,
+                  backgroundColor: spk.color,
+                }}
+                title={`${spk.name}: ${spk.count}段 (${spk.percent}%)`}
+              />
+            ))}
+          </div>
+          <div className="speaker-chips-row">
+            {speakerStats.map((spk) => {
+              const isSelected = selectedSpeaker === spk.key;
+              return (
+                <button
+                  key={spk.key}
+                  type="button"
+                  className={`speaker-stat-chip ${isSelected ? "selected" : ""}`}
+                  onClick={() => setSelectedSpeaker(isSelected ? "all" : spk.key)}
+                  title={`点击按 ${spk.name} 筛选发言`}
+                >
+                  <span className="chip-dot" style={{ backgroundColor: spk.color }} />
+                  <span className="chip-name">{spk.name}</span>
+                  <span className="chip-percent">{spk.percent}% ({spk.count}段)</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 说话人通道超限提示 (超过 4 位说话人) */}
+      {speakerStats.length > 4 && (
         <div
           style={{
             padding: "6px 12px",
@@ -99,7 +176,7 @@ export function MeetingTranscriptViewer({
         >
           <span>⚠️</span>
           <span>
-            当前已检测到 {speakers.length} 个说话人通道（推荐 ≤ 4 人）。超过 4 人可能存在声纹归属漂移，建议点击名字修正。
+            当前已检测到 {speakerStats.length} 个说话人通道（推荐 ≤ 4 人）。超过 4 人可能存在声纹归属漂移，建议点击名字修正。
           </span>
         </div>
       )}
@@ -116,10 +193,10 @@ export function MeetingTranscriptViewer({
           value={selectedSpeaker}
           onChange={(e) => setSelectedSpeaker(e.target.value)}
         >
-          <option value="all">全部说话人 ({speakers.length})</option>
-          {speakers.map((spk) => (
+          <option value="all">全部说话人 ({speakerStats.length})</option>
+          {speakerStats.map((spk) => (
             <option key={spk.key} value={spk.key}>
-              {spk.name}
+              {spk.name} ({spk.count}段)
             </option>
           ))}
         </select>
@@ -167,7 +244,7 @@ export function MeetingTranscriptViewer({
                   </button>
                 </div>
               </div>
-              <p className="segment-text">{seg.text}</p>
+              <p className="segment-text">{highlightMatch(seg.text, search)}</p>
             </div>
           );
         })}

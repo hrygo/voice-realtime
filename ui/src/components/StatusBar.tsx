@@ -32,6 +32,12 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
   checking: "检测中",
 };
 
+const SERVICE_DIAGNOSTIC_COMMANDS: Record<string, string> = {
+  wlk: "uv run vr-subtitles",
+  tts: "scripts/run-bridge.sh",
+  storage: "psql knowledge -f scripts/bootstrap-meeting-db.sql",
+};
+
 const THEME_LABELS: Record<Theme, string> = {
   light: "☀️",
   dark: "🌙",
@@ -385,9 +391,28 @@ export default function StatusBar({ commandSocket, onOpenShortcuts }: StatusBarP
                       <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
                       <span className="health-row-name">{item.name}</span>
                     </div>
-                    <span className={`health-row-status status-${item.status}`}>
-                      {STATUS_LABELS[item.status as ServiceStatus] || item.status}
-                    </span>
+                    <div className="health-row-right">
+                      <span className={`health-row-status status-${item.status}`}>
+                        {STATUS_LABELS[item.status as ServiceStatus] || item.status}
+                      </span>
+                      {item.status !== "ok" && SERVICE_DIAGNOSTIC_COMMANDS[item.id] && (
+                        <button
+                          type="button"
+                          className="health-cmd-copy-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const cmd = SERVICE_DIAGNOSTIC_COMMANDS[item.id];
+                            navigator.clipboard.writeText(cmd).then(
+                              () => showToast(`已复制启动命令: ${cmd}`, "success"),
+                              () => showToast("复制失败", "error"),
+                            );
+                          }}
+                          title={`复制终端启动命令: ${SERVICE_DIAGNOSTIC_COMMANDS[item.id]}`}
+                        >
+                          📋 复制命令
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>

@@ -475,6 +475,8 @@ export default function SubtitleStream({
                 <h2>Voice Studio 舞台提词与大屏</h2>
                 <span className="presentation-subtitle-status">
                   {connected ? "● WhisperLiveKit 实时转写" : "○ 等待 ASR 连接"}
+                  {" · "}
+                  <span>已转录 {lines.length} 条字幕</span>
                 </span>
               </div>
             </div>

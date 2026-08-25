@@ -1767,3 +1767,104 @@
     box-shadow: 0 0 18px rgba(239, 68, 68, 0.5);
   }
 }
+
+/* ==========================================================================
+   Speaker Distribution Bar & Starred Segments Styles
+   ========================================================================== */
+
+.speaker-distribution-container {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.speaker-distribution-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+  width: 100%;
+}
+
+.distribution-segment {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.speaker-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.speaker-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.speaker-stat-chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--color-accent);
+  color: var(--text-primary);
+}
+
+.speaker-stat-chip.selected {
+  background: color-mix(in srgb, var(--color-accent) 15%, var(--bg-card));
+  border-color: var(--color-accent);
+  color: var(--color-accent-light);
+  font-weight: 600;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.chip-name {
+  font-weight: 500;
+}
+
+.chip-percent {
+  opacity: 0.75;
+  font-size: 0.64rem;
+}
+
+/* Starred Segments in Live & History Views */
+.segment-card.is-starred {
+  border-left: 3px solid var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 6%, var(--bg-card-solid));
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.08);
+}
+
+.segment-starred-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 20%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-yellow) 40%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.transcript-search-highlight {
+  background: rgba(245, 158, 11, 0.35);
+  color: var(--text-primary);
+  padding: 0 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
