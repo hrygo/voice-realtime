@@ -337,9 +337,24 @@ export default function StatusBar({
     }),
   ];
 
-  const okCount = healthItems.filter((h) => h.status === "ok").length;
-  const totalCount = healthItems.length;
-  const hasError = healthItems.some((h) => h.status === "error" || h.status === "unreachable");
+  const authoritativeMode = commandSocket.snapshot?.mode;
+  const aggregateHealthItems = healthItems.filter((item) => {
+    if (item.id === "subtitle") {
+      return !(authoritativeMode === "assistant" && subtitleStatus === "paused");
+    }
+    if (item.id === "pipeline") {
+      return !(
+        (authoritativeMode === "subtitles" || authoritativeMode === "meeting")
+        && pipelineStatus === "stopped"
+      );
+    }
+    return true;
+  });
+  const okCount = aggregateHealthItems.filter((h) => h.status === "ok").length;
+  const totalCount = aggregateHealthItems.length;
+  const hasError = aggregateHealthItems.some(
+    (h) => h.status === "error" || h.status === "unreachable",
+  );
   const isAllOk = okCount === totalCount;
 
   return (

@@ -56,6 +56,7 @@ export function mergeRuntimeState(
   incoming: RuntimeStateSnapshot,
 ): RuntimeStateSnapshot {
   if (!current || incoming.runtime_revision > current.runtime_revision) return incoming;
+  if (incoming.runtime_revision < current.runtime_revision) return current;
   if (
     incoming.runtime_revision === current.runtime_revision
     && hasSameOwnership(current, incoming)
@@ -169,6 +170,7 @@ export class CommandChannel {
       );
     }
     const merged = mergeRuntimeState(current, incoming);
+    if (merged === current) return current;
     this.currentState = merged;
     this.currentHighestRuntimeRevision = merged.runtime_revision;
     this.options.applyState(merged);

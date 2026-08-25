@@ -178,7 +178,7 @@ describe("CommandChannel", () => {
     }));
   });
 
-  it("keeps ownership from the highest revision while accepting fresh UI fields", async () => {
+  it("discards an entire late acknowledgement below the highest revision", async () => {
     const socket = new OpenSocket();
     const applyState = vi.fn();
     const channel = new CommandChannel({ applyState, timeoutMs: 1000 });
@@ -187,11 +187,17 @@ describe("CommandChannel", () => {
 
     const pending = channel.send({ cmd: "set_mic_muted", muted: true });
     const request = JSON.parse(socket.sent[0] ?? "{}") as { request_id: string };
-    channel.receive(runtimeEvent(snapshot({
+    const highestSnapshot = snapshot({
       mode: "subtitles",
       pcm_owner: "subtitles",
       runtime_revision: 9,
-    })));
+      pipeline: "stopped",
+      subtitle: "connected",
+      mic_muted: false,
+      persona: "当前 persona",
+      voice: "current",
+    });
+    channel.receive(runtimeEvent(highestSnapshot));
     channel.receive(JSON.stringify({
       request_id: request.request_id,
       cmd: "set_mic_muted",
@@ -200,22 +206,18 @@ describe("CommandChannel", () => {
         mode: "assistant",
         pcm_owner: "assistant",
         runtime_revision: 8,
+        pipeline: "running",
+        subtitle: "paused",
         mic_muted: true,
+        persona: "迟到 persona",
+        voice: "stale",
       }),
     }));
 
-    await expect(pending).resolves.toMatchObject({
-      mode: "subtitles",
-      pcm_owner: "subtitles",
-      runtime_revision: 9,
-      mic_muted: true,
-    });
-    expect(applyState).toHaveBeenLastCalledWith(expect.objectContaining({
-      mode: "subtitles",
-      pcm_owner: "subtitles",
-      runtime_revision: 9,
-      mic_muted: true,
-    }));
+    await expect(pending).resolves.toEqual(highestSnapshot);
+    expect(channel.latestState).toEqual(highestSnapshot);
+    expect(applyState).toHaveBeenCalledTimes(2);
+    expect(applyState).toHaveBeenLastCalledWith(highestSnapshot);
   });
 
   it("reports same-revision ownership conflicts without overwriting ownership", () => {
@@ -323,7 +325,7 @@ describe("CommandChannel", () => {
     expect(channel.reconciling).toBe(false);
   });
 
-  it("does not let a lower HTTP revision overwrite ownership", async () => {
+  it("discards an entire lower HTTP revision during reconciliation", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => snapshot({
@@ -344,7 +346,7 @@ describe("CommandChannel", () => {
       mode: "subtitles",
       pcm_owner: "subtitles",
       runtime_revision: 9,
-      mic_muted: true,
+      mic_muted: false,
     });
   });
 
