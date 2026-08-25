@@ -9,6 +9,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -26,7 +27,7 @@ from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
 from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
 from voice_realtime.ui.server import _initialize_meeting_backend, create_app
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
 
 
 class _FakeRuntime:
@@ -271,6 +272,224 @@ class TestServices:
         for svc in data["services"]:
             assert svc["status"] in ("unreachable", "timeout", "error")
             assert svc["name"] in names
+        assert data["diagnostics"] == {
+            "audio_hub": {},
+            "interaction": {},
+            "subtitles": {},
+            "tts": {},
+            "last_transition": None,
+        }
+
+    def test_services_adds_runtime_workload_diagnostics(self) -> None:
+        """HTTP 探活与 paused workload 独立，并复制五类运行时诊断。"""
+
+        @dataclass(frozen=True, slots=True)
+        class QueueDiagnostics:
+            queued_chunks: int
+            dropped_chunks: int
+
+        runtime = _FakeRuntime(mode=RuntimeMode.ASSISTANT)
+        runtime.diagnostics = Mock(  # type: ignore[attr-defined]
+            return_value={
+                "audio_hub": {
+                    "interaction": QueueDiagnostics(
+                        queued_chunks=2,
+                        dropped_chunks=1,
+                    )
+                },
+                "interaction": QueueDiagnostics(
+                    queued_chunks=3,
+                    dropped_chunks=4,
+                ),
+                "subtitles": runtime.subtitle_proxy.diagnostics(PCMOwner.ASSISTANT),
+                "tts": {
+                    "source_chunk_gaps_over_200ms": 0,
+                    "pcm": b"must-not-leak",
+                    "queue": asyncio.Queue(),
+                },
+                "last_transition": ("idle", "assistant"),
+                "internal_pcm": b"must-not-leak",
+            }
+        )
+        mock_resp = Mock(status_code=200)
+        mock_resp.json.return_value = {
+            "data": [{"id": _settings().interaction.llm_model}]
+        }
+
+        with (
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ),
+            _running_client(runtime) as client,
+        ):
+            response = client.get("/api/services")
+
+        assert response.status_code == 200
+        payload = response.json()
+        services = {item["name"]: item for item in payload["services"]}
+        assert set(services) == {"wlk", "tts", "lm"}
+        assert services["wlk"] == {
+            "name": "wlk",
+            "status": "ok",
+            "url": "http://127.0.0.1:9998/health",
+            "workload": "paused",
+            "ws_state": "paused",
+            "reconnect_count": 0,
+            "last_event_age_ms": None,
+        }
+        assert services["tts"] == {
+            "name": "tts",
+            "status": "ok",
+            "url": "http://127.0.0.1:9999/health",
+        }
+        assert services["lm"]["status"] == "ok"
+        assert services["lm"]["target_model"] == _settings().interaction.llm_model
+        assert services["lm"]["model_present"] is True
+        assert payload["diagnostics"] == {
+            "audio_hub": {
+                "interaction": {"queued_chunks": 2, "dropped_chunks": 1}
+            },
+            "interaction": {"queued_chunks": 3, "dropped_chunks": 4},
+            "subtitles": {
+                "workload": "paused",
+                "ws_state": "paused",
+                "reconnect_count": 0,
+                "last_event_age_ms": None,
+                "dropped_chunks": 0,
+                "gap_count": 0,
+            },
+            "tts": {
+                "source_chunk_gaps_over_200ms": 0,
+                "pcm": None,
+                "queue": None,
+            },
+            "last_transition": ["idle", "assistant"],
+        }
+        assert "must-not-leak" not in response.text
+
+    def test_services_http_ok_reports_backoff_workload_as_degraded(self) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
+        runtime.subtitle_proxy._state = SubtitleProxyState.BACKOFF
+        mock_resp = Mock(status_code=200)
+
+        with (
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ),
+            _running_client(runtime) as client,
+        ):
+            response = client.get("/api/services")
+
+        wlk = next(
+            item for item in response.json()["services"] if item["name"] == "wlk"
+        )
+        assert wlk["status"] == "ok"
+        assert wlk["workload"] == "degraded"
+        assert wlk["ws_state"] == "backoff"
+
+    def test_services_ready_workload_ignores_long_event_silence(self) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
+        proxy = runtime.subtitle_proxy
+        proxy._state = SubtitleProxyState.CONNECTED
+        proxy._browser_stream = object()
+        proxy._browser_ready.set()
+        proxy._last_event_at = proxy._clock() - 120.0
+        mock_resp = Mock(status_code=200)
+
+        with (
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ),
+            _running_client(runtime) as client,
+        ):
+            response = client.get("/api/services")
+
+        wlk = next(
+            item for item in response.json()["services"] if item["name"] == "wlk"
+        )
+        assert wlk["status"] == "ok"
+        assert wlk["workload"] == "ready"
+        assert wlk["ws_state"] == "connected"
+        assert wlk["last_event_age_ms"] >= 120_000
+
+    def test_services_runtime_diagnostics_failure_is_redacted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        runtime = _FakeRuntime(mode=RuntimeMode.ASSISTANT)
+        runtime.diagnostics = Mock(  # type: ignore[attr-defined]
+            side_effect=RuntimeError("private upstream response")
+        )
+        runtime.subtitle_proxy.diagnostics = Mock(
+            side_effect=ValueError("private PCM content")
+        )
+        mock_resp = Mock(status_code=200)
+
+        with (
+            caplog.at_level(logging.WARNING),
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ),
+            _running_client(runtime) as client,
+        ):
+            response = client.get("/api/services")
+
+        payload = response.json()
+        assert {item["name"] for item in payload["services"]} == {
+            "wlk",
+            "tts",
+            "lm",
+        }
+        wlk = next(item for item in payload["services"] if item["name"] == "wlk")
+        assert set(wlk) == {"name", "status", "url"}
+        assert payload["diagnostics"] == {
+            "audio_hub": {},
+            "interaction": {},
+            "subtitles": {},
+            "tts": {},
+            "last_transition": None,
+        }
+        assert "RuntimeError" in caplog.text
+        assert "ValueError" in caplog.text
+        assert "private upstream response" not in caplog.text
+        assert "private PCM content" not in caplog.text
+
+    def test_services_probes_remain_concurrent(self) -> None:
+        active = 0
+        peak = 0
+        all_started = asyncio.Event()
+
+        async def concurrent_get(_url: str) -> Mock:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            if active == 3:
+                all_started.set()
+            await asyncio.wait_for(all_started.wait(), timeout=1.0)
+            active -= 1
+            return Mock(status_code=200)
+
+        application = create_app(_settings(), initialize_meeting=False)
+        with (
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                side_effect=concurrent_get,
+            ),
+            TestClient(application, raise_server_exceptions=False) as client,
+        ):
+            response = client.get("/api/services")
+
+        assert response.status_code == 200
+        assert peak == 3
 
     def test_services_one_ok(self) -> None:
         """模拟 httpx.AsyncClient.get 返回 200 时返回 status=ok。"""
@@ -296,8 +515,17 @@ class TestServices:
             with TestClient(app) as client:
                 resp = client.get("/api/services")
                 assert resp.status_code == 200
-                for svc in resp.json()["services"]:
+                payload = resp.json()
+                for svc in payload["services"]:
                     assert svc["status"] == "ok"
+                    assert {"name", "status", "url"} <= set(svc)
+                assert payload["diagnostics"] == {
+                    "audio_hub": {},
+                    "interaction": {},
+                    "subtitles": {},
+                    "tts": {},
+                    "last_transition": None,
+                }
 
 
 class TestVoices:

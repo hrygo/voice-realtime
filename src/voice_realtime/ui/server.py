@@ -11,8 +11,9 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import is_dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -20,6 +21,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -47,6 +49,19 @@ _CONTROL_RESPONSE_QUEUE_SIZE = 8
 _SUBTITLE_INACTIVE_CODE = 4409
 _SUBTITLE_INACTIVE_REASON = "字幕模式未激活"
 _SUBTITLE_ELIGIBLE_MODES = frozenset({RuntimeMode.SUBTITLES, RuntimeMode.MEETING})
+_RUNTIME_DIAGNOSTIC_KEYS = (
+    "audio_hub",
+    "interaction",
+    "subtitles",
+    "tts",
+    "last_transition",
+)
+_WLK_WORKLOAD_KEYS = (
+    "workload",
+    "ws_state",
+    "reconnect_count",
+    "last_event_age_ms",
+)
 
 
 def _probe_url(host: str, port: int, path: str = "/health") -> str:
@@ -87,6 +102,85 @@ async def _do_probe_async(
         return {"name": name, "status": "timeout", "url": url}
     except Exception:
         return {"name": name, "status": "error", "url": url}
+
+
+def _empty_runtime_diagnostics() -> dict[str, Any]:
+    return {
+        "audio_hub": {},
+        "interaction": {},
+        "subtitles": {},
+        "tts": {},
+        "last_transition": None,
+    }
+
+
+def _redact_diagnostic_binary(_value: object) -> None:
+    """诊断接口只公开指标，不复制 PCM 或其他二进制载荷。"""
+
+
+def _json_safe_mapping(value: object) -> dict[str, Any] | None:
+    """把 mapping/frozen dataclass 转成已验证可 JSON 序列化的深副本。"""
+    if not isinstance(value, Mapping) and not (
+        is_dataclass(value) and not isinstance(value, type)
+    ):
+        return None
+    encoded = jsonable_encoder(
+        value,
+        custom_encoder={
+            bytes: _redact_diagnostic_binary,
+            bytearray: _redact_diagnostic_binary,
+            memoryview: _redact_diagnostic_binary,
+            asyncio.Queue: _redact_diagnostic_binary,
+        },
+    )
+    copied = cast(object, json.loads(json.dumps(encoded, allow_nan=False)))
+    if not isinstance(copied, dict):
+        return None
+    return cast(dict[str, Any], copied)
+
+
+def _runtime_diagnostics(runtime: Any) -> dict[str, Any]:
+    fallback = _empty_runtime_diagnostics()
+    if runtime is None:
+        return fallback
+    diagnostics = getattr(runtime, "diagnostics", None)
+    if not callable(diagnostics):
+        return fallback
+    try:
+        raw = _json_safe_mapping(diagnostics())
+        if raw is None:
+            return fallback
+        return {
+            key: raw.get(key, fallback[key]) for key in _RUNTIME_DIAGNOSTIC_KEYS
+        }
+    except Exception as exc:
+        logger.warning(
+            "Voice Studio: runtime diagnostics unavailable: %s",
+            type(exc).__name__,
+        )
+        return fallback
+
+
+def _wlk_workload_diagnostics(runtime: Any) -> dict[str, Any]:
+    if runtime is None:
+        return {}
+    try:
+        snapshot = getattr(runtime, "snapshot", None)
+        subtitle_proxy = getattr(runtime, "subtitle_proxy", None)
+        diagnostics = getattr(subtitle_proxy, "diagnostics", None)
+        if not callable(snapshot) or not callable(diagnostics):
+            return {}
+        state = snapshot()
+        raw = _json_safe_mapping(diagnostics(state.pcm_owner))
+        if raw is None:
+            return {}
+        return {key: raw[key] for key in _WLK_WORKLOAD_KEYS if key in raw}
+    except Exception as exc:
+        logger.warning(
+            "Voice Studio: WLK workload diagnostics unavailable: %s",
+            type(exc).__name__,
+        )
+        return {}
 
 
 def create_app(
@@ -135,7 +229,7 @@ def create_app(
         return {"status": "ok"}
 
     @app.get("/api/services")
-    async def services() -> dict[str, list[dict[str, Any]]]:
+    async def services() -> dict[str, Any]:
         """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
         timeout = min(cfg.ui.api_timeout, 1.0)
         wlk = cfg.subtitles
@@ -152,7 +246,20 @@ def create_app(
                 for name, url, expected_model in paths
             ]
             results = await asyncio.gather(*tasks)
-        return {"services": list(results)}
+        service_results = list(results)
+        runtime = _get_runtime(app)
+        workload_diagnostics = _wlk_workload_diagnostics(runtime)
+        if workload_diagnostics:
+            wlk_service = next(
+                (item for item in service_results if item["name"] == "wlk"),
+                None,
+            )
+            if wlk_service is not None:
+                wlk_service.update(workload_diagnostics)
+        return {
+            "services": service_results,
+            "diagnostics": _runtime_diagnostics(runtime),
+        }
 
     @app.get("/api/runtime")
     async def runtime_state() -> dict[str, Any]:
