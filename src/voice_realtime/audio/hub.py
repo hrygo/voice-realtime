@@ -44,6 +44,12 @@ class _SinkState:
     dropped: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class SinkDiagnostics:
+    queued_chunks: int
+    dropped_chunks: int
+
+
 class AudioHub:
     """系统麦克风采集 + 扇出服务（专用后台线程采集，0 阻塞事件循环）。
 
@@ -88,6 +94,16 @@ class AudioHub:
     def muted(self) -> bool:
         """麦克风是否处于真实静音状态。"""
         return self._muted
+
+    def sink_diagnostics(self) -> dict[str, SinkDiagnostics]:
+        """返回不含队列和音频内容的 sink 诊断快照。"""
+        return {
+            name: SinkDiagnostics(
+                queued_chunks=state.queue.qsize(),
+                dropped_chunks=state.dropped,
+            )
+            for name, state in self._sinks.items()
+        }
 
     def set_muted(self, muted: bool) -> None:
         """设置静音；进入静音时丢弃各 sink 尚未消费的音频。"""

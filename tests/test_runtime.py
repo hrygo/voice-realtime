@@ -192,6 +192,35 @@ class TestBackpressure:
             await runtime._enqueue_audio(b"\x01" * 512)  # 不抛
             assert runtime.audio_queue.qsize() == AUDIO_QUEUE_MAXSIZE
 
+    async def test_enqueue_rejects_new_chunk_and_reports_exact_drop_count(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime.audio_queue = asyncio.Queue(maxsize=1)
+            runtime.audio_queue.put_nowait(b"queued")
+
+            await runtime._enqueue_audio(b"rejected")
+
+            diagnostics = runtime.diagnostics()
+            assert diagnostics["interaction"] == {
+                "queued_chunks": 1,
+                "dropped_chunks": 1,
+            }
+            assert diagnostics["last_transition"] is None
+            assert runtime.diagnostics()["interaction"]["dropped_chunks"] == 1
+            assert "queue" not in diagnostics["interaction"]
+            assert "bytes" not in diagnostics["interaction"]
+
+            transition = {"target": "subtitles", "result": "success"}
+            runtime.mode_coordinator = MagicMock(last_transition=transition)
+            assert runtime.diagnostics()["last_transition"] is transition
+
+            assert runtime.audio_queue.get_nowait() == b"queued"
+            runtime.audio_queue.task_done()
+
 
 class TestStop:
     async def test_stop_cancels_pipeline_and_closes_components(

@@ -26,6 +26,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
+from statistics import median
 from typing import Any
 
 from pipecat.frames.frames import (
@@ -64,6 +65,15 @@ class _ClientState:
     dropped: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class TTSSourceDiagnostics:
+    first_chunk_ms: float | None
+    chunk_count: int
+    max_source_chunk_gap_ms: float | None
+    median_source_chunk_gap_ms: float | None
+    source_chunk_gaps_over_200ms: int
+
+
 class StatusBridgeObserver(BaseObserver):
     """管道状态观测器：帧 → 协议事件 → 浏览器 WS 广播。
 
@@ -73,15 +83,26 @@ class StatusBridgeObserver(BaseObserver):
         worker = PipelineWorker(pipeline, observers=[observer])
     """
 
-    def __init__(self, tts_throttle_secs: float = 0.5, client_queue_size: int = 32) -> None:
+    def __init__(
+        self,
+        tts_throttle_secs: float = 0.5,
+        client_queue_size: int = 32,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
         super().__init__()
         self._ws_clients: dict[Callable[[str], Awaitable[None]], _ClientState] = {}
         self._client_queue_size = max(1, client_queue_size)
         self._client_counter = 0
         self._seen_ids: set[int] = set()
         self._tts_throttle_secs = tts_throttle_secs
+        self._monotonic = monotonic
         self._tts_chunks = 0
         self._tts_last_broadcast: float = 0.0
+        self._tts_source_started_at: float | None = None
+        self._tts_source_first_chunk_ms: float | None = None
+        self._tts_source_chunk_count = 0
+        self._tts_source_last_chunk_at: float | None = None
+        self._tts_source_chunk_gaps_ms: list[float] = []
         self._turn_id = 0
         self._current_sentence = ""
         # Turn-level 耗时度量时间戳
@@ -116,6 +137,18 @@ class StatusBridgeObserver(BaseObserver):
     def has_clients(self) -> bool:
         return bool(self._ws_clients)
 
+    @property
+    def tts_source_diagnostics(self) -> TTSSourceDiagnostics:
+        """返回最近一轮 TTS 的源音频块节奏快照。"""
+        gaps = self._tts_source_chunk_gaps_ms
+        return TTSSourceDiagnostics(
+            first_chunk_ms=self._tts_source_first_chunk_ms,
+            chunk_count=self._tts_source_chunk_count,
+            max_source_chunk_gap_ms=max(gaps) if gaps else None,
+            median_source_chunk_gap_ms=median(gaps) if gaps else None,
+            source_chunk_gaps_over_200ms=sum(gap > 200.0 for gap in gaps),
+        )
+
     # ---------- BaseObserver 回调 ----------
 
     async def on_pipeline_started(self) -> None:
@@ -137,7 +170,7 @@ class StatusBridgeObserver(BaseObserver):
     # ---------- 帧处理 ----------
 
     async def _handle_frame(self, frame: Frame) -> None:
-        now_ts = time.monotonic()
+        now_ts = self._monotonic()
         if isinstance(frame, InterimTranscriptionFrame):
             await self._emit_event(
                 {"type": "stt", "state": "interim", "text": frame.text, "t": self._now()}
@@ -169,6 +202,7 @@ class StatusBridgeObserver(BaseObserver):
         elif isinstance(frame, (TTSStartedFrame, BotStartedSpeakingFrame)):
             if not self._tts_active:
                 self._tts_active = True
+                self._reset_tts_source_diagnostics(now_ts)
                 await self._emit_event(
                     {"type": "tts", "state": "started", "sentence": self._current_sentence}
                 )
@@ -177,10 +211,11 @@ class StatusBridgeObserver(BaseObserver):
             await self._emit_event({"type": "tts", "state": "stopped"})
             self._tts_chunks = 0
         elif isinstance(frame, TTSAudioRawFrame):
+            self._record_tts_source_chunk(now_ts)
             if self._t_tts_first is None:
                 self._t_tts_first = now_ts
                 await self._emit_turn_metrics()
-            await self._handle_tts_audio()
+            await self._handle_tts_audio(now_ts)
         elif isinstance(frame, UserStartedSpeakingFrame):
             self._reset_turn_metrics()
             self._t_speaking_start = now_ts
@@ -262,10 +297,29 @@ class StatusBridgeObserver(BaseObserver):
         self._t_llm_first = None
         self._t_tts_first = None
 
-    async def _handle_tts_audio(self) -> None:
+    def _reset_tts_source_diagnostics(self, started_at: float) -> None:
+        self._tts_source_started_at = started_at
+        self._tts_source_first_chunk_ms = None
+        self._tts_source_chunk_count = 0
+        self._tts_source_last_chunk_at = None
+        self._tts_source_chunk_gaps_ms = []
+
+    def _record_tts_source_chunk(self, received_at: float) -> None:
+        if self._tts_source_chunk_count == 0 and self._tts_source_started_at is not None:
+            self._tts_source_first_chunk_ms = max(
+                0.0,
+                round((received_at - self._tts_source_started_at) * 1000, 1),
+            )
+        if self._tts_source_last_chunk_at is not None:
+            self._tts_source_chunk_gaps_ms.append(
+                max(0.0, round((received_at - self._tts_source_last_chunk_at) * 1000, 1))
+            )
+        self._tts_source_chunk_count += 1
+        self._tts_source_last_chunk_at = received_at
+
+    async def _handle_tts_audio(self, now: float) -> None:
         """TTS 音频帧：仅计数，超节流窗口才广播一次 synthesizing。"""
         self._tts_chunks += 1
-        now = time.monotonic()
         if now - self._tts_last_broadcast < self._tts_throttle_secs:
             return
         self._tts_last_broadcast = now

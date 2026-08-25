@@ -279,3 +279,23 @@ class TestMuteAndBackpressure:
         assert sink_state.dropped > 0
         gate.set()
         await hub.stop()
+
+    def test_sink_diagnostics_count_drops_without_exposing_queue_or_audio(self) -> None:
+        hub = AudioHub(queue_size=1)
+        hub.add_sink("slow", AsyncMock())
+        hub._running = True
+
+        hub._on_chunk_received(b"old")
+        hub._on_chunk_received(b"latest")
+
+        diagnostics = hub.sink_diagnostics()
+        assert diagnostics["slow"].queued_chunks == 1
+        assert diagnostics["slow"].dropped_chunks == 1
+        assert not hasattr(diagnostics["slow"], "queue")
+        assert not hasattr(diagnostics["slow"], "audio")
+        assert hub.sink_diagnostics() == diagnostics
+
+        queued = hub._sinks["slow"].queue.get_nowait()
+        hub._sinks["slow"].queue.task_done()
+        assert queued == b"latest"
+        assert hub.sink_diagnostics()["slow"].dropped_chunks == 1

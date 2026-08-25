@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import Any
 
@@ -48,6 +47,7 @@ class UIRuntime:
         self._sinks_wired = False
         self.observer = StatusBridgeObserver()
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
+        self._interaction_dropped_chunks = 0
         self.hub = AudioHub(
             device_index=settings.interaction.input_device,
             device_name=settings.interaction.input_device_name,
@@ -204,6 +204,23 @@ class UIRuntime:
             runtime_revision=coordinator.runtime_revision if coordinator is not None else 0,
         )
 
+    def diagnostics(self) -> dict[str, Any]:
+        """返回不含内部队列和音频内容的运行时诊断快照。"""
+        coordinator = self.mode_coordinator
+        return {
+            "audio_hub": self.hub.sink_diagnostics(),
+            "interaction": {
+                "queued_chunks": self.audio_queue.qsize(),
+                "dropped_chunks": self._interaction_dropped_chunks,
+            },
+            "tts": self.observer.tts_source_diagnostics,
+            "last_transition": (
+                getattr(coordinator, "last_transition", None)
+                if coordinator is not None
+                else None
+            ),
+        }
+
     @property
     def mode(self) -> RuntimeMode:
         if self.mode_coordinator is not None:
@@ -286,8 +303,10 @@ class UIRuntime:
             and self.mode_coordinator.mode is RuntimeMode.MEETING
         ):
             return
-        with contextlib.suppress(asyncio.QueueFull):
+        try:
             self.audio_queue.put_nowait(data)
+        except asyncio.QueueFull:
+            self._interaction_dropped_chunks += 1
 
     def _drain_audio_queue(self) -> None:
         while True:

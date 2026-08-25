@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import fields
 from unittest.mock import AsyncMock
 
 from pipecat.frames.frames import (
@@ -213,6 +214,34 @@ class TestTtsThrottling:
         assert client.call_count == 2
         last = json.loads(client.call_args_list[-1].args[0])
         assert last["chunks"] == 2
+
+    async def test_source_chunk_diagnostics_use_fake_monotonic_and_reset_on_started(
+        self,
+    ) -> None:
+        timestamps = iter((1.0, 1.1, 1.15, 1.4, 1.5, 2.0))
+        observer = StatusBridgeObserver(
+            tts_throttle_secs=0.0,
+            monotonic=lambda: next(timestamps),
+        )
+
+        await _push(observer, TTSStartedFrame())
+        await _push(observer, _tts_audio())
+        await _push(observer, _tts_audio())
+        await _push(observer, _tts_audio())
+        await _push(observer, TTSStoppedFrame())
+
+        diagnostics = observer.tts_source_diagnostics
+        assert diagnostics.first_chunk_ms == 100.0
+        assert diagnostics.chunk_count == 3
+        assert diagnostics.max_source_chunk_gap_ms == 250.0
+        assert diagnostics.median_source_chunk_gap_ms == 150.0
+        assert diagnostics.source_chunk_gaps_over_200ms == 1
+        assert all("underrun" not in field.name for field in fields(diagnostics))
+
+        await _push(observer, TTSStartedFrame())
+        assert observer.tts_source_diagnostics.first_chunk_ms is None
+        assert observer.tts_source_diagnostics.chunk_count == 0
+        assert observer.tts_source_diagnostics.max_source_chunk_gap_ms is None
 
 
 class TestBroadcast:
