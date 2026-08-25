@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
@@ -31,6 +32,14 @@ class MeetingStorageUnavailableError(RuntimeError):
 
 
 MeetingStorageUnavailable = MeetingStorageUnavailableError
+
+
+@dataclass(frozen=True, slots=True)
+class MeetingPreparation:
+    """会议记录与无 PCM capture 已准备完成的一次性凭证。"""
+
+    record: MeetingRecord
+    capture: object
 
 
 class MeetingSession:
@@ -68,6 +77,8 @@ class MeetingSession:
         self._lock = asyncio.Lock()
         self._active_meeting_id: UUID | None = None
         self._record: MeetingRecord | None = None
+        self._preparation: MeetingPreparation | None = None
+        self._committed_preparation: MeetingPreparation | None = None
         self._listener: WindowListener | None = None
         self._last_window_signature: tuple[Any, ...] | None = None
         self._storage_degraded = False
@@ -89,10 +100,10 @@ class MeetingSession:
     def storage_health(self) -> StorageHealth:
         return StorageHealth.DEGRADED if self._storage_degraded else StorageHealth.OK
 
-    async def start(self, title: str | None = None) -> MeetingRecord:
+    async def prepare_start(self, title: str | None = None) -> MeetingPreparation:
         async with self._lock:
-            if self._active_meeting_id is not None:
-                raise RuntimeError("meeting 已经在录制")
+            if self._active_meeting_id is not None or self._preparation is not None:
+                raise RuntimeError("meeting 已经在录制或准备")
             normalized_title = (title or "").strip()
             if not normalized_title:
                 normalized_title = datetime.now(UTC).strftime("会议-%Y%m%d-%H%M%S")
@@ -112,30 +123,50 @@ class MeetingSession:
                     "meeting storage unavailable"
                 ) from exc
             self._record = record
-            self._active_meeting_id = record.id
             self._last_window_signature = None
             self._storage_degraded = False
             listener = self._on_window
             self._listener = listener
-            self.gateway.add_event_listener(listener)
-            add_gap_listener = getattr(self.gateway, "add_gap_listener", None)
-            if add_gap_listener is not None:
-                add_gap_listener(self._on_gap)
             try:
-                await self.gateway.begin_capture(f"meeting:{record.id}")
-            except Exception:
+                self.gateway.add_event_listener(listener)
+                add_gap_listener = getattr(self.gateway, "add_gap_listener", None)
+                if add_gap_listener is not None:
+                    add_gap_listener(self._on_gap)
+                capture = await self.gateway.prepare_capture(
+                    f"meeting:{record.id}", timeout_secs=5.0
+                )
+            except BaseException:
+                await self._release_listener()
                 with contextlib.suppress(Exception):
-                    self.gateway.remove_event_listener(listener)
-                with contextlib.suppress(Exception):
-                    await self.repository.set_status(
+                    interrupted = await self.repository.set_status(
                         record.id,
                         MeetingStatus.INTERRUPTED,
-                        reason="capture_start_failed",
+                        reason="mode_switch_aborted",
                     )
-                self._listener = None
-                self._record = None
+                    self._record = interrupted
+                self._preparation = None
                 self._active_meeting_id = None
                 raise
+            preparation = MeetingPreparation(record=record, capture=capture)
+            self._preparation = preparation
+            return preparation
+
+    def commit_start(self, preparation: MeetingPreparation) -> MeetingRecord:
+        self._require_current_preparation(preparation)
+        self.gateway.commit_capture(preparation.capture)
+        self._active_meeting_id = preparation.record.id
+        self._record = preparation.record
+        self._preparation = None
+        self._committed_preparation = preparation
+        return preparation.record
+
+    async def publish_started(self, preparation: MeetingPreparation) -> None:
+        async with self._lock:
+            if (
+                self._committed_preparation is not preparation
+                or self._active_meeting_id != preparation.record.id
+            ):
+                raise RuntimeError("无效或已消费的 meeting preparation")
             requeue = getattr(self.summary_service, "requeue_for_recording", None)
             if requeue is not None:
                 with contextlib.suppress(Exception):
@@ -144,10 +175,36 @@ class MeetingSession:
                         await result
             await self._emit(
                 "meeting_state_changed",
-                record.id,
-                self._meeting_state_payload(record),
+                preparation.record.id,
+                self._meeting_state_payload(preparation.record),
             )
-            return cast(MeetingRecord, record)
+            self._committed_preparation = None
+
+    async def abort_start(self, preparation: MeetingPreparation) -> None:
+        async with self._lock:
+            self._require_current_preparation(preparation)
+            self._preparation = None
+            try:
+                with contextlib.suppress(Exception):
+                    await self.gateway.abort_prepared_capture(preparation.capture)
+            finally:
+                await self._release_listener()
+                try:
+                    record = await self.repository.set_status(
+                        preparation.record.id,
+                        MeetingStatus.INTERRUPTED,
+                        reason="mode_switch_aborted",
+                    )
+                    self._record = record
+                finally:
+                    self._active_meeting_id = None
+                    self._committed_preparation = None
+
+    async def start(self, title: str | None = None) -> MeetingRecord:
+        preparation = await self.prepare_start(title)
+        record = self.commit_start(preparation)
+        await self.publish_started(preparation)
+        return record
 
     async def stop(self) -> MeetingRecord:
         async with self._lock:
@@ -214,6 +271,7 @@ class MeetingSession:
             finally:
                 await self._release_listener()
                 self._active_meeting_id = None
+                self._committed_preparation = None
                 await self._resume_summary_worker()
 
     async def interrupt(self, reason: str) -> MeetingRecord | None:
@@ -236,6 +294,7 @@ class MeetingSession:
             )
             await self._release_listener()
             self._active_meeting_id = None
+            self._committed_preparation = None
             await self._resume_summary_worker()
             return cast(MeetingRecord, record)
 
@@ -355,6 +414,10 @@ class MeetingSession:
         payload = segment.model_dump(mode="json")
         payload["speaker_name"] = speaker_name
         return cast(dict[str, object | None], payload)
+
+    def _require_current_preparation(self, preparation: MeetingPreparation) -> None:
+        if self._preparation is not preparation:
+            raise RuntimeError("无效或已消费的 meeting preparation")
 
     async def _release_listener(self) -> None:
         listener = self._listener

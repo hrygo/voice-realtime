@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
@@ -102,7 +102,10 @@ class FakeGateway:
     def __init__(self) -> None:
         self.listeners: list[Callable[[TranscriptWindow], Awaitable[None]]] = []
         self.gap_listeners: list[Callable[[object], Awaitable[None]]] = []
-        self.begin_capture = AsyncMock()
+        self.capture = object()
+        self.prepare_capture = AsyncMock(return_value=self.capture)
+        self.commit_capture = Mock()
+        self.abort_prepared_capture = AsyncMock()
         self.finish_capture = AsyncMock(return_value=TranscriptWindow(source_epoch=1))
         self.abort_capture = AsyncMock()
 
@@ -133,17 +136,139 @@ def gateway() -> FakeGateway:
     return FakeGateway()
 
 
-async def test_start_creates_record_and_acquires_capture(
+async def test_prepare_creates_record_and_listeners_without_activating_or_publishing(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    publish = AsyncMock()
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+
+    preparation = await session.prepare_start("  周会  ")
+
+    assert preparation.record.status is MeetingStatus.RECORDING
+    assert preparation.record.title == "周会"
+    assert session.active_meeting_id is None
+    assert session.record == preparation.record
+    assert len(gateway.listeners) == 1
+    assert len(gateway.gap_listeners) == 1
+    gateway.prepare_capture.assert_awaited_once_with(
+        f"meeting:{preparation.record.id}", timeout_secs=5.0
+    )
+    gateway.commit_capture.assert_not_called()
+    publish.assert_not_awaited()
+
+
+async def test_commit_synchronously_activates_capture_without_publishing(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    publish = AsyncMock()
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    preparation = await session.prepare_start("周会")
+
+    record = session.commit_start(preparation)
+
+    assert record == preparation.record
+    assert session.active_meeting_id == record.id
+    gateway.commit_capture.assert_called_once_with(gateway.capture)
+    publish.assert_not_awaited()
+
+
+async def test_publish_started_emits_recording_only_after_commit(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    publish = AsyncMock()
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    preparation = await session.prepare_start("周会")
+
+    with pytest.raises(RuntimeError, match="preparation"):
+        await session.publish_started(preparation)
+    publish.assert_not_awaited()
+
+    session.commit_start(preparation)
+    publish.assert_not_awaited()
+    await session.publish_started(preparation)
+
+    publish.assert_awaited_once()
+    event_type, meeting_id, payload = publish.await_args.args
+    assert event_type == "meeting_state_changed"
+    assert meeting_id == preparation.record.id
+    assert payload["status"] == "recording"
+
+
+async def test_publish_failure_does_not_roll_back_committed_meeting(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    publish = AsyncMock(side_effect=RuntimeError("client disconnected"))
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    preparation = await session.prepare_start("周会")
+    session.commit_start(preparation)
+
+    await session.publish_started(preparation)
+
+    assert session.active_meeting_id == preparation.record.id
+    assert repository.record.status is MeetingStatus.RECORDING
+    gateway.abort_prepared_capture.assert_not_awaited()
+
+
+async def test_abort_marks_record_interrupted_and_releases_prepared_capture(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
+    preparation = await session.prepare_start("周会")
 
-    record = await session.start("  周会  ")
+    await session.abort_start(preparation)
 
-    assert record.status is MeetingStatus.RECORDING
-    assert record.title == "周会"
+    assert repository.record.status is MeetingStatus.INTERRUPTED
+    assert repository.record.interruption_reason == "mode_switch_aborted"
+    assert session.record == repository.record
+    assert session.active_meeting_id is None
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+    gateway.abort_prepared_capture.assert_awaited_once_with(gateway.capture)
+
+
+async def test_preparation_tokens_reject_stale_and_repeated_operations(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    session = MeetingSession(repository, gateway)
+    first = await session.prepare_start("第一场")
+    with pytest.raises(RuntimeError, match="已经"):
+        await session.prepare_start("并发准备")
+    await session.abort_start(first)
+
+    with pytest.raises(RuntimeError, match="preparation"):
+        await session.abort_start(first)
+
+    second = await session.prepare_start("第二场")
+    with pytest.raises(RuntimeError, match="preparation"):
+        session.commit_start(first)
+    session.commit_start(second)
+
+    with pytest.raises(RuntimeError, match="preparation"):
+        session.commit_start(second)
+    with pytest.raises(RuntimeError, match="preparation"):
+        await session.abort_start(second)
+    with pytest.raises(RuntimeError, match="preparation"):
+        await session.publish_started(first)
+
+    await session.publish_started(second)
+    with pytest.raises(RuntimeError, match="preparation"):
+        await session.publish_started(second)
+
+
+async def test_start_compatibility_wrapper_prepares_commits_and_publishes(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    publish = AsyncMock()
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+
+    record = await session.start("周会")
+
     assert session.active_meeting_id == record.id
-    gateway.begin_capture.assert_awaited_once_with(f"meeting:{record.id}")
+    gateway.prepare_capture.assert_awaited_once_with(
+        f"meeting:{record.id}", timeout_secs=5.0
+    )
+    gateway.commit_capture.assert_called_once_with(gateway.capture)
+    publish.assert_awaited_once()
 
 
 async def test_stop_flushes_transcript_and_returns_completed(
@@ -225,7 +350,7 @@ async def test_start_rejects_unwritable_storage(
     with pytest.raises(RuntimeError, match="storage"):
         await session.start("周会")
 
-    gateway.begin_capture.assert_not_awaited()
+    gateway.prepare_capture.assert_not_awaited()
 
 
 async def test_start_maps_create_failure_to_storage_unavailable(
@@ -238,7 +363,7 @@ async def test_start_maps_create_failure_to_storage_unavailable(
         await session.start("周会")
 
     assert getattr(exc_info.value, "code", None) == "storage_unavailable"
-    gateway.begin_capture.assert_not_awaited()
+    gateway.prepare_capture.assert_not_awaited()
 
 
 def test_init_requires_gateway_and_positive_timeout(repository: FakeRepository) -> None:
@@ -302,34 +427,40 @@ async def test_start_supports_sync_summary_requeue_and_gateway_without_gap_hooks
     assert gateway.gap_listeners == []
 
 
-async def test_start_failure_cleans_state_and_marks_interrupted(
+async def test_prepare_failure_cleans_state_and_marks_interrupted(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    gateway.begin_capture.side_effect = RuntimeError("capture failed")
+    gateway.prepare_capture.side_effect = RuntimeError("capture failed")
     session = MeetingSession(repository, gateway)
 
     with pytest.raises(RuntimeError, match="capture failed"):
-        await session.start("周会")
+        await session.prepare_start("周会")
 
     assert session.active_meeting_id is None
-    assert session.record is None
+    assert session.record == repository.record
+    assert repository.record.status is MeetingStatus.INTERRUPTED
+    assert repository.record.interruption_reason == "mode_switch_aborted"
     assert gateway.listeners == []
+    assert gateway.gap_listeners == []
     assert repository.calls[-1] == "interrupted"
+    gateway.commit_capture.assert_not_called()
+    gateway.abort_prepared_capture.assert_not_awaited()
 
 
-async def test_start_failure_suppresses_cleanup_errors(
+async def test_prepare_failure_suppresses_cleanup_errors_and_releases_gap_listener(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    gateway.begin_capture.side_effect = RuntimeError("capture failed")
+    gateway.prepare_capture.side_effect = RuntimeError("capture failed")
     gateway.remove_event_listener_error = RuntimeError("listener cleanup failed")
     repository.status_error = RuntimeError("status update failed")
     session = MeetingSession(repository, gateway)
 
     with pytest.raises(RuntimeError, match="capture failed"):
-        await session.start("周会")
+        await session.prepare_start("周会")
 
     assert session.active_meeting_id is None
-    assert session.record is None
+    assert session.record is not None
+    assert gateway.gap_listeners == []
 
 
 async def test_stop_requires_active_meeting(
