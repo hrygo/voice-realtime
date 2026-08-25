@@ -3,7 +3,7 @@
 ## 1. 文档状态
 
 - 设计日期：2026-08-25（Asia/Shanghai）
-- 状态：方案 A 已获聊天批准，等待书面规范复核
+- 状态：书面规范已批准；实施计划自审产生的 finalize/cursor、model root 与 eligibility 三项接口澄清等待复核
 - 适用分支：`feature/asr-benchmark-runner`
 - 代码基线：`0d098b1d9ffe39d9288cda849e65cd2680639851`
 - 索引证据：Codebase Memory Tier 2，generation `2026-08-24T19:50:07Z`，与上述
@@ -124,13 +124,18 @@ class StageRunRequest:
     arm: Literal["baseline", "finalist"]
     candidate_id: str
     evidence_tier: Literal["formal", "experimental"]
+    executor_id: str
     model_manifest_path: Path
+    model_root: Path
     profile_path: Path
     runtime_config_path: Path
     schedule_path: Path
     input_manifest_path: Path
     input_root: Path
     output_root: Path
+    repository_root: Path
+    eligibility_path: Path | None = None
+    upstream_report_paths: Mapping[UpstreamStage, Path] = field(default_factory=dict)
     fault_plan_path: Path | None = None
     lock_path: Path | None = None
     lock_timeout_secs: float = 0.0
@@ -139,9 +144,18 @@ class StageRunRequest:
 `run_stage()` 重新读取并哈希这些制品，构造实际 `StageRunManifest`。调用者不能以参数覆盖实际
 `git_commit`、profile、runtime、schedule、fault plan 或模型身份。
 
+`model_manifest_path` 使用 typed `StageModelManifest` 保存 model ID、immutable revision，以及相对于
+`model_root` 的必需文件路径、大小和 SHA-256。formal 运行逐项拒绝 symlink/non-regular/path escape，
+并重新计算实际大小和 hash；core runner 不加载模型，也不允许 executor 绕过已验证 root。
+
 `covered_stages` 对普通运行必须等于 `(stage,)`；唯一例外是会议 candidate 的物理
 `stage=5, covered_stages=(3, 5)`。该 lineage 同时写入 final manifest 和 summary，Stage 3/5 report
 必须引用同一个 run identity 与 artifact index。其他跨阶段组合一律拒绝。
+
+formal 请求必须提供 `StageEligibilityEvidence` 及其列出的全部 upstream report paths；runner 重新计算
+hash，并核对 target stage、family、candidate 和唯一状态。`eligible=false` 时只封存
+`planned → deferred`，完全不构造 executor；`eligible=true` 才允许进入 `running`。experimental 请求可
+省略 eligibility，但其证据不能进入 Promote。
 
 `run_stage()` 返回只含 `run_id`、terminal status、manifest/index hash、外部相对制品标识和停止原因的
 `StageRunResult`；不返回 reference、原始音频、逐字稿或绝对路径。
@@ -190,7 +204,10 @@ class StageExecutor(Protocol):
     ) -> SegmentObservation: ...
     async def inject_fault(self, event: FaultEvent) -> FaultObservation: ...
     async def snapshot(self) -> RuntimeObservation: ...
-    async def finalize(self) -> FinalObservation: ...
+    async def finalize(
+        self,
+        finalization_fault: FaultEvent | None,
+    ) -> FinalObservation: ...
     async def close(self) -> CloseObservation: ...
 ```
 
@@ -200,15 +217,22 @@ class StageExecutor(Protocol):
 2. `start()` 每次物理运行只调用一次；返回不含秘密和绝对路径的 `session_id`、进程/epoch 身份。
 3. `feed_segment()` 接收 runner 已验证的 `ResolvedStageInput` 和冻结 cursor range，不接收任意路径。
    PCM 输入暴露确定帧流；interaction 输入暴露判别联合 action 流及已验证 asset，不允许 executor 自行
-   读取其他音频或解释未知 action。
+   读取其他音频或解释未知 action。cursor range 可以是完整 segment，也可以是 runner 在固定故障
+   cursor 处切出的确定 slice；executor 只能消费该 range 对应的字节/action，不能越界推进。
 4. `inject_fault()` 只执行 runner 指定的事件，返回开始、恢复、结果和受影响身份。
 5. `snapshot()` 提供资源和状态快照，不给出晋级结论。
-6. `finalize()` 完成 EOF/flush 并返回最终 observation；runner 决定是否满足门禁。
+6. `finalize(finalization_fault)` 完成 EOF/flush 并返回最终 observation；参数只能为该 run 固定
+   `finalization_delay` 或 `None`。executor 必须按“发送 EOF → 应用延迟 → 接收 terminal”执行，并在
+   `FinalObservation` 中返回对应 fault observation；runner 决定是否满足门禁。
 7. `close()` 必须幂等；runner 在成功和异常路径都调用，并通过 `CloseObservation` 核验自有进程、
    端口、AudioHub/连接、后台 task 和文件描述符已经释放。
 8. executor 的异常必须使用稳定错误类别；原始 vendor 内容仅进入受限诊断制品。
 9. runner 串行调用 feed、fault、snapshot 和 finalize；禁止 executor 在 runner 不知情时并发推进 cursor
    或自行注入故障。
+
+`StageExecutionContext` 额外携带仅驻留内存、`repr=False` 的 `ValidatedRuntimeInputs`：已验证
+`model_root`、typed model manifest、profile payload 和 runtime config payload。该对象允许真实 executor
+加载目标运行时，但禁止进入 observation、JSON/CSV、错误消息或 decision artifact。
 
 `StageExecutorCapabilities` 至少声明支持的 stage、输入格式、是否支持同会话 continuation、支持的故障
 类型和 `is_synthetic`。formal 请求必须拒绝 `is_synthetic=True` 的 executor。
@@ -308,7 +332,8 @@ writer 或其他基础设施异常产生 run `failed` 和 `Experimental / No dec
 ## 10. Canonical cursor 与故障注入
 
 - canonical cursor 只按成功提交给 executor 的输入音频毫秒数推进，不使用 wall clock。
-- runner 在跨越故障 cursor 前拆分 PCM 帧，确保事件在精确 cursor 触发且仅触发一次。
+- runner 在跨越故障 cursor 前把 resolved input 切成确定 cursor slice；executor 在 slice 内仍按冻结
+  frame size 发送 PCM。runner 在两个 slice 之间注入故障，确保事件在精确 cursor 触发且仅触发一次。
 - Stage 5 必须加载 `FaultPlan(stage=5, duration_ms=3_600_000)`，并核对固定
   `3 disconnect + 1 asr_crash + 1 finalization_delay`。
 - `fault-execution.jsonl` 对每次事件记录 planned cursor、actual cursor、started、recovered、outcome、
@@ -322,9 +347,11 @@ writer 或其他基础设施异常产生 run `failed` 和 `Experimental / No dec
 `FaultEvent.cursor_ms` 始终相对于整个 60 分钟 session 起点，`duration_ms` 表示 wall-clock 故障持续
 时间，不增加 canonical audio cursor；因此契约不再用 `cursor + duration` 判断音频越界。三个
 disconnect 和一个 `asr_crash` 必须位于 `< 3_600_000 ms` 的冻结 cursor；
-`finalization_delay` 固定在 `cursor_ms == 3_600_000`，runner 已发送 EOF 后、接受终止确认前注入，
-且 `duration_ms > 0`。其含义是延迟 ASR/会议的 terminal/ready-to-stop 确认，不是重复发送音频或任意
-sleep。实际允许 cursor 误差固定为 0 ms；wall-clock 调度误差单独记录，不改变 fault identity。
+`finalization_delay` 固定在 `cursor_ms == 3_600_000` 且 `duration_ms > 0`。runner 不把它传给普通
+`inject_fault()`，而是在全部音频提交后作为唯一参数传给 `finalize(finalization_fault)`；executor 必须
+按“发送 EOF → 应用延迟 → 接收 terminal”执行。其含义是延迟 ASR/会议的
+terminal/ready-to-stop 确认，不是重复发送音频或任意 sleep。实际允许 cursor 误差固定为 0 ms；
+wall-clock 调度误差单独记录，不改变 fault identity。
 
 Promote 中现有 `actual_duration_ms=3_600_000` 表示 canonical 连续音频覆盖；metrics 另记录从
 `start()` 到 `finalize()` 的 monotonic wall elapsed，必须不少于 60 分钟并包含故障恢复时间。两者都从
