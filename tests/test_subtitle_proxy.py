@@ -782,6 +782,39 @@ class TestMeetingCapture:
         assert late not in stream.sent_audio
         await proxy.stop()
 
+    async def test_finish_times_out_before_eof_when_accepted_audio_cannot_drain(
+        self, settings: SubtitleSettings
+    ) -> None:
+        stream = BlockingTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=Mock(return_value=stream),
+        )
+        await proxy.start()
+        preparation_task = asyncio.create_task(
+            proxy.prepare_capture("meeting:blocked-drain", timeout_secs=0.2)
+        )
+        await stream.connected.wait()
+        await stream.emit(ASREvent(kind="ready"))
+        preparation = await preparation_task
+        proxy.commit_capture(preparation)
+        last_window = TranscriptNormalizer().normalize(_snapshot("上一句"), 1, 0)
+        proxy._capture_last_window = last_window
+
+        await proxy.push_audio(b"a" * 32)
+        await stream.send_started.wait()
+        await proxy.push_audio(b"b" * 32)
+        assert proxy._audio_buffer.qsize() == 1
+
+        with pytest.raises(FinalizationTimeout) as exc_info:
+            await proxy.finish_capture(timeout_secs=0.01)
+
+        assert exc_info.value.last_window is last_window
+        assert stream.operations == []
+        assert stream.closed
+        assert proxy.capture_owner is None
+        await proxy.stop()
+
     async def test_capture_accepts_audio_without_browser_clients(
         self, settings: SubtitleSettings
     ) -> None:

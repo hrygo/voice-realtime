@@ -31,7 +31,7 @@ GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
 
 
 class FinalizationTimeoutError(TimeoutError):
-    """WLK 未在时限内发送 ready_to_stop，携带最后已知窗口。"""
+    """会议 ASR 未在时限内排空 PCM 或完成 EOF，携带最后已知窗口。"""
 
     code = "finalization_timeout"
 
@@ -525,19 +525,21 @@ class SubtitleProxy:
             raise RuntimeError("没有活动的会议采集租约")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
-        start_time = time.perf_counter()
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+        deadline = start_time + timeout_secs
         logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
         self._capture_accept_audio = False
         try:
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._audio_buffer.join(), timeout=timeout_secs)
-            self._capture_active.clear()
-            final_window = await asyncio.wait_for(stream.finish(), timeout=timeout_secs)
-            self._capture_last_window = final_window
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            async with asyncio.timeout_at(deadline):
+                await self._audio_buffer.join()
+                self._capture_active.clear()
+                final_window = await stream.finish()
+                self._capture_last_window = final_window
+            elapsed_ms = (loop.time() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
         except TimeoutError as exc:
-            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            elapsed_ms = (loop.time() - start_time) * 1000
             logger.warning(
                 "会议 ASR 优雅冲刷超时 (%.1f ms > %.1fs)，执行强制截断封存",
                 elapsed_ms,
