@@ -10,22 +10,36 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
+from voice_realtime.benchmarks.asr.report import (
+    CandidateLookDecision,
+    FamilyLookDecision,
+    Stage1DecisionReport,
+)
+from voice_realtime.benchmarks.asr.stage_artifacts import StageArtifactWriter
 from voice_realtime.benchmarks.asr.stage_contracts import (
+    PROMOTION_HARD_GATES,
     FaultEvent,
     FaultPlan,
+    FinalistSelectionEvidence,
     PCMInputBinding,
     ScheduleManifest,
     SchedulePurpose,
     ScheduleSegment,
+    StageDecisionReport,
+    StageGateEvidenceBundle,
     StageInputManifest,
     StageModelFile,
     StageModelManifest,
     StageNumber,
     StagePhase,
+    StageRunManifest,
+    StageRunState,
 )
+from voice_realtime.benchmarks.asr.stage_decision import StageDecisionRequest
 from voice_realtime.benchmarks.asr.stage_evaluators import (
     MeetingStagePolicy,
     ScreenDecision,
@@ -508,11 +522,289 @@ def build_stage5_fixture(tmp_path: Path) -> StageFixture:
     return StageFixture(request=base.request, policy=MeetingStagePolicy())
 
 
+@dataclass(frozen=True)
+class DecisionFixture:
+    """A formally sealed Stage 5 run plus its external decision evidence."""
+
+    request: StageDecisionRequest
+    metrics_path: Path
+    stage3_metrics_path: Path
+    selection_path: Path
+    gate_evidence_path: Path
+    run_dir: Path
+    upstream_report_sha256s: Mapping[str, str]
+
+    def write_selection(
+        self,
+        *,
+        eligible: tuple[str, ...],
+        selected: str,
+    ) -> None:
+        payload = FinalistSelectionEvidence(
+            family_id="meeting",
+            selected_candidate_id=selected,
+            eligible_candidate_ids=eligible,
+            upstream_report_sha256s=dict(self.upstream_report_sha256s),
+        )
+        _write_private_json(self.selection_path, payload.model_dump(mode="json"))
+
+
+def _fault_rows() -> tuple[dict[str, object], ...]:
+    events = (
+        ("d1", "disconnect", 600_000),
+        ("d2", "disconnect", 1_200_000),
+        ("crash", "asr_crash", 1_800_000),
+        ("d3", "disconnect", 2_400_000),
+        ("delay", "finalization_delay", 3_600_000),
+    )
+    rows: list[dict[str, object]] = []
+    for index, (event_id, kind, cursor) in enumerate(events):
+        before = f"session-{index}"
+        after = f"session-{index + 1}"
+        for state in ("planned", "attempt_started", "applied", "recovered"):
+            row: dict[str, object] = {
+                "event_id": event_id,
+                "kind": kind,
+                "state": state,
+                "planned_cursor_ms": cursor,
+                "actual_cursor_ms": cursor,
+                "duration_ms": 5_000 if kind == "finalization_delay" else 0,
+                "observation_available": True,
+                "session_id_before": before,
+                "source_epoch_before": index,
+            }
+            if state in {"applied", "recovered"}:
+                row.update(
+                    {
+                        "outcome": "recovered",
+                        "session_id_after": after,
+                        "source_epoch_after": index + 1,
+                    }
+                )
+            rows.append(row)
+    return tuple(rows)
+
+
+def build_decision_fixture(
+    tmp_path: Path,
+    *,
+    evidence_tier: Literal["formal", "experimental"] = "formal",
+    run_status: Literal["completed", "failed", "deferred"] = "completed",
+    stage3_duration_ms: int = 1_800_000,
+    stage5_duration_ms: object = 3_600_000,
+    fault_rows: Sequence[Mapping[str, object]] | None = None,
+) -> DecisionFixture:
+    """Build a complete, hash-cross-checked decision source graph."""
+
+    external = tmp_path / "external"
+    repository = external / "repo"
+    output_root = external / "runs"
+    for directory in (external, repository, output_root):
+        directory.mkdir(mode=0o700, parents=True)
+        directory.chmod(0o700)
+
+    run_writer = StageArtifactWriter.create(output_root, "stage5-meeting-fun")
+    started_at = datetime(2026, 8, 25, tzinfo=UTC)
+    finished_at = datetime(2026, 8, 25, 1, tzinfo=UTC)
+    manifest_kwargs = {
+        "run_id": "stage5-meeting-fun",
+        "stage": 5,
+        "covered_stages": (3, 5),
+        "family_id": "meeting",
+        "arm": "finalist",
+        "candidate_id": "fun",
+        "evidence_tier": evidence_tier,
+        "executor_id": "meeting-real-test",
+        "git_commit": "1" * 40,
+        "model_sha256": "a" * 64,
+        "profile_sha256": "b" * 64,
+        "runtime_config_sha256": "c" * 64,
+        "schedule_sha256": "d" * 64,
+        "fault_plan_sha256": "e" * 64,
+        "started_at": started_at,
+    }
+    run_writer.replace_manifest(StageRunManifest(status="planned", **manifest_kwargs))
+    cursor_ms = 3_600_000 if run_status == "completed" else 1_200_000
+    run_writer.replace_state(
+        StageRunState(
+            run_id="stage5-meeting-fun",
+            status=run_status,
+            phase="terminal",
+            cursor_ms=cursor_ms,
+            start_count=1,
+            session_id="session-final",
+            started_at=started_at,
+            finished_at=finished_at,
+            stop_reason="schedule_complete" if run_status == "completed" else run_status,
+        )
+    )
+    run_writer.replace_manifest(
+        StageRunManifest(status=run_status, **manifest_kwargs)
+    )
+    run_writer.append_event(
+        {"event_kind": "terminal", "status": run_status, "cursor_ms": cursor_ms}
+    )
+    if run_status == "failed":
+        run_writer.append_failure({"error_type": "FixtureFailure", "failure_code": "fixture"})
+    run_writer.append_resource(
+        {
+            "background_tasks": 0,
+            "file_descriptors": 0,
+            "monotonic_ms": 3_605_000,
+            "queue_depth": 0,
+            "rss_bytes": 0,
+        }
+    )
+    for row in _fault_rows() if fault_rows is None else fault_rows:
+        run_writer.append_fault(row)
+    run_writer.write_stage_checkpoint(
+        3,
+        {
+            "stage": 3,
+            "window": {"start_ms": 0, "end_ms": 1_800_000},
+            "cursor_ms": 1_800_000,
+            "session_id": "session-stage3",
+            "source_epoch": 1,
+            "observation_count": 1,
+        },
+    )
+    run_writer.write_stage_metrics(
+        3,
+        {
+            "stage": 3,
+            "window": {"start_ms": 0, "end_ms": 1_800_000},
+            "canonical_audio_duration_ms": stage3_duration_ms,
+            "logical_segments": [],
+        },
+    )
+    run_writer.write_metrics(
+        {
+            "canonical_audio_duration_ms": stage5_duration_ms,
+            "monotonic_wall_elapsed_ms": 3_605_000,
+            "executed_cursor_ms": cursor_ms,
+            "start_count": 1,
+            "executed_fault_counts": {
+                "disconnect": 3,
+                "asr_crash": 1,
+                "finalization_delay": 1,
+            },
+        }
+    )
+    run_writer.write_summary(
+        {
+            "status": run_status,
+            "covered_stages": [3, 5],
+            "cursor_ms": cursor_ms,
+        }
+    )
+    run_writer.ensure_empty_streams()
+    artifact_index = run_writer.seal()
+    indexed_hashes = {item.path: item.sha256 for item in artifact_index.artifacts}
+
+    stage1_path = external / "stage1-report.json"
+    stage1 = Stage1DecisionReport(
+        look="final",
+        alpha=0.05,
+        confidence=0.96,
+        stopped_at="completed",
+        decisions=(
+            FamilyLookDecision(
+                family_id="meeting",
+                baseline_id="sensevoice",
+                status="Finalist / Reliability Pending",
+                selected_candidate_id="fun",
+                candidates=(
+                    CandidateLookDecision(
+                        candidate_id="fun",
+                        raw_p_value=0.01,
+                        holm_adjusted_p_value=0.01,
+                        advance_eligible=True,
+                        hard_rejected=False,
+                        futility_rejected=False,
+                        required_gates_passed=True,
+                        reason_codes=(),
+                    ),
+                ),
+            ),
+        ),
+    )
+    _write_private_json(stage1_path, stage1.model_dump(mode="json"))
+    upstream_paths: dict[str, Path] = {"stage1": stage1_path}
+    upstream_hashes: dict[str, str] = {"stage1": _sha256(stage1_path)}
+    stage_statuses = {
+        2: "Confirm-Pass",
+        3: "Finalist / Reliability Pending",
+        4: "Confirm-Pass",
+    }
+    for stage in (2, 3, 4):
+        report_path = external / f"stage{stage}-report.json"
+        previous_hashes = {
+            f"stage{previous}": upstream_hashes[f"stage{previous}"]
+            for previous in range(1, stage)
+        }
+        report = StageDecisionReport(
+            stage=stage,
+            family_id="meeting",
+            candidate_id="fun",
+            status=stage_statuses[stage],
+            run_manifest_sha256=(
+                artifact_index.run_manifest_sha256
+                if stage == 3
+                else str(stage) * 64
+            ),
+            upstream_report_sha256s=previous_hashes,
+            hard_gates=dict.fromkeys(PROMOTION_HARD_GATES, "not_applicable"),
+            actual_duration_ms=1_800_000 if stage == 3 else 1,
+        )
+        _write_private_json(report_path, report.model_dump(mode="json"))
+        key = f"stage{stage}"
+        upstream_paths[key] = report_path
+        upstream_hashes[key] = _sha256(report_path)
+
+    gate_path = external / "stage5-gates.json"
+    stage3_source_hashes = (
+        indexed_hashes["metrics-stage3.json"],
+        indexed_hashes["checkpoints/stage3.json"],
+    )
+    gates = StageGateEvidenceBundle(
+        stage=5,
+        family_id="meeting",
+        candidate_id="fun",
+        gates=dict.fromkeys(PROMOTION_HARD_GATES, "passed"),
+        source_artifact_sha256s=dict.fromkeys(PROMOTION_HARD_GATES, stage3_source_hashes),
+    )
+    _write_private_json(gate_path, gates.model_dump(mode="json"))
+    selection_path = external / "finalist-selection.json"
+    selection = DecisionFixture(
+        request=StageDecisionRequest(
+            stage=5,
+            family_id="meeting",
+            candidate_id="fun",
+            run_dir=run_writer.run_dir,
+            gate_evidence_path=gate_path,
+            finalist_selection_path=selection_path,
+            upstream_report_paths=upstream_paths,
+            output_path=external / "decision.json",
+            repository_root=repository,
+        ),
+        metrics_path=run_writer.run_dir / "metrics.json",
+        stage3_metrics_path=run_writer.run_dir / "metrics-stage3.json",
+        selection_path=selection_path,
+        gate_evidence_path=gate_path,
+        run_dir=run_writer.run_dir,
+        upstream_report_sha256s=upstream_hashes,
+    )
+    selection.write_selection(eligible=("fun",), selected="fun")
+    return selection
+
+
 __all__ = [
     "DEFAULT_SEGMENTS",
+    "DecisionFixture",
     "StageFixture",
     "SyntheticStageExecutor",
     "TestStagePolicy",
+    "build_decision_fixture",
     "build_stage5_fixture",
     "build_stage_fixture",
 ]

@@ -44,6 +44,7 @@ from voice_realtime.benchmarks.asr.stage_runner import (
     FaultScheduler,
     StageEligibilityError,
     StageRequestError,
+    StageRunnerError,
     StageStateError,
     run_stage,
     validate_status_transition,
@@ -230,6 +231,50 @@ async def test_screen_pass_continues_same_session_without_restart(
     assert executor.session_ids == ("synthetic-session-1",)
     assert executor.fed_segment_ids == ("screen-001", "confirm-001")
     assert executor.cursor_ranges == (CursorRange(0, 1_000), CursorRange(1_000, 2_000))
+
+
+@pytest.mark.asyncio
+async def test_run_records_physical_monotonic_wall_elapsed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    ticks = iter((10_000_000, 2_010_000_000))
+    monkeypatch.setattr(
+        "voice_realtime.benchmarks.asr.stage_runner.time.monotonic_ns",
+        lambda: next(ticks),
+    )
+
+    result = await run_stage(fixture.request, SyntheticStageExecutor, fixture.policy)
+
+    assert result.status == "completed"
+    metrics = json.loads(
+        (fixture.request.output_root / fixture.request.run_id / "metrics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert metrics["monotonic_wall_elapsed_ms"] == 2_000
+
+
+@pytest.mark.asyncio
+async def test_monotonic_clock_backwards_closes_without_sealing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    executor = SyntheticStageExecutor()
+    ticks = iter((2_000_000_000, 1_000_000_000))
+    monkeypatch.setattr(
+        "voice_realtime.benchmarks.asr.stage_runner.time.monotonic_ns",
+        lambda: next(ticks),
+    )
+
+    with pytest.raises(StageRunnerError, match="monotonic clock moved backwards"):
+        await run_stage(fixture.request, lambda: executor, fixture.policy)
+
+    run_dir = fixture.request.output_root / fixture.request.run_id
+    assert executor.close_count == 1
+    assert not (run_dir / "artifact-index.json").exists()
 
 
 @pytest.mark.asyncio

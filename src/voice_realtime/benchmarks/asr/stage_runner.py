@@ -7,6 +7,7 @@ lock owner，不启动任何未通过 validation 的 runtime。
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -458,6 +459,7 @@ async def _run_locked(
     policy: StagePolicy,
     writer: StageArtifactWriter,
 ) -> StageRunResult:
+    physical_started_ns = time.monotonic_ns()
     request = validated.request
     started_at = datetime.now(UTC)
 
@@ -925,6 +927,7 @@ async def _run_locked(
         meeting_composite=meeting_composite,
         meeting_policy=meeting_policy,
         observations=segment_observations,
+        physical_started_ns=physical_started_ns,
     )
 
 
@@ -945,6 +948,7 @@ async def _seal_terminal(
     meeting_composite: bool,
     meeting_policy: MeetingStagePolicy | None,
     observations: list[SegmentObservation],
+    physical_started_ns: int,
 ) -> StageRunResult:
     validate_status_transition("running", status)
     normalized_fault_counts = _normalized_fault_counts(
@@ -983,9 +987,16 @@ async def _seal_terminal(
         )
     )
     writer.replace_manifest(_build_manifest(validated, status=status, started_at=started_at))
+    physical_finished_ns = time.monotonic_ns()
+    if type(physical_finished_ns) is not int or physical_finished_ns < physical_started_ns:
+        raise StageRunnerError("physical monotonic clock moved backwards")
+    monotonic_wall_elapsed_ms = (
+        physical_finished_ns - physical_started_ns
+    ) // 1_000_000
     metrics: dict[str, object] = {
         "executed_cursor_ms": cursor,
         "canonical_audio_duration_ms": cursor,
+        "monotonic_wall_elapsed_ms": monotonic_wall_elapsed_ms,
         "start_count": 1 if session is not None else 0,
         "executed_fault_counts": dict(normalized_fault_counts),
         "logical_segments": _logical_segments(observations),
