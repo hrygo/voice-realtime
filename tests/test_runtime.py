@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 from voice_realtime.config import Settings
-from voice_realtime.meeting.models import PCMOwner, RuntimeMode
+from voice_realtime.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
 from voice_realtime.meeting.runtime_mode import (
     MeetingUnavailableError,
     ModeConflictError,
@@ -743,6 +743,55 @@ class TestControlCommands:
 
         assert first_task.done()
         assert build.call_count == 2
+
+    async def test_restart_pipeline_serializes_with_start_meeting(
+        self, settings: Settings
+    ) -> None:
+        calls: list[str] = []
+        restart_entered = asyncio.Event()
+        restart_gate = asyncio.Event()
+        meeting = MagicMock()
+        meeting.active_meeting_id = None
+        meeting.record = None
+        record = MeetingRecord(title="周会")
+
+        async def prepare_meeting(_title: str | None = None) -> object:
+            calls.append("meeting.prepare")
+            return object()
+
+        async def restart() -> None:
+            calls.append("restart.begin")
+            restart_entered.set()
+            await restart_gate.wait()
+            calls.append("restart.end")
+
+        meeting.prepare_start = AsyncMock(side_effect=prepare_meeting)
+        meeting.commit_start = MagicMock(return_value=record)
+        meeting.publish_started = AsyncMock()
+        meeting.abort_start = AsyncMock()
+        with ExitStack() as stack:
+            _proxy_cls, hub_cls, _build, _worker_cls, runner_cls = _patched(stack)
+            runtime = UIRuntime(settings, meeting_session=meeting)
+            proxy = runtime.subtitle_proxy
+            hub = hub_cls.return_value
+            runner = runner_cls.return_value
+            _mock_async_components(proxy, hub, runner)
+            await runtime.start()
+            await asyncio.sleep(0)
+            runtime.session.restart = AsyncMock(side_effect=restart)
+
+            restarting = asyncio.create_task(runtime.restart_pipeline())
+            await restart_entered.wait()
+            starting_meeting = asyncio.create_task(runtime.start_meeting("周会"))
+            await asyncio.sleep(0)
+            meeting_started_during_restart = meeting.prepare_start.await_count
+
+            restart_gate.set()
+            await asyncio.gather(restarting, starting_meeting)
+
+        assert meeting_started_during_restart == 0
+        assert calls == ["restart.begin", "restart.end", "meeting.prepare"]
+        assert runtime.mode is RuntimeMode.MEETING
 
     @pytest.mark.parametrize(
         "mode",

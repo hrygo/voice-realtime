@@ -125,6 +125,13 @@ class FakeMeeting:
         self.fail_prepare: BaseException | None = None
         self.fail_stop: BaseException | None = None
         self.fail_publish: BaseException | None = None
+        self.block_prepare = False
+        self.prepare_entered = asyncio.Event()
+        self.prepare_gate = asyncio.Event()
+        self.block_publish = False
+        self.publish_entered = asyncio.Event()
+        self.publish_gate = asyncio.Event()
+        self.publish_completed = asyncio.Event()
         self.abort_failures = 0
         self.block_stop_once = False
         self.stop_started = asyncio.Event()
@@ -132,6 +139,9 @@ class FakeMeeting:
 
     async def prepare_start(self, title: str | None = None) -> MeetingPreparation:
         self.calls.append("meeting.prepare")
+        self.prepare_entered.set()
+        if self.block_prepare:
+            await self.prepare_gate.wait()
         if self.fail_prepare is not None:
             raise self.fail_prepare
         self.record = MeetingRecord(title=title or "周会")
@@ -147,9 +157,13 @@ class FakeMeeting:
 
     async def publish_started(self, preparation: MeetingPreparation) -> None:
         self.calls.append("meeting.publish")
+        self.publish_entered.set()
+        if self.block_publish:
+            await self.publish_gate.wait()
         if self.fail_publish is not None:
             raise self.fail_publish
         assert self.active_meeting_id == preparation.record.id
+        self.publish_completed.set()
 
     async def abort_start(self, preparation: MeetingPreparation) -> None:
         assert self.prepared is preparation
@@ -516,6 +530,34 @@ async def test_user_commands_share_one_non_preemptive_lock() -> None:
     assert first_publish < second_prepare
 
 
+async def test_assistant_restart_waits_for_meeting_command_and_rechecks_mode() -> None:
+    harness = make_harness()
+    assert harness.meeting is not None
+    harness.meeting.block_prepare = True
+    meeting_start = asyncio.create_task(harness.coordinator.start_meeting("周会"))
+    await harness.meeting.prepare_entered.wait()
+    restart_executed = False
+
+    async def restart() -> None:
+        nonlocal restart_executed
+        restart_executed = True
+
+    assistant_restart = asyncio.create_task(
+        harness.coordinator.restart_assistant(restart)
+    )
+    await asyncio.sleep(0)
+    restart_finished_before_meeting = assistant_restart.done()
+
+    harness.meeting.prepare_gate.set()
+    await meeting_start
+    with pytest.raises(ModeConflictError):
+        await assistant_restart
+
+    assert restart_finished_before_meeting is False
+    assert restart_executed is False
+    assert harness.coordinator.mode is RuntimeMode.MEETING
+
+
 async def test_shutdown_cancels_transition_aborts_target_and_stops_everything() -> None:
     harness = make_harness()
     harness.interaction.block_stop_once = True
@@ -565,6 +607,34 @@ async def test_meeting_publish_failure_does_not_rollback_committed_state() -> No
     assert harness.calls.index("state.publish:meeting:meeting:1") < harness.calls.index(
         "meeting.publish"
     )
+
+
+async def test_committed_meeting_finishes_publish_before_cancellation_propagates() -> None:
+    harness = make_harness()
+    assert harness.meeting is not None
+    harness.meeting.block_publish = True
+    starting = asyncio.create_task(harness.coordinator.start_meeting("周会"))
+    await harness.meeting.publish_entered.wait()
+
+    assert harness.coordinator.mode is RuntimeMode.MEETING
+    assert harness.coordinator.active_meeting_id == harness.meeting.record.id
+    committed_transition = harness.coordinator.last_transition
+    assert committed_transition is not None
+    assert committed_transition["target"] == RuntimeMode.MEETING.value
+    assert committed_transition["result"] == "success"
+    assert "error_type" not in committed_transition
+    starting.cancel()
+    await asyncio.sleep(0)
+    cancellation_propagated_before_publish = starting.done()
+
+    harness.meeting.publish_gate.set()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+
+    assert cancellation_propagated_before_publish is False
+    assert harness.meeting.publish_completed.is_set()
+    assert "meeting.abort" not in harness.calls
+    assert harness.coordinator.last_transition == committed_transition
 
 
 async def test_meeting_can_be_configured_once_after_construction() -> None:

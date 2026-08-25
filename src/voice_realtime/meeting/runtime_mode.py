@@ -220,10 +220,38 @@ class RuntimeModeCoordinator:
         await self._run_serialized(RuntimeMode.SUBTITLES, self._start_subtitles_locked)
 
     async def start_meeting(self, title: str | None = None) -> MeetingRecord:
-        async def command() -> MeetingRecord:
+        meeting = self.meeting
+        if meeting is None:
+            raise MeetingUnavailable("meeting service unavailable")
+
+        async def command() -> tuple[Any, MeetingRecord]:
             return await self._start_meeting_locked(title)
 
-        return await self._run_serialized(RuntimeMode.MEETING, command)
+        async def publish_started(result: tuple[Any, MeetingRecord]) -> None:
+            preparation, _record = result
+            await self._publish_committed_meeting_started(meeting, preparation)
+
+        _preparation, record = await self._run_serialized(
+            RuntimeMode.MEETING,
+            command,
+            after_commit=publish_started,
+        )
+        return record
+
+    async def restart_assistant(
+        self, restart: Callable[[], Awaitable[None]]
+    ) -> None:
+        """在模式命令锁内复核 assistant 所有权并执行重启。"""
+
+        async def command() -> None:
+            if (
+                self.mode is not RuntimeMode.ASSISTANT
+                or self.pcm_owner is not PCMOwner.ASSISTANT
+            ):
+                raise ModeConflict("仅助手模式允许重启语音管道")
+            await restart()
+
+        await self._run_serialized(RuntimeMode.ASSISTANT, command)
 
     async def end_meeting(self, meeting_id: UUID | str | None = None) -> MeetingRecord:
         async def command() -> MeetingRecord:
@@ -238,6 +266,8 @@ class RuntimeModeCoordinator:
         self,
         target: RuntimeMode,
         command: Callable[[], Awaitable[T]],
+        *,
+        after_commit: Callable[[T], Awaitable[None]] | None = None,
     ) -> T:
         async with self._command_lock:
             if self._closing:
@@ -260,6 +290,9 @@ class RuntimeModeCoordinator:
                 raise
             else:
                 self._record_transition(target, started, "success", None)
+                if after_commit is not None:
+                    # commit 已完成；此处异常不得进入上方 pre-commit 补偿分支。
+                    await after_commit(result)
                 return result
             finally:
                 if self._transition_task is current:
@@ -356,7 +389,9 @@ class RuntimeModeCoordinator:
             abort=abort,
         )
 
-    async def _start_meeting_locked(self, title: str | None) -> MeetingRecord:
+    async def _start_meeting_locked(
+        self, title: str | None
+    ) -> tuple[Any, MeetingRecord]:
         if self._mode is RuntimeMode.MEETING:
             raise ModeConflict("meeting 已经在录制")
         meeting = self.meeting
@@ -375,21 +410,43 @@ class RuntimeModeCoordinator:
         async def abort(preparation: Any) -> None:
             await meeting.abort_start(preparation)
 
-        preparation, record = await self._switch_workload(
+        return await self._switch_workload(
             RuntimeMode.MEETING,
             source=self._mode,
             prepare=prepare,
             commit=commit,
             abort=abort,
         )
-        try:
-            await meeting.publish_started(preparation)
-        except Exception as exc:
-            LOGGER.error(
-                "meeting started event publish failed",
-                extra={"error_type": type(exc).__name__},
-            )
-        return record
+
+    @staticmethod
+    async def _publish_committed_meeting_started(
+        meeting: MeetingWorkload, preparation: Any
+    ) -> None:
+        """屏蔽调用者取消直至已提交会议的 started 事件发布完成。"""
+        publish_task = asyncio.create_task(meeting.publish_started(preparation))
+        cancellation: asyncio.CancelledError | None = None
+        while not publish_task.done():
+            try:
+                await asyncio.shield(publish_task)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+            except Exception:
+                break
+
+        if publish_task.cancelled():
+            if cancellation is not None:
+                raise cancellation
+            await publish_task
+        else:
+            try:
+                publish_task.result()
+            except Exception as exc:
+                LOGGER.error(
+                    "meeting started event publish failed",
+                    extra={"error_type": type(exc).__name__},
+                )
+        if cancellation is not None:
+            raise cancellation
 
     async def _switch_workload(
         self,

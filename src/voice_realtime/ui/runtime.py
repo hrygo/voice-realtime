@@ -169,14 +169,12 @@ class UIRuntime:
         await self._coordinator.stop_active_mode()
 
     async def restart_pipeline(self) -> None:
-        if (
-            self._coordinator.mode is not RuntimeMode.ASSISTANT
-            or self._coordinator.pcm_owner is not PCMOwner.ASSISTANT
-        ):
-            raise ModeConflictError("仅助手模式允许重启语音管道")
-        self._drain_audio_queue()
-        if self._started and self._hub_active:
-            await self.session.restart()
+        async def restart() -> None:
+            self._drain_audio_queue()
+            if self._started and self._hub_active:
+                await self.session.restart()
+
+        await self._coordinator.restart_assistant(restart)
 
     def snapshot(self) -> RuntimeStateSnapshot:
         subtitle_state = getattr(self.subtitle_proxy, "state", "stopped")
