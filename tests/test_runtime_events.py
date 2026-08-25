@@ -64,10 +64,27 @@ async def test_remove_client_clears_pending_state_and_is_idempotent() -> None:
     broadcaster.remove_client(client)
     broadcaster.publish(snapshot(revision=2, mode=RuntimeMode.SUBTITLES))
 
-    with pytest.raises(asyncio.QueueEmpty):
+    with pytest.raises(RuntimeError, match="closed"):
         client.latest_nowait()
     with pytest.raises(RuntimeError, match="closed"):
         await client.receive()
+
+
+async def test_remove_client_wakes_receiver_blocked_on_empty_queue() -> None:
+    broadcaster = RuntimeStateBroadcaster(
+        lambda: snapshot(revision=1, mode=RuntimeMode.ASSISTANT)
+    )
+    client = broadcaster.add_client()
+    assert client.latest_nowait().runtime_revision == 1
+
+    waiter = asyncio.create_task(client.receive())
+    await asyncio.sleep(0)
+    assert waiter.done() is False
+
+    broadcaster.remove_client(client)
+
+    with pytest.raises(RuntimeError, match="closed"):
+        await asyncio.wait_for(waiter, timeout=0.1)
 
 
 def test_clients_keep_independent_latest_snapshots() -> None:
@@ -90,6 +107,6 @@ def test_clients_keep_independent_latest_snapshots() -> None:
     broadcaster.remove_client(fast_client)
     broadcaster.publish(snapshot(revision=4, mode=RuntimeMode.IDLE))
 
-    with pytest.raises(asyncio.QueueEmpty):
+    with pytest.raises(RuntimeError, match="closed"):
         fast_client.latest_nowait()
     assert slow_client.latest_nowait().runtime_revision == 4

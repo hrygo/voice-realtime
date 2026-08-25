@@ -10,35 +10,54 @@ from dataclasses import dataclass
 from voice_realtime.ui.protocol import RuntimeStateSnapshot
 
 
+class _CloseSentinel:
+    """唤醒已阻塞状态订阅者的私有队列标记。"""
+
+
+_CLOSE_SENTINEL = _CloseSentinel()
+type _QueueItem = RuntimeStateSnapshot | _CloseSentinel
+
+
 @dataclass(eq=False, slots=True)
 class RuntimeStateClient:
     """一个控制客户端的独立、容量为一的状态队列。"""
 
-    _queue: asyncio.Queue[RuntimeStateSnapshot]
+    _queue: asyncio.Queue[_QueueItem]
     _closed: bool = False
 
     async def receive(self) -> RuntimeStateSnapshot:
         """等待并返回下一个可用的权威状态。"""
         if self._closed:
             raise RuntimeError("runtime state client is closed")
-        return await self._queue.get()
+        item = await self._queue.get()
+        if isinstance(item, _CloseSentinel):
+            raise RuntimeError("runtime state client is closed")
+        return item
 
     def latest_nowait(self) -> RuntimeStateSnapshot:
         """同步取出队列当前保留的最新状态。"""
+        if self._closed:
+            raise RuntimeError("runtime state client is closed")
         latest = self._queue.get_nowait()
         while True:
             try:
                 latest = self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                return latest
+                break
+        if isinstance(latest, _CloseSentinel):
+            raise RuntimeError("runtime state client is closed")
+        return latest
 
     def _close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
         while True:
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
-                return
+                break
+        self._queue.put_nowait(_CLOSE_SENTINEL)
 
 
 class RuntimeStateBroadcaster:
@@ -50,7 +69,8 @@ class RuntimeStateBroadcaster:
 
     def add_client(self) -> RuntimeStateClient:
         """注册客户端并立即入队当前完整状态。"""
-        client = RuntimeStateClient(asyncio.Queue(maxsize=1))
+        queue: asyncio.Queue[_QueueItem] = asyncio.Queue(maxsize=1)
+        client = RuntimeStateClient(queue)
         self._clients.add(client)
         self._replace_latest(client, self._snapshot_provider())
         return client
