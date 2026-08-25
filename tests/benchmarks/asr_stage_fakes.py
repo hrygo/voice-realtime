@@ -27,6 +27,7 @@ from voice_realtime.benchmarks.asr.stage_contracts import (
     StagePhase,
 )
 from voice_realtime.benchmarks.asr.stage_evaluators import (
+    MeetingStagePolicy,
     ScreenDecision,
     StagePolicy,
 )
@@ -42,7 +43,11 @@ from voice_realtime.benchmarks.asr.stage_executors import (
     StageExecutionContext,
     StageExecutorCapabilities,
 )
-from voice_realtime.benchmarks.asr.stage_inputs import ResolvedStageInput
+from voice_realtime.benchmarks.asr.stage_inputs import (
+    ResolvedInteractionInput,
+    ResolvedPCMInput,
+    ResolvedStageInput,
+)
 from voice_realtime.benchmarks.asr.stage_runner import StageRunRequest
 
 
@@ -121,8 +126,11 @@ class SyntheticStageExecutor:
         self.cursor_ranges: tuple[CursorRange, ...] = ()
         self.injected_faults: tuple[tuple[str, int], ...] = ()
         self.finalize_order: tuple[str, ...] = ()
+        self.pcm_slice_offsets: tuple[tuple[str, int, int], ...] = ()
+        self.segment_observation_indices: tuple[tuple[str, int, int], ...] = ()
         self._session: SessionIdentity | None = None
-        self._segment_counts: dict[str, int] = {}
+        self._segment_repetitions: dict[str, tuple[int, int]] = {}
+        self._slice_counts: dict[tuple[str, int], int] = {}
         self._sequence_index = 0
 
     def _maybe_fail(self, method: str) -> None:
@@ -161,8 +169,52 @@ class SyntheticStageExecutor:
         self.calls.append("feed_segment")
         self.fed_segment_ids = (*self.fed_segment_ids, segment.segment_id)
         self.cursor_ranges = (*self.cursor_ranges, cursor_range)
-        repetition_index = self._segment_counts.get(segment.segment_id, 0)
-        self._segment_counts[segment.segment_id] = repetition_index + 1
+        previous_repetition = self._segment_repetitions.get(segment.segment_id)
+        if previous_repetition is None:
+            repetition_index = 0
+            repetition_start = cursor_range.start_ms
+        else:
+            previous_index, previous_start = previous_repetition
+            expected_next_start = previous_start + segment.duration_ms
+            if cursor_range.start_ms == expected_next_start:
+                repetition_index = previous_index + 1
+                repetition_start = cursor_range.start_ms
+            else:
+                repetition_index = previous_index
+                repetition_start = previous_start
+        local_start = cursor_range.start_ms - repetition_start
+        local_end = cursor_range.end_ms - repetition_start
+        if not 0 <= local_start <= local_end <= segment.duration_ms:
+            raise ValueError("synthetic PCM slice is outside segment")
+        self._segment_repetitions[segment.segment_id] = (
+            repetition_index,
+            repetition_start,
+        )
+        slice_key = (segment.segment_id, repetition_index)
+        slice_index = self._slice_counts.get(slice_key, 0)
+        self._slice_counts[slice_key] = slice_index + 1
+        if isinstance(resolved_input, ResolvedPCMInput):
+            # Lifecycle-only executor tests construct an opaque resolved input
+            # without a backing file; real stage runs always resolve a regular
+            # file before reaching this boundary.
+            if resolved_input._path.is_file():
+                for _frame in resolved_input.iter_frames(
+                    start_offset_ms=local_start,
+                    end_offset_ms=local_end,
+                ):
+                    pass
+            self.pcm_slice_offsets = (
+                *self.pcm_slice_offsets,
+                (segment.segment_id, local_start, local_end),
+            )
+        elif isinstance(resolved_input, ResolvedInteractionInput) and (
+            local_start != 0 or local_end != segment.duration_ms
+        ):
+            raise ValueError("synthetic interaction script cannot be sliced")
+        self.segment_observation_indices = (
+            *self.segment_observation_indices,
+            (segment.segment_id, repetition_index, slice_index),
+        )
         if isinstance(self._segment_observations, Mapping):
             preset = self._segment_observations.get(segment.segment_id)
         else:
@@ -177,7 +229,7 @@ class SyntheticStageExecutor:
         return SegmentObservation(
             segment_id=segment.segment_id,
             repetition_index=repetition_index,
-            slice_index=0,
+            slice_index=slice_index,
             cursor=cursor_range,
             session_id=self._session.session_id,
             source_epoch=self._session.source_epoch,
@@ -193,17 +245,7 @@ class SyntheticStageExecutor:
         preset = self._fault_observations.get(event.event_id)
         if preset is not None:
             return preset
-        if event.event_id in self._fault_overrides:
-            outcome = self._fault_overrides[event.event_id]
-        elif event.kind in self._fault_overrides:
-            outcome = self._fault_overrides[event.kind]
-        elif isinstance(self._fault_outcomes, Mapping):
-            outcome = self._fault_outcomes.get(
-                event.event_id,
-                self._fault_outcomes.get(event.kind, "recovered"),
-            )
-        else:
-            outcome = self._fault_outcomes
+        outcome = self._fault_outcome(event)
         return FaultObservation(
             event_id=event.event_id,
             kind=event.kind,
@@ -216,6 +258,18 @@ class SyntheticStageExecutor:
             source_epoch_after=self._session.source_epoch,
         )
 
+    def _fault_outcome(self, event: FaultEvent) -> FaultOutcome:
+        if event.event_id in self._fault_overrides:
+            return self._fault_overrides[event.event_id]
+        if event.kind in self._fault_overrides:
+            return self._fault_overrides[event.kind]
+        if isinstance(self._fault_outcomes, Mapping):
+            return self._fault_outcomes.get(
+                event.event_id,
+                self._fault_outcomes.get(event.kind, "recovered"),
+            )
+        return self._fault_outcomes
+
     async def snapshot(self) -> RuntimeObservation:
         self._maybe_fail("snapshot")
         self.calls.append("snapshot")
@@ -224,11 +278,42 @@ class SyntheticStageExecutor:
     async def finalize(self, finalization_fault: FaultEvent | None) -> FinalObservation:
         self._maybe_fail("finalize")
         self.calls.append("finalize")
+        fault_observation: FaultObservation | None = None
+        if finalization_fault is not None:
+            if self._session is None:
+                raise RuntimeError("synthetic executor finalization requires start")
+            self.injected_faults = (
+                *self.injected_faults,
+                (finalization_fault.event_id, finalization_fault.cursor_ms),
+            )
+            preset = self._fault_observations.get(finalization_fault.event_id)
+            if preset is not None:
+                fault_observation = preset
+            else:
+                fault_observation = FaultObservation(
+                    event_id=finalization_fault.event_id,
+                    kind=finalization_fault.kind,
+                    planned_cursor_ms=finalization_fault.cursor_ms,
+                    actual_cursor_ms=finalization_fault.cursor_ms,
+                    outcome=self._fault_outcome(finalization_fault),
+                    session_id_before=self._session.session_id,
+                    session_id_after=self._session.session_id,
+                    source_epoch_before=self._session.source_epoch,
+                    source_epoch_after=self._session.source_epoch,
+                )
         self.finalize_order = ("eof", "delay", "terminal") if finalization_fault else (
             "eof",
             "terminal",
         )
-        return self._final_observation
+        if fault_observation is None:
+            return self._final_observation
+        return FinalObservation(
+            eof_sent=self._final_observation.eof_sent,
+            terminal_received=self._final_observation.terminal_received,
+            finalization_latency_ms=self._final_observation.finalization_latency_ms,
+            metrics=self._final_observation.metrics,
+            fault_observation=fault_observation,
+        )
 
     async def close(self) -> CloseObservation:
         self._maybe_fail("close")
@@ -290,6 +375,7 @@ def build_stage_fixture(
     covered_stages: tuple[StageNumber, ...] = (2,),
     segment_specs: tuple[tuple[str, SchedulePurpose, int], ...] = DEFAULT_SEGMENTS,
     fault_plan: FaultPlan | None = None,
+    segment_repetition: int = 1,
 ) -> StageFixture:
     repo = tmp_path / "repo"
     external = tmp_path / "external"
@@ -311,7 +397,7 @@ def build_stage_fixture(
                 purpose=purpose,
                 input_sha256=digest,
                 duration_ms=duration_ms,
-                repetition=1,
+                repetition=segment_repetition,
             )
         )
         bindings.append(
@@ -389,10 +475,44 @@ def build_stage_fixture(
     return StageFixture(request=request, policy=TestStagePolicy())
 
 
+def build_stage5_fixture(tmp_path: Path) -> StageFixture:
+    """Build the fixed Stage 5 meeting finalist run used by Task 6 tests."""
+
+    fault_plan = FaultPlan(
+        stage=5,
+        duration_ms=3_600_000,
+        events=(
+            FaultEvent(event_id="d1", cursor_ms=600_000, kind="disconnect"),
+            FaultEvent(event_id="d2", cursor_ms=1_200_000, kind="disconnect"),
+            FaultEvent(event_id="crash", cursor_ms=1_800_000, kind="asr_crash"),
+            FaultEvent(event_id="d3", cursor_ms=2_400_000, kind="disconnect"),
+            FaultEvent(
+                event_id="delay",
+                cursor_ms=3_600_000,
+                kind="finalization_delay",
+                duration_ms=5_000,
+            ),
+        ),
+    )
+    base = build_stage_fixture(
+        tmp_path,
+        stage=5,
+        covered_stages=(3, 5),
+        segment_specs=(
+            ("preflight", "system", 300_000),
+            ("stage3-main", "system", 1_500_000),
+            ("stage5-reliability", "reliability", 1_800_000),
+        ),
+        fault_plan=fault_plan,
+    )
+    return StageFixture(request=base.request, policy=MeetingStagePolicy())
+
+
 __all__ = [
     "DEFAULT_SEGMENTS",
     "StageFixture",
     "SyntheticStageExecutor",
     "TestStagePolicy",
+    "build_stage5_fixture",
     "build_stage_fixture",
 ]

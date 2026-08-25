@@ -46,6 +46,7 @@ _ABSOLUTE_PATH_PATTERN = re.compile(
 _MAX_SANITIZED_STRING_LENGTH = 2048
 _FILE_MODE = 0o600
 _DIRECTORY_MODE = 0o700
+_STAGE_NUMBERS = frozenset({2, 3, 4, 5})
 
 
 class StageArtifactError(RuntimeError):
@@ -435,6 +436,38 @@ class StageArtifactWriter:
 
     def write_summary(self, payload: Mapping[str, object]) -> None:
         self._write_new_json("summary.json", payload)
+
+    @staticmethod
+    def _validate_stage_number(stage: int) -> None:
+        if type(stage) is not int or stage not in _STAGE_NUMBERS:
+            raise ValueError("stage must be one of 2, 3, 4, or 5")
+
+    def _ensure_checkpoint_directory(self) -> Path:
+        self._require_open()
+        checkpoint_dir = self.run_dir / "checkpoints"
+        try:
+            info = checkpoint_dir.lstat()
+        except FileNotFoundError:
+            checkpoint_dir.mkdir(mode=_DIRECTORY_MODE, exist_ok=False)
+            info = checkpoint_dir.lstat()
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            raise StageArtifactError("checkpoint directory must be a regular directory")
+        if _mode_bits(info.st_mode) != _DIRECTORY_MODE:
+            raise StageArtifactError("checkpoint directory must use mode 0700")
+        return checkpoint_dir
+
+    def write_stage_checkpoint(self, stage: int, payload: Mapping[str, object]) -> None:
+        """Atomically write one private, non-overwritable stage checkpoint."""
+
+        self._validate_stage_number(stage)
+        self._ensure_checkpoint_directory()
+        self._write_new_json(f"checkpoints/stage{stage}.json", payload)
+
+    def write_stage_metrics(self, stage: int, payload: Mapping[str, object]) -> None:
+        """Atomically write one private, non-overwritable stage metrics slice."""
+
+        self._validate_stage_number(stage)
+        self._write_new_json(f"metrics-stage{stage}.json", payload)
 
     def _write_new_json(self, name: str, payload: Mapping[str, object]) -> None:
         self._require_open()

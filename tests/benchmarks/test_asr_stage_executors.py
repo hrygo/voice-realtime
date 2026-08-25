@@ -17,6 +17,7 @@ from voice_realtime.benchmarks.asr.stage_contracts import (
 from voice_realtime.benchmarks.asr.stage_executors import (
     CloseObservation,
     CursorRange,
+    FaultObservation,
     FinalObservation,
     RuntimeObservation,
     SegmentObservation,
@@ -195,6 +196,34 @@ def test_metrics_allow_signed_finite_scientific_values() -> None:
         )
 
 
+def test_final_observation_validates_optional_fault_observation() -> None:
+    fault = FaultObservation(
+        event_id="delay",
+        kind="finalization_delay",
+        planned_cursor_ms=100,
+        actual_cursor_ms=100,
+        outcome="recovered",
+        session_id_before="session",
+        session_id_after="session",
+        source_epoch_before=1,
+        source_epoch_after=1,
+    )
+    observation = FinalObservation(
+        eof_sent=True,
+        terminal_received=True,
+        finalization_latency_ms=5,
+        metrics={},
+        fault_observation=fault,
+    )
+    assert observation.fault_observation == fault
+    with pytest.raises(TypeError, match="fault_observation"):
+        FinalObservation(
+            eof_sent=True,
+            terminal_received=True,
+            finalization_latency_ms=0,
+            metrics={},
+            fault_observation=object(),  # type: ignore[arg-type]
+        )
 def test_context_validates_hashes_and_stage_lineage(tmp_path: Path) -> None:
     context = StageExecutionContext(
         run_id="run",

@@ -356,6 +356,7 @@ class FinalObservation:
     terminal_received: bool
     finalization_latency_ms: int
     metrics: Mapping[str, MetricValue]
+    fault_observation: FaultObservation | None = None
 
     def __post_init__(self) -> None:
         if type(self.eof_sent) is not bool or type(self.terminal_received) is not bool:
@@ -363,6 +364,10 @@ class FinalObservation:
         _require_non_negative_int(self.finalization_latency_ms, label="finalization_latency_ms")
         if self.terminal_received and not self.eof_sent:
             raise ValueError("terminal_received requires eof_sent")
+        if self.fault_observation is not None and not isinstance(
+            self.fault_observation, FaultObservation
+        ):
+            raise TypeError("fault_observation must be FaultObservation or None")
         object.__setattr__(self, "metrics", _freeze_metrics(self.metrics))
 
 

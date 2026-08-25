@@ -122,6 +122,49 @@ def test_snapshot_replacement_is_stable_and_private(tmp_path: Path) -> None:
     assert not tuple(writer.run_dir.glob("*.tmp"))
 
 
+def test_public_stage_checkpoint_and_metrics_are_private_atomic_and_non_overwriting(
+    tmp_path: Path,
+) -> None:
+    writer = StageArtifactWriter.create(tmp_path, "run-001")
+    writer.write_stage_checkpoint(3, {"window": {"start_ms": 0, "end_ms": 10}})
+    writer.write_stage_metrics(3, {"window": {"start_ms": 0, "end_ms": 10}})
+
+    checkpoint = writer.run_dir / "checkpoints" / "stage3.json"
+    metrics = writer.run_dir / "metrics-stage3.json"
+    assert checkpoint.stat().st_mode & 0o777 == 0o600
+    assert metrics.stat().st_mode & 0o777 == 0o600
+    assert writer.run_dir.joinpath("checkpoints").stat().st_mode & 0o777 == 0o700
+    with pytest.raises(FileExistsError):
+        writer.write_stage_checkpoint(3, {"changed": True})
+    with pytest.raises(FileExistsError):
+        writer.write_stage_metrics(3, {"changed": True})
+
+
+@pytest.mark.parametrize("stage", [0, 1, 6, "3"])
+def test_public_stage_artifact_api_rejects_invalid_stage(tmp_path: Path, stage: object) -> None:
+    writer = StageArtifactWriter.create(tmp_path, "run-001")
+    with pytest.raises(ValueError, match="stage"):
+        writer.write_stage_checkpoint(stage, {})  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="stage"):
+        writer.write_stage_metrics(stage, {})  # type: ignore[arg-type]
+
+
+def test_public_checkpoint_api_rejects_symlink_and_bad_directory_mode(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    writer = StageArtifactWriter.create(tmp_path, "run-001")
+    (writer.run_dir / "checkpoints").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(StageArtifactError, match="directory"):
+        writer.write_stage_checkpoint(3, {})
+
+    writer2 = StageArtifactWriter.create(tmp_path, "run-002")
+    checkpoint_dir = writer2.run_dir / "checkpoints"
+    checkpoint_dir.mkdir(mode=0o755)
+    checkpoint_dir.chmod(0o755)
+    with pytest.raises(StageArtifactError, match="0700"):
+        writer2.write_stage_checkpoint(3, {})
+
+
 def test_non_failure_artifacts_preserve_opaque_strings_exactly(tmp_path: Path) -> None:
     writer = StageArtifactWriter.create(tmp_path, "run-001")
     opaque_url = "https://vendor.example/api?token=keep"
