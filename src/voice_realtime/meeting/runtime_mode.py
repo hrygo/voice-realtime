@@ -312,6 +312,11 @@ class RuntimeModeCoordinator:
 
         await self._switch_workload(
             RuntimeMode.ASSISTANT,
+            source=(
+                RuntimeMode.IDLE
+                if self._mode is RuntimeMode.ASSISTANT
+                else self._mode
+            ),
             prepare=prepare,
             commit=commit,
             abort=abort,
@@ -341,6 +346,11 @@ class RuntimeModeCoordinator:
 
         await self._switch_workload(
             RuntimeMode.SUBTITLES,
+            source=(
+                RuntimeMode.IDLE
+                if self._mode is RuntimeMode.SUBTITLES
+                else self._mode
+            ),
             prepare=prepare,
             commit=commit,
             abort=abort,
@@ -367,6 +377,7 @@ class RuntimeModeCoordinator:
 
         preparation, record = await self._switch_workload(
             RuntimeMode.MEETING,
+            source=self._mode,
             prepare=prepare,
             commit=commit,
             abort=abort,
@@ -384,11 +395,11 @@ class RuntimeModeCoordinator:
         self,
         target: RuntimeMode,
         *,
+        source: RuntimeMode,
         prepare: Callable[[], Awaitable[Any]],
         commit: Callable[[Any], T],
         abort: Callable[[Any], Awaitable[None]],
     ) -> tuple[Any, T]:
-        source = self._mode
         preparation = await prepare()
         self._prepared_target = (target, preparation)
         if source is not RuntimeMode.IDLE:

@@ -245,6 +245,43 @@ async def test_subtitles_to_assistant_uses_two_phase_order() -> None:
     ]
 
 
+async def test_inactive_assistant_mode_recovers_without_quiescing_prepared_target() -> None:
+    harness = make_harness(RuntimeMode.ASSISTANT)
+    harness.interaction.active = False
+
+    await harness.coordinator.start_assistant()
+
+    assert harness.interaction.active is True
+    assert harness.calls == [
+        "interaction.start",
+        "owner.assistant",
+        "state.publish:assistant:assistant:1",
+    ]
+    assert harness.coordinator.runtime_revision == 1
+    assert harness.snapshots == [
+        (RuntimeMode.ASSISTANT, PCMOwner.ASSISTANT, 1, None)
+    ]
+
+
+async def test_inactive_subtitles_mode_recovers_without_quiescing_prepared_target() -> None:
+    harness = make_harness(RuntimeMode.SUBTITLES)
+    harness.subtitles.browser_capture_active = False
+
+    await harness.coordinator.start_subtitles()
+
+    assert harness.subtitles.browser_capture_active is True
+    assert harness.calls == [
+        "subtitles.prepare",
+        "subtitles.commit",
+        "owner.subtitles",
+        "state.publish:subtitles:subtitles:1",
+    ]
+    assert harness.coordinator.runtime_revision == 1
+    assert harness.snapshots == [
+        (RuntimeMode.SUBTITLES, PCMOwner.SUBTITLES, 1, None)
+    ]
+
+
 @pytest.mark.parametrize("source", [RuntimeMode.ASSISTANT, RuntimeMode.SUBTITLES])
 async def test_active_source_to_meeting_publishes_state_before_recording(
     source: RuntimeMode,
