@@ -652,6 +652,37 @@ async def test_interrupt_suppresses_abort_failure_and_truncates_reason(
     assert gateway.gap_listeners == []
 
 
+async def test_interrupt_status_failure_releases_local_session_and_allows_restart(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    resume = AsyncMock()
+    summary = SimpleNamespace(resume_after_recording=resume)
+    session = MeetingSession(repository, gateway, summary_service=summary)
+    await _start_session(session)
+    interrupted_reason = "database unavailable"
+    repository.status_error = RuntimeError(interrupted_reason)
+
+    with pytest.raises(RuntimeError, match=interrupted_reason):
+        await session.interrupt(interrupted_reason)
+
+    gateway.abort_capture.assert_awaited_once_with()
+    assert gateway.listeners == []
+    assert gateway.gap_listeners == []
+    assert session.active_meeting_id is None
+    assert session._committed_preparation is None
+    assert session.record is not None
+    assert session.record.status is MeetingStatus.INTERRUPTED
+    assert session.record.interruption_reason == interrupted_reason
+    assert session.storage_health is StorageHealth.DEGRADED
+    resume.assert_awaited_once_with()
+
+    repository.status_error = None
+    restarted = await _start_session(session, "恢复后的会议")
+
+    assert session.active_meeting_id == restarted.id
+    assert restarted.status is MeetingStatus.RECORDING
+
+
 async def test_recover_stale_delegates_and_defaults_without_method(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:

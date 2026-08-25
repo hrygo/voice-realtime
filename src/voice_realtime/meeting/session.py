@@ -313,24 +313,37 @@ class MeetingSession:
             meeting_id = self._active_meeting_id
             if meeting_id is None:
                 return self._record
-            with contextlib.suppress(Exception):
-                await self.gateway.abort_capture()
-            record = await self.repository.set_status(
-                meeting_id,
-                MeetingStatus.INTERRUPTED,
-                reason=reason[:128],
-            )
-            self._record = record
-            await self._emit(
-                "meeting_state_changed",
-                meeting_id,
-                self._meeting_state_payload(record),
-            )
-            await self._release_listener()
-            self._active_meeting_id = None
-            self._committed_preparation = None
-            await self._resume_summary_worker()
-            return cast(MeetingRecord, record)
+            interrupted_reason = reason[:128]
+            try:
+                with contextlib.suppress(Exception):
+                    await self.gateway.abort_capture()
+                current = self._record
+                if current is not None:
+                    self._record = current.model_copy(
+                        update={
+                            "status": MeetingStatus.INTERRUPTED,
+                            "interruption_reason": interrupted_reason,
+                        }
+                    )
+                try:
+                    record = await self.repository.set_status(
+                        meeting_id,
+                        MeetingStatus.INTERRUPTED,
+                        reason=interrupted_reason,
+                    )
+                except Exception:
+                    self._storage_degraded = True
+                    raise
+                self._record = record
+                await self._emit(
+                    "meeting_state_changed",
+                    meeting_id,
+                    self._meeting_state_payload(record),
+                )
+                return cast(MeetingRecord, record)
+            finally:
+                final_cleanup = asyncio.create_task(self._release_stopped_session())
+                await asyncio.shield(final_cleanup)
 
     async def recover_stale(self) -> int:
         recover = getattr(self.repository, "recover_stale", None)
