@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import fields
 from ipaddress import ip_address
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pydantic import TypeAdapter
 
@@ -70,9 +73,39 @@ from voice_realtime.benchmarks.asr.report import (
     load_family_look_evidence,
     write_stage1_decision_report,
 )
-from voice_realtime.benchmarks.resource_lock import exclusive_resource_lock
+from voice_realtime.benchmarks.asr.stage_decision import (
+    StageDecisionRequest,
+    StageEvidenceError,
+    verify_stage_decision,
+    write_stage_decision_report,
+)
+from voice_realtime.benchmarks.asr.stage_evaluators import (
+    DefaultStagePolicy,
+    InteractionStagePolicy,
+    MeetingStagePolicy,
+    StagePolicy,
+)
+from voice_realtime.benchmarks.asr.stage_executors import (
+    StageExecutorError,
+    StageExecutorRegistry,
+)
+from voice_realtime.benchmarks.asr.stage_runner import (
+    StageRunnerError,
+    StageRunRequest,
+    load_stage_run_request,
+    run_stage,
+)
+from voice_realtime.benchmarks.asr.stage_validation import read_stable_file
+from voice_realtime.benchmarks.resource_lock import (
+    ResourceQuarantinedError,
+    exclusive_resource_lock,
+)
 
 _PROFILE_ADAPTER: TypeAdapter[ASRProfile] = TypeAdapter(ASRProfile)
+_STAGE_DECISION_REQUEST_ADAPTER: TypeAdapter[StageDecisionRequest] = TypeAdapter(
+    StageDecisionRequest
+)
+_MAX_STAGE_REQUEST_BYTES = 1024 * 1024
 
 
 def _loopback_service_url(host: str, port: int) -> str:
@@ -168,6 +201,167 @@ def _require_external_artifact_path(
     if resolved.is_relative_to(resolved_repo_root):
         raise ValueError(f"{label} must be outside the repository")
     return resolved
+
+
+def _json_object_no_duplicates(raw: bytes, *, label: str) -> Mapping[str, object]:
+    def build_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"{label} contains duplicate key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=build_object,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{label} must be valid UTF-8 JSON") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"{label} JSON root must be an object")
+    return cast(Mapping[str, object], payload)
+
+
+def _load_external_request_object(
+    request_path: Path,
+    repository_root: Path,
+    *,
+    label: str,
+) -> Mapping[str, object]:
+    repository = repository_root.resolve(strict=True)
+    _require_external_artifact_path(
+        request_path,
+        repository,
+        label=label,
+        must_exist=True,
+    )
+    stable = read_stable_file(
+        request_path,
+        label=label,
+        max_bytes=_MAX_STAGE_REQUEST_BYTES,
+    )
+    if stat.S_IMODE(stable.identity[2]) != 0o600:
+        raise ValueError(f"{label} must use mode 0600")
+    _require_external_artifact_path(
+        stable.path,
+        repository,
+        label=label,
+        must_exist=True,
+    )
+    return _json_object_no_duplicates(stable.raw, label=label)
+
+
+def _require_request_repository(
+    declared_repository: Path,
+    repository_root: Path,
+    *,
+    label: str,
+) -> None:
+    repository = repository_root.resolve(strict=True)
+    try:
+        declared = declared_repository.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{label} repository boundary mismatch") from exc
+    if declared != repository:
+        raise ValueError(f"{label} repository boundary mismatch")
+
+
+def load_stage_run_request_file(
+    request_path: Path,
+    repository_root: Path,
+) -> StageRunRequest:
+    """Load an exact, external Stage run request bound to the CLI repository."""
+
+    payload = _load_external_request_object(
+        request_path,
+        repository_root,
+        label="stage run request",
+    )
+    allowed = {field.name for field in fields(StageRunRequest)}
+    extras = sorted(set(payload) - allowed)
+    if extras:
+        raise ValueError(f"stage run request contains extra field: {extras[0]}")
+    request = load_stage_run_request(payload)
+    _require_request_repository(
+        request.repository_root,
+        repository_root,
+        label="stage run request",
+    )
+    return request
+
+
+def load_stage_decision_request(
+    request_path: Path,
+    repository_root: Path,
+) -> StageDecisionRequest:
+    """Load an exact, external decision request bound to the CLI repository."""
+
+    payload = _load_external_request_object(
+        request_path,
+        repository_root,
+        label="stage decision request",
+    )
+    request = _STAGE_DECISION_REQUEST_ADAPTER.validate_python(payload)
+    _require_request_repository(
+        request.repository_root,
+        repository_root,
+        label="stage decision request",
+    )
+    return request
+
+
+def build_stage_policy(request: StageRunRequest) -> StagePolicy:
+    """Select the pure policy implied by immutable stage identity."""
+
+    if request.stage == 5 and request.family_id == "meeting":
+        if request.covered_stages != (3, 5):
+            raise ValueError("meeting Stage 5 must use covered_stages (3, 5)")
+        return MeetingStagePolicy()
+    if request.family_id == "interaction":
+        return InteractionStagePolicy()
+    return DefaultStagePolicy()
+
+
+def _build_stage_executor_registry() -> StageExecutorRegistry:
+    """Return the explicit production registry; no synthetic fallback is registered."""
+
+    return StageExecutorRegistry()
+
+
+def run_stage_from_request(
+    request_path: Path,
+    repository_root: Path,
+    registry: StageExecutorRegistry,
+) -> int:
+    """Run one frozen request; ``run_stage`` remains the only lock owner."""
+
+    request = load_stage_run_request_file(request_path, repository_root)
+    result = asyncio.run(
+        run_stage(
+            request,
+            executor_factory=lambda: registry.create(request.executor_id),
+            policy=build_stage_policy(request),
+        )
+    )
+    return 0 if result.status in {"completed", "deferred"} else 1
+
+
+def decide_stage_from_request(
+    request_path: Path,
+    repository_root: Path,
+) -> int:
+    """Derive and atomically publish a Stage decision from sealed evidence."""
+
+    request = load_stage_decision_request(request_path, repository_root)
+    report = verify_stage_decision(request)
+    write_stage_decision_report(
+        request.output_path,
+        report,
+        repository_root=repository_root,
+    )
+    return 0
 
 
 def _verify_replay_identity(
@@ -335,6 +529,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     decide_parser.add_argument("--output", required=True)
     decide_parser.add_argument("--repo-root", default=".")
+
+    run_stage_parser = subparsers.add_parser(
+        "run-stage",
+        help="执行 Stage 2-5 冻结运行",
+    )
+    run_stage_parser.add_argument("--request", required=True)
+    run_stage_parser.add_argument("--repo-root", default=".")
+
+    decide_stage_parser = subparsers.add_parser(
+        "decide-stage",
+        help="从封存制品生成 Stage 决策",
+    )
+    decide_stage_parser.add_argument("--request", required=True)
+    decide_stage_parser.add_argument("--repo-root", default=".")
     return parser
 
 
@@ -863,6 +1071,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "run":
             return _run_command(args)
+        if args.command == "run-stage":
+            return run_stage_from_request(
+                Path(str(args.request)),
+                Path(str(args.repo_root)),
+                _build_stage_executor_registry(),
+            )
+        if args.command == "decide-stage":
+            return decide_stage_from_request(
+                Path(str(args.request)),
+                Path(str(args.repo_root)),
+            )
         if args.command == "score":
             return _score_command(args)
         if args.command == "compare":
@@ -914,7 +1133,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             write_stage1_decision_report(Path(str(args.output)), report)
             return 0
-    except (OSError, ValueError) as exc:
+    except (
+        OSError,
+        ValueError,
+        ResourceQuarantinedError,
+        StageEvidenceError,
+        StageExecutorError,
+        StageRunnerError,
+    ) as exc:
         print(f"vr-asr-benchmark: {exc}", file=sys.stderr)
         return 2
     raise RuntimeError(f"unsupported command: {args.command}")

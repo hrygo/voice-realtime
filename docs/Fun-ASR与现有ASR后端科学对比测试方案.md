@@ -90,10 +90,13 @@
 ### 1.1 当前落地状态（2026-08-24）
 
 - **统一契约与接入边界**：ASR 契约、WLK 适配器、profile/registry、字幕注入边界和交互 STT factory 已合入 `main`。
-- **可复现实验 Runner**：已在 `feature/asr-benchmark-runner` 分支实现 `run`、`score`、`compare`：
+- **可复现实验 Runner**：已在 `feature/asr-benchmark-runner` 分支实现 `run`、`score`、`compare`，并完成
+  Stage 2–5 的统一执行、封存、证据校验与 CLI 边界：
   - 固定 16kHz mono s16le、20ms chunk 回放。
   - 原始 vendor 事件分离记录、逐样本失败保留、1 秒资源采样。
   - 分层等权 macro CER 计算与 10,000 次配对 cluster bootstrap。
+  - `run-stage` 只接受项目外冻结 request，由 `run_stage()` 独占主机资源锁；`decide-stage` 只从封存
+    制品生成决策。生产 registry 暂不注册 synthetic 或未完成验收的真实 executor。
 - **严密指纹核验与安全边界**：Runner 自动核验干净 git checkout、代码 commit、语料 manifest SHA-256、模型文件 SHA-256、音频 SHA-256/长度、相对路径与归一化版本；输出目录权限为 `0700`，逐字稿和事件文件权限为 `0600`，严格不复制音频 payload。
 - **WebSocket 适配器就绪**：`FunASRNanoWSAdapter`、`funasr-nano-ws` 判别 profile、用途能力门禁和 benchmark runner 接线已在当前分支实现；mock 协议测试覆盖握手、partial/final、STOP 幂等、错误、断线与非法时间戳。
 - **PyTorch 适配器就绪**：`FunASRNanoPyTorchAdapter`、`funasr-nano-pytorch` profile 与 benchmark CLI 接线已在当前分支实现。engine 在一次 run 中只加载一次模型，样本 adapter 只缓冲内存 PCM；原生离线 profile 强制 `--mode offline`，禁止误报为流式实验。
@@ -619,6 +622,11 @@ Stage 1 的 60/45 分钟是音频覆盖，不是 wall-clock；离线墙钟按每
 | Stage 5 | 不对所有晋级臂长跑 | 每个决策方向最多一个 finalist 运行 1×60m | 会议 candidate 与 Stage 3 共用同一 60m 连续会话 |
 | 生产收敛 | 3–5 轮增量 smoke | 配置身份变化才重跑受影响链路 | 不重复 Stage 3/4/5 和固定 30 轮 |
 
+Stage 2–5 每次物理运行都必须由项目外的冻结 request 驱动，并使用同一主机级 lock/quarantine 边界。
+`run-stage` 不在 CLI 外层重复加锁，`run_stage()` 是唯一 lock owner；任一时刻只允许一个模型、服务或
+Stage executor 占用实验资源。正式 request 只有在 Stage 1 已产生对应 family 的唯一 finalist 且真实
+executor 已注册后才可运行；synthetic 只用于测试，不能生成 formal 证据。
+
 当前实测 warm P50 RTF 为 Qwen $0.0619$、SenseVoice $0.1080$、Fun-ASR MPS $0.0573$。仅 Stage 1
 blind 的机器预算为：
 
@@ -833,6 +841,23 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 ├── failures.jsonl             # 失败与异常样本堆栈
 └── summary.json               # 本次 run 聚合指标摘要
 
+<external-root>/asr-benchmark/stage-runs/<run_id>/
+├── manifest.json              # 物理 Stage 身份；Stage 3/5 复用时 covered_stages=[3,5]
+├── state.json                 # terminal 状态、canonical cursor 与 stop reason
+├── events.jsonl               # 生命周期与 cursor 事件
+├── resources.csv              # 资源观测
+├── failures.jsonl             # 失败证据；失败 run 不删除
+├── metrics.json               # 完整物理 run 指标与 monotonic wall elapsed
+├── fault-execution.jsonl      # Stage 5 固定故障的计划、尝试、应用和恢复状态
+├── checkpoints/stage3.json    # 组合 run 在 30 分钟处的不可变 checkpoint
+├── metrics-stage3.json        # 只覆盖 0..1,800,000ms 的 Stage 3 slice
+├── summary.json               # 运行摘要
+└── artifact-index.json        # 最后写入的 SHA-256/size 封存索引
+
+<external-root>/asr-benchmark/stage-decisions/
+├── <stage>-<family>-<candidate>-request.json
+└── <stage>-<family>-<candidate>-report.json
+
 docs/benchmarks/asr/<experiment-family>/
 ├── summary.csv                # 横向对比汇总表
 ├── report.md                  # 最终决策报告与分析
@@ -868,6 +893,19 @@ reference、candidate、profile 与完成状态，并把 run manifest 和 scored
 正式冻结必须同时提供原始 preflight metadata、已物化 PCM 根目录和 dev/pilot 10,000 次 power simulation：
 程序重新核验 metadata/power hash、PCM 实际字节长度与 SHA-256，以及 session/speaker/content/cluster 的
 Core/Reserve 隔离。`metadata_ready` 本身不再足以冻结 formal plan。
+
+Stage 2–5 的 request、run 目录、gate evidence、上游报告、finalist selection 和 decision 输出同样必须
+位于项目外。request 只允许路径和阶段身份字段，且其中的 `repository_root` 必须与 CLI
+`--repo-root` 解析到同一目录；duration、fault count、gate map 和 `unique_finalist` 不能由调用者传入。
+`run-stage` 通过显式 `StageExecutorRegistry` 查找 executor，不做动态发现，也不回退 synthetic；未知
+executor 稳定返回 exit 2，且不会创建 run 目录。`run_stage()` 在一个排他锁生命周期内完成输入复核、
+Screen→Confirm 连续执行、失败保留、资源释放审计与封存；存在 quarantine marker 时禁止开始下一 run。
+
+组合会议候选只执行一次 `stage=5, covered_stages=[3,5]` 的连续 60 分钟物理 run。30 分钟 checkpoint
+只在完整物理 run 终止并写入 `artifact-index.json` 后用于生成 Stage 3 report；Stage 5 report 再复用
+同一 manifest/index，避免重复墙钟和循环 hash。Stage 1–4 上游报告必须按顺序绑定 SHA-256，Stage 5
+还必须核验唯一 finalist、八项固定 hard gate、实际 3,600,000ms、物理单调时钟不短于 60 分钟及五个
+固定故障的完整恢复证据。
 
 截至 2026-08-25，`preflight-corpus`、`prepare-corpus` 与正式 `freeze-analysis` 已实现：metadata-only
 预检不读取音频或逐字稿，只核验匿名 token、授权/脱敏/人工复核状态、配额、跨 look 隔离和 reference
@@ -925,6 +963,7 @@ scorer 开盲。
 
 ```bash
 VR_ASR_EXTERNAL_ROOT=/path/to/external/voice-realtime/asr/<corpus-version>
+ASR_BENCH_ROOT=/path/to/external/asr-benchmark
 
 # 0. 不读取音频的目标域 metadata 预检
 uv run vr-asr-benchmark preflight-corpus \
@@ -996,6 +1035,16 @@ uv run vr-asr-benchmark decide \
   --gate-metrics "$VR_ASR_EXTERNAL_ROOT/comparisons/<interaction-gates-id>.json" \
   --gate-source <opaque-artifact-name>="$VR_ASR_EXTERNAL_ROOT/<metrics-artifact>" \
   --output "$VR_ASR_EXTERNAL_ROOT/comparisons/core-decision.json"
+
+# 6. Stage 1 唯一 finalist 与真实 executor 均已就绪后，串行执行冻结的 Stage 2–5 request
+uv run vr-asr-benchmark run-stage \
+  --request "$ASR_BENCH_ROOT/stage-requests/stage2-meeting-qwen.json" \
+  --repo-root .
+
+# 7. 物理 run 已封存、gate/upstream/selection 证据齐全后生成阶段决策
+uv run vr-asr-benchmark decide-stage \
+  --request "$ASR_BENCH_ROOT/stage-decisions/meeting-fun-stage5-request.json" \
+  --repo-root .
 ```
 
 > [!CAUTION]
@@ -1016,6 +1065,10 @@ uv run vr-asr-benchmark decide \
 > 必须与门禁制品完全一致。
 > run、score、compare 与 decide 的敏感输入/输出必须位于项目外；comparison 不写绝对路径，只保存 opaque
 > run ID。所有 JSON 结果原子写入、拒绝覆盖并设为 `0600`。
+> `run-stage` 与 `decide-stage` 也拒绝项目内 request/产物和 repository boundary 漂移；Stage run 目录为
+> `0700`、文件为 `0600`。未封存、被篡改、含额外文件、hash/size 不符或使用 experimental/synthetic
+> 证据的 run 均不能产生 `Promote`。当前生产 registry 在真实 executor 完成独立验收前保持空表，因此
+> 示例命令此时会对未知 executor fail-closed，而不会加载模型或占用服务。
 
 ---
 
@@ -1063,14 +1116,16 @@ uv run vr-asr-benchmark decide \
 4. **Dev 集调优**：三个 primary 臂使用同等有限预算；无 context 是 blind 主配置，context 只进 finalist。
 5. **Stage 1A Core**：依次运行 Qwen、SenseVoice、Fun MPS 的 60 分钟目标域 Core；Fun 输出复用到两个 family。
 6. **Stage 1B Reserve**：只对 `Continue` family 追加 45 分钟；禁止在两个固定 look 之外查看并停止。
-7. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
+7. **注册真实 executor 并完成 preflight**：只为 Stage 1 已保留的 family/baseline/finalist 注册对应
+   真实 executor；先核验 request、输入、模型、schedule、lock 与 quarantine，不启动其他模型或服务。
+8. **Stage 2 字幕流式**：baseline 与字幕/会议 finalist 各运行同一 15–20 分钟冻结 block；前
    8–10 分钟是 Screen，通过后原 run 继续到 Confirm 总时长。
-8. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
+9. **Stage 3/5 会议链路**：baseline 运行一次 30 分钟；候选运行一次 60 分钟连续会话并同时完成
    Stage 3 主会议和 Stage 5 可靠性。
-9. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
+10. **Stage 4/5 交互链路**：SenseVoice 与候选各运行同一 10–15 轮冻结话术；前 5 轮是 Screen，
    通过后原 session 继续到 Confirm 总轮数；只有交互 finalist 再运行 1×60 分钟可靠性。
-10. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时额外 Public；不阻塞生产选型。
-11. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
+11. **Public 附录**：最终 baseline + winner 才运行完整 1–2 小时额外 Public；不阻塞生产选型。
+12. **增量收敛与清理**：复用相同身份的 Stage 3/4/5 证据，只做 3–5 轮部署 smoke、离线重启、
     EOF/外放恢复抽查；随后固定唯一后端并清理落选模型与专用接入。
 
 > [!WARNING]
@@ -1096,6 +1151,11 @@ uv run vr-asr-benchmark decide \
 - [ ] `unsupported` 与 `infeasible` 状态不被错误填成 0。
 - [ ] Sortformer 在主比较中固定。
 - [ ] EOF、重连、长会、静音和隐私硬门禁均严格执行。
+- [ ] Stage 2–5 request、run、gate、upstream、selection 与 decision 均在项目外且身份 hash 可闭环。
+- [ ] `state.json` 为 terminal，`artifact-index.json` 最后封存并覆盖全部必需制品；失败 run 仍保留证据。
+- [ ] Stage 3/5 候选只有一个 60 分钟 session，Stage 3 checkpoint/slice 与 Stage 5 使用同一 manifest。
+- [ ] 主机排他锁覆盖完整 executor 生命周期；无并发模型/服务，quarantine 未清除时不启动下一 run。
+- [ ] Formal run 不使用 synthetic/未知 executor；Stage 5 的时长、五故障、八门禁和唯一 finalist 均由源制品推导。
 - [ ] 字幕/会议与交互助手分别做独立决策。
 - [ ] 报告包含负面结果和失败样本类别，不只展示平均值。
 

@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from collections.abc import Iterator
+import stat
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from asr_stage_fakes import (
+    SyntheticStageExecutor,
+    build_decision_fixture,
+    build_stage_fixture,
+)
 
 import voice_realtime.benchmarks.asr.cli as cli_module
 from voice_realtime.asr.contracts import ASRSessionContext
@@ -26,7 +33,10 @@ from voice_realtime.benchmarks.asr.cli import (
     _verify_pytorch_run_identity,
     _verify_replay_identity,
     build_parser,
+    build_stage_policy,
+    decide_stage_from_request,
     main,
+    run_stage_from_request,
 )
 from voice_realtime.benchmarks.asr.manifest import (
     ASRRunManifest,
@@ -43,6 +53,26 @@ from voice_realtime.benchmarks.asr.manifest import (
     write_run_manifest,
 )
 from voice_realtime.benchmarks.asr.replay import load_hypotheses
+from voice_realtime.benchmarks.asr.stage_executors import StageExecutorRegistry
+
+
+def _json_value(value: object) -> object:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    return value
+
+
+def _write_request(path: Path, request: object) -> None:
+    payload = {
+        field.name: _json_value(getattr(request, field.name))
+        for field in dataclasses.fields(request)
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.chmod(0o600)
 
 
 def _write_hypotheses(run_dir: Path, values: list[tuple[str, float]]) -> None:
@@ -174,6 +204,126 @@ def test_parser_exposes_run_score_compare_subcommands() -> None:
             "analysis-plan.json",
         ]
     ).design == "design.json"
+
+
+def test_parser_exposes_stage_commands() -> None:
+    parser = build_parser()
+
+    run_args = parser.parse_args(
+        ["run-stage", "--request", "stage-request.json", "--repo-root", "."]
+    )
+    decide_args = parser.parse_args(
+        ["decide-stage", "--request", "decision-request.json", "--repo-root", "."]
+    )
+
+    assert run_args.command == "run-stage"
+    assert decide_args.command == "decide-stage"
+
+
+def test_run_stage_cli_delegates_without_taking_a_second_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Path, Path, StageExecutorRegistry]] = []
+    registry = StageExecutorRegistry()
+    monkeypatch.setattr(cli_module, "_build_stage_executor_registry", lambda: registry)
+    monkeypatch.setattr(
+        cli_module,
+        "run_stage_from_request",
+        lambda request, repository, selected_registry: calls.append(
+            (request, repository, selected_registry)
+        )
+        or 0,
+    )
+
+    assert main(["run-stage", "--request", "request.json", "--repo-root", "."]) == 0
+    assert calls == [(Path("request.json"), Path(), registry)]
+
+
+def test_run_stage_from_request_uses_only_explicit_test_registry(tmp_path: Path) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    request_path = fixture.request.output_root.parent / "stage-request.json"
+    _write_request(request_path, fixture.request)
+    registry = StageExecutorRegistry()
+    registry.register("test-synthetic", SyntheticStageExecutor)
+
+    assert run_stage_from_request(request_path, fixture.request.repository_root, registry) == 0
+    assert (
+        fixture.request.output_root / fixture.request.run_id / "artifact-index.json"
+    ).is_file()
+
+
+def test_production_stage_registry_fails_closed_for_unregistered_executor(
+    tmp_path: Path,
+) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    request_path = fixture.request.output_root.parent / "stage-request.json"
+    _write_request(request_path, fixture.request)
+
+    exit_code = main(
+        [
+            "run-stage",
+            "--request",
+            str(request_path),
+            "--repo-root",
+            str(fixture.request.repository_root),
+        ]
+    )
+
+    assert exit_code == 2
+    assert not (fixture.request.output_root / fixture.request.run_id).exists()
+
+
+def test_stage_request_rejects_extra_and_repository_boundary_drift(
+    tmp_path: Path,
+) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    request_path = fixture.request.output_root.parent / "stage-request.json"
+    _write_request(request_path, fixture.request)
+    payload = json.loads(request_path.read_text(encoding="utf-8"))
+    payload["caller_duration_ms"] = 1
+    request_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    registry = StageExecutorRegistry()
+    registry.register("test-synthetic", SyntheticStageExecutor)
+    with pytest.raises(ValueError, match="extra"):
+        run_stage_from_request(request_path, fixture.request.repository_root, registry)
+
+    payload.pop("caller_duration_ms")
+    payload["repository_root"] = str(tmp_path / "different-repo")
+    request_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="repository"):
+        run_stage_from_request(request_path, fixture.request.repository_root, registry)
+
+
+def test_stage_request_must_be_private(tmp_path: Path) -> None:
+    fixture = build_stage_fixture(tmp_path)
+    request_path = fixture.request.output_root.parent / "stage-request.json"
+    _write_request(request_path, fixture.request)
+    request_path.chmod(0o644)
+
+    with pytest.raises(ValueError, match="0600"):
+        run_stage_from_request(
+            request_path,
+            fixture.request.repository_root,
+            StageExecutorRegistry(),
+        )
+
+
+def test_meeting_stage5_policy_requires_composite_lineage(tmp_path: Path) -> None:
+    fixture = build_stage_fixture(tmp_path, stage=5, covered_stages=(5,))
+
+    with pytest.raises(ValueError, match="covered_stages"):
+        build_stage_policy(fixture.request)
+
+
+def test_decide_stage_from_request_writes_verified_private_report(tmp_path: Path) -> None:
+    fixture = build_decision_fixture(tmp_path)
+    request_path = fixture.request.output_path.parent / "stage5-decision-request.json"
+    _write_request(request_path, fixture.request)
+
+    assert decide_stage_from_request(request_path, fixture.request.repository_root) == 0
+    assert fixture.request.output_path.is_file()
+    assert stat.S_IMODE(fixture.request.output_path.stat().st_mode) == 0o600
 
 
 def test_run_parser_exposes_resource_lock_controls() -> None:
