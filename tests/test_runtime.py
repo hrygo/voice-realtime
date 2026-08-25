@@ -314,11 +314,32 @@ class TestPCMOwnership:
             runtime.hub.muted = False
 
             runtime._set_pcm_owner(owner)
-            await runtime._enqueue_audio(b"pcm")
+            with patch.object(
+                type(runtime.session),
+                "active",
+                new_callable=PropertyMock,
+                return_value=owner is PCMOwner.ASSISTANT,
+            ):
+                await runtime._enqueue_audio(b"pcm")
             await runtime._push_subtitle_audio(b"pcm")
 
         assert runtime.audio_queue.qsize() == interaction_chunks
         assert runtime.subtitle_proxy.push_audio.await_count == subtitle_chunks
+
+    async def test_assistant_owner_rejects_audio_when_interaction_inactive(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime._set_pcm_owner(PCMOwner.ASSISTANT)
+
+            assert not runtime.session.active
+            await runtime._enqueue_audio(b"orphaned")
+
+        interaction = runtime.diagnostics()["interaction"]
+        assert interaction == {"queued_chunks": 0, "dropped_chunks": 0}
 
     async def test_none_drains_only_interaction_queue_and_preserves_meeting_audio(
         self, settings: Settings
@@ -385,7 +406,13 @@ class TestBackpressure:
             for _ in range(AUDIO_QUEUE_MAXSIZE):
                 runtime.audio_queue.put_nowait(b"\x00" * 512)
             assert runtime.audio_queue.full()
-            await runtime._enqueue_audio(b"\x01" * 512)  # 不抛
+            with patch.object(
+                type(runtime.session),
+                "active",
+                new_callable=PropertyMock,
+                return_value=True,
+            ):
+                await runtime._enqueue_audio(b"\x01" * 512)  # 不抛
             assert runtime.audio_queue.qsize() == AUDIO_QUEUE_MAXSIZE
 
     async def test_enqueue_rejects_new_chunk_and_reports_exact_drop_count(
@@ -399,7 +426,13 @@ class TestBackpressure:
             runtime.audio_queue = asyncio.Queue(maxsize=1)
             runtime.audio_queue.put_nowait(b"queued")
 
-            await runtime._enqueue_audio(b"rejected")
+            with patch.object(
+                type(runtime.session),
+                "active",
+                new_callable=PropertyMock,
+                return_value=True,
+            ):
+                await runtime._enqueue_audio(b"rejected")
 
             with patch.object(
                 RuntimeModeCoordinator,

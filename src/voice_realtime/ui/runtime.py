@@ -295,7 +295,11 @@ class UIRuntime:
             return False
 
     async def _enqueue_audio(self, data: bytes) -> None:
-        if self.hub.muted or self._pcm_owner is not PCMOwner.ASSISTANT:
+        if (
+            self.hub.muted
+            or self._pcm_owner is not PCMOwner.ASSISTANT
+            or not self.session.active
+        ):
             return
         try:
             self.audio_queue.put_nowait(data)
