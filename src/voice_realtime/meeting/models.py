@@ -29,8 +29,18 @@ class RuntimeMode(StrEnum):
     """Voice Studio 当前的互斥运行模式。"""
 
     ASSISTANT = "assistant"
+    SUBTITLES = "subtitles"
     MEETING = "meeting"
     IDLE = "idle"
+
+
+class PCMOwner(StrEnum):
+    """当前允许消费新麦克风 PCM 的唯一工作负载。"""
+
+    ASSISTANT = "assistant"
+    SUBTITLES = "subtitles"
+    MEETING = "meeting"
+    NONE = "none"
 
 
 class MeetingStatus(StrEnum):

@@ -11,12 +11,14 @@ from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import (
     DuplexMode,
     EndMeetingCommand,
+    RuntimeStateEvent,
     RuntimeStateSnapshot,
     SendTextCommand,
     SetDuplexModeCommand,
     SetPersonaCommand,
     StartAssistantCommand,
     StartMeetingCommand,
+    StartSubtitlesCommand,
     StopActiveModeCommand,
     parse_command,
 )
@@ -30,6 +32,7 @@ def runtime() -> MagicMock:
     rt.stop_session = AsyncMock()
     rt.restart_pipeline = AsyncMock()
     rt.set_mic_muted = AsyncMock()
+    rt.start_subtitles = AsyncMock()
     rt.send_text = AsyncMock()
     rt.set_persona = MagicMock()
     rt.set_duplex_mode = MagicMock()
@@ -143,6 +146,37 @@ class TestDispatch:
         assert resp["ok"] is True
         runtime.end_meeting.assert_awaited_once_with(None)
 
+    async def test_start_subtitles_dispatches_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        resp = await bridge.handle(
+            {
+                "contract_version": "1",
+                "request_id": "sub-1",
+                "cmd": "start_subtitles",
+            }
+        )
+
+        assert resp["ok"] is True
+        assert resp["contract_version"] == "1"
+        runtime.start_subtitles.assert_awaited_once_with()
+
+    async def test_start_subtitles_rejects_extra_fields(
+        self, bridge: ControlBridge
+    ) -> None:
+        resp = await bridge.handle(
+            {
+                "contract_version": "1",
+                "request_id": "sub-invalid",
+                "cmd": "start_subtitles",
+                "extra": True,
+            }
+        )
+
+        assert resp["ok"] is False
+        assert resp["error_code"] == "invalid_payload"
+        assert resp["contract_version"] == "1"
+
     async def test_v1_request_id_is_idempotent(
         self, runtime: MagicMock, bridge: ControlBridge
     ) -> None:
@@ -220,6 +254,21 @@ class TestSetVoice:
 
 
 class TestProtocol:
+    def test_runtime_state_defaults_pcm_owner_and_event_name(self) -> None:
+        snapshot = RuntimeStateSnapshot(
+            pipeline="running",
+            subtitle="connected",
+            mic_muted=False,
+            persona=None,
+            voice="default",
+            duplex_mode=DuplexMode.SPEAKER_FOCUS,
+            session_started_at="2026-08-21T00:00:00+00:00",
+        )
+
+        assert snapshot.model_dump(mode="json")["pcm_owner"] == "none"
+        assert RuntimeStateEvent(state=snapshot).event == "runtime_state"
+        assert RuntimeStateEvent(event="state", state=snapshot).event == "state"
+
     def test_parse_command_rejects_extra_fields(self) -> None:
         with pytest.raises(ValueError):
             parse_command({"request_id": "1", "cmd": "clear_context", "extra": True})
@@ -247,12 +296,22 @@ class TestProtocol:
             parse_command({"request_id": "2", "cmd": "start_assistant"}), StartAssistantCommand
         )
         assert isinstance(
-            parse_command({"request_id": "3", "cmd": "stop_active_mode"}), StopActiveModeCommand
+            parse_command(
+                {
+                    "contract_version": "1",
+                    "request_id": "3",
+                    "cmd": "start_subtitles",
+                }
+            ),
+            StartSubtitlesCommand,
+        )
+        assert isinstance(
+            parse_command({"request_id": "4", "cmd": "stop_active_mode"}), StopActiveModeCommand
         )
         assert isinstance(
             parse_command(
                 {
-                    "request_id": "4",
+                    "request_id": "5",
                     "cmd": "end_meeting",
                     "meeting_id": "7e0c6f4e-9f2d-4f3a-9402-ec5cfa9d6f65",
                 }
@@ -260,6 +319,6 @@ class TestProtocol:
             EndMeetingCommand,
         )
         assert isinstance(
-            parse_command({"request_id": "5", "cmd": "send_text", "text": "测试文本"}),
+            parse_command({"request_id": "6", "cmd": "send_text", "text": "测试文本"}),
             SendTextCommand,
         )

@@ -12,6 +12,7 @@ from voice_realtime.config import MeetingSettings, SubtitleSettings
 from voice_realtime.meeting.models import (
     MeetingStatus,
     NormalizedSegment,
+    PCMOwner,
     RuntimeMode,
     TranscriptWindow,
 )
@@ -87,3 +88,14 @@ def test_runtime_and_meeting_status_values_are_stable() -> None:
     assert RuntimeMode.ASSISTANT.value == "assistant"
     assert RuntimeMode.MEETING.value == "meeting"
     assert MeetingStatus.RECORDING.value == "recording"
+
+
+def test_runtime_mode_and_pcm_owner_include_subtitles() -> None:
+    assert RuntimeMode("assistant") is RuntimeMode.ASSISTANT
+    assert RuntimeMode("subtitles") is RuntimeMode.SUBTITLES
+    assert RuntimeMode("meeting") is RuntimeMode.MEETING
+    assert RuntimeMode("idle") is RuntimeMode.IDLE
+    assert PCMOwner("assistant") is PCMOwner.ASSISTANT
+    assert PCMOwner("subtitles") is PCMOwner.SUBTITLES
+    assert PCMOwner("meeting") is PCMOwner.MEETING
+    assert PCMOwner("none") is PCMOwner.NONE

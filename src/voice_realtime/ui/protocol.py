@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 
 from voice_realtime.interaction.types import DuplexMode as DuplexMode
-from voice_realtime.meeting.models import MeetingStatus, RuntimeMode, StorageHealth
+from voice_realtime.meeting.models import MeetingStatus, PCMOwner, RuntimeMode, StorageHealth
 
 RequestId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=64)]
 ShortText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
@@ -95,6 +95,11 @@ class StartAssistantCommand(CommandBase):
     contract_version: Literal["1"] | None = None
 
 
+class StartSubtitlesCommand(CommandBase):
+    cmd: Literal["start_subtitles"]
+    contract_version: Literal["1"] | None = None
+
+
 class StopActiveModeCommand(CommandBase):
     cmd: Literal["stop_active_mode"]
     contract_version: Literal["1"] | None = None
@@ -118,6 +123,7 @@ ControlCommand = Annotated[
     | StartMeetingCommand
     | EndMeetingCommand
     | StartAssistantCommand
+    | StartSubtitlesCommand
     | StopActiveModeCommand
     | SendTextCommand,
     Field(discriminator="cmd"),
@@ -138,6 +144,7 @@ class RuntimeStateSnapshot(BaseModel):
     duplex_mode: DuplexMode
     session_started_at: str | None
     mode: RuntimeMode = RuntimeMode.ASSISTANT
+    pcm_owner: PCMOwner = PCMOwner.NONE
     active_meeting_id: str | None = None
     meeting_state: MeetingStatus | None = None
     meeting_started_at: str | None = None
@@ -177,7 +184,7 @@ class RuntimeStateEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    event: Literal["state"] = "state"
+    event: Literal["state", "runtime_state"] = "runtime_state"
     state: RuntimeStateSnapshot
     contract_version: Literal["1"] | None = None
 

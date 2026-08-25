@@ -29,6 +29,7 @@ from voice_realtime.ui.protocol import (
     SetVoiceCommand,
     StartAssistantCommand,
     StartMeetingCommand,
+    StartSubtitlesCommand,
     StopActiveModeCommand,
     StopSessionCommand,
     parse_command,
@@ -50,6 +51,7 @@ _COMMAND_NAMES = frozenset(
         "start_meeting",
         "end_meeting",
         "start_assistant",
+        "start_subtitles",
         "stop_active_mode",
         "send_text",
     }
@@ -65,6 +67,7 @@ class ControlRuntime(Protocol):
     async def start_meeting(self, title: str | None = None) -> Any: ...
     async def end_meeting(self, meeting_id: str | None = None) -> Any: ...
     async def start_assistant(self) -> None: ...
+    async def start_subtitles(self) -> None: ...
     async def stop_active_mode(self) -> None: ...
     async def send_text(self, text: str) -> None: ...
     def set_persona(self, persona: str) -> None: ...
@@ -163,6 +166,8 @@ class ControlBridge:
             await self._runtime.end_meeting(command.meeting_id)
         elif isinstance(command, StartAssistantCommand):
             await self._runtime.start_assistant()
+        elif isinstance(command, StartSubtitlesCommand):
+            await self._runtime.start_subtitles()
         elif isinstance(command, StopActiveModeCommand):
             await self._runtime.stop_active_mode()
         elif isinstance(command, SendTextCommand):
@@ -195,6 +200,7 @@ class ControlBridge:
                 "start_meeting",
                 "end_meeting",
                 "start_assistant",
+                "start_subtitles",
                 "stop_active_mode",
             } else None,
             error=(
