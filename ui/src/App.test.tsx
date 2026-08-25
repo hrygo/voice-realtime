@@ -310,4 +310,27 @@ describe("App authoritative workspace state", () => {
     expect(container.querySelector("[data-testid='workspace-tabs']")?.getAttribute("data-pending-tab"))
       .toBe("");
   });
+
+  it("lets a meeting event preempt a pending mode switch and ignores its late ack", async () => {
+    const acknowledgement = deferred<RuntimeStateSnapshot>();
+    commandSocket.sendCommand.mockReturnValue(acknowledgement.promise);
+    setAuthoritativeState("assistant", 20);
+
+    clickTab("实时字幕");
+    act(() => {
+      useMeetingStore.setState({ status: "recording" });
+    });
+
+    expect(container.querySelector("[data-testid='meeting-panel']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='workspace-tabs']")?.getAttribute("data-pending-tab"))
+      .toBe("");
+
+    await act(async () => {
+      acknowledgement.resolve(runtimeState("subtitles", 21));
+      await acknowledgement.promise;
+    });
+
+    expect(container.querySelector("[data-testid='meeting-panel']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='subtitles-panel']")).toBeNull();
+  });
 });

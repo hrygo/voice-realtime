@@ -163,10 +163,20 @@ export default function App() {
   }, []);
 
   const commitWorkspaceTab = useCallback((tab: WorkspaceTab) => {
-    persistedTabRef.current = tab;
-    persistWorkspaceTab(tab);
-    setActiveTab(tab);
+    if (persistedTabRef.current !== tab) {
+      persistedTabRef.current = tab;
+      persistWorkspaceTab(tab);
+    }
+    setActiveTab((currentTab) => (currentTab === tab ? currentTab : tab));
   }, []);
+
+  useEffect(() => {
+    if (!isMeetingRecording) return;
+    switchGenerationRef.current += 1;
+    clearPendingSwitch();
+    setSwitchError(null);
+    commitWorkspaceTab("meeting");
+  }, [clearPendingSwitch, commitWorkspaceTab, isMeetingRecording]);
 
   const applyAuthoritativeSnapshot = useCallback((
     snapshot: RuntimeStateSnapshot,
