@@ -683,11 +683,37 @@ class TestWebSocketGateways:
             ws.receive_text()
 
     def test_vite_origin_is_allowed(self) -> None:
-        client = self._app_with_runtime()
+        client = self._app_with_runtime(allowed_origins=[])
         with client.websocket_connect(
-            "/ws/assistant", headers={"origin": "http://localhost:5173"}
+            "/ws/assistant",
+            headers={
+                "host": "localhost:8100",
+                "origin": "http://localhost:5173",
+            },
         ):
             assert client.app.state.runtime.observer.has_clients
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            "http://localhost:8100",
+            "http://localhost:5173",
+            "http://127.0.0.1:8100",
+            "http://127.0.0.1:5173",
+            "http://[::1]:8100",
+            "http://[::1]:5173",
+        ],
+    )
+    def test_lan_host_rejects_implicit_loopback_origin(self, origin: str) -> None:
+        client = self._app_with_runtime()
+        with pytest.raises(WebSocketDisconnect) as caught, client.websocket_connect(
+            "/ws/assistant",
+            headers={"host": "192.168.1.10:8100", "origin": origin},
+        ) as websocket:
+            websocket.close()
+
+        assert caught.value.code == 1008
+        assert caught.value.reason == "Origin 不受信任"
 
     @pytest.mark.parametrize(
         ("request_host", "origin"),
@@ -732,8 +758,11 @@ class TestWebSocketGateways:
         ):
             assert client.app.state.runtime.observer.has_clients
 
-    def test_explicit_lan_origin_is_allowed(self) -> None:
-        origin = "http://192.168.1.100:5173"
+    @pytest.mark.parametrize(
+        "origin",
+        ["http://192.168.1.100:5173", "http://localhost:5173"],
+    )
+    def test_explicit_origin_is_allowed(self, origin: str) -> None:
         client = self._app_with_runtime(
             allowed_origins=[origin],
         )

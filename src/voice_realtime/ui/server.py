@@ -761,7 +761,7 @@ async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
     origin = websocket.headers.get("origin")
     if origin is None:
         return True
-    allowed = {
+    loopback_origins = {
         f"http://127.0.0.1:{cfg.ui.port}",
         f"http://localhost:{cfg.ui.port}",
         "http://127.0.0.1:5173",
@@ -770,9 +770,17 @@ async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:
         "http://[::1]:5173",
     }
     meeting_cfg = getattr(cfg, "meeting", None)
-    configured_origins = getattr(meeting_cfg, "allowed_origins", ()) if meeting_cfg else ()
-    allowed.update(str(item) for item in configured_origins)
-    if origin in allowed or _origin_matches_websocket_host(websocket, origin):
+    configured_origins = (
+        getattr(meeting_cfg, "allowed_origins", ())
+        if meeting_cfg is not None
+        and "allowed_origins" in meeting_cfg.model_fields_set
+        else ()
+    )
+    if (
+        origin in {str(item) for item in configured_origins}
+        or _origin_matches_websocket_host(websocket, origin)
+        or (origin in loopback_origins and _websocket_host_is_loopback(websocket))
+    ):
         return True
 
     await websocket.close(code=1008, reason="Origin 不受信任")
@@ -823,6 +831,35 @@ def _origin_matches_websocket_host(websocket: WebSocket, origin: str) -> bool:
         == _canonical_hostname(request_authority.hostname)
         and origin_port == request_port
     )
+
+
+def _websocket_host_is_loopback(websocket: WebSocket) -> bool:
+    """仅在实际请求 Host 为 localhost/IP loopback 时启用开发白名单。"""
+    request_host = websocket.headers.get("host")
+    if request_host is None:
+        return False
+    try:
+        request_authority = urlsplit(f"//{request_host}")
+        hostname = request_authority.hostname
+        if (
+            hostname is None
+            or request_authority.username is not None
+            or request_authority.password is not None
+            or request_authority.path
+            or request_authority.query
+            or request_authority.fragment
+        ):
+            return False
+        _ = request_authority.port
+    except ValueError:
+        return False
+
+    if hostname.casefold() == "localhost":
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 def _canonical_hostname(hostname: str) -> str:
