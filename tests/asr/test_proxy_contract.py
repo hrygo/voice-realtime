@@ -67,13 +67,13 @@ async def test_proxy_broadcasts_domain_snapshot_through_legacy_presenter(
         output_dir=tmp_path / "subtitles",
     )
     window = TranscriptWindow(
-        source_epoch=0,
+        source_epoch=1,
         partial="下一句",
         segments=(
             NormalizedSegment(
                 order=0,
-                source_epoch=0,
-                speaker_key="epoch:0:speaker:2",
+                source_epoch=1,
+                speaker_key="epoch:1:speaker:2",
                 start_ms=1000,
                 end_ms=2500,
                 text="第一句",
@@ -92,11 +92,17 @@ async def test_proxy_broadcasts_domain_snapshot_through_legacy_presenter(
     proxy.add_client(client)
 
     await proxy.start()
+    assert contexts == []
+    client.assert_not_awaited()
+
+    preparation = await proxy.prepare_browser_capture(timeout_secs=0.2)
+    proxy.commit_browser_capture(preparation)
     await asyncio.sleep(0.02)
 
     payload = json.loads(client.await_args.args[0])
     assert payload["type"] == "full_update"
     assert payload["buffer_transcription"] == "下一句"
     assert payload["lines"][0]["speaker"] == 2
-    assert contexts == [ASRSessionContext(source_epoch=0, offset_ms=0, purpose="subtitles")]
+    assert preparation.generation == 1
+    assert contexts == [ASRSessionContext(source_epoch=1, offset_ms=0, purpose="subtitles")]
     await proxy.stop()
