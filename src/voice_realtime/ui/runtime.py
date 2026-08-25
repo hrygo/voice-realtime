@@ -14,14 +14,14 @@ from voice_realtime.interaction.nltk_data import ensure_punkt_tab
 from voice_realtime.interaction.ownership import InteractionOwnership
 from voice_realtime.interaction.pipeline import build_pipeline
 from voice_realtime.interaction.session import InteractionSession
-from voice_realtime.meeting.models import RuntimeMode, StorageHealth
+from voice_realtime.meeting.models import PCMOwner, RuntimeMode
 from voice_realtime.meeting.runtime_mode import (
-    MeetingUnavailableError,
     ModeConflictError,
     RuntimeModeCoordinator,
 )
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,6 @@ class UIRuntime:
         settings: Settings,
         *,
         meeting_session: Any | None = None,
-        mode_coordinator: RuntimeModeCoordinator | None = None,
         asr_registry: ASRBackendRegistry | None = None,
         conversation_stt_factory: ConversationSTTFactory | None = None,
     ) -> None:
@@ -48,6 +47,7 @@ class UIRuntime:
         self.observer = StatusBridgeObserver()
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self._interaction_dropped_chunks = 0
+        self._pcm_owner = PCMOwner.NONE
         self.hub = AudioHub(
             device_index=settings.interaction.input_device,
             device_name=settings.interaction.input_device_name,
@@ -65,51 +65,56 @@ class UIRuntime:
             stt_factory=conversation_stt_factory,
         )
         self.meeting_session = meeting_session
-        self.mode_coordinator = mode_coordinator
-        if self.mode_coordinator is None and meeting_session is not None:
-            self.mode_coordinator = RuntimeModeCoordinator(
-                self.session,
-                meeting_session,
-                initial_mode=RuntimeMode.ASSISTANT,
-            )
+        self._coordinator = RuntimeModeCoordinator(
+            self.session,
+            self.subtitle_proxy,
+            meeting_session=meeting_session,
+            initial_mode=RuntimeMode.IDLE,
+            on_owner_changed=self._set_pcm_owner,
+            state_publisher=self._publish_runtime_state,
+        )
+        self.runtime_events = RuntimeStateBroadcaster(self.snapshot)
 
     def configure_meeting(self, meeting_session: Any) -> None:
         """在基础运行时启动后注入会议服务及互斥模式编排。"""
-        if self.mode_coordinator is not None:
-            raise RuntimeError("meeting runtime 已配置")
+        self._coordinator.configure_meeting(meeting_session)
         self.meeting_session = meeting_session
-        self.mode_coordinator = RuntimeModeCoordinator(
-            self.session,
-            meeting_session,
-            initial_mode=(RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE),
-        )
 
     async def start(self) -> None:
         if self._started:
             return
+        self._started = True
         await self._start_subtitle_proxy()
         self._wire_sinks()
         self._hub_active = await self._start_hub()
         if self._hub_active:
-            ensure_punkt_tab()
             try:
-                await self.session.start()
+                ensure_punkt_tab()
+                await self._coordinator.start_assistant()
             except Exception:
                 logger.warning("UIRuntime: 交互会话启动失败", exc_info=True)
-        self._started = True
         logger.info("UIRuntime: 已启动 (pipeline=%s)", self.pipelines_active)
 
     async def stop(self) -> None:
         if not self._started:
             return
-        if self.mode_coordinator is not None:
-            await self.mode_coordinator.stop()
-        await self.session.stop(reason="UI 运行时停止")
-        await self.hub.stop()
-        await self.subtitle_proxy.stop()
-        self._hub_active = False
-        self._started = False
+        try:
+            await self._coordinator.stop()
+        finally:
+            try:
+                await self.hub.stop()
+            finally:
+                try:
+                    await self.subtitle_proxy.stop()
+                finally:
+                    self._hub_active = False
+                    self._started = False
         logger.info("UIRuntime: 已停止")
+
+    @property
+    def mode_coordinator(self) -> RuntimeModeCoordinator:
+        """返回构造时建立且生命周期内不可替换的模式协调器。"""
+        return self._coordinator
 
     @property
     def pipelines_active(self) -> bool:
@@ -151,7 +156,7 @@ class UIRuntime:
         await self.session.clear_context()
 
     async def send_text(self, text: str) -> None:
-        if self.mode_coordinator is not None and self.mode_coordinator.mode is RuntimeMode.MEETING:
+        if self._coordinator.mode is RuntimeMode.MEETING:
             raise ModeConflictError("会议录制期间不能向语音助手发送文本")
         if not self.session.active:
             raise RuntimeError("语音助手会话未在运行中")
@@ -161,12 +166,14 @@ class UIRuntime:
         await self.subtitle_proxy.clear_subtitles()
 
     async def stop_session(self) -> None:
-        await self.session.stop(reason="用户停止会话")
-        self._drain_audio_queue()
+        await self._coordinator.stop_active_mode()
 
     async def restart_pipeline(self) -> None:
-        if self.mode_coordinator is not None and self.mode_coordinator.mode is RuntimeMode.MEETING:
-            raise ModeConflictError("会议录制期间不能重启语音管道")
+        if (
+            self._coordinator.mode is not RuntimeMode.ASSISTANT
+            or self._coordinator.pcm_owner is not PCMOwner.ASSISTANT
+        ):
+            raise ModeConflictError("仅助手模式允许重启语音管道")
         self._drain_audio_queue()
         if self._started and self._hub_active:
             await self.session.restart()
@@ -175,14 +182,11 @@ class UIRuntime:
         subtitle_state = getattr(self.subtitle_proxy, "state", "stopped")
         if hasattr(subtitle_state, "value"):
             subtitle_state = subtitle_state.value
-        coordinator = self.mode_coordinator
-        meeting_record = coordinator.meeting_record if coordinator is not None else None
+        coordinator = self._coordinator
+        meeting_record = coordinator.meeting_record
         meeting_state = meeting_record.status if meeting_record is not None else None
         meeting_started_at = (
             meeting_record.started_at.isoformat() if meeting_record is not None else None
-        )
-        mode = coordinator.mode if coordinator is not None else (
-            RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE
         )
         return RuntimeStateSnapshot(
             pipeline=self.session.state.value,
@@ -192,77 +196,68 @@ class UIRuntime:
             voice=self._settings.bridge.voice,
             duplex_mode=self.session.duplex_mode,
             session_started_at=self.session.started_at,
-            mode=mode,
+            mode=coordinator.mode,
+            pcm_owner=coordinator.pcm_owner,
             active_meeting_id=(
                 str(coordinator.active_meeting_id)
-                if coordinator is not None and coordinator.active_meeting_id
+                if coordinator.active_meeting_id
                 else None
             ),
             meeting_state=meeting_state,
             meeting_started_at=meeting_started_at,
-            storage=coordinator.storage if coordinator is not None else StorageHealth.OK,
-            runtime_revision=coordinator.runtime_revision if coordinator is not None else 0,
+            storage=coordinator.storage,
+            runtime_revision=coordinator.runtime_revision,
         )
 
     def diagnostics(self) -> dict[str, Any]:
         """返回不含内部队列和音频内容的运行时诊断快照。"""
-        coordinator = self.mode_coordinator
         return {
             "audio_hub": self.hub.sink_diagnostics(),
             "interaction": {
                 "queued_chunks": self.audio_queue.qsize(),
                 "dropped_chunks": self._interaction_dropped_chunks,
             },
+            "subtitles": self.subtitle_proxy.diagnostics(self._coordinator.pcm_owner),
             "tts": self.observer.tts_source_diagnostics,
-            "last_transition": (
-                getattr(coordinator, "last_transition", None)
-                if coordinator is not None
-                else None
-            ),
+            "last_transition": self._coordinator.last_transition,
         }
 
     @property
     def mode(self) -> RuntimeMode:
-        if self.mode_coordinator is not None:
-            return self.mode_coordinator.mode
-        return RuntimeMode.ASSISTANT if self.session.active else RuntimeMode.IDLE
+        return self._coordinator.mode
 
     @property
     def active_meeting_id(self) -> Any | None:
-        coordinator = self.mode_coordinator
-        return coordinator.active_meeting_id if coordinator is not None else None
+        return self._coordinator.active_meeting_id
 
     @property
     def meeting_state(self) -> Any | None:
-        coordinator = self.mode_coordinator
-        return coordinator.meeting_state if coordinator is not None else None
+        return self._coordinator.meeting_state
 
     async def start_meeting(self, title: str | None = None) -> Any:
-        coordinator = self.mode_coordinator
-        if coordinator is None:
-            raise MeetingUnavailableError("meeting service unavailable")
-        return await coordinator.start_meeting(title)
+        return await self._coordinator.start_meeting(title)
 
     async def end_meeting(self, meeting_id: str | None = None) -> Any:
-        coordinator = self.mode_coordinator
-        if coordinator is None:
-            raise MeetingUnavailableError("meeting service unavailable")
-        return await coordinator.end_meeting(meeting_id)
+        return await self._coordinator.end_meeting(meeting_id)
 
     async def start_assistant(self) -> None:
-        coordinator = self.mode_coordinator
-        if coordinator is None:
-            if not self.session.active and self._started and self._hub_active:
-                await self.session.start()
-            return
-        await coordinator.start_assistant()
+        await self._coordinator.start_assistant()
+
+    async def start_subtitles(self) -> None:
+        await self._coordinator.start_subtitles()
 
     async def stop_active_mode(self) -> None:
-        coordinator = self.mode_coordinator
-        if coordinator is None:
-            await self.session.stop(reason="停止当前模式")
-            return
-        await coordinator.stop_active_mode()
+        await self._coordinator.stop_active_mode()
+
+    def _publish_runtime_state(self) -> None:
+        runtime_events = getattr(self, "runtime_events", None)
+        if runtime_events is not None:
+            runtime_events.publish(self.snapshot())
+
+    def _set_pcm_owner(self, owner: PCMOwner) -> None:
+        self._pcm_owner = owner
+        if owner is PCMOwner.NONE:
+            self._drain_audio_queue()
 
     async def _start_subtitle_proxy(self) -> None:
         try:
@@ -287,6 +282,8 @@ class UIRuntime:
             and self.session.is_echo_suppressing(data)
         ):
             return
+        if self._pcm_owner not in {PCMOwner.SUBTITLES, PCMOwner.MEETING}:
+            return
         await self.subtitle_proxy.push_audio(data)
 
     async def _start_hub(self) -> bool:
@@ -298,10 +295,7 @@ class UIRuntime:
             return False
 
     async def _enqueue_audio(self, data: bytes) -> None:
-        if self.hub.muted or (
-            self.mode_coordinator is not None
-            and self.mode_coordinator.mode is RuntimeMode.MEETING
-        ):
+        if self.hub.muted or self._pcm_owner is not PCMOwner.ASSISTANT:
             return
         try:
             self.audio_queue.put_nowait(data)
