@@ -1,6 +1,6 @@
 [project]
 name = "voice-realtime"
-version = "1.1.0"
+version = "1.2.0"
 description = "全本地实时语音交互 + 实时语音字幕系统 (Apple Silicon / MLX / 中文优先)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
