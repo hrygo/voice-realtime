@@ -166,7 +166,7 @@ export function MeetingTranscriptViewer({
             {starredIds.size > 0 && ` · ⭐ ${starredIds.size} 重点`}
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        <div className="pane-actions-group">
           {/* 时序视图 / 阅读视图切换器 */}
           <div className="view-mode-toggle-group" role="radiogroup" aria-label="转录视图切换">
             <button

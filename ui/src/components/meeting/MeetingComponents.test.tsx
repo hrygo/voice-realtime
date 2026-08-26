@@ -269,6 +269,7 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("会议逐字转录");
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("李四 (前端负责人)");
+    expect(container.querySelector(".pane-actions-group")).not.toBeNull();
 
     // Check highlighted class
     const highlightedCard = container.querySelector(".segment-card.highlighted");
@@ -415,6 +416,11 @@ describe("Meeting React Components DOM Rendering", () => {
 
     expect(container.textContent).toContain("返回正在进行的会议（进行中的架构评审）");
     expect(container.textContent).toContain("4 段发言");
+
+    const splitGrid = container.querySelector(".dual-pane-grid") as HTMLDivElement;
+    expect(splitGrid).not.toBeNull();
+    expect(splitGrid.style.getPropertyValue("--meeting-split-percent")).toBe("48%");
+    expect(splitGrid.style.gridTemplateColumns).toBe("");
 
     const backBtn = container.querySelector(".detail-back-btn.is-live-return") as HTMLButtonElement;
     expect(backBtn).not.toBeNull();

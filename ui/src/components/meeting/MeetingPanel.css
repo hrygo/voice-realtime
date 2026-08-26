@@ -298,6 +298,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
   background: transparent;
 }
@@ -468,6 +469,8 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -488,6 +491,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
   border-bottom: none;
   background: var(--bg-hover);
 }
@@ -522,9 +527,18 @@
 
 
 .toolbar-left {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 12px;
+}
+
+.recording-status-text {
+  min-width: 0;
+  flex: 1 1 14rem;
+  line-height: 1.4;
 }
 
 .recording-timer {
@@ -609,11 +623,14 @@
 
 .live-transcript-container {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overscroll-behavior: contain;
 }
 
 .partial-card {
@@ -848,6 +865,8 @@
 
 /* 现代化全景导航与会议信息栏 */
 .detail-top-nav-bar {
+  position: relative;
+  z-index: 20;
   padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   display: flex;
@@ -1245,10 +1264,14 @@
 .dual-pane-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6px minmax(0, 1.2fr);
+  grid-template-columns:
+    minmax(0, var(--meeting-split-percent, 48%))
+    6px
+    minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
   position: relative;
   background: var(--bg-primary);
 }
@@ -1305,6 +1328,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
   background: color-mix(in srgb, var(--bg-card-solid) 60%, transparent);
   flex-shrink: 0;
 }
@@ -1313,6 +1337,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-weight: 700;
   font-size: 0.88rem;
   color: var(--text-primary);
@@ -1536,15 +1561,18 @@
 
 .segment-list {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 14px 18px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .segment-card {
+  min-width: 0;
   padding: 12px 16px;
   background: var(--bg-card-solid);
   border: 1px solid var(--border-dim);
@@ -1574,11 +1602,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 0.72rem;
 }
 
 .speaker-tag-btn {
+  min-width: 0;
+  max-width: 100%;
   font-weight: 700;
   color: var(--text-primary);
   background: transparent;
@@ -1609,8 +1640,12 @@
 }
 
 .speaker-name-text {
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.76rem;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .speaker-edit-badge {
@@ -1626,6 +1661,8 @@
 .segment-actions-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -1656,6 +1693,7 @@
   font-size: 0.88rem;
   color: var(--text-primary);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 /* Right Pane: AI Minutes Viewer */
@@ -1671,6 +1709,9 @@
 .pane-actions-group {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -2129,8 +2170,11 @@
     min-width: 220px;
   }
   .dual-pane-grid {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .pane-splitter {
+    display: none;
   }
   .transcript-pane {
     border-right: none;
@@ -3499,4 +3543,138 @@
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border-width: 0;
+}
+
+/* Responsive main-area layout refinements.  Keep each pane internally
+   scrollable so the workspace itself never grows beyond the app viewport. */
+@media (max-width: 1024px) {
+  .meeting-workspace .pane-header {
+    flex-wrap: wrap;
+  }
+
+  .meeting-workspace .pane-title-group,
+  .meeting-workspace .pane-actions-group {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 840px) {
+  .meeting-workspace .recording-toolbar {
+    align-items: flex-start;
+  }
+
+  .meeting-workspace .toolbar-left {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .meeting-workspace .recording-status-text {
+    flex: 1 1 15rem;
+  }
+
+  .meeting-workspace .btn-end-meeting {
+    margin-left: auto;
+  }
+
+  .meeting-workspace .detail-top-nav-bar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .meeting-workspace .nav-left-section,
+  .meeting-workspace .nav-right-section {
+    flex: 1 1 100%;
+  }
+
+  .meeting-workspace .nav-right-section {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 560px) {
+  .meeting-workspace .recording-toolbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
+  .meeting-workspace .toolbar-left {
+    gap: 8px;
+  }
+
+  .meeting-workspace .recording-status-text {
+    flex-basis: 100%;
+  }
+
+  .meeting-workspace .view-mode-toggle-group {
+    display: flex;
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .meeting-workspace .btn-view-mode {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .meeting-workspace .btn-star-action,
+  .meeting-workspace .filter-starred-toggle {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 0 !important;
+  }
+
+  .meeting-workspace .btn-end-meeting {
+    width: 100%;
+    flex: 1 1 100%;
+    justify-content: center;
+    margin-left: 0;
+  }
+
+  .meeting-workspace .live-transcript-container {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .meeting-workspace .segment-list {
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .meeting-workspace .segment-card {
+    padding: 10px 12px;
+  }
+
+  .meeting-workspace .segment-actions-group {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .meeting-workspace .pane-header {
+    align-items: flex-start;
+    padding: 10px 12px;
+  }
+
+  .meeting-workspace .pane-title-group,
+  .meeting-workspace .pane-actions-group {
+    width: 100%;
+  }
+
+  .meeting-workspace .pane-actions-group {
+    justify-content: flex-start;
+  }
+
+  .meeting-workspace .pane-filter-bar {
+    flex-wrap: wrap;
+  }
+
+  .meeting-workspace .search-input-wrapper,
+  .meeting-workspace .speaker-select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .meeting-workspace .detail-top-nav-bar {
+    padding: 10px 12px;
+  }
 }

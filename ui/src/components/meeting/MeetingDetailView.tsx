@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, type CSSProperties } from "react";
 import type {
   ExportFormat,
   MeetingDetail,
@@ -468,8 +468,8 @@ function formatMeetingDateTime(dateStr?: string | null): string {
         className={`dual-pane-grid ${isDraggingSplitter ? "is-resizing" : ""}`}
         ref={containerRef}
         style={{
-          gridTemplateColumns: `${splitPercent}% 6px calc(${100 - splitPercent}% - 6px)`,
-        }}
+          "--meeting-split-percent": `${splitPercent}%`,
+        } as CSSProperties}
       >
         <MeetingTranscriptViewer
           segments={segments}
