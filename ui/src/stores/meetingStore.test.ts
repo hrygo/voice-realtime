@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TranscriptSegment } from "../contracts/meetingContract";
-import { mockMinutesCompleted, mockSegments } from "../test/fixtures/meetingFixtures";
+import {
+  mockMeetingDetailCompleted,
+  mockMeetingSummaryCompleted,
+  mockMeetingSummaryRecording,
+  mockMinutesCompleted,
+  mockSegments,
+} from "../test/fixtures/meetingFixtures";
 import { meetingApi } from "../services/meetingApi";
 import { useMeetingStore } from "./meetingStore";
 
@@ -24,7 +30,7 @@ describe("meetingStore", () => {
           speaker_key: "spk_0",
           speaker_name: "说话人 1",
           start_ms: 0,
-          end_ms: 10000,
+          end_ms: 9500,
           text: "第一句话已稳定确认",
         },
         {
@@ -45,7 +51,7 @@ describe("meetingStore", () => {
         partialText: "正在输入的易失文本",
       });
 
-      // 新事件：replace_from_ms = 10000 (即 seg-1 保留，seg-2 被替换)
+      // 新事件：replace_from_ms = 10000 (即 seg-1 9500 < 10000 保留，seg-2 20000 >= 10000 被替换)
       const updatedWindow: TranscriptSegment[] = [
         {
           id: "seg-2-revised",
@@ -169,7 +175,11 @@ describe("meetingStore", () => {
         },
         transcript_revision: 10,
         content_revision: 10,
-        partial: "实时转录预览文字",
+        partial: {
+          text: "实时转录预览文字",
+          speaker_key: "e1:s1",
+          speaker_name: "说话人 1",
+        },
         health: {
           storage: "ok",
           transcription: "ok",
@@ -182,6 +192,33 @@ describe("meetingStore", () => {
       expect(state.status).toBe("recording");
       expect(state.transcriptRevision).toBe(10);
       expect(state.partialText).toBe("实时转录预览文字");
+    });
+
+    it("normalizes the structured partial snapshot into renderable text and speaker", () => {
+      useMeetingStore.getState().applySnapshot({
+        meeting: {
+          id: "m-partial-1",
+          title: "结构化 partial 测试会议",
+          status: "recording",
+          language: "Chinese",
+          started_at: "2026-08-21T10:00:00Z",
+          ended_at: null,
+          transcript_revision: 1,
+          content_revision: 1,
+          created_at: "2026-08-21T10:00:00Z",
+        },
+        transcript_revision: 1,
+        content_revision: 1,
+        partial: {
+          text: "正在识别的结构化预览",
+          speaker_key: "e1:s2",
+          speaker_name: "说话人 2",
+        },
+      });
+
+      const state = useMeetingStore.getState();
+      expect(state.partialText).toBe("正在识别的结构化预览");
+      expect(state.partialSpeaker).toBe("说话人 2");
     });
 
     it("does not let a stale baseline response overwrite a newer active meeting", async () => {
@@ -327,6 +364,49 @@ describe("meetingStore", () => {
       expect(state.selectedMinutes).not.toBeNull();
       expect(state.selectedMinutes?.status).toBe("generating");
       expect(state.selectedMinutesList).toHaveLength(1);
+    });
+  });
+
+  describe("meeting_title_updated", () => {
+    it("updates active, selected and history meeting titles atomically", () => {
+      useMeetingStore.setState({
+        activeMeetingId: mockMeetingSummaryRecording.id,
+        activeMeeting: {
+          ...mockMeetingDetailCompleted,
+          id: mockMeetingSummaryRecording.id,
+          title: mockMeetingSummaryRecording.title,
+        },
+        selectedMeetingId: mockMeetingSummaryCompleted.id,
+        selectedMeeting: mockMeetingDetailCompleted,
+        historyList: [mockMeetingSummaryRecording, mockMeetingSummaryCompleted],
+      });
+
+      useMeetingStore
+        .getState()
+        .setMeetingTitle(mockMeetingSummaryCompleted.id, "AI 新标题");
+
+      const state = useMeetingStore.getState();
+      expect(state.selectedMeeting?.title).toBe("AI 新标题");
+      expect(
+        state.historyList.find((meeting) => meeting.id === mockMeetingSummaryCompleted.id)?.title,
+      ).toBe("AI 新标题");
+      expect(state.activeMeeting?.title).toBe(mockMeetingSummaryRecording.title);
+    });
+  });
+
+  describe("minutes idempotency", () => {
+    it("sends an idempotency key for every user-triggered generation request", async () => {
+      const generate = vi
+        .spyOn(meetingApi, "generateMinutes")
+        .mockResolvedValue(mockMinutesCompleted);
+
+      await useMeetingStore.getState().triggerGenerateMinutes(mockMeetingSummaryCompleted.id);
+
+      expect(generate).toHaveBeenCalledWith(
+        mockMeetingSummaryCompleted.id,
+        expect.any(String),
+      );
+      expect(generate.mock.calls[0]?.[1]).not.toBe("");
     });
   });
 
@@ -501,7 +581,123 @@ describe("meetingStore", () => {
       expect(state.status).toBe("idle");
       expect(state.selectedMeetingId).toBeNull();
       expect(state.selectedMeeting).toBeNull();
+      expect(state.isCalibrating).toBe(false);
+    });
+
+    it("applySnapshot atomically resets previous meeting segments, speakers, minutes and gaps when meeting ID switches", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-first",
+        status: "recording",
+        segments: [
+          {
+            id: "seg-first-1",
+            order: 1,
+            speaker_key: "spk_0",
+            speaker_name: "旧说话人",
+            start_ms: 0,
+            end_ms: 5000,
+            text: "第一场会议的发言",
+          },
+        ],
+        speakers: {
+          spk_0: {
+            speaker_key: "spk_0",
+            default_label: "spk_0",
+            display_name: "旧说话人",
+            updated_at: "2026-08-26T10:00:00Z",
+          },
+        },
+        minutes: mockMinutesCompleted,
+        minutesHistory: [mockMinutesCompleted],
+        activeMinutesVersion: 1,
+        gaps: [{ start_ms: 1000, end_ms: 2000, reason: "audio drop" }],
+        partialText: "未完成的旧输入",
+        partialSpeaker: "旧说话人",
+        transcriptRevision: 10,
+        contentRevision: 10,
+      });
+
+      const newSnapshot = {
+        meeting: {
+          id: "m-second",
+          title: "第二场会议",
+          status: "recording" as const,
+          language: "Chinese",
+          started_at: "2026-08-26T11:00:00Z",
+          ended_at: null,
+          transcript_revision: 1,
+          content_revision: 1,
+          interruption_reason: null,
+          created_at: "2026-08-26T11:00:00Z",
+        },
+        transcript_revision: 1,
+        content_revision: 1,
+        partial: {
+          text: "新会议的首句 partial",
+          speaker_key: null,
+          speaker_name: null,
+        },
+        health: {
+          storage: "ok" as const,
+          transcription: "ok",
+          mic_muted: false,
+          recovery_journal_active: false,
+        },
+      };
+
+      useMeetingStore.getState().applySnapshot(newSnapshot);
+
+      const state = useMeetingStore.getState();
+      expect(state.activeMeetingId).toBe("m-second");
+      expect(state.segments).toHaveLength(0); // 原子重置
+      expect(state.speakers).toEqual({}); // 原子重置
+      expect(state.minutes).toBeNull(); // 原子重置
+      expect(state.minutesHistory).toHaveLength(0); // 原子重置
+      expect(state.activeMinutesVersion).toBeNull();
+      expect(state.gaps).toHaveLength(0); // 原子重置
+      expect(state.partialText).toBe("新会议的首句 partial");
+      expect(state.partialSpeaker).toBeNull();
+      expect(state.transcriptRevision).toBe(1);
+      expect(state.contentRevision).toBe(1);
+    });
+
+    it("reconcileTranscript replaces segments ending exactly at replace_from_ms (end_ms >= replace_from_ms)", () => {
+      const initialSegments: TranscriptSegment[] = [
+        {
+          id: "seg-exact-boundary",
+          order: 1,
+          speaker_key: "spk_0",
+          speaker_name: "说话人 1",
+          start_ms: 0,
+          end_ms: 10000,
+          text: "旧边界内容（结束于10000）",
+        },
+      ];
+
+      useMeetingStore.setState({
+        segments: initialSegments,
+        transcriptRevision: 1,
+        contentRevision: 1,
+      });
+
+      const newWindow: TranscriptSegment[] = [
+        {
+          id: "seg-replacement",
+          order: 1,
+          speaker_key: "spk_0",
+          speaker_name: "说话人 1",
+          start_ms: 10000,
+          end_ms: 15000,
+          text: "新替换内容",
+        },
+      ];
+
+      // replace_from_ms = 10000 -> seg-exact-boundary.end_ms (10000) >= 10000 -> 被替换
+      useMeetingStore.getState().reconcileTranscript(10000, newWindow, 2, 2);
+
+      const state = useMeetingStore.getState();
+      expect(state.segments).toHaveLength(1);
+      expect(state.segments[0]?.id).toBe("seg-replacement");
     });
   });
 });
-

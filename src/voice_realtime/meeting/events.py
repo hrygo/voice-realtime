@@ -22,12 +22,18 @@ DURABLE_EVENT_TYPES = frozenset(
         "meeting_state_changed",
         "transcript_reconciled",
         "speaker_updated",
+        "meeting_title_updated",
         "minutes_state_changed",
         "health_changed",
         "transcription_gap",
         "resync_required",
     }
 )
+
+_REVISION_FIELDS = {
+    "transcript_reconciled": ("transcript_revision", "content_revision"),
+    "speaker_updated": ("content_revision",),
+}
 
 
 def _json_value(value: Any) -> Any:
@@ -94,6 +100,7 @@ class MeetingEventBroadcaster:
         self._clients: set[MeetingEventClient] = set()
         self._lock = asyncio.Lock()
         self._latest: dict[str, Any] | None = None
+        self._revision_cursors: dict[str, dict[str, int]] = {}
 
     @property
     def clients(self) -> tuple[MeetingEventClient, ...]:
@@ -154,19 +161,37 @@ class MeetingEventBroadcaster:
         normalized = _json_value(event)
         if not isinstance(normalized, dict):
             raise TypeError("meeting event must be an object")
-        event_type = str(normalized.get("type", ""))
-        if event_type != "resync_required":
-            self._latest = normalized
-        durable = event_type in DURABLE_EVENT_TYPES
         async with self._lock:
+            accepted, replacement = self._accept_revision_event(normalized)
+            if not accepted:
+                return
+            event = replacement or normalized
+            event_type = str(event.get("type", ""))
+            if event_type != "resync_required":
+                self._latest = event
+            durable = event_type in DURABLE_EVENT_TYPES
             for client in tuple(self._clients):
                 if client.closed:
                     self._clients.discard(client)
                     continue
-                self._enqueue(client, normalized, durable=durable)
+                self._enqueue(client, event, durable=durable)
 
     async def publish_event(self, event_type: str, meeting_id: str | UUID, payload: Any) -> None:
         await self.publish(make_event(event_type, meeting_id, payload))
+
+    async def observe_snapshot(self, event: Mapping[str, Any] | BaseModel) -> None:
+        """Seed revision cursors from a snapshot sent outside the event queue."""
+
+        normalized = _json_value(event)
+        if not isinstance(normalized, dict):
+            raise TypeError("meeting snapshot must be an object")
+        if normalized.get("type") != "meeting_snapshot":
+            raise ValueError("revision cursor can only be seeded by meeting_snapshot")
+        async with self._lock:
+            self._seed_revision_cursor(
+                str(normalized.get("meeting_id", "")),
+                normalized.get("payload"),
+            )
 
     def _enqueue(self, client: MeetingEventClient, event: dict[str, Any], *, durable: bool) -> None:
         try:
@@ -176,6 +201,19 @@ class MeetingEventBroadcaster:
             if not durable:
                 # partial 是易失数据，慢客户端可安全丢弃。
                 return
+
+        # A resync request is already the recovery signal.  Preserve its
+        # reason when a client is full instead of replacing it with a generic
+        # client_queue_overflow reason.
+        if event.get("type") == "resync_required":
+            while True:
+                try:
+                    client.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            with contextlib.suppress(asyncio.QueueFull):
+                client.queue.put_nowait(event)
+            return
 
         expected_revision = None
         payload = event.get("payload")
@@ -198,6 +236,81 @@ class MeetingEventBroadcaster:
         )
         with contextlib.suppress(asyncio.QueueFull):
             client.queue.put_nowait(resync)
+
+    def _accept_revision_event(
+        self, event: dict[str, Any]
+    ) -> tuple[bool, dict[str, Any] | None]:
+        """Apply the producer-side revision gate for durable content events.
+
+        The broadcaster can observe events from several async producers.  A
+        revision jump means at least one durable event is missing, so sending
+        the newer event would make a consumer build an incomplete transcript.
+        In that case emit one recovery event and retain the previous latest
+        snapshot.  Stale events are harmlessly ignored; the HTTP baseline is
+        still the authority for recovery.
+        """
+
+        event_type = str(event.get("type", ""))
+        meeting_id = str(event.get("meeting_id", ""))
+        payload = event.get("payload")
+
+        if event_type == "meeting_snapshot":
+            self._seed_revision_cursor(meeting_id, payload)
+            return True, None
+
+        fields = _REVISION_FIELDS.get(event_type)
+        if fields is None or not isinstance(payload, Mapping):
+            return True, None
+
+        incoming = {
+            field: value
+            for field in fields
+            if isinstance(value := payload.get(field), int) and not isinstance(value, bool)
+        }
+        if not incoming:
+            # Leave legacy/internal malformed payloads observable; the
+            # contract test gate reports their schema violation with context.
+            return True, None
+
+        cursor = self._revision_cursors.setdefault(meeting_id, {})
+        expected_revision: int | None = None
+        stale = False
+        for field, value in incoming.items():
+            previous = cursor.get(field)
+            if previous is None:
+                continue
+            if value > previous + 1:
+                expected_revision = previous + 1
+                break
+            if value < previous:
+                stale = True
+
+        if expected_revision is not None:
+            return True, make_event(
+                "resync_required",
+                meeting_id or "unknown",
+                {"expected_revision": expected_revision, "reason": "revision_gap"},
+            )
+        if stale:
+            return False, None
+
+        cursor.update(incoming)
+        return True, None
+
+    def _seed_revision_cursor(self, meeting_id: str, payload: Any) -> None:
+        if not isinstance(payload, Mapping):
+            return
+        meeting_payload = payload.get("meeting")
+        if not meeting_id and isinstance(meeting_payload, Mapping):
+            meeting_id = str(meeting_payload.get("id", ""))
+        if not meeting_id:
+            return
+        cursor = self._revision_cursors.setdefault(meeting_id, {})
+        for field in ("transcript_revision", "content_revision"):
+            value = payload.get(field)
+            if not isinstance(value, int) or isinstance(value, bool):
+                continue
+            cursor[field] = value
 
 
 __all__ = [

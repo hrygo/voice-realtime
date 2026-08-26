@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: Voice Studio Meeting Assistant WebSocket API
-  version: 1.0.0
+  version: 1.1.0
   description: Versioned control and meeting-event channels for the separated frontend.
 servers:
   local:
@@ -49,7 +49,7 @@ components:
         properties:
           contract_version: {const: '1'}
           request_id: {type: string, minLength: 1, maxLength: 64}
-          cmd: {type: string, enum: [start_meeting, end_meeting, start_assistant, stop_active_mode]}
+          cmd: {type: string, enum: [start_meeting, end_meeting, start_assistant, start_subtitles, stop_active_mode]}
           title: {type: string, maxLength: 200}
           meeting_id: {type: string, format: uuid}
     ControlResponse:
@@ -65,4 +65,14 @@ components:
           error: {type: [object, 'null']}
     MeetingEvent:
       payload:
-        $ref: './schemas/event-envelope.schema.json'
+        oneOf:
+          - $ref: './schemas/event-meeting-snapshot.schema.json'
+          - $ref: './schemas/event-meeting-state-changed.schema.json'
+          - $ref: './schemas/event-transcript-partial.schema.json'
+          - $ref: './schemas/event-transcript-reconciled.schema.json'
+          - $ref: './schemas/event-speaker-updated.schema.json'
+          - $ref: './schemas/event-meeting-title-updated.schema.json'
+          - $ref: './schemas/event-minutes-state-changed.schema.json'
+          - $ref: './schemas/event-health-changed.schema.json'
+          - $ref: './schemas/event-transcription-gap.schema.json'
+          - $ref: './schemas/event-resync-required.schema.json'

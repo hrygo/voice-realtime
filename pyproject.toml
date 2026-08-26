@@ -61,6 +61,7 @@ vr-subtitles = "voice_realtime.subtitles.launcher:main"
 vr-subtitle-events = "voice_realtime.subtitles.consumer:main"
 vr-ui = "voice_realtime.ui.server:main"
 vr-asr-benchmark = "voice_realtime.benchmarks.asr.cli:main"
+vr-meeting-mock = "voice_realtime.meeting.mock_server:main"
 
 [build-system]
 requires = ["hatchling"]

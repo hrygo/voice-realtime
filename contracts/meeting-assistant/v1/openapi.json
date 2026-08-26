@@ -19,6 +19,10 @@
       "patch": {"operationId": "updateMeetingTitle", "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MeetingTitleUpdate"}}}}, "responses": {"200": {"description": "更新后的会议", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MeetingDetail"}}}}, "409": {"$ref": "#/components/responses/Conflict"}}},
       "delete": {"operationId": "deleteMeeting", "responses": {"204": {"description": "已删除"}, "404": {"$ref": "#/components/responses/NotFound"}, "409": {"$ref": "#/components/responses/Conflict"}}}
     },
+    "/api/v1/meetings/{meeting_id}/generate-title": {
+      "parameters": [{"$ref": "#/components/parameters/MeetingId"}],
+      "post": {"operationId": "generateMeetingTitle", "responses": {"200": {"description": "AI 提炼并更新标题后的会议", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MeetingDetail"}}}}, "400": {"$ref": "#/components/responses/NotFound"}, "404": {"$ref": "#/components/responses/NotFound"}, "503": {"$ref": "#/components/responses/SummaryUnavailable"}}}
+    },
     "/api/v1/meetings/{meeting_id}/transcript": {
       "parameters": [{"$ref": "#/components/parameters/MeetingId"}],
       "get": {"operationId": "getTranscript", "responses": {"200": {"description": "封存转录", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TranscriptResponse"}}}}, "404": {"$ref": "#/components/responses/NotFound"}}}

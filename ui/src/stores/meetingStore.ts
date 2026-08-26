@@ -42,6 +42,7 @@ export interface MeetingStoreState {
   readonly activeMinutesVersion: number | null;
   readonly health: MeetingHealthState;
   readonly isFinalizing: boolean;
+  readonly isCalibrating: boolean;
   readonly sessionStartedAt: string | null;
   readonly sessionEndedAt: string | null;
   readonly interruptionReason: string | null;
@@ -100,6 +101,7 @@ export interface MeetingStoreState {
     meetingId?: string | null,
     minutesId?: string | null,
   ) => void;
+  readonly setMeetingTitle: (meetingId: string, title: string) => void;
   readonly setActiveMinutesVersion: (version: number) => void;
   readonly addGap: (
     start_ms: number,
@@ -112,6 +114,7 @@ export interface MeetingStoreState {
     meetingId?: string | null,
   ) => void;
   readonly setErrorMessage: (msg: string | null) => void;
+  readonly setIsCalibrating: (val: boolean) => void;
   readonly resetActiveSession: () => void;
   readonly syncBaselineTranscript: (meetingId: string) => Promise<void>;
 
@@ -121,6 +124,7 @@ export interface MeetingStoreState {
   readonly fetchHistory: (cursor?: string | null) => Promise<void>;
   readonly selectMeeting: (id: string | null) => Promise<void>;
   readonly updateMeetingTitle: (id: string, title: string) => Promise<void>;
+  readonly generateMeetingTitle: (id: string) => Promise<void>;
   readonly updateSpeakerName: (id: string, speakerKey: string, displayName: string) => Promise<void>;
   readonly triggerGenerateMinutes: (id: string) => Promise<void>;
   readonly selectHistoryMinutesVersion: (id: string, version: number) => Promise<void>;
@@ -173,6 +177,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     recovery_journal_active: false,
   },
   isFinalizing: false,
+  isCalibrating: false,
   sessionStartedAt: null,
   sessionEndedAt: null,
   interruptionReason: null,
@@ -248,8 +253,8 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     if (meetingId && meetingId !== get().activeMeetingId) return;
     const currentSegments = get().segments;
 
-    // 保留与新窗口无重叠的历史（结束时间在替换起始点之前或等于替换点）
-    const stableHistory = currentSegments.filter((seg) => seg.end_ms <= replaceFromMs);
+    // 保留与新窗口无重叠的历史（结束时间严格小于替换起始点）
+    const stableHistory = currentSegments.filter((seg) => seg.end_ms < replaceFromMs);
 
     // 过滤掉 newSegments 中可能与 stableHistory id 重复的段
     const existingIds = new Set(stableHistory.map((s) => s.id));
@@ -271,23 +276,40 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
       transcriptRevision,
       contentRevision,
       partialText: null, // 清空过时的 partial
+      isCalibrating: false,
     });
   },
 
   applySnapshot: (snapshot) => {
     const meeting = snapshot.meeting;
     const isFinalizing = meeting.status === "finalizing";
+    const currentActiveId = get().activeMeetingId;
+    const isDifferentMeeting = meeting.id !== currentActiveId;
 
     set((state) => ({
-      activeMeetingId: meeting.id,
-      status: meeting.status,
-      sessionStartedAt: meeting.started_at,
-      sessionEndedAt: meeting.ended_at,
+      activeMeetingId: meeting.id || null,
+      activeMeeting: isDifferentMeeting ? null : state.activeMeeting,
+      status: meeting.status || "idle",
+      sessionStartedAt: meeting.started_at || null,
+      sessionEndedAt: meeting.ended_at || null,
       interruptionReason: meeting.interruption_reason || null,
-      transcriptRevision: Math.max(state.transcriptRevision, snapshot.transcript_revision),
-      contentRevision: Math.max(state.contentRevision, snapshot.content_revision),
-      partialText: snapshot.partial || null,
+      // 换会时原子重置旧会议的数据，避免残留
+      segments: isDifferentMeeting ? [] : state.segments,
+      speakers: isDifferentMeeting ? {} : state.speakers,
+      minutes: isDifferentMeeting ? null : state.minutes,
+      minutesHistory: isDifferentMeeting ? [] : state.minutesHistory,
+      activeMinutesVersion: isDifferentMeeting ? null : state.activeMinutesVersion,
+      gaps: isDifferentMeeting ? [] : state.gaps,
+      partialSpeaker: snapshot.partial?.speaker_name || null,
+      transcriptRevision: isDifferentMeeting
+        ? snapshot.transcript_revision
+        : Math.max(state.transcriptRevision, snapshot.transcript_revision),
+      contentRevision: isDifferentMeeting
+        ? snapshot.content_revision
+        : Math.max(state.contentRevision, snapshot.content_revision),
+      partialText: snapshot.partial?.text || null,
       isFinalizing,
+      isCalibrating: false,
       health: snapshot.health
         ? {
             ...state.health,
@@ -434,8 +456,8 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
           version,
           status,
           source_content_revision: existing?.source_content_revision ?? state.contentRevision,
-          model: existing?.model || "qwen/qwen3.8-27b",
-          prompt_version: existing?.prompt_version || "v1",
+          model: existing?.model || "qwen/qwen3.6-35b-a3b",
+          prompt_version: existing?.prompt_version || "v2-bounded",
           content_json: null,
           content_markdown: null,
           raw_output: null,
@@ -495,6 +517,22 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     });
   },
 
+  setMeetingTitle: (meetingId, title) => {
+    set((state) => ({
+      selectedMeeting:
+        state.selectedMeeting?.id === meetingId
+          ? { ...state.selectedMeeting, title }
+          : state.selectedMeeting,
+      activeMeeting:
+        state.activeMeeting?.id === meetingId
+          ? { ...state.activeMeeting, title }
+          : state.activeMeeting,
+      historyList: state.historyList.map((meeting) =>
+        meeting.id === meetingId ? { ...meeting, title } : meeting,
+      ),
+    }));
+  },
+
   setActiveMinutesVersion: (version) => {
     const history = get().minutesHistory;
     const target = history.find((m) => m.version === version);
@@ -524,6 +562,10 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     set({ errorMessage: msg });
   },
 
+  setIsCalibrating: (val) => {
+    set({ isCalibrating: val });
+  },
+
   resetActiveSession: () => {
     set({
       activeMeetingId: null,
@@ -540,6 +582,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
       minutesHistory: [],
       activeMinutesVersion: null,
       isFinalizing: false,
+      isCalibrating: false,
       sessionStartedAt: null,
       sessionEndedAt: null,
       interruptionReason: null,
@@ -555,6 +598,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   },
 
   syncBaselineTranscript: async (meetingId) => {
+    set({ isCalibrating: true });
     try {
       const [transcriptResp, meetingDetail] = await Promise.allSettled([
         meetingApi.fetchTranscript(meetingId),
@@ -568,6 +612,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
             segments: resp.segments,
             transcriptRevision: resp.transcript_revision,
             contentRevision: resp.content_revision,
+            isCalibrating: false,
           });
         }
       }
@@ -587,6 +632,10 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
       }
     } catch {
       // 网络瞬时异常，由重连退避重试
+    } finally {
+      if (get().activeMeetingId === meetingId) {
+        set({ isCalibrating: false });
+      }
     }
   },
 
@@ -653,19 +702,12 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
 
   updateMeetingTitle: async (id, title) => {
     const updated = await meetingApi.updateMeetingTitle(id, title);
-    set((state) => ({
-      selectedMeeting:
-        state.selectedMeeting?.id === id
-          ? { ...state.selectedMeeting, title: updated.title }
-          : state.selectedMeeting,
-      activeMeeting:
-        state.activeMeeting?.id === id
-          ? { ...state.activeMeeting, title: updated.title }
-          : state.activeMeeting,
-      historyList: state.historyList.map((m) =>
-        m.id === id ? { ...m, title: updated.title } : m,
-      ),
-    }));
+    get().setMeetingTitle(id, updated.title);
+  },
+
+  generateMeetingTitle: async (id) => {
+    const updated = await meetingApi.generateMeetingTitle(id);
+    get().setMeetingTitle(id, updated.title);
   },
 
   updateSpeakerName: async (id, speakerKey, displayName) => {
@@ -691,7 +733,11 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   },
 
   triggerGenerateMinutes: async (id) => {
-    const newMinutes = await meetingApi.generateMinutes(id);
+    const idempotencyKey =
+      typeof globalThis.crypto?.randomUUID === "function"
+        ? globalThis.crypto.randomUUID()
+        : `minutes:${id}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+    const newMinutes = await meetingApi.generateMinutes(id, idempotencyKey);
     set((state) => {
       let nextSelectedMinutes = state.selectedMinutes;
       let nextSelectedVersion = state.selectedMinutesVersion;

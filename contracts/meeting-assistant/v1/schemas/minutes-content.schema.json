@@ -6,17 +6,19 @@
   "additionalProperties": false,
   "required": ["overview", "topics", "decisions", "action_items", "risks", "open_questions", "highlights"],
   "properties": {
-    "overview": {"type": "string"},
-    "topics": {"type": "array", "items": {"$ref": "#/$defs/topic"}},
-    "decisions": {"type": "array", "items": {"$ref": "#/$defs/decision"}},
-    "action_items": {"type": "array", "items": {"$ref": "#/$defs/action_item"}},
-    "risks": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}},
-    "open_questions": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}},
-    "highlights": {"type": "array", "items": {"$ref": "#/$defs/evidence_item"}}
+    "title": {"type": ["string", "null"], "maxLength": 64},
+    "overview": {"type": "string", "minLength": 1, "maxLength": 3000},
+    "topics": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/topic"}},
+    "decisions": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/decision"}},
+    "action_items": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/action_item"}},
+    "risks": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/evidence_item"}},
+    "open_questions": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/evidence_item"}},
+    "highlights": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/evidence_item"}}
   },
   "$defs": {
     "evidence_ids": {
       "type": "array",
+      "maxItems": 6,
       "items": {"type": "string", "format": "uuid"}
     },
     "topic": {
@@ -24,8 +26,8 @@
       "additionalProperties": false,
       "required": ["title", "summary", "evidence_segment_ids"],
       "properties": {
-        "title": {"type": "string"},
-        "summary": {"type": "string"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 1000},
         "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
       }
     },
@@ -34,7 +36,7 @@
       "additionalProperties": false,
       "required": ["content", "evidence_segment_ids"],
       "properties": {
-        "content": {"type": "string"},
+        "content": {"type": "string", "minLength": 1, "maxLength": 1000},
         "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
       }
     },
@@ -43,9 +45,9 @@
       "additionalProperties": false,
       "required": ["task", "owner", "due_date", "evidence_segment_ids"],
       "properties": {
-        "task": {"type": "string"},
-        "owner": {"type": ["string", "null"]},
-        "due_date": {"type": ["string", "null"]},
+        "task": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "owner": {"type": ["string", "null"], "maxLength": 200},
+        "due_date": {"type": ["string", "null"], "maxLength": 64},
         "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
       }
     },
@@ -54,7 +56,7 @@
       "additionalProperties": false,
       "required": ["content", "evidence_segment_ids"],
       "properties": {
-        "content": {"type": "string"},
+        "content": {"type": "string", "minLength": 1, "maxLength": 1000},
         "evidence_segment_ids": {"$ref": "#/$defs/evidence_ids"}
       }
     }

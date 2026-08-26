@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import type { TranscriptSegment } from "../../contracts/meetingContract";
 import { formatTimeRange } from "./MeetingGapAlert";
 import { showToast } from "../Toast";
+import { deriveReadingBlocks } from "./transcriptViewModel";
 
 interface MeetingTranscriptViewerProps {
   segments: readonly TranscriptSegment[];
@@ -51,6 +52,8 @@ export function MeetingTranscriptViewer({
   const [localStarredIds, setLocalStarredIds] = useState<Set<string>>(() => new Set());
   const starredIds = propStarredIds ?? localStarredIds;
   const [filterStarredOnly, setFilterStarredOnly] = useState(false);
+  const [viewMode, setViewMode] = useState<"timeline" | "reading">("timeline");
+  const [expandedBlockIds, setExpandedBlockIds] = useState<Set<string>>(() => new Set());
   const segmentRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   // Unique speakers and their statistics
@@ -80,7 +83,7 @@ export function MeetingTranscriptViewer({
     if (propToggleStarSegment) {
       const isCurrentlyStarred = starredIds.has(id);
       propToggleStarSegment(id);
-      showToast(isCurrentlyStarred ? "已取消重点标记" : "⭐ 已标记此段落为重点", isCurrentlyStarred ? "info" : "success");
+      showToast(isCurrentlyStarred ? "已取消重点标记" : "⭐ 已标记此发言为重点", isCurrentlyStarred ? "info" : "success");
       return;
     }
     setLocalStarredIds((prev) => {
@@ -90,7 +93,7 @@ export function MeetingTranscriptViewer({
         showToast("已取消重点标记", "info");
       } else {
         next.add(id);
-        showToast("⭐ 已标记此段落为重点", "success");
+        showToast("⭐ 已标记此发言为重点", "success");
       }
       return next;
     });
@@ -108,6 +111,22 @@ export function MeetingTranscriptViewer({
       return matchSpeaker && matchSearch;
     });
   }, [segments, filterStarredOnly, starredIds, selectedSpeaker, search]);
+
+  const readingBlocks = useMemo(() => {
+    return deriveReadingBlocks(filtered, starredIds);
+  }, [filtered, starredIds]);
+
+  const toggleBlockExpand = (blockId: string) => {
+    setExpandedBlockIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(blockId)) {
+        next.delete(blockId);
+      } else {
+        next.add(blockId);
+      }
+      return next;
+    });
+  };
 
   // Auto scroll to highlighted segment
   useEffect(() => {
@@ -143,17 +162,39 @@ export function MeetingTranscriptViewer({
           <span className="pane-icon">📝</span>
           <span className="pane-title">会议逐字转录</span>
           <span className="pane-count-badge">
-            {filtered.length} 段
+            {filtered.length} 个发言片段
             {starredIds.size > 0 && ` · ⭐ ${starredIds.size} 重点`}
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {/* 时序视图 / 阅读视图切换器 */}
+          <div className="view-mode-toggle-group" role="radiogroup" aria-label="转录视图切换">
+            <button
+              type="button"
+              className={`btn-view-mode ${viewMode === "timeline" ? "active" : ""}`}
+              onClick={() => setViewMode("timeline")}
+              aria-pressed={viewMode === "timeline"}
+              title="时序视图"
+            >
+              ⏱️ 时序
+            </button>
+            <button
+              type="button"
+              className={`btn-view-mode ${viewMode === "reading" ? "active" : ""}`}
+              onClick={() => setViewMode("reading")}
+              aria-pressed={viewMode === "reading"}
+              title="阅读视图"
+            >
+              📖 阅读
+            </button>
+          </div>
+
           {starredIds.size > 0 && (
             <button
               type="button"
               className={`pane-header-btn ${filterStarredOnly ? "primary" : ""}`}
               onClick={() => setFilterStarredOnly((prev) => !prev)}
-              title={filterStarredOnly ? "查看全部转录段落" : "仅查看已标为重点的段落"}
+              title={filterStarredOnly ? "查看全部发言片段" : "仅查看已标为重点的发言片段"}
             >
               <span>⭐</span>
               <span>{filterStarredOnly ? "查看全部" : `仅看重点 (${starredIds.size})`}</span>
@@ -258,77 +299,160 @@ export function MeetingTranscriptViewer({
             <span style={{ fontSize: "1.5rem", marginBottom: "6px" }}>🔍</span>
             <span>
               {filterStarredOnly
-                ? "暂无标记为重点的段落"
-                : "未匹配到相关转录段落"}
+                ? "暂无标记为重点的发言片段"
+                : "未匹配到相关转录内容"}
             </span>
           </div>
         )}
 
-        {filtered.map((seg) => {
-          const isHighlighted = highlightedSegmentId === seg.id;
-          const isStarred = starredIds.has(seg.id);
-          const currentSpeakerColor =
-            speakerStats.find((s) => s.key === seg.speaker_key)?.color || "var(--color-accent)";
+        {/* 1. 时序视图 (Timeline View) */}
+        {viewMode === "timeline" &&
+          filtered.map((seg) => {
+            const isHighlighted = highlightedSegmentId === seg.id;
+            const isStarred = starredIds.has(seg.id);
+            const currentSpeakerColor =
+              speakerStats.find((s) => s.key === seg.speaker_key)?.color || "var(--color-accent)";
 
-          return (
-            <div
-              key={seg.id}
-              ref={(el) => {
-                segmentRefs.current[seg.id] = el;
-              }}
-              className={`segment-card ${isHighlighted ? "highlighted" : ""} ${isStarred ? "is-starred" : ""}`}
-              style={{
-                borderLeftColor: isStarred ? "var(--color-yellow)" : currentSpeakerColor,
-              }}
-            >
-              <div className="segment-top">
-                <button
-                  type="button"
-                  className="speaker-tag-btn"
-                  onClick={() => onRenameSpeaker(seg.speaker_key, seg.speaker_name)}
-                  title="点击修改此说话人名称"
-                >
-                  <span
-                    className="speaker-avatar-circle"
-                    style={{ backgroundColor: currentSpeakerColor }}
+            return (
+              <div
+                key={seg.id}
+                ref={(el) => {
+                  segmentRefs.current[seg.id] = el;
+                }}
+                className={`segment-card ${isHighlighted ? "highlighted" : ""} ${isStarred ? "is-starred" : ""}`}
+                style={{
+                  borderLeftColor: isStarred ? "var(--color-yellow)" : currentSpeakerColor,
+                }}
+              >
+                <div className="segment-top">
+                  <button
+                    type="button"
+                    className="speaker-tag-btn"
+                    onClick={() => onRenameSpeaker(seg.speaker_key, seg.speaker_name)}
+                    title="点击修改此说话人名称"
                   >
-                    👤
-                  </span>
-                  <span className="speaker-name-text">{seg.speaker_name}</span>
-                  <span className="speaker-edit-badge">✎</span>
-                </button>
-                <div className="segment-actions-group">
-                  {isStarred && (
-                    <span className="segment-starred-badge" title="重点发言段落">
-                      ⭐ 重点
+                    <span
+                      className="speaker-avatar-circle"
+                      style={{ backgroundColor: currentSpeakerColor }}
+                    >
+                      👤
                     </span>
-                  )}
-                  <span className="segment-time">
-                    {formatTimeRange(seg.start_ms, seg.end_ms)}
-                  </span>
-                  <button
-                    type="button"
-                    className={`segment-star-btn ${isStarred ? "active" : ""}`}
-                    title={isStarred ? "取消重点标记" : "标记此段落为重点"}
-                    onClick={() => toggleStarSegment(seg.id)}
-                  >
-                    <span>{isStarred ? "⭐" : "✩"}</span>
-                    <span className="star-btn-text">{isStarred ? "已标记" : "标为重点"}</span>
+                    <span className="speaker-name-text">{seg.speaker_name}</span>
+                    <span className="speaker-edit-badge" title="可重命名">✎</span>
                   </button>
-                  <button
-                    type="button"
-                    className="segment-copy-btn"
-                    title="复制此段内容"
-                    onClick={() => void handleCopySegment(seg.text)}
-                  >
-                    📋
-                  </button>
+                  <div className="segment-actions-group">
+                    {isStarred && (
+                      <span className="segment-starred-badge" title="重点发言片段">
+                        ⭐ 重点
+                      </span>
+                    )}
+                    <span className="segment-time">
+                      {formatTimeRange(seg.start_ms, seg.end_ms)}
+                    </span>
+                    <button
+                      type="button"
+                      className={`segment-star-btn ${isStarred ? "active" : ""}`}
+                      title={isStarred ? "取消重点标记" : "标记此片段为重点"}
+                      aria-pressed={isStarred}
+                      onClick={() => toggleStarSegment(seg.id)}
+                    >
+                      <span>{isStarred ? "⭐" : "✩"}</span>
+                      <span className="star-btn-text">{isStarred ? "已标记" : "标为重点"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="segment-copy-btn"
+                      title="复制此段内容"
+                      onClick={() => void handleCopySegment(seg.text)}
+                    >
+                      📋
+                    </button>
+                  </div>
                 </div>
+                <p className="segment-text">{highlightMatch(seg.text, search)}</p>
               </div>
-              <p className="segment-text">{highlightMatch(seg.text, search)}</p>
-            </div>
-          );
-        })}
+            );
+          })}
+
+        {/* 2. 阅读视图 (Reading View) */}
+        {viewMode === "reading" &&
+          readingBlocks.map((block) => {
+            const isExpanded = expandedBlockIds.has(block.block_id);
+            const currentSpeakerColor =
+              speakerStats.find((s) => s.key === block.speaker_key)?.color || "var(--color-accent)";
+
+            return (
+              <div
+                key={block.block_id}
+                className={`segment-card reading-block-card ${block.isStarred ? "is-starred" : ""}`}
+                style={{
+                  borderLeftColor: block.isStarred ? "var(--color-yellow)" : currentSpeakerColor,
+                }}
+              >
+                <div className="segment-top">
+                  <button
+                    type="button"
+                    className="speaker-tag-btn"
+                    onClick={() => onRenameSpeaker(block.speaker_key, block.speaker_name)}
+                    title="点击修改此说话人名称"
+                  >
+                    <span
+                      className="speaker-avatar-circle"
+                      style={{ backgroundColor: currentSpeakerColor }}
+                    >
+                      👤
+                    </span>
+                    <span className="speaker-name-text">{block.speaker_name}</span>
+                    <span className="speaker-edit-badge" title="可重命名">✎</span>
+                  </button>
+                  <div className="segment-actions-group">
+                    {block.isStarred && (
+                      <span className="segment-starred-badge" title="包含重点发言片段">
+                        ⭐ 重点
+                      </span>
+                    )}
+                    <span className="segment-time">
+                      {formatTimeRange(block.start_ms, block.end_ms)}
+                    </span>
+                    <button
+                      type="button"
+                      className="segment-copy-btn"
+                      title="复制此段阅读内容"
+                      onClick={() => void handleCopySegment(block.text)}
+                    >
+                      📋
+                    </button>
+                  </div>
+                </div>
+                <p className="segment-text reading-block-text">{highlightMatch(block.text, search)}</p>
+                {block.segment_ids.length > 1 && (
+                  <div className="reading-block-meta">
+                    <button
+                      type="button"
+                      className="btn-expand-segments"
+                      onClick={() => toggleBlockExpand(block.block_id)}
+                    >
+                      <span>{isExpanded ? "收起发言片段明细 ▴" : `聚合了 ${block.segment_ids.length} 个连续发言片段 ▾`}</span>
+                    </button>
+                    {isExpanded && (
+                      <div className="reading-block-segments-preview">
+                        {block.segment_ids.map((id) => {
+                          const seg = segments.find((s) => s.id === id);
+                          if (!seg) return null;
+                          return (
+                            <div key={id} className="preview-subsegment">
+                              <span className="preview-subsegment-time">[{formatTimeRange(seg.start_ms, seg.end_ms)}]</span>
+                              <span className="preview-subsegment-text">{highlightMatch(seg.text, search)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
       </div>
     </div>
   );

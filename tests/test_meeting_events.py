@@ -7,7 +7,11 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from voice_realtime.meeting.events import MeetingEventBroadcaster, make_event
+from voice_realtime.meeting.events import DURABLE_EVENT_TYPES, MeetingEventBroadcaster, make_event
+
+
+def test_meeting_title_updated_is_a_durable_event() -> None:
+    assert "meeting_title_updated" in DURABLE_EVENT_TYPES
 
 
 @pytest.mark.asyncio
@@ -24,6 +28,79 @@ async def test_slow_client_gets_resync_required_for_durable_event() -> None:
         "reason": "client_queue_overflow",
     }
     assert broadcaster.snapshot()["payload"]["transcript_revision"] == 2
+
+
+@pytest.mark.asyncio
+async def test_revision_gap_emits_resync_instead_of_broadcasting_new_revision() -> None:
+    broadcaster = MeetingEventBroadcaster()
+    client = broadcaster.add_test_client()
+    await broadcaster.publish(
+        make_event(
+            "transcript_reconciled",
+            "m1",
+            {"transcript_revision": 1, "content_revision": 1},
+        )
+    )
+    assert (await client.receive())["payload"]["transcript_revision"] == 1
+
+    await broadcaster.publish(
+        make_event(
+            "transcript_reconciled",
+            "m1",
+            {"transcript_revision": 3, "content_revision": 3},
+        )
+    )
+
+    event = await client.receive()
+    assert event["type"] == "resync_required"
+    assert event["meeting_id"] == "m1"
+    assert event["payload"] == {"expected_revision": 2, "reason": "revision_gap"}
+    assert broadcaster.snapshot()["payload"]["transcript_revision"] == 1
+
+
+@pytest.mark.asyncio
+async def test_observed_snapshot_reseeds_revision_cursor_after_gap() -> None:
+    broadcaster = MeetingEventBroadcaster()
+    client = broadcaster.add_test_client()
+    await broadcaster.publish(
+        make_event(
+            "transcript_reconciled",
+            "m1",
+            {"transcript_revision": 1, "content_revision": 1},
+        )
+    )
+    await client.receive()
+    await broadcaster.publish(
+        make_event(
+            "transcript_reconciled",
+            "m1",
+            {"transcript_revision": 3, "content_revision": 3},
+        )
+    )
+    await client.receive()
+
+    await broadcaster.observe_snapshot(
+        make_event(
+            "meeting_snapshot",
+            "m1",
+            {
+                "meeting": {"id": "m1"},
+                "transcript_revision": 3,
+                "content_revision": 3,
+            },
+        )
+    )
+    await broadcaster.publish(
+        make_event(
+            "transcript_reconciled",
+            "m1",
+            {"transcript_revision": 4, "content_revision": 4},
+        )
+    )
+
+    event = await client.receive()
+    assert event["type"] == "transcript_reconciled"
+    assert event["payload"]["transcript_revision"] == 4
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ import { useMeetingStore } from "../stores/meetingStore";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeMode } from "../contracts/meetingContract";
+import { apiUrl } from "../config/runtimeConfig";
 import "./StatusBar.css";
 
 type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
@@ -279,7 +280,7 @@ export default function StatusBar({
   const fetchServices = useCallback(async (isManual = false) => {
     if (!isManual && typeof document !== "undefined" && document.hidden) return;
     try {
-      const resp = await fetch("/api/services");
+      const resp = await fetch(apiUrl("/api/services"));
       if (!resp.ok) return;
       const data: ServicesResponse = await resp.json();
       setNetworkScope(normalizeNetworkScope(data.network_scope));

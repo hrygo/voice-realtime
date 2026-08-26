@@ -703,6 +703,7 @@ def _runtime_state_json(runtime: Any) -> dict[str, Any]:
 async def _meeting_snapshot(app: FastAPI, broadcaster: MeetingEventBroadcaster) -> dict[str, Any]:
     provided = await broadcaster.snapshot_async()
     if isinstance(provided, dict) and provided.get("type") == "meeting_snapshot":
+        await broadcaster.observe_snapshot(provided)
         return provided
     runtime = getattr(app.state, "meeting_runtime", None) or getattr(app.state, "runtime", None)
     runtime_state = _runtime_state_json(runtime)
@@ -730,17 +731,19 @@ async def _meeting_snapshot(app: FastAPI, broadcaster: MeetingEventBroadcaster) 
                             str(runtime_state.get("storage", "ok")) == "degraded"
                         ),
                     },
-                    "partial": getattr(last_window, "partial", None),
+                    "partial": _partial_snapshot_json(last_window),
                     "transcript_revision": document.transcript_revision,
                     "content_revision": document.content_revision,
                 }
-                return make_event("meeting_snapshot", meeting_id, payload)
+                snapshot = make_event("meeting_snapshot", meeting_id, payload)
+                await broadcaster.observe_snapshot(snapshot)
+                return snapshot
         except Exception:
             logger.warning("构造会议快照失败，回退运行时快照", exc_info=True)
     now = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     payload = {
         "meeting": {
-            "id": meeting_id,
+            "id": meeting_id or "00000000-0000-4000-8000-000000000000",
             "title": "",
             "status": meeting_status,
             "language": "Chinese",
@@ -761,7 +764,31 @@ async def _meeting_snapshot(app: FastAPI, broadcaster: MeetingEventBroadcaster) 
         "transcript_revision": 0,
         "content_revision": 0,
     }
-    return make_event("meeting_snapshot", meeting_id, payload)
+    snapshot = make_event("meeting_snapshot", meeting_id, payload)
+    await broadcaster.observe_snapshot(snapshot)
+    return snapshot
+
+
+def _partial_snapshot_json(window: Any) -> dict[str, str | None] | None:
+    """Serialize the volatile partial without exposing the domain model."""
+
+    text = str(getattr(window, "partial", "") or "").strip()
+    if not text:
+        return None
+    speaker_key = getattr(window, "partial_speaker_key", None)
+    if speaker_key is not None:
+        speaker_key = str(speaker_key)
+    speaker_name = getattr(window, "partial_speaker_name", None)
+    if speaker_name is not None:
+        speaker_name = str(speaker_name)
+    if speaker_key and not speaker_name:
+        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
+        speaker_name = f"说话人 {raw}" if raw.isdigit() else None
+    return {
+        "text": text,
+        "speaker_key": speaker_key,
+        "speaker_name": speaker_name,
+    }
 
 
 async def _allow_websocket(websocket: WebSocket, cfg: Settings) -> bool:

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-transcript-partial.schema.json",
+  "title": "TranscriptPartialEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "transcript_partial"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "speaker_key": {"type": ["string", "null"]},
+        "speaker_name": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

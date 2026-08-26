@@ -8,6 +8,7 @@ import {
   type TranscriptResponse,
 } from "../contracts/meetingContract";
 import type { RuntimeStateSnapshot } from "../protocol";
+import { apiUrl } from "../config/runtimeConfig";
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -44,7 +45,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 
 export const meetingApi = {
   async fetchRuntimeState(): Promise<RuntimeStateSnapshot> {
-    const res = await fetch("/api/v1/runtime");
+    const res = await fetch(apiUrl("/api/v1/runtime"));
     return handleResponse<RuntimeStateSnapshot>(res);
   },
 
@@ -53,22 +54,22 @@ export const meetingApi = {
     if (cursor) params.set("cursor", cursor);
     if (limit) params.set("limit", String(limit));
     const qs = params.toString();
-    const res = await fetch(`/api/v1/meetings${qs ? `?${qs}` : ""}`);
+    const res = await fetch(apiUrl(`/api/v1/meetings${qs ? `?${qs}` : ""}`));
     return handleResponse<MeetingListResponse>(res);
   },
 
   async fetchMeeting(id: string): Promise<MeetingDetail> {
-    const res = await fetch(`/api/v1/meetings/${encodeURIComponent(id)}`);
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}`));
     return handleResponse<MeetingDetail>(res);
   },
 
   async fetchTranscript(id: string): Promise<TranscriptResponse> {
-    const res = await fetch(`/api/v1/meetings/${encodeURIComponent(id)}/transcript`);
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/transcript`));
     return handleResponse<TranscriptResponse>(res);
   },
 
   async updateMeetingTitle(id: string, title: string): Promise<MeetingDetail> {
-    const res = await fetch(`/api/v1/meetings/${encodeURIComponent(id)}`, {
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title }),
@@ -76,9 +77,17 @@ export const meetingApi = {
     return handleResponse<MeetingDetail>(res);
   },
 
+  async generateMeetingTitle(id: string): Promise<MeetingDetail> {
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/generate-title`), {
+      method: "POST",
+    });
+    return handleResponse<MeetingDetail>(res);
+  },
+
+
   async updateSpeakerName(id: string, speakerKey: string, displayName: string): Promise<MeetingSpeaker> {
     const res = await fetch(
-      `/api/v1/meetings/${encodeURIComponent(id)}/speakers/${encodeURIComponent(speakerKey)}`,
+      apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/speakers/${encodeURIComponent(speakerKey)}`),
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -95,7 +104,7 @@ export const meetingApi = {
     if (idempotencyKey) {
       headers["Idempotency-Key"] = idempotencyKey;
     }
-    const res = await fetch(`/api/v1/meetings/${encodeURIComponent(id)}/minutes`, {
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/minutes`), {
       method: "POST",
       headers,
     });
@@ -104,13 +113,13 @@ export const meetingApi = {
 
   async fetchMinutesVersion(id: string, version: number): Promise<MeetingMinutesVersion> {
     const res = await fetch(
-      `/api/v1/meetings/${encodeURIComponent(id)}/minutes/${encodeURIComponent(String(version))}`,
+      apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/minutes/${encodeURIComponent(String(version))}`),
     );
     return handleResponse<MeetingMinutesVersion>(res);
   },
 
   getExportUrl(id: string, format: ExportFormat): string {
-    return `/api/v1/meetings/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`;
+    return apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}/export?format=${encodeURIComponent(format)}`);
   },
 
   async downloadExport(id: string, format: ExportFormat, filename?: string): Promise<void> {
@@ -135,7 +144,7 @@ export const meetingApi = {
   },
 
   async deleteMeeting(id: string): Promise<void> {
-    const res = await fetch(`/api/v1/meetings/${encodeURIComponent(id)}`, {
+    const res = await fetch(apiUrl(`/api/v1/meetings/${encodeURIComponent(id)}`), {
       method: "DELETE",
     });
     return handleResponse<void>(res);

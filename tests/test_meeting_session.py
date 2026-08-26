@@ -339,6 +339,80 @@ async def test_session_publishes_partial_and_durable_transcript_events(
     assert reconciled["segments"][0]["text"] == "已确认"
 
 
+async def test_partial_event_preserves_known_speaker_identity(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    events: list[tuple[str, UUID, object]] = []
+
+    async def publish(event_type: str, meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, meeting_id, payload))
+
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    await _start_session(session)
+
+    await session._on_window(
+        TranscriptWindow(
+            source_epoch=1,
+            partial="正在确认",
+            partial_speaker_key="epoch:1:speaker:1",
+            partial_speaker_name="主持人",
+        )
+    )
+
+    partial = next(event[2] for event in events if event[0] == "transcript_partial")
+    assert partial == {
+        "text": "正在确认",
+        "speaker_key": "epoch:1:speaker:1",
+        "speaker_name": "主持人",
+    }
+
+
+async def test_partial_event_keeps_unknown_speaker_null(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    events: list[tuple[str, UUID, object]] = []
+
+    async def publish(event_type: str, meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, meeting_id, payload))
+
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    await _start_session(session)
+    await session._on_window(TranscriptWindow(source_epoch=1, partial="未知说话人"))
+
+    partial = next(event[2] for event in events if event[0] == "transcript_partial")
+    assert partial == {
+        "text": "未知说话人",
+        "speaker_key": None,
+        "speaker_name": None,
+    }
+
+
+async def test_partial_event_does_not_echo_opaque_speaker_key(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    events: list[tuple[str, UUID, object]] = []
+
+    async def publish(event_type: str, meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, meeting_id, payload))
+
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    await _start_session(session)
+    await session._on_window(
+        TranscriptWindow(
+            source_epoch=1,
+            partial="尚未命名",
+            partial_speaker_key="opaque-internal-key",
+        )
+    )
+
+    partial = next(event[2] for event in events if event[0] == "transcript_partial")
+    assert partial == {
+        "text": "尚未命名",
+        "speaker_key": "opaque-internal-key",
+        "speaker_name": None,
+    }
+
+
 async def test_start_rejects_unwritable_storage(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:

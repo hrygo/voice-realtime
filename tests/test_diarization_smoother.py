@@ -33,6 +33,21 @@ def test_diarization_smoother_disabled() -> None:
     assert result == window
 
 
+def test_diarization_smoother_preserves_partial_speaker_identity() -> None:
+    window = TranscriptWindow(
+        source_epoch=1,
+        partial="正在说",
+        partial_speaker_key="epoch:1:speaker:1",
+        partial_speaker_name="主持人",
+        segments=(_make_segment(0, "speaker:s0", 0, 1000, "已确认"),),
+    )
+
+    smoothed = DiarizationSmoother().smooth_window(window)
+
+    assert smoothed.partial_speaker_key == "epoch:1:speaker:1"
+    assert smoothed.partial_speaker_name == "主持人"
+
+
 def test_diarization_smoother_filter_short_noise() -> None:
     smoother = DiarizationSmoother(min_duration_ms=350)
     # seg1: 100ms 纯符号杂音 -> 过滤

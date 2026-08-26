@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-speaker-updated.schema.json",
+  "title": "SpeakerUpdatedEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "speaker_updated"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["speaker_key", "display_name", "content_revision"],
+      "properties": {
+        "speaker_key": {"type": "string", "minLength": 1, "maxLength": 200},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "content_revision": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

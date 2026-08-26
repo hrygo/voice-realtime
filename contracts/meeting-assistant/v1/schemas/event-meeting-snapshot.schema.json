@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-meeting-snapshot.schema.json",
+  "title": "MeetingSnapshotEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "meeting_snapshot"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string"},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["meeting", "health", "partial", "transcript_revision", "content_revision"],
+      "properties": {
+        "meeting": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "title", "status", "language", "started_at", "ended_at", "transcript_revision", "content_revision", "interruption_reason", "created_at"],
+          "properties": {
+            "id": {"type": "string", "format": "uuid"},
+            "title": {"type": "string"},
+            "status": {"enum": ["recording", "finalizing", "completed", "interrupted", "storage_error"]},
+            "language": {"type": "string"},
+            "started_at": {"type": ["string", "null"], "format": "date-time"},
+            "ended_at": {"type": ["string", "null"], "format": "date-time"},
+            "transcript_revision": {"type": "integer", "minimum": 0},
+            "content_revision": {"type": "integer", "minimum": 0},
+            "interruption_reason": {"type": ["string", "null"]},
+            "created_at": {"type": "string", "format": "date-time"}
+          }
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["storage", "transcription", "mic_muted", "recovery_journal_active"],
+          "properties": {
+            "storage": {"type": "string"},
+            "transcription": {"type": "string"},
+            "mic_muted": {"type": "boolean"},
+            "recovery_journal_active": {"type": "boolean"}
+          }
+        },
+        "partial": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text"],
+              "properties": {
+                "text": {"type": "string", "minLength": 1},
+                "speaker_key": {"type": ["string", "null"]},
+                "speaker_name": {"type": ["string", "null"]}
+              }
+            }
+          ]
+        },
+        "transcript_revision": {"type": "integer", "minimum": 0},
+        "content_revision": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

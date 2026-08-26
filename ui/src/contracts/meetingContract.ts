@@ -33,6 +33,25 @@ export interface TranscriptSegment {
   readonly source_epoch?: number;
 }
 
+/** 前端派生阅读视图块 (§5.1, 不作为后端持久化事实) */
+export interface TranscriptViewBlock {
+  readonly block_id: string;
+  readonly segment_ids: readonly string[];
+  readonly speaker_key: string;
+  readonly speaker_name: string;
+  readonly source_epoch?: number;
+  readonly start_ms: number;
+  readonly end_ms: number;
+  readonly text: string;
+  readonly isStarred?: boolean;
+}
+
+export interface ReadingBlockOptions {
+  readonly maxGapMs?: number;       // default 1200ms
+  readonly maxDurationMs?: number;  // default 15000ms (15s)
+  readonly maxLength?: number;       // default 180 chars
+}
+
 export interface MeetingSpeaker {
   readonly speaker_key: string;
   readonly original_speaker?: string;
@@ -75,6 +94,7 @@ export interface EvidenceHighlight {
 }
 
 export interface MinutesContentJson {
+  readonly title?: string | null;
   readonly overview: string;
   readonly topics: EvidenceTopic[];
   readonly decisions: EvidenceDecision[];
@@ -169,6 +189,8 @@ export const ERROR_CODE_MESSAGES: Record<string, string> = {
   meeting_not_active: "目标会议未处于活动状态",
   finalization_timeout: "会议转录冲刷超时，已封存当前数据",
   summary_unavailable: "AI 纪要模型服务不可用",
+  summary_timeout: "AI 纪要生成超过安全时限，已停止",
+  output_limit: "AI 纪要输出异常增长，已停止退化生成",
   internal_error: "服务端内部异常",
   service_unavailable: "服务连接未建立或不可达",
   timeout: "请求处理超时",
@@ -185,6 +207,7 @@ export type MeetingEventType =
   | "transcript_partial"
   | "transcript_reconciled"
   | "speaker_updated"
+  | "meeting_title_updated"
   | "minutes_state_changed"
   | "health_changed"
   | "transcription_gap"
@@ -199,6 +222,12 @@ export interface MeetingEventEnvelope<T = unknown> {
   readonly payload: T;
 }
 
+export interface MeetingPartialPayload {
+  readonly text: string;
+  readonly speaker_key?: string | null;
+  readonly speaker_name?: string | null;
+}
+
 export interface MeetingSnapshotPayload {
   readonly meeting: MeetingSummary;
   readonly health?: {
@@ -207,7 +236,7 @@ export interface MeetingSnapshotPayload {
     readonly mic_muted?: boolean;
     readonly recovery_journal_active?: boolean;
   };
-  readonly partial?: string | null;
+  readonly partial?: MeetingPartialPayload | null;
   readonly transcript_revision: number;
   readonly content_revision: number;
 }
@@ -238,6 +267,21 @@ export interface SpeakerUpdatedPayload {
   readonly content_revision: number;
 }
 
+export interface MeetingTitleUpdatedPayload {
+  readonly title: string;
+}
+
+export interface SummaryCallStats {
+  readonly stage: string;
+  readonly model: string;
+  readonly duration_seconds: number;
+  readonly input_tokens?: number;
+  readonly total_output_tokens?: number;
+  readonly reasoning_output_tokens?: number;
+  readonly tokens_per_second?: number;
+  readonly time_to_first_token_seconds?: number;
+}
+
 export interface MinutesStateChangedPayload {
   readonly minutes_id?: string;
   readonly version: number;
@@ -245,6 +289,7 @@ export interface MinutesStateChangedPayload {
   readonly error_code?: string | null;
   readonly error_message?: string | null;
   readonly minutes?: MeetingMinutesVersion | null;
+  readonly generation_stats?: readonly SummaryCallStats[] | null;
 }
 
 export interface HealthChangedPayload {

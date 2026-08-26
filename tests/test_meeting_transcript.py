@@ -7,6 +7,8 @@ from uuid import UUID
 
 from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
 from voice_realtime.meeting import transcript as transcript_module
+from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.meeting.transcript import TranscriptAccumulator
 
 
 def _snapshot(text: str = "你好", speaker: int = 1) -> dict[str, object]:
@@ -60,3 +62,18 @@ def test_normalizer_ids_change_when_wlk_revises_text() -> None:
 def test_meeting_transcript_has_no_vendor_adapter_dependency() -> None:
     source = Path(transcript_module.__file__).read_text(encoding="utf-8")
     assert "voice_realtime.asr.adapters" not in source
+
+
+def test_transcript_accumulator_detects_partial_speaker_changes() -> None:
+    accumulator = TranscriptAccumulator()
+    first = TranscriptWindow(
+        source_epoch=1,
+        partial="正在说",
+        partial_speaker_key="epoch:1:speaker:1",
+    )
+    second = first.model_copy(
+        update={"partial_speaker_key": "epoch:1:speaker:2"}
+    )
+
+    assert accumulator.apply(first) is True
+    assert accumulator.apply(second) is True

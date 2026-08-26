@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-meeting-state-changed.schema.json",
+  "title": "MeetingStateChangedEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "meeting_state_changed"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "started_at", "ended_at", "interruption_reason"],
+      "properties": {
+        "status": {"enum": ["recording", "finalizing", "completed", "interrupted", "storage_error"]},
+        "started_at": {"type": ["string", "null"], "format": "date-time"},
+        "ended_at": {"type": ["string", "null"], "format": "date-time"},
+        "interruption_reason": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

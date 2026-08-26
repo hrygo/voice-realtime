@@ -172,7 +172,7 @@ export function MeetingMinutesViewer({
             </div>
             <div className="ai-generating-footer">
               <span className="ai-model-tag">
-                🤖 模型: {minutes?.model || "qwen/qwen3.8-27b"}
+                🤖 模型: {minutes?.model || "qwen/qwen3.6-35b-a3b"}
               </span>
               <span className="ai-safe-tip">
                 🛡️ 本地推理 · 左侧转录可独立查看与导出
@@ -214,6 +214,39 @@ export function MeetingMinutesViewer({
 
         {!isGenerating && !isFailed && jsonContent && viewMode === "structured" && (
           <>
+            {/* 0. 纪要主题提炼 */}
+            {jsonContent.title && (
+              <div
+                className="minutes-card"
+                style={{
+                  borderColor: "rgba(99, 102, 241, 0.25)",
+                  background: "rgba(99, 102, 241, 0.05)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                  <span
+                    style={{
+                      fontSize: "0.72rem",
+                      color: "var(--color-accent)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    🏷️ AI 纪要主题提炼
+                  </span>
+                </div>
+                <h3
+                  style={{
+                    fontSize: "1.02rem",
+                    fontWeight: 700,
+                    color: "var(--text-primary)",
+                    margin: 0,
+                  }}
+                >
+                  {jsonContent.title}
+                </h3>
+              </div>
+            )}
+
             {/* 1. 会议概要 */}
             {jsonContent.overview && (
               <div className="minutes-card">

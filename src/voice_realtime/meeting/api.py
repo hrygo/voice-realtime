@@ -313,6 +313,14 @@ def _runtime(request: Request, explicit: Any) -> Any:
     )
 
 
+def _summary_service(request: Request, explicit: Any) -> Any:
+    return (
+        explicit
+        or getattr(request.app.state, "meeting_summary_service", None)
+        or getattr(request.app.state, "summary_service", None)
+    )
+
+
 async def _publish_event(
     request: Request,
     event_type: str,
@@ -396,9 +404,55 @@ def create_meeting_router(
             meeting = method(meeting_id, body.title)
             if inspect.isawaitable(meeting):
                 meeting = await meeting
+            await _publish_event(
+                request,
+                "meeting_title_updated",
+                meeting_id,
+                {"title": str(_attr(meeting, "title", body.title))},
+            )
             return await _meeting_detail(repo, meeting)
         except Exception as exc:
             raise _typed_error(exc) from exc
+
+    @router.api_route("/meetings/{meeting_id}/generate-title", methods=["POST", "PATCH"])
+    async def generate_meeting_title(
+        request: Request,
+        meeting_id: UUID,
+    ) -> dict[str, Any]:
+        repo = _repository(request, repository)
+        summary_srv = _summary_service(request, summary_service)
+        client = getattr(summary_srv, "client", None)
+        try:
+            document = await repo.get_transcript(meeting_id)
+            segments = tuple(_attr(document, "segments", ()) or ())
+            if not segments:
+                raise MeetingAPIError(
+                    "invalid_request", "会议没有可生成标题的转录内容", status_code=400
+                )
+            speakers = _attr(document, "speakers", ())
+            if client is not None and hasattr(client, "generate_title"):
+                title = await client.generate_title(document, speakers)
+            else:
+                first_text = str(_attr(segments[0], "text", "")).strip()
+                title = first_text[:20] or "AI 会议纪要"
+            method = getattr(repo, "update_title", None) or getattr(repo, "rename_meeting", None)
+            if method is None:
+                raise MeetingAPIError("internal_error", "会议标题更新不可用", status_code=500)
+            meeting = method(meeting_id, title)
+            if inspect.isawaitable(meeting):
+                meeting = await meeting
+            await _publish_event(
+                request,
+                "meeting_title_updated",
+                meeting_id,
+                {"title": str(_attr(meeting, "title", title))},
+            )
+            return await _meeting_detail(repo, meeting)
+        except MeetingAPIError:
+            raise
+        except Exception as exc:
+            raise _typed_error(exc) from exc
+
 
     @router.patch("/meetings/{meeting_id}/speakers/{speaker_key}")
     async def update_speaker(

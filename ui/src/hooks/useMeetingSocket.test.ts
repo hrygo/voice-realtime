@@ -40,6 +40,7 @@ describe("useMeetingSocket", () => {
     expect(isMeetingEventRelevant("transcript_partial", "m-old", state)).toBe(false);
     expect(isMeetingEventRelevant("transcription_gap", "m-current", state)).toBe(true);
     expect(isMeetingEventRelevant("minutes_state_changed", "m-history", state)).toBe(true);
+    expect(isMeetingEventRelevant("meeting_title_updated", "m-history", state)).toBe(true);
     expect(isMeetingEventRelevant("minutes_state_changed", "m-old", state)).toBe(false);
   });
 });

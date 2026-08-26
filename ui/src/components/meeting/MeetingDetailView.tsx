@@ -19,6 +19,7 @@ interface MeetingDetailViewProps {
   selectedMinutesVersion: number | null;
   onSelectMinutesVersion: (version: number) => void;
   onUpdateTitle: (title: string) => Promise<void>;
+  onGenerateTitle: () => Promise<void>;
   onRenameSpeaker: (speakerKey: string, currentName: string) => void;
   onRegenerateMinutes: () => Promise<void>;
   onDeleteMeeting: () => Promise<void> | void;
@@ -37,6 +38,7 @@ export function MeetingDetailView({
   selectedMinutesVersion,
   onSelectMinutesVersion,
   onUpdateTitle,
+  onGenerateTitle,
   onRenameSpeaker,
   onRegenerateMinutes,
   onDeleteMeeting,
@@ -48,9 +50,27 @@ export function MeetingDetailView({
 }: MeetingDetailViewProps) {
   const [title, setTitle] = useState(meeting.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+
+  const handleGenerateTitle = async () => {
+    if (isGeneratingTitle) return;
+    if (segments.length === 0) {
+      showToast("当前会议暂无转录内容，无法由 AI 提炼标题", "warning");
+      return;
+    }
+    setIsGeneratingTitle(true);
+    try {
+      await onGenerateTitle();
+      showToast("✨ AI 已成功提炼并更新会议标题", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "AI 标题生成失败", "error");
+    } finally {
+      setIsGeneratingTitle(false);
+    }
+  };
 
   // Split ratio (left pane percentage, e.g. 48)
   const [splitPercent, setSplitPercent] = useState<number>(() => {
@@ -295,22 +315,35 @@ function formatMeetingDateTime(dateStr?: string | null): string {
 
           <div className="detail-title-block">
             <div className="detail-title-row">
-              <input
-                className="detail-title-input"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onFocus={() => setIsEditingTitle(true)}
-                onBlur={() => void handleTitleBlur()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                  if (e.key === "Escape") {
-                    setTitle(meeting.title);
-                    setIsEditingTitle(false);
-                  }
-                }}
-                placeholder="输入会议主题..."
-                title="点击修改会议标题 (按 Enter 确认)"
-              />
+              <div className={`detail-title-input-wrapper ${isEditingTitle || isGeneratingTitle ? "is-focused" : ""}`}>
+                <input
+                  className="detail-title-input"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onFocus={() => setIsEditingTitle(true)}
+                  onBlur={() => void handleTitleBlur()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") {
+                      setTitle(meeting.title);
+                      setIsEditingTitle(false);
+                    }
+                  }}
+                  placeholder="输入会议主题..."
+                  title="点击修改会议标题 (按 Enter 确认)"
+                />
+                <button
+                  type="button"
+                  className={`ai-title-gen-btn ${isGeneratingTitle ? "loading" : ""}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => void handleGenerateTitle()}
+                  disabled={isGeneratingTitle || segments.length === 0}
+                  title={segments.length === 0 ? "暂无转录内容，无法提炼标题" : "根据会议转录由 AI 提炼并更新会议标题"}
+                >
+                  <span className="ai-btn-icon">{isGeneratingTitle ? "⏳" : "✨"}</span>
+                  <span className="ai-btn-text">{isGeneratingTitle ? "提炼中..." : "AI 智能命名"}</span>
+                </button>
+              </div>
               {isEditingTitle && (
                 <span className="detail-save-hint">
                   (按 Enter 保存)

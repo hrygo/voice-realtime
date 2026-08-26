@@ -94,9 +94,10 @@ export const mockMinutesCompleted = {
   version: 1,
   status: "completed" as const,
   source_content_revision: 42,
-  model: "qwen/qwen3.8-27b",
+  model: "qwen/qwen3.6-35b-a3b",
   prompt_version: "v1.0",
   content_json: {
+    title: "实时语音与字幕产品评审",
     overview: "本次会议讨论了 Voice Studio 会议助手的前后端解耦实现方案，明确了契约标准和交付时间表。",
     topics: [
       {

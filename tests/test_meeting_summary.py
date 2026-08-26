@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -265,7 +266,8 @@ def test_summary_client_payload_is_native_and_role_free() -> None:
     assert payload["stream"] is True
     assert "role" not in payload
     assert "max_tokens" not in payload
-    assert all("role" not in item for item in payload["input"])
+    assert payload["system_prompt"] == "instructions"
+    assert payload["input"] == "transcript"
 
 
 @pytest.mark.asyncio
@@ -360,6 +362,123 @@ async def test_summary_client_wraps_timeout_errors() -> None:
 
 
 @pytest.mark.asyncio
+async def test_summary_client_enforces_total_deadline_during_active_stream() -> None:
+    client = MeetingSummaryClient(
+        settings=SimpleNamespace(summary_request_timeout_secs=0.01),
+        model="m",
+        base_url="http://127.0.0.1:1234/v1",
+    )
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        async def aiter_lines(self) -> object:
+            for _ in range(20):
+                await asyncio.sleep(0.005)
+                yield 'data: {"type":"message.delta","content":"x"}'
+
+    @asynccontextmanager
+    async def stream(*_args: object, **_kwargs: object) -> object:
+        yield _Response()
+
+    client._http.stream = stream  # type: ignore[method-assign]
+    with pytest.raises(SummaryUnavailableError) as exc_info:
+        await client._stream_text({"model": "m"})
+    assert exc_info.value.code == "summary_timeout"
+
+
+@pytest.mark.asyncio
+async def test_summary_client_stops_degenerate_output_before_server_limit() -> None:
+    client = MeetingSummaryClient(
+        settings=SimpleNamespace(summary_max_output_chars=8),
+        model="m",
+        base_url="http://127.0.0.1:1234/v1",
+    )
+    client._http = _stream_client(
+        ('data: {"type":"message.delta","content":"123456789"}',)
+    )._http
+
+    with pytest.raises(SummaryUnavailableError) as exc_info:
+        await client._stream_text({"model": "m"})
+    assert exc_info.value.code == "output_limit"
+
+
+@pytest.mark.asyncio
+async def test_summary_client_uses_compact_segment_refs_and_map_budget() -> None:
+    segment_id = _document().segments[0].id
+    model_output = {
+        "title": "发布计划",
+        "overview": "确定发布计划。",
+        "topics": [
+            {
+                "title": "发布",
+                "summary": "下周一发布。",
+                "evidence_segment_ids": ["S0001"],
+            }
+        ],
+        "decisions": [],
+        "action_items": [],
+        "risks": [],
+        "open_questions": [],
+        "highlights": [],
+    }
+    event = json.dumps(
+        {"type": "message.delta", "content": json.dumps(model_output, ensure_ascii=False)},
+        ensure_ascii=False,
+    )
+    client = _stream_client((f"data: {event}",))
+    captured: list[dict[str, object]] = []
+    original_build = client._build_payload
+
+    def build_payload(
+        instructions: str,
+        transcript: str,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> dict[str, object]:
+        payload = original_build(
+            instructions,
+            transcript,
+            max_output_tokens=max_output_tokens,
+        )
+        captured.append(payload)
+        return payload
+
+    client._build_payload = build_payload  # type: ignore[method-assign]
+    result = await client.generate(_document(), ())
+
+    assert result.topics[0].evidence_segment_ids == (segment_id,)
+    assert captured[0]["max_output_tokens"] == 2048
+    assert "[S0001]" in str(captured[0]["input"])
+    assert "SEG:" not in str(captured[0]["input"])
+
+
+@pytest.mark.asyncio
+async def test_summary_client_captures_chat_end_stats_without_content_logging() -> None:
+    event = json.dumps(
+        {
+            "type": "chat.end",
+            "result": {
+                "output": [{"type": "message", "content": '{"overview":"ok"}'}],
+                "stats": {
+                    "input_tokens": 120,
+                    "total_output_tokens": 18,
+                    "reasoning_output_tokens": 0,
+                    "tokens_per_second": 91.9,
+                },
+            },
+        }
+    )
+    client = _stream_client((f"data: {event}",))
+
+    assert await client._stream_text({"model": "m"}) == '{"overview":"ok"}'
+    assert client.call_stats[-1]["input_tokens"] == 120
+    assert client.call_stats[-1]["total_output_tokens"] == 18
+    assert "content" not in client.call_stats[-1]
+
+
+@pytest.mark.asyncio
 async def test_summary_client_rejects_empty_transcript_and_adds_repair_instruction() -> None:
     client = _stream_client(
         (
@@ -373,15 +492,24 @@ async def test_summary_client_rejects_empty_transcript_and_adds_repair_instructi
     payloads: list[dict[str, object]] = []
     original_build = client._build_payload
 
-    def build_payload(instructions: str, transcript: str) -> dict[str, object]:
-        payload = original_build(instructions, transcript)
+    def build_payload(
+        instructions: str,
+        transcript: str,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> dict[str, object]:
+        payload = original_build(
+            instructions,
+            transcript,
+            max_output_tokens=max_output_tokens,
+        )
         payloads.append(payload)
         return payload
 
     client._build_payload = build_payload  # type: ignore[method-assign]
     with pytest.raises(SummaryValidationError):
         await client.generate(_document(), (), repair=True)
-    instructions = str(payloads[0]["input"])
+    instructions = str(payloads[0]["system_prompt"])
     assert "只修复 JSON 结构" in instructions
     assert '"evidence_segment_ids"' in instructions
     assert '"task"' in instructions
@@ -401,8 +529,17 @@ async def test_summary_client_reduce_sends_only_map_results_and_closes_idempoten
     captured: list[dict[str, object]] = []
     original_build = client._build_payload
 
-    def build_payload(instructions: str, transcript: str) -> dict[str, object]:
-        payload = original_build(instructions, transcript)
+    def build_payload(
+        instructions: str,
+        transcript: str,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> dict[str, object]:
+        payload = original_build(
+            instructions,
+            transcript,
+            max_output_tokens=max_output_tokens,
+        )
         captured.append(payload)
         return payload
 
@@ -411,13 +548,43 @@ async def test_summary_client_reduce_sends_only_map_results_and_closes_idempoten
     assert reduced.overview == "合并"
     assert len(captured) == 1
     assert "确定发布计划。" in str(captured[0]["input"])
-    assert "归并器" in str(captured[0]["input"])
-    assert '"evidence_segment_ids"' in str(captured[0]["input"])
-    assert '"task"' in str(captured[0]["input"])
-    assert "禁止使用 segments" in str(captured[0]["input"])
+    assert "归并器" in str(captured[0]["system_prompt"])
+    assert '"evidence_segment_ids"' in str(captured[0]["system_prompt"])
+    assert '"task"' in str(captured[0]["system_prompt"])
+    assert "禁止使用 segments" in str(captured[0]["system_prompt"])
 
     await client.close()
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_summary_client_reduce_repairs_only_the_invalid_json() -> None:
+    client = MeetingSummaryClient(model="m", base_url="http://127.0.0.1:1234/v1")
+    invalid = SummaryValidationError("invalid reduce")
+    invalid.raw_output = "{invalid-reduce"
+
+    async def stream_text(_payload: object, *, stage: str = "summary") -> str:
+        assert stage == "reduce"
+        raise invalid
+
+    repair_inputs: list[tuple[str, int | None]] = []
+
+    async def repair_output(
+        raw_output: str,
+        document: object,
+        _speakers: object,
+        *,
+        max_output_tokens: int | None = None,
+    ) -> MinutesContent:
+        repair_inputs.append((raw_output, max_output_tokens))
+        return _content(document.segments[0].id)
+
+    client._stream_text = stream_text  # type: ignore[method-assign]
+    client.repair_output = repair_output  # type: ignore[method-assign]
+
+    result = await client.reduce((_content(_document().segments[0].id),), _document(), ())
+    assert result.overview == "确定发布计划。"
+    assert repair_inputs == [("{invalid-reduce", 4096)]
 
 
 def test_invalid_summary_is_a_typed_validation_error() -> None:
@@ -596,6 +763,64 @@ async def test_summary_worker_repairs_one_invalid_model_response() -> None:
     assert repository.failed_code is None
     assert repository.completed is not None
     assert service._active is False
+
+
+@pytest.mark.asyncio
+async def test_summary_worker_repairs_raw_output_without_resending_transcript() -> None:
+    content = _content(_document().segments[0].id)
+
+    class _RawRepairClient:
+        def __init__(self) -> None:
+            self.generate_calls = 0
+            self.repair_inputs: list[str] = []
+
+        async def generate(
+            self, _document: object, _speakers: object, *, repair: bool = False
+        ) -> object:
+            del repair
+            self.generate_calls += 1
+            error = SummaryValidationError("invalid")
+            error.raw_output = "{invalid-json"
+            raise error
+
+        async def repair_output(
+            self, raw_output: str, _document: object, _speakers: object
+        ) -> object:
+            self.repair_inputs.append(raw_output)
+            return content
+
+    repository = _Repository(content)
+    client = _RawRepairClient()
+    service = MeetingSummaryService(repository, client, settings=SimpleNamespace())
+
+    assert await service.run_once()
+    assert client.generate_calls == 1
+    assert client.repair_inputs == ["{invalid-json"]
+    assert repository.completed is not None
+
+
+@pytest.mark.asyncio
+async def test_summary_worker_enforces_job_deadline_and_persists_timeout() -> None:
+    content = _content(_document().segments[0].id)
+
+    class _SlowClient:
+        async def generate(
+            self, _document: object, _speakers: object, *, repair: bool = False
+        ) -> object:
+            del repair
+            await asyncio.sleep(0.05)
+            return content
+
+    repository = _Repository(content)
+    service = MeetingSummaryService(
+        repository,
+        _SlowClient(),
+        settings=SimpleNamespace(summary_job_timeout_secs=0.01),
+    )
+
+    assert await service.run_once()
+    assert repository.failed_code == "summary_timeout"
+    assert repository.completed is None
 
 
 @pytest.mark.asyncio
@@ -799,3 +1024,118 @@ async def test_summary_worker_survives_event_publisher_failure() -> None:
 
     assert await service.run_once()
     assert repository.completed is not None
+
+
+def test_markdown_renderer_with_custom_title() -> None:
+    segment_id = _document().segments[0].id
+    content = _content(segment_id)
+    content_with_title = MinutesContent(
+        title="2026年Q3产品战略规划研讨",
+        overview=content.overview,
+        topics=content.topics,
+        decisions=content.decisions,
+        action_items=content.action_items,
+        risks=content.risks,
+        open_questions=content.open_questions,
+        highlights=content.highlights,
+    )
+    markdown = render_minutes_markdown(content_with_title)
+    assert markdown.startswith("# 会议纪要：2026年Q3产品战略规划研讨")
+    assert f"[{segment_id}]" in markdown
+
+
+@pytest.mark.asyncio
+async def test_summary_client_generate_title() -> None:
+    class _FakeStreamResponse:
+        def __init__(self, text: str) -> None:
+            self.status_code = 200
+            self._lines = [
+                f'data: {{"type":"message.delta","content":"{text}"}}',
+                "data: [DONE]",
+            ]
+
+        async def __aenter__(self) -> _FakeStreamResponse:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+        async def aiter_lines(self):
+            for line in self._lines:
+                yield line
+
+    class _FakeHttp:
+        def __init__(self, response_text: str) -> None:
+            self.response_text = response_text
+            self.last_payload: dict[str, object] | None = None
+
+        def stream(self, method: str, url: str, **kwargs: object):
+            self.last_payload = kwargs.get("json")  # type: ignore[assignment]
+            return _FakeStreamResponse(self.response_text)
+
+    fake_http = _FakeHttp("会议标题：《语音助手与会议纪要架构评审》" + "很长的文字" * 20)
+    client = MeetingSummaryClient(
+        model="test-model",
+        http_client=fake_http,
+    )
+    title = await client.generate_title(_document())
+    assert len(title) <= 64
+    assert title.startswith("语音助手与会议纪要架构评审")
+    assert not title.startswith("《")
+    assert not title.startswith("会议标题：")
+    assert fake_http.last_payload is not None
+    assert fake_http.last_payload.get("max_output_tokens") == 128
+
+
+
+@pytest.mark.asyncio
+async def test_summary_worker_auto_updates_default_meeting_title() -> None:
+    content = MinutesContent(
+        title="语音实时架构评审",
+        overview="确认发布计划。",
+        topics=(),
+        decisions=(),
+        action_items=(),
+        risks=(),
+        open_questions=(),
+        highlights=(),
+    )
+
+    class _RepositoryWithUpdateTitle(_Repository):
+        def __init__(self, result: object) -> None:
+            super().__init__(result)
+            self.updated_title: str | None = None
+
+        async def claim_minutes(self) -> SimpleNamespace:
+            return SimpleNamespace(
+                id=uuid4(),
+                meeting_id=_document().meeting_id,
+                meeting=SimpleNamespace(id=_document().meeting_id, title="会议-20260826-140000"),
+                source_content_revision=3,
+                model="test-model",
+                prompt_version="v1",
+            )
+
+        async def update_title(self, meeting_id: UUID, title: str) -> SimpleNamespace:
+            self.updated_title = title
+            return SimpleNamespace(id=meeting_id, title=title)
+
+    events: list[tuple[str, object]] = []
+
+    async def publish(event_type: str, _meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, payload))
+
+    repository = _RepositoryWithUpdateTitle(content)
+    service = MeetingSummaryService(
+        repository,
+        _Client(content),
+        settings=SimpleNamespace(),
+        event_publisher=publish,
+    )
+
+    assert await service.run_once()
+    assert repository.updated_title == "语音实时架构评审"
+    title_events = [
+        payload for event_type, payload in events if event_type == "meeting_title_updated"
+    ]
+    assert title_events == [{"title": "语音实时架构评审"}]

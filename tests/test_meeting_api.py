@@ -701,3 +701,44 @@ async def test_non_meeting_validation_keeps_fastapi_default_shape() -> None:
     assert response.status_code == 422
     assert "detail" in response.json()
     assert "error" not in response.json()
+
+
+@pytest.mark.asyncio
+async def test_generate_meeting_title_endpoint() -> None:
+    app = FastAPI()
+    repo = _AllRoutesRepo()
+
+    async def fake_generate_title(doc: Any, speakers: Any = ()) -> str:
+        return "AI提炼：语音交互架构讨论"
+
+    summary_client = SimpleNamespace(generate_title=fake_generate_title)
+    summary_service = SimpleNamespace(client=summary_client)
+    install_meeting_api(app, repository=repo, summary_service=summary_service)
+
+    class _Events:
+        def __init__(self) -> None:
+            self.items: list[tuple[str, UUID, dict[str, object]]] = []
+
+        async def publish_event(
+            self, event_type: str, meeting_id: UUID, payload: dict[str, object]
+        ) -> None:
+            self.items.append((event_type, meeting_id, payload))
+
+    events = _Events()
+    app.state.meeting_events = events
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(f"/api/v1/meetings/{MEETING_ID}/generate-title")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title"] == "AI提炼：语音交互架构讨论"
+    assert repo.meeting.title == "AI提炼：语音交互架构讨论"
+    assert events.items == [
+        (
+            "meeting_title_updated",
+            MEETING_ID,
+            {"title": "AI提炼：语音交互架构讨论"},
+        )
+    ]

@@ -107,12 +107,28 @@ class TranscriptWindow(_FrozenModel):
 
     source_epoch: int = Field(ge=0)
     partial: str = Field(default="", max_length=100_000)
+    partial_speaker_key: str | None = Field(default=None, min_length=1, max_length=200)
+    partial_speaker_name: str | None = Field(default=None, min_length=1, max_length=200)
     segments: tuple[NormalizedSegment, ...] = ()
 
     @field_validator("partial")
     @classmethod
     def _strip_partial(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("partial_speaker_key", "partial_speaker_name")
+    @classmethod
+    def _strip_partial_speaker(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def _validate_partial_speaker(self) -> Self:
+        """空 partial 不得携带过期的说话人标签。"""
+        if not self.partial and (self.partial_speaker_key or self.partial_speaker_name):
+            raise ValueError("空 partial 不得携带说话人标签")
+        return self
 
 
 class TranscriptReconcileResult(_FrozenModel):
@@ -184,58 +200,60 @@ class MeetingPage(_FrozenModel):
 class Topic(_FrozenModel):
     """纪要中的主题。"""
 
-    title: str = Field(min_length=1, max_length=500)
-    summary: str = Field(min_length=1, max_length=100_000)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class Decision(_FrozenModel):
     """纪要中的决策。"""
 
-    content: str = Field(min_length=1, max_length=100_000)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    content: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class ActionItem(_FrozenModel):
     """纪要中的行动项；缺失信息保持为空。"""
 
-    task: str = Field(min_length=1, max_length=100_000)
+    task: str = Field(min_length=1, max_length=1_000)
     owner: str | None = Field(default=None, max_length=200)
     due_date: str | None = Field(default=None, max_length=64)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class Risk(_FrozenModel):
     """纪要中的风险。"""
 
-    content: str = Field(min_length=1, max_length=100_000)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    content: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class OpenQuestion(_FrozenModel):
     """纪要中的待确认问题。"""
 
-    content: str = Field(min_length=1, max_length=100_000)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    content: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class Highlight(_FrozenModel):
     """纪要中的重点摘录。"""
 
-    content: str = Field(min_length=1, max_length=100_000)
-    evidence_segment_ids: tuple[UUID, ...] = ()
+    content: str = Field(min_length=1, max_length=1_000)
+    evidence_segment_ids: tuple[UUID, ...] = Field(default=(), max_length=6)
 
 
 class MinutesResult(_FrozenModel):
     """已通过证据 ID 校验的结构化纪要。"""
 
-    overview: str = Field(min_length=1, max_length=100_000)
-    topics: tuple[Topic, ...] = ()
-    decisions: tuple[Decision, ...] = ()
-    action_items: tuple[ActionItem, ...] = ()
-    risks: tuple[Risk, ...] = ()
-    open_questions: tuple[OpenQuestion, ...] = ()
-    highlights: tuple[Highlight, ...] = ()
+    title: str | None = Field(default=None, max_length=64)
+    overview: str = Field(min_length=1, max_length=3_000)
+    topics: tuple[Topic, ...] = Field(default=(), max_length=12)
+    decisions: tuple[Decision, ...] = Field(default=(), max_length=12)
+    action_items: tuple[ActionItem, ...] = Field(default=(), max_length=12)
+    risks: tuple[Risk, ...] = Field(default=(), max_length=8)
+    open_questions: tuple[OpenQuestion, ...] = Field(default=(), max_length=8)
+    highlights: tuple[Highlight, ...] = Field(default=(), max_length=12)
+
 
 
 class MinutesRecord(_FrozenModel):
@@ -247,7 +265,7 @@ class MinutesRecord(_FrozenModel):
     status: MinutesStatus = MinutesStatus.QUEUED
     source_content_revision: int = Field(default=0, ge=0)
     model: str = Field(default="", max_length=256)
-    prompt_version: str = Field(default="v1", max_length=64)
+    prompt_version: str = Field(default="v2-bounded", max_length=64)
     content_json: MinutesResult | None = None
     content_markdown: str | None = None
     raw_output: str | None = None

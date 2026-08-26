@@ -1,0 +1,10 @@
+{
+  "contract_version": "1",
+  "type": "meeting_title_updated",
+  "event_id": "77777777-7777-4777-8777-777777777777",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-26T12:00:00Z",
+  "payload": {
+    "title": "语音实时架构评审"
+  }
+}

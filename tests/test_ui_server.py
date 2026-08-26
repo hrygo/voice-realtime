@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from voice_realtime.config import Settings, SubtitleSettings
-from voice_realtime.meeting.models import PCMOwner, RuntimeMode
+from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
 from voice_realtime.ui import server as server_module
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
@@ -871,6 +871,50 @@ class TestMeetingV1Gateway:
         assert event["contract_version"] == "1"
         assert event["type"] == "meeting_snapshot"
         assert "meeting" in event["payload"]
+
+    def test_idle_meeting_snapshot_uses_nil_meeting_and_null_partial(self) -> None:
+        app = create_app(Settings(), initialize_meeting=False)
+        app.state.runtime = _FakeRuntime(mode=RuntimeMode.IDLE)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with client.websocket_connect("/ws/v1/meetings") as ws:
+            event = ws.receive_json()
+
+        assert event["meeting_id"] == ""
+        assert event["payload"]["meeting"]["id"] == "00000000-0000-4000-8000-000000000000"
+        assert event["payload"]["partial"] is None
+
+    def test_snapshot_partial_serializes_known_speaker_without_guessing_unknown(self) -> None:
+        known = server_module._partial_snapshot_json(
+            TranscriptWindow(
+                source_epoch=1,
+                partial="正在说",
+                partial_speaker_key="epoch:1:speaker:2",
+            )
+        )
+        unknown = server_module._partial_snapshot_json(
+            TranscriptWindow(source_epoch=1, partial="尚未分人")
+        )
+
+        assert known == {
+            "text": "正在说",
+            "speaker_key": "epoch:1:speaker:2",
+            "speaker_name": "说话人 2",
+        }
+        assert unknown == {"text": "尚未分人", "speaker_key": None, "speaker_name": None}
+        opaque = server_module._partial_snapshot_json(
+            TranscriptWindow(
+                source_epoch=1,
+                partial="尚未命名",
+                partial_speaker_key="opaque-internal-key",
+            )
+        )
+
+        assert opaque == {
+            "text": "尚未命名",
+            "speaker_key": "opaque-internal-key",
+            "speaker_name": None,
+        }
 
     def test_control_socket_uses_v1_envelope(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)

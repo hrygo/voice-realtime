@@ -823,6 +823,23 @@ class PostgresMeetingRepository:
                     existing = await existing_cursor.fetchone()
                     if existing is not None:
                         return _minutes_from_row(existing)
+                active_cursor = await connection.execute(
+                    f"""
+                    SELECT {_MINUTES_COLUMNS}
+                    FROM {self._schema}.meeting_minutes
+                    WHERE meeting_id = %s AND status IN (%s, %s)
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    (
+                        meeting_id,
+                        MinutesStatus.QUEUED.value,
+                        MinutesStatus.GENERATING.value,
+                    ),
+                )
+                active = await active_cursor.fetchone()
+                if active is not None:
+                    return _minutes_from_row(active)
                 version_cursor = await connection.execute(
                     f"""
                     SELECT COALESCE(MAX(version), 0) + 1
@@ -849,7 +866,7 @@ class PostgresMeetingRepository:
                         MinutesStatus.QUEUED.value,
                         meeting.content_revision,
                         self.settings.summary_model,
-                        "v1",
+                        "v2-bounded",
                         idempotency_key,
                         now,
                         now,
@@ -1116,7 +1133,17 @@ class PostgresMeetingRepository:
 
 def _render_minutes_markdown(result: MinutesResult) -> str:
     """从已校验结构稳定渲染 Markdown，不记录原始模型 prompt。"""
-    lines = ["# 会议纪要", "", "## 概要", "", result.overview]
+    title = str(getattr(result, "title", "") or "").strip()
+    if title:
+        if title.startswith("#"):
+            header = title
+        elif not title.startswith("会议纪要"):
+            header = f"# 会议纪要：{title}"
+        else:
+            header = f"# {title}"
+    else:
+        header = "# 会议纪要"
+    lines = [header, "", "## 概要", "", result.overview]
     sections: tuple[tuple[str, Sequence[Any]], ...] = (
         ("主题", result.topics),
         ("决策", result.decisions),

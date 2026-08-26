@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-transcription-gap.schema.json",
+  "title": "TranscriptionGapEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "transcription_gap"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start_ms", "end_ms", "reason"],
+      "properties": {
+        "start_ms": {"type": "integer", "minimum": 0},
+        "end_ms": {"type": "integer", "minimum": 0},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

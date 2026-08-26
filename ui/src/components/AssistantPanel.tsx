@@ -35,6 +35,7 @@ import {
 } from "./assistantPresentation";
 import { PersonaDialog } from "./PersonaDialog";
 import { showToast } from "./Toast";
+import { apiUrl } from "../config/runtimeConfig";
 import {
   ActivityIcon,
   BroomIcon,
@@ -277,7 +278,7 @@ export default function AssistantPanel({
       let blob: Blob;
       try {
         const previewText = "你好，我是你的语音助手，很高兴为你服务。";
-        const res = await fetch("/v1/audio/speech", {
+        const res = await fetch(apiUrl("/v1/audio/speech"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -369,7 +370,7 @@ export default function AssistantPanel({
       showToast("🔊 正在合成语音并朗读...", "info");
 
       try {
-        const res = await fetch("/v1/audio/speech", {
+        const res = await fetch(apiUrl("/v1/audio/speech"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -448,7 +449,7 @@ export default function AssistantPanel({
   /** 获取音色列表 */
   useEffect(() => {
     let cancelled = false;
-    fetch("/v1/voices")
+    fetch(apiUrl("/v1/voices"))
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{ voice: string; available: string[] }>;

@@ -471,12 +471,30 @@ class MeetingSettings(BaseSettings):
         serialization_alias="schema",
         description="会议表所在独立 schema",
     )
-    summary_model: str = Field(default="qwen/qwen3.8-27b", description="会后纪要模型 ID")
+    summary_model: str = Field(default="qwen/qwen3.6-35b-a3b", description="会后纪要模型 ID")
     summary_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     summary_reasoning: str = Field(default="off", description="纪要推理开关，首版固定 off")
     summary_timeout_secs: float = Field(
-        default=60.0, ge=5.0, le=600.0, description="纪要生成 LLM 请求超时（秒）"
+        default=60.0,
+        ge=5.0,
+        le=600.0,
+        description="纪要 LM Studio 流式读取空闲超时（秒，兼容旧配置）",
     )
+    summary_request_timeout_secs: float = Field(
+        default=180.0, ge=5.0, le=600.0, description="单次纪要模型调用总时限（秒）"
+    )
+    summary_job_timeout_secs: float = Field(
+        default=600.0, ge=30.0, le=1800.0, description="整条纪要任务总时限（秒）"
+    )
+    summary_map_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
+    summary_reduce_max_output_tokens: int = Field(default=4096, ge=256, le=16384)
+    summary_title_max_output_tokens: int = Field(default=128, ge=32, le=512)
+    summary_max_output_chars: int = Field(default=32_768, ge=2_048, le=262_144)
+    summary_max_input_chars: int = Field(default=20_000, ge=4_000, le=96_000)
+    summary_chunk_max_duration_ms: int = Field(
+        default=1_200_000, ge=60_000, le=7_200_000, description="单个 map chunk 最大时长"
+    )
+    summary_chunk_overlap_segments: int = Field(default=1, ge=0, le=10)
     finalization_timeout_secs: float = Field(default=8.0, ge=1.0, le=300.0)
     recovery_dir: Path = Field(default=Path("runtime/meetings/recovery"))
     summary_concurrency: int = Field(default=1, ge=1, le=8)

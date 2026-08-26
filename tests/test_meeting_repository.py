@@ -89,6 +89,21 @@ async def test_reconcile_replaces_only_overlapping_window(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_replaces_segment_ending_on_window_boundary(
+    repository: PostgresMeetingRepository,
+) -> None:
+    meeting = await repository.create_meeting(
+        "边界对账", language="Chinese", audio_source="microphone"
+    )
+    await repository.reconcile_window(meeting.id, _window(0, "旧段", 0, 1000))
+    await repository.reconcile_window(meeting.id, _window(1, "新段", 1000, 2000))
+
+    document = await repository.get_transcript(meeting.id)
+
+    assert [segment.text for segment in document.segments] == ["新段"]
+
+
+@pytest.mark.asyncio
 async def test_duplicate_window_is_idempotent(repository: PostgresMeetingRepository) -> None:
     meeting = await repository.create_meeting(
         "幂等性", language="Chinese", audio_source="microphone"
@@ -165,6 +180,26 @@ async def test_minutes_claim_and_complete_are_transactional(
     assert latest is not None
     assert latest.content_json is not None
     assert latest.content_json.overview == "已记录内容"
+
+
+@pytest.mark.asyncio
+async def test_create_minutes_reuses_active_job_but_allows_new_terminal_version(
+    repository: PostgresMeetingRepository,
+) -> None:
+    meeting = await repository.create_meeting(
+        "纪要去重", language="Chinese", audio_source="microphone"
+    )
+    await repository.finalize_transcript(meeting.id)
+
+    first = await repository.create_minutes(meeting.id, idempotency_key=None)
+    duplicate = await repository.create_minutes(meeting.id, idempotency_key=None)
+    assert duplicate.id == first.id
+
+    assert await repository.claim_minutes() is not None
+    await repository.fail_minutes(first.id, code="test", message="terminal")
+    regenerated = await repository.create_minutes(meeting.id, idempotency_key=None)
+    assert regenerated.id != first.id
+    assert regenerated.version == first.version + 1
 
 
 @pytest.mark.asyncio

@@ -41,14 +41,15 @@
 
 | 模块 | 职责与功能 | 关键文件 |
 |---|---|---|
+| `voice_realtime.asr` | ASR 多引擎契约与适配层：流式识别适配器、模型 profiles、worker 队列管理与结果呈现 | `contracts.py`<br>`profiles.py`<br>`registry.py`<br>`defaults.py`<br>`presenters.py` |
 | `voice_realtime.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、说话人映射、Sortformer 接入、异步 AI 纪要生成、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`summary.py`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
 | `voice_realtime.ui` | 默认运行时主入口：`RuntimeModeCoordinator` 模式协调、`SubtitleProxy`（带 PCM 重连快照与 ready_to_stop 优雅停机）、严格控制协议网关（`request_id` ack）、助手桥接 | `server.py`<br>`runtime.py`<br>`control.py`<br>`assistant_bridge.py`<br>`subtitle_proxy.py`<br>`protocol.py` |
-| `voice_realtime.interaction` | 共享交互会话/所有权 + Pipecat 管道 + LM Studio 原生服务 + 双层回声防线 + NLTK 依赖自愈 | `session.py`<br>`ownership.py`<br>`pipeline.py`<br>`reasoning.py`<br>`runner.py`<br>`nltk_data.py` |
+| `voice_realtime.interaction` | 共享交互会话/所有权 + Pipecat 管道 + LM Studio 原生服务 + 双层回声防线 + 滚动记忆压缩与 NLTK 依赖自愈 | `session.py`<br>`ownership.py`<br>`pipeline.py`<br>`reasoning.py`<br>`context_memory.py`<br>`runner.py`<br>`nltk_data.py` |
 | `voice_realtime.subtitles` | WhisperLiveKit 启动器、Sortformer Diarization 参数注入、WS 字幕事件桥、事件去重与 SRT 持久化 | `launcher.py`<br>`consumer.py`<br>`events.py` |
 | `voice_realtime.audio` | 单源麦克风采集、有界 sink 扇出、真实静音（零音频吞吐）、Pipecat 音频注入器 | `hub.py`<br>`audio_injector.py` |
 | `voice_realtime.tts_bridge` | mlx-audio Qwen3-TTS → OpenAI 兼容 `POST /v1/audio/speech`，请求级音色、单并发门有界串行生成 | `server.py`<br>`engine.py`<br>`schema.py` |
-| `voice_realtime.config` | 集中配置层（pydantic-settings，含 Bridge / Interaction / Subtitles / Meeting / UI） | `config.py` |
-| `ui/` (前端) | React 19 + TypeScript + Vite + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
+| `voice_realtime.config` | 集中配置层（pydantic-settings，含 Bridge / Interaction / Subtitles / Meeting / UI / ASR） | `config.py` |
+| `ui/` (前端) | React 19 + TypeScript + Vite 7 + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、声学波形、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
 
 > 📌 **注**：`tools/` 下的 `WhisperLiveKit` 与 `mlx-audio` 为 vendor 子仓库（仅启动/桥接），非自研代码。
 
@@ -112,16 +113,16 @@
 ## 🛡️ 质量门禁（提交前必须全绿）
 
 ```bash
-# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 580 passed，覆盖率 ~84%）
+# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 1161 passed, 10 skipped，覆盖率 ~82%）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
-# 2. Python 类型检查（strict，46 source files 全绿）
+# 2. Python 类型检查（strict，87 source files 全绿）
 uv run mypy src/
 
 # 3. Python 代码风格与 Lint 检查
 uv run ruff check src/ tests/
 
-# 4. 前端测试（55 passed / 11 test files）
+# 4. 前端测试（144 passed / 17 test files 全绿）
 cd ui && npm test -- --run
 
 # 5. 前端类型检查与生产构建
@@ -171,8 +172,8 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 
 | 依赖组件 | 规格与配置要求 |
 |---|---|
-| **硬件平台** | Apple Silicon M-series (M5 Max / macOS 26 / 128GB 等) |
-| **LM Studio** (`localhost:1234`) | - **交互模型**：`qwen/qwen3.6-35b-a3b`<br>- **会议纪要模型**：`qwen/qwen3.8-27b` |
+| **硬件平台** | Apple Silicon M-series (M1~M5 / macOS 14+ / 16GB~128GB 等) |
+| **LM Studio** (`localhost:1234`) | - **统一模型（交互 / 纪要 / 标题）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b/14b`） |
 | **PostgreSQL** | DSN: `postgresql:///knowledge`，Schema: `voice_realtime` |
 | **TTS 桥服务** (Port: `8765`) | `mlx-audio` Qwen3-TTS (24 kHz WAV/PCM)，`VoiceDesign` 音色 profile |
 | **SenseVoice 缓存快照** | `~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…` |

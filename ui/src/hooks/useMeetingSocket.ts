@@ -5,6 +5,7 @@ import {
   type MeetingEventType,
   type MeetingSnapshotPayload,
   type MeetingStateChangedPayload,
+  type MeetingTitleUpdatedPayload,
   type MinutesStateChangedPayload,
   type SpeakerUpdatedPayload,
   type TranscriptionGapPayload,
@@ -12,6 +13,7 @@ import {
   type TranscriptReconciledPayload,
 } from "../contracts/meetingContract";
 import { useMeetingStore } from "../stores/meetingStore";
+import { runtimeConfig } from "../config/runtimeConfig";
 import { ReconnectingSocket, type ConnectionState } from "./useEventSocket";
 
 export function isMeetingEventEnvelope(val: unknown): val is MeetingEventEnvelope {
@@ -37,13 +39,17 @@ export function isMeetingEventRelevant(
   state: MeetingEventTargetState,
 ): boolean {
   if (meetingId === state.activeMeetingId) return true;
-  if (type === "minutes_state_changed" || type === "meeting_state_changed") {
+  if (
+    type === "minutes_state_changed" ||
+    type === "meeting_state_changed" ||
+    type === "meeting_title_updated"
+  ) {
     return meetingId === state.selectedMeetingId || meetingId === state.selectedMeeting?.id;
   }
   return false;
 }
 
-export function useMeetingSocket(url = "/ws/v1/meetings") {
+export function useMeetingSocket(url = runtimeConfig.meetingWsUrl) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
 
   useEffect(() => {
@@ -102,13 +108,17 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
         case "transcript_reconciled": {
           const p = payload as TranscriptReconciledPayload;
-          // 检测 revision 是否跳变，若跳变过大触发 resync
-          if (
-            meeting_id &&
-            meeting_id.trim() !== "" &&
-            p.transcript_revision > store.transcriptRevision + 10
-          ) {
-            void store.syncBaselineTranscript(meeting_id);
+          const currentRev = store.transcriptRevision;
+          // 过期事件丢弃
+          if (p.transcript_revision <= currentRev) {
+            return;
+          }
+          // 检测 revision 是否断档跳变（若当前已有版本且不连续，即 p.transcript_revision > currentRev + 1）
+          if (currentRev > 0 && p.transcript_revision > currentRev + 1) {
+            store.setIsCalibrating(true);
+            if (meeting_id && meeting_id.trim() !== "" && meeting_id !== "null") {
+              void store.syncBaselineTranscript(meeting_id);
+            }
           } else {
             store.reconcileTranscript(
               p.replace_from_ms,
@@ -123,7 +133,16 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
         case "speaker_updated": {
           const p = payload as SpeakerUpdatedPayload;
+          if (p.content_revision <= store.contentRevision) {
+            return;
+          }
           store.setSpeaker(p.speaker_key, p.display_name, p.content_revision, meeting_id);
+          break;
+        }
+
+        case "meeting_title_updated": {
+          const p = payload as MeetingTitleUpdatedPayload;
+          store.setMeetingTitle(meeting_id, p.title);
           break;
         }
 
@@ -160,7 +179,8 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
         }
 
         case "resync_required": {
-          if (meeting_id && meeting_id.trim() !== "") {
+          store.setIsCalibrating(true);
+          if (meeting_id && meeting_id.trim() !== "" && meeting_id !== "null") {
             void store.syncBaselineTranscript(meeting_id);
           }
           void store.fetchHistory();

@@ -236,11 +236,20 @@ describe("Meeting React Components DOM Rendering", () => {
       );
     });
 
-    expect(container.textContent).toContain("已记录 4 个段落");
+    expect(container.textContent).toContain("已确认 4 个发言片段");
+    expect(container.textContent).toContain("时序视图");
+    expect(container.textContent).toContain("阅读视图");
     expect(container.textContent).toContain("结束会议并生成纪要");
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("正在输入的临时转录片段...");
 
+    // Switch to reading view
+    const readingBtn = container.querySelector("button[title*='阅读视图']") as HTMLButtonElement;
+    expect(readingBtn).not.toBeNull();
+    act(() => {
+      readingBtn.click();
+    });
+    expect(container.querySelector(".reading-block-card")).not.toBeNull();
   });
 
 
@@ -286,7 +295,9 @@ describe("Meeting React Components DOM Rendering", () => {
       );
     });
 
-    // Verify all 7 sections
+    // Verify all sections and title badge
+    expect(container.textContent).toContain("AI 纪要主题提炼");
+    expect(container.textContent).toContain("实时语音与字幕产品评审");
     expect(container.textContent).toContain("会议概要");
     expect(container.textContent).toContain("核心议题");
     expect(container.textContent).toContain("决策事项");
@@ -391,6 +402,7 @@ describe("Meeting React Components DOM Rendering", () => {
           selectedMinutesVersion={1}
           onSelectMinutesVersion={vi.fn()}
           onUpdateTitle={handleUpdateTitle}
+          onGenerateTitle={vi.fn().mockResolvedValue(undefined)}
           onRenameSpeaker={handleRenameSpeaker}
           onRegenerateMinutes={handleRegenerate}
           onDeleteMeeting={handleDelete}
@@ -412,6 +424,38 @@ describe("Meeting React Components DOM Rendering", () => {
     });
 
     expect(handleReturnToActive).toHaveBeenCalledTimes(1);
+  });
+
+  it("generates an AI title through one callback without issuing a second title update", async () => {
+    const handleGenerateTitle = vi.fn().mockResolvedValue(undefined);
+    const handleUpdateTitle = vi.fn().mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(
+        <MeetingDetailView
+          meeting={mockMeetingDetailCompleted}
+          segments={mockSegments}
+          minutes={mockMinutesCompleted}
+          minutesList={[mockMinutesCompleted]}
+          selectedMinutesVersion={1}
+          onSelectMinutesVersion={vi.fn()}
+          onUpdateTitle={handleUpdateTitle}
+          onGenerateTitle={handleGenerateTitle}
+          onRenameSpeaker={vi.fn()}
+          onRegenerateMinutes={vi.fn().mockResolvedValue(undefined)}
+          onDeleteMeeting={vi.fn().mockResolvedValue(undefined)}
+        />,
+      );
+    });
+
+    const button = container.querySelector(".ai-title-gen-btn") as HTMLButtonElement;
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+
+    expect(handleGenerateTitle).toHaveBeenCalledTimes(1);
+    expect(handleUpdateTitle).not.toHaveBeenCalled();
   });
 
   it("renders MarkdownRenderer with fenced code blocks and copy button", () => {

@@ -1,0 +1,11 @@
+{
+  "contract_version": "1",
+  "type": "resync_required",
+  "event_id": "00000000-0000-4000-8000-000000000015",
+  "meeting_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "occurred_at": "2026-08-26T08:00:02Z",
+  "payload": {
+    "expected_revision": 4,
+    "reason": "revision_gap"
+  }
+}

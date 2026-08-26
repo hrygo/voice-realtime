@@ -23,6 +23,8 @@ class TranscriptAccumulator:
         signature = (
             window.source_epoch,
             window.partial,
+            window.partial_speaker_key,
+            window.partial_speaker_name,
             tuple(
                 (
                     segment.source_epoch,

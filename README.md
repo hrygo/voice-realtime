@@ -134,8 +134,7 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 ### 步骤 4：配置并启动 LM Studio
 
 1. 打开 **LM Studio**，下载并加载推荐模型：
-   - **交互助手推荐模型**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b-instruct` / `qwen2.5-14b-instruct`）
-   - **会议纪要推荐模型**：`qwen/qwen3.8-27b`（或 `qwen2.5-14b-instruct`）
+   - **推荐统一模型（交互 / 纪要 / 标题）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b-instruct` / `qwen2.5-14b-instruct`）
 2. 在 LM Studio 中启动 Local Server，监听 `localhost:1234`。
 
 ### 步骤 5：启动系统服务
@@ -230,7 +229,7 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_INTERACTION_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
 | `VR_INTERACTION_TTS_BRIDGE_URL` | `http://127.0.0.1:8765/v1` | 交互管道使用的 TTS 端点；`scripts/run-all.sh` 未显式配置时按桥监听地址自动推导 |
 | `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
-| `VR_SUMMARY_MODEL` | `qwen/qwen3.8-27b` | 会议纪要 LLM 模型名称 |
+| `VR_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
 | `VR_SUBTITLE_MODEL_DIR` | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master` | Qwen3-ASR 项目外模型目录 |
@@ -241,22 +240,33 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 ## 🛡️ 质量门禁与工程规范
 
-本项目遵循高标准的工程质量与测试规范，全链路质量门禁命令：
+本项目遵循高标准的工程质量与严苛的测试规范，全链路质量门禁命令：
+
+前后端分离开发可先启动不依赖模型和数据库的契约 mock：
 
 ```bash
-# 1. 后端单元与集成测试 (带分支覆盖率，阈值 80%+)
+scripts/run-meeting-mock.sh
+uv run python3 scripts/validate-meeting-contract.py
+```
+
+默认 mock 地址为 `http://127.0.0.1:8200`，事件 WS 为
+`ws://127.0.0.1:8200/ws/v1/meetings`；场景和故障参数见
+[`docs/联调记录模板.md`](docs/联调记录模板.md)。
+
+```bash
+# 1. 后端单元与集成测试 (带分支覆盖率，fail_under=80，实测 1161 passed, 10 skipped，覆盖率 ~82%)
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
-# 2. Python 严格静态类型检查 (Strict mode)
+# 2. Python 严格静态类型检查 (Strict mode，87 source files 全绿)
 uv run mypy src/
 
-# 3. Python 代码风格与 Lint 检查
+# 3. Python 代码风格与 Lint 检查 (全通过)
 uv run ruff check src/ tests/
 
-# 4. 前端单元与组件测试
+# 4. 前端单元与组件测试 (144 passed / 17 test files 全绿)
 cd ui && npm test -- --run
 
-# 5. 前端类型检查与生产构建
+# 5. 前端类型检查与生产构建 (React 19 + TypeScript + Vite 7)
 cd ui && npm run build
 ```
 
@@ -306,7 +316,7 @@ uv run vr-interact
 - 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/Qwen3-ASR-实时语音转文字开发对接手册.md)
 - 📖 [声学防回声与全双工交互设计方案](docs/声学防回声与全双工交互设计方案.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
-- 📝 [架构决策记录 (ADR-001 ~ ADR-003)](docs/decisions)
+- 📝 [架构决策记录 (ADR-001 ~ ADR-007)](docs/decisions)
 
 ---
 

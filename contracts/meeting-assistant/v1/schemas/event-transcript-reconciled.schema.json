@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/event-transcript-reconciled.schema.json",
+  "title": "TranscriptReconciledEvent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "type", "event_id", "meeting_id", "occurred_at", "payload"],
+  "properties": {
+    "contract_version": {"const": "1"},
+    "type": {"const": "transcript_reconciled"},
+    "event_id": {"type": "string", "format": "uuid"},
+    "meeting_id": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transcript_revision", "content_revision", "replace_from_ms", "segments"],
+      "properties": {
+        "transcript_revision": {"type": "integer", "minimum": 0},
+        "content_revision": {"type": "integer", "minimum": 0},
+        "replace_from_ms": {"type": "integer", "minimum": 0},
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "order", "speaker_key", "speaker_name", "start_ms", "end_ms", "text", "translation", "detected_language", "source_epoch"],
+            "properties": {
+              "id": {"type": "string", "format": "uuid"},
+              "order": {"type": "integer", "minimum": 0},
+              "speaker_key": {"type": "string", "minLength": 1, "maxLength": 200},
+              "speaker_name": {"type": "string", "minLength": 1},
+              "start_ms": {"type": "integer", "minimum": 0},
+              "end_ms": {"type": "integer", "minimum": 0},
+              "text": {"type": "string", "minLength": 1},
+              "translation": {"type": ["string", "null"]},
+              "detected_language": {"type": ["string", "null"]},
+              "source_epoch": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
+      }
+    }
+  }
+}

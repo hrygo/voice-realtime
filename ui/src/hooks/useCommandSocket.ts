@@ -10,6 +10,8 @@ import {
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
+import { apiUrl } from "../config/runtimeConfig";
+import { runtimeConfig } from "../config/runtimeConfig";
 import { ReconnectingSocket, type ConnectionState } from "./useEventSocket";
 
 interface PendingRequest {
@@ -245,7 +247,7 @@ export class CommandChannel {
   private async fetchRuntimeState(): Promise<RuntimeStateSnapshot> {
     let response: Response;
     try {
-      response = await fetch("/api/runtime");
+      response = await fetch(apiUrl("/api/runtime"));
     } catch {
       throw new CommandError("运行时状态对账失败", "service_unavailable");
     }
@@ -290,7 +292,7 @@ export interface CommandSocketApi {
   readonly reconcileRuntime: () => Promise<RuntimeStateSnapshot>;
 }
 
-export function useCommandSocket(url = "/ws/v1/control"): CommandSocketApi {
+export function useCommandSocket(url = runtimeConfig.controlWsUrl): CommandSocketApi {
   const [state, setState] = useState<ConnectionState>("connecting");
   const [ready, setReady] = useState(false);
   const [snapshot, setSnapshot] = useState<RuntimeStateSnapshot | null>(null);

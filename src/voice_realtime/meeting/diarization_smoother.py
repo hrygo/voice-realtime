@@ -71,6 +71,8 @@ class DiarizationSmoother:
         return TranscriptWindow(
             source_epoch=window.source_epoch,
             partial=window.partial,
+            partial_speaker_key=window.partial_speaker_key,
+            partial_speaker_name=window.partial_speaker_name,
             segments=smoothed_segments,
         )
 

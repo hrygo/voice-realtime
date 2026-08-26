@@ -317,6 +317,11 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
                 ? store.updateMeetingTitle(store.selectedMeetingId, title)
                 : Promise.resolve()
             }
+            onGenerateTitle={() =>
+              store.selectedMeetingId
+                ? store.generateMeetingTitle(store.selectedMeetingId)
+                : Promise.resolve()
+            }
             onRenameSpeaker={handleRenameSpeaker}
             onRegenerateMinutes={() =>
               store.selectedMeetingId
@@ -359,6 +364,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             onEndMeeting={handleEndMeeting}
             onRenameSpeaker={handleRenameSpeaker}
             isEnding={isEnding}
+            isCalibrating={store.isCalibrating}
             starredIds={
               store.activeMeetingId
                 ? store.starredMap[store.activeMeetingId] || store.getStarredSegments(store.activeMeetingId)
@@ -383,6 +389,11 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             onUpdateTitle={(title) =>
               store.activeMeetingId
                 ? store.updateMeetingTitle(store.activeMeetingId, title)
+                : Promise.resolve()
+            }
+            onGenerateTitle={() =>
+              store.activeMeetingId
+                ? store.generateMeetingTitle(store.activeMeetingId)
                 : Promise.resolve()
             }
             onRenameSpeaker={handleRenameSpeaker}

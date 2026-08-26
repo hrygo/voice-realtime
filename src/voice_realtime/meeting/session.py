@@ -411,7 +411,11 @@ class MeetingSession:
             await self._emit(
                 "transcript_partial",
                 meeting_id,
-                {"text": window.partial, "speaker_key": None, "speaker_name": None},
+                {
+                    "text": window.partial,
+                    "speaker_key": window.partial_speaker_key,
+                    "speaker_name": self._partial_speaker_name(window),
+                },
             )
         if not window.segments:
             return
@@ -506,11 +510,23 @@ class MeetingSession:
     @staticmethod
     def _segment_payload(segment: Any) -> dict[str, object | None]:
         speaker_key = str(segment.speaker_key)
-        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
-        speaker_name = f"说话人 {raw}" if raw.isdigit() else speaker_key
         payload = segment.model_dump(mode="json")
-        payload["speaker_name"] = speaker_name
+        payload["speaker_name"] = MeetingSession._speaker_name_from_key(speaker_key)
         return cast(dict[str, object | None], payload)
+
+    @staticmethod
+    def _speaker_name_from_key(speaker_key: str) -> str:
+        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
+        return f"说话人 {raw}" if raw.isdigit() else speaker_key
+
+    @classmethod
+    def _partial_speaker_name(cls, window: TranscriptWindow) -> str | None:
+        if window.partial_speaker_key is None:
+            return window.partial_speaker_name
+        if window.partial_speaker_name:
+            return window.partial_speaker_name
+        raw = window.partial_speaker_key.rsplit(":", 1)[-1].removeprefix("s")
+        return f"说话人 {raw}" if raw.isdigit() else None
 
     def _require_current_preparation(self, preparation: MeetingPreparation) -> None:
         if self._preparation is not preparation:
