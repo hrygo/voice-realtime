@@ -119,6 +119,11 @@ class ControlBridge:
             )
         try:
             await self._dispatch(command)
+            logger.info(
+                "ControlBridge: 执行命令 %s (request_id=%s)",
+                command.cmd,
+                command.request_id,
+            )
         except Exception as exc:
             logger.exception("ControlBridge: 命令 %s 执行失败", command.cmd)
             error_code = getattr(exc, "code", ErrorCode.COMMAND_FAILED)
@@ -129,11 +134,11 @@ class ControlBridge:
             return self._remember(
                 command.request_id,
                 self._response(
-                request_id=command.request_id,
-                cmd=command.cmd,
-                ok=False,
-                error_code=normalized_code,
-                message="命令执行失败，请检查相关服务状态",
+                    request_id=command.request_id,
+                    cmd=command.cmd,
+                    ok=False,
+                    error_code=normalized_code,
+                    message="命令执行失败，请检查相关服务状态",
                 ),
             )
         return self._remember(

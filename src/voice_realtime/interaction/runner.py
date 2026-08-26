@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 async def run() -> None:
     settings = get_settings()
-    setup_logging()
+    setup_logging("interact")
     ensure_punkt_tab()
     logger.info("交互管道配置:\n%s", settings.interaction.model_dump())
     session = InteractionSession(settings.interaction, handle_signals=True)

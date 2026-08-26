@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import struct
+import time
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -83,6 +84,7 @@ async def _continue_pcm_stream(
 async def _create_speech_response(
     engine: TTSEngine, req: SpeechRequest, voice: str
 ) -> Response:
+    start_time = time.monotonic()
     media_type = "audio/wav" if req.response_format == "wav" else "audio/x-pcm"
     audio_stream = engine.stream_speech(
         req.input,
@@ -102,6 +104,14 @@ async def _create_speech_response(
             ) from exc
         finally:
             await audio_stream.aclose()
+        elapsed_ms = (time.monotonic() - start_time) * 1000
+        logger.info(
+            "TTS: WAV 合成完成 (voice=%s, chars=%d, bytes=%d, elapsed=%.1fms)",
+            voice,
+            len(req.input),
+            len(pcm),
+            elapsed_ms,
+        )
         body = build_wav_header(engine.sample_rate, data_size=len(pcm)) + bytes(pcm)
         return Response(content=body, media_type=media_type)
 
@@ -117,6 +127,13 @@ async def _create_speech_response(
             status_code=500,
             detail=_openai_error("speech synthesis failed", "server_error"),
         ) from exc
+    ttfa_ms = (time.monotonic() - start_time) * 1000
+    logger.info(
+        "TTS: PCM 流首包就绪 (voice=%s, chars=%d, ttfa=%.1fms)",
+        voice,
+        len(req.input),
+        ttfa_ms,
+    )
     return StreamingResponse(
         _continue_pcm_stream(first_chunk, audio_stream),
         media_type=media_type,
@@ -207,7 +224,7 @@ def create_app(
 def main() -> None:
     """`vr-bridge` 控制台入口。"""
     settings = get_settings()
-    setup_logging()
+    setup_logging("bridge")
     bridge_settings = settings.bridge
     app = create_app(bridge_settings)
     uvicorn.run(app, host=bridge_settings.host, port=bridge_settings.port, log_level="info")

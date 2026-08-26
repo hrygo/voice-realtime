@@ -215,3 +215,26 @@ def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> No
     assert settings.summary_reduce_max_output_tokens == 10240
     assert settings.summary_max_output_chars == 65536
     assert settings.summary_job_timeout_secs == 600.0
+
+
+def test_bridge_anti_repetition_and_sampling_defaults() -> None:
+    settings = BridgeSettings()
+    assert settings.repetition_penalty == 1.25
+    assert settings.temperature == 0.85
+    assert settings.top_p == 0.95
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("repetition_penalty", 0.9),
+        ("repetition_penalty", 2.1),
+        ("temperature", 0.0),
+        ("temperature", 2.1),
+        ("top_p", 0.0),
+        ("top_p", 1.1),
+    ],
+)
+def test_bridge_rejects_invalid_sampling_ranges(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        BridgeSettings(**{field: value})

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import AsyncGenerator
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -32,16 +33,57 @@ VOICE_PROFILES: dict[str, str] = {
 
 _STREAM_QUEUE_SIZE = 8
 _QUEUE_PUT_POLL_SECS = 0.05
-_MIN_GENERATION_TOKENS = 96
+_MIN_GENERATION_TOKENS = 32
 _MAX_GENERATION_TOKENS = 1200
-_TOKENS_PER_TEXT_CHAR = 8
+_BASE_BUFFER_TOKENS = 24
+_TOKENS_PER_TEXT_CHAR = 5
 _FINAL_SILENCE_THRESHOLD = 1e-3
 _FINAL_SILENCE_KEEP_MS = 100
 
+_MARKDOWN_CLEANUP_RE = re.compile(r"[*#`~_>]+")
+_EMOJI_RE = re.compile(
+    r"[\U00010000-\U0010FFFF\u2600-\u27BF\u2300-\u23FF\u2B50-\u2B55\u200d\ufe0f]+"
+)
+_TRAILING_WEAK_PUNCT_RE = re.compile(r"[，,、：:\s]+$")
+_SENTENCE_TERMINATORS = frozenset({"。", "！", "？", "!", "?", "；", ";", "…", "—", "."})
+
+
+def normalize_tts_text(text: str) -> str:
+    """清洗 TTS 输入文本并确保终结标点闭合。
+
+    1. 剔除 markdown 格式标记、emoji 与首尾空白；
+    2. 若末尾为弱停顿标点（逗号/顿号/冒号），归一化消除；
+    3. 若末尾无任何终结标点，自动补全句号（中文为 '。'，纯英文为 '.'）；
+    4. 确保 Qwen3-TTS 文本编码器获得清晰的语法边界，促使自回归 Talker 准时产生 EOS。
+    """
+    clean = _MARKDOWN_CLEANUP_RE.sub("", text)
+    clean = _EMOJI_RE.sub("", clean).strip()
+    if not clean:
+        return ""
+    clean = _TRAILING_WEAK_PUNCT_RE.sub("", clean).strip()
+    if not clean:
+        return ""
+    if clean[-1] not in _SENTENCE_TERMINATORS:
+        has_cjk = any("\u4e00" <= ch <= "\u9fff" for ch in clean)
+        clean += "。" if has_cjk else "."
+    return clean
+
 
 def _generation_token_budget(text: str) -> int:
-    """为音频 token 设置与文本长度匹配的硬上限，避免异常采样长期占住单引擎。"""
-    estimated = 32 + len(text.strip()) * _TOKENS_PER_TEXT_CHAR
+    """为音频 token 设置与文本长度紧密匹配的动态硬上限，毫秒级熔断死循环。
+
+    12.5Hz 下，正常中文发音速度约 4~5 字/秒（对应 2.5~3.1 Token/字）。
+    按每字 5 Token 预留充足的语速放缓与自然停顿余量，并加 24 Token 缓冲：
+    - 2字（"好的"）：34 Token (2.7s 熔断，实测发音 0.6s)
+    - 4字（"好的好的"）：44 Token (3.5s 熔断，实测发音 0.7s)
+    - 15字：99 Token (7.9s 熔断)
+    - 50字：274 Token (21.9s 熔断)
+    最低保底 32 Token (~2.5s)，彻底杜绝旧版 96 Token（7.7s+）导致的长时间蜂鸣。
+    """
+    clean = text.strip()
+    if not clean:
+        return _MIN_GENERATION_TOKENS
+    estimated = _BASE_BUFFER_TOKENS + len(clean) * _TOKENS_PER_TEXT_CHAR
     return max(_MIN_GENERATION_TOKENS, min(_MAX_GENERATION_TOKENS, estimated))
 
 
@@ -112,10 +154,13 @@ class TTSEngine:
         assert self._model is not None
         _, instruct, speaker = self._synthesis_args(self._voice)
         for _ in self._model.generate(
-            text="预热",
+            text="预热。",
             voice=speaker,
             instruct=instruct,
             max_tokens=_MIN_GENERATION_TOKENS,
+            repetition_penalty=self._settings.repetition_penalty,
+            temperature=self._settings.temperature,
+            top_p=self._settings.top_p,
             stream=True,
             streaming_interval=self._settings.chunk_ms / 1000,
         ):
@@ -142,6 +187,10 @@ class TTSEngine:
             speed: 语速倍率。
             lang: 语言代码（auto/chinese/english…）。
         """
+        clean_text = normalize_tts_text(text)
+        if not clean_text:
+            return
+
         async with self._generation_lock:
             if self._model is None:
                 raise RuntimeError("TTSEngine not loaded")
@@ -179,12 +228,15 @@ class TTSEngine:
                 try:
                     assert self._model is not None
                     for result in self._model.generate(
-                        text=text,
+                        text=clean_text,
                         voice=speaker,
                         instruct=instruct,
                         speed=speed,
                         lang_code=lang,
-                        max_tokens=_generation_token_budget(text),
+                        max_tokens=_generation_token_budget(clean_text),
+                        repetition_penalty=self._settings.repetition_penalty,
+                        temperature=self._settings.temperature,
+                        top_p=self._settings.top_p,
                         stream=True,
                         streaming_interval=chunk_secs,
                     ):
@@ -227,6 +279,9 @@ class TTSEngine:
             )
         audio: Any = result.audio
         samples = np.asarray(audio, dtype=np.float32)
+        # 数值安全清洗：消除 Apple Silicon MPS 精度下偶发的 NaN / Inf 异常
+        samples = np.nan_to_num(samples, nan=0.0, posinf=1.0, neginf=-1.0)
+
         if bool(getattr(result, "is_final_chunk", False)):
             non_silent = np.flatnonzero(np.abs(samples) > _FINAL_SILENCE_THRESHOLD)
             if non_silent.size == 0:
@@ -235,5 +290,11 @@ class TTSEngine:
                 keep_samples = result_sample_rate * _FINAL_SILENCE_KEEP_MS // 1000
                 end = min(samples.size, int(non_silent[-1]) + 1 + keep_samples)
                 samples = samples[:end]
+                # 尾部 5ms (约 120 个采样点) 线性淡出平滑，防止波形截断爆音
+                fade_len = min(samples.size, result_sample_rate * 5 // 1000)
+                if fade_len > 0:
+                    fade_curve = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+                    samples[-fade_len:] *= fade_curve
+
         pcm = np.clip(samples * 32767.0, -32768.0, 32767.0).astype(np.int16)
         return pcm.tobytes()

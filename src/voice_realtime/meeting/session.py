@@ -116,6 +116,12 @@ class MeetingSession:
                     language=self.language,
                     audio_source=self.audio_source,
                 )
+                logger.info(
+                    "MeetingSession: 准备创建会议 %s (title=%r, lang=%s)",
+                    record.id,
+                    normalized_title,
+                    self.language,
+                )
             except MeetingStorageUnavailableError:
                 raise
             except Exception as exc:
@@ -135,7 +141,12 @@ class MeetingSession:
                 capture = await self.gateway.prepare_capture(
                     f"meeting:{record.id}", timeout_secs=5.0
                 )
-            except BaseException:
+            except BaseException as exc:
+                logger.warning(
+                    "MeetingSession: 准备会议失败，执行回滚 (meeting_id=%s): %s",
+                    record.id,
+                    exc,
+                )
                 await self._release_listener()
                 with contextlib.suppress(Exception):
                     interrupted = await self.repository.set_status(
@@ -158,6 +169,11 @@ class MeetingSession:
         self._record = preparation.record
         self._preparation = None
         self._committed_preparation = preparation
+        logger.info(
+            "MeetingSession: 会议录制已启动 (meeting_id=%s, title=%r)",
+            preparation.record.id,
+            preparation.record.title,
+        )
         return preparation.record
 
     async def publish_started(self, preparation: MeetingPreparation) -> None:
@@ -184,6 +200,9 @@ class MeetingSession:
         async with self._lock:
             self._require_current_preparation(preparation)
             self._preparation = None
+            logger.warning(
+                "MeetingSession: 放弃准备会议 (meeting_id=%s)", preparation.record.id
+            )
             try:
                 with contextlib.suppress(Exception):
                     await self.gateway.abort_prepared_capture(preparation.capture)
@@ -205,6 +224,7 @@ class MeetingSession:
             meeting_id = self._active_meeting_id
             if meeting_id is None:
                 raise RuntimeError("meeting not active")
+            logger.info("MeetingSession: 收到停止会议请求 (meeting_id=%s)", meeting_id)
             capture_closed = False
             try:
                 record = await self.repository.set_status(
@@ -239,6 +259,12 @@ class MeetingSession:
                     reason="finalization_timeout" if timed_out else None,
                 )
                 self._record = record
+                logger.info(
+                    "MeetingSession: 会议录制已封存 (meeting_id=%s, status=%s, timed_out=%s)",
+                    meeting_id,
+                    record.status.value,
+                    timed_out,
+                )
                 minutes = await self.repository.create_minutes(
                     meeting_id,
                     idempotency_key=f"meeting:{meeting_id}:minutes:v1",
@@ -341,6 +367,11 @@ class MeetingSession:
             if meeting_id is None:
                 return self._record
             interrupted_reason = reason[:128]
+            logger.warning(
+                "MeetingSession: 会议被中断 (meeting_id=%s, reason=%s)",
+                meeting_id,
+                interrupted_reason,
+            )
             initial_cancellation: asyncio.CancelledError | None = None
             result: MeetingRecord | None = None
             try:
@@ -399,7 +430,14 @@ class MeetingSession:
         result = replay(self.repository, meeting_id)
         if asyncio.iscoroutine(result):
             result = await result
-        return int(result or 0)
+        count = int(result or 0)
+        if count > 0:
+            logger.info(
+                "MeetingSession: 重放未处理 Journal 记录 (meeting_id=%s, count=%d)",
+                meeting_id,
+                count,
+            )
+        return count
 
     async def _on_window(self, window: TranscriptWindow) -> None:
         meeting_id = self._active_meeting_id
@@ -452,8 +490,14 @@ class MeetingSession:
         try:
             await self._replay_pending_journal(meeting_id)
             result = await self.repository.reconcile_window(meeting_id, window)
-        except Exception:
+        except Exception as exc:
             self._storage_degraded = True
+            logger.warning(
+                "MeetingSession: 数据库对账失败，已降级至 RecoveryJournal (meeting_id=%s): %s",
+                meeting_id,
+                exc,
+                exc_info=True,
+            )
             journal = self.recovery_journal
             if journal is None:
                 with contextlib.suppress(Exception):

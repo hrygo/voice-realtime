@@ -293,7 +293,7 @@ class AudioHub:
         """主事件循环回调：并发扇出音频数据到所有 sink。"""
         if not self._running or self._muted or not self._sinks:
             return
-        for sink in list(self._sinks.values()):
+        for name, sink in list(self._sinks.items()):
             if sink.queue.full():
                 try:
                     sink.queue.get_nowait()
@@ -301,6 +301,12 @@ class AudioHub:
                 except asyncio.QueueEmpty:
                     pass
                 sink.dropped += 1
+                if sink.dropped == 1 or sink.dropped % 50 == 0:
+                    logger.warning(
+                        "AudioHub: sink %r 队列已满，丢弃音频帧（累计丢弃 %d 帧）",
+                        name,
+                        sink.dropped,
+                    )
             sink.queue.put_nowait(data)
 
     async def _sink_worker(self, name: str, sink: _SinkState) -> None:

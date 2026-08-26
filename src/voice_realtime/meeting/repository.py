@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -57,6 +58,8 @@ _SEGMENT_COLUMNS = """
     id, segment_order, source_epoch, speaker_key, start_ms, end_ms, text,
     translation, detected_language, created_at, updated_at
 """
+
+logger = logging.getLogger(__name__)
 
 
 class MeetingRepositoryError(RuntimeError):
@@ -273,7 +276,8 @@ class PostgresMeetingRepository:
                 cursor = await connection.execute("SELECT 1")
                 await cursor.fetchone()
                 return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("PostgresMeetingRepository: 数据库不可写检查失败: %s", exc)
             return False
 
     async def create_meeting(

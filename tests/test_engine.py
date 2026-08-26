@@ -17,9 +17,57 @@ import numpy as np
 import pytest
 
 from voice_realtime.config import BridgeSettings
-from voice_realtime.tts_bridge.engine import VOICE_PROFILES, TTSEngine
+from voice_realtime.tts_bridge.engine import (
+    VOICE_PROFILES,
+    TTSEngine,
+    _generation_token_budget,
+    normalize_tts_text,
+)
 
 TEST_MODEL = "test-org/test-tts-model"
+
+
+class TestTextNormalization:
+    def test_normalize_tts_text_appends_period(self) -> None:
+        assert normalize_tts_text("好的好的") == "好的好的。"
+        assert normalize_tts_text("好的") == "好的。"
+        assert normalize_tts_text("是的") == "是的。"
+
+    def test_normalize_tts_text_preserves_existing_terminators(self) -> None:
+        assert normalize_tts_text("好的好的！") == "好的好的！"
+        assert normalize_tts_text("好的好的？") == "好的好的？"
+        assert normalize_tts_text("好的好的。") == "好的好的。"
+        assert normalize_tts_text("好的好的…") == "好的好的…"
+
+    def test_normalize_tts_text_cleans_markdown_and_weak_punctuation(self) -> None:
+        assert normalize_tts_text("**好的好的**：") == "好的好的。"
+        assert normalize_tts_text("好的好的，") == "好的好的。"
+        assert normalize_tts_text("### 标题") == "标题。"
+
+    def test_normalize_tts_text_cleans_emojis(self) -> None:
+        assert normalize_tts_text("好的好的 😊👌") == "好的好的。"
+
+    def test_normalize_tts_text_supports_ascii_english(self) -> None:
+        assert normalize_tts_text("Hello world") == "Hello world."
+        assert normalize_tts_text("Hello world!") == "Hello world!"
+
+    def test_normalize_tts_text_empty_returns_empty(self) -> None:
+        assert normalize_tts_text("") == ""
+        assert normalize_tts_text("   ") == ""
+        assert normalize_tts_text("***") == ""
+
+
+class TestTokenBudget:
+    def test_short_text_token_budget(self) -> None:
+        assert _generation_token_budget("好的") == 34
+        assert _generation_token_budget("好的好的") == 44
+        assert _generation_token_budget("好的好的。") == 49
+
+    def test_empty_text_token_budget(self) -> None:
+        assert _generation_token_budget("") == 32
+
+    def test_long_text_token_budget_capped(self) -> None:
+        assert _generation_token_budget("中" * 1000) == 1200
 
 
 def _mock_generation_result(
@@ -130,12 +178,48 @@ class TestStreamSpeech:
         ]
         assert chunks
         call_kwargs = model.generate.call_args.kwargs
+        assert call_kwargs["text"] == "你好。"
         assert call_kwargs["voice"] is None
         assert call_kwargs["instruct"] == VOICE_PROFILES["default"]
         assert call_kwargs["lang_code"] == "chinese"
         assert call_kwargs["stream"] is True
         assert call_kwargs["streaming_interval"] == settings.chunk_ms / 1000
-        assert call_kwargs["max_tokens"] == 96
+        assert call_kwargs["max_tokens"] == _generation_token_budget("你好。")
+        assert call_kwargs["repetition_penalty"] == settings.repetition_penalty
+        assert call_kwargs["temperature"] == settings.temperature
+        assert call_kwargs["top_p"] == settings.top_p
+
+    @pytest.mark.asyncio
+    async def test_stream_speech_empty_or_markdown_only_yields_nothing(
+        self, engine: TTSEngine
+    ) -> None:
+        model = _mock_model("voice_design")
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+        chunks = [c async for c in engine.stream_speech("   ***   ")]
+        assert chunks == []
+        model.generate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_to_pcm_handles_nan_and_inf_safely(self, engine: TTSEngine) -> None:
+        model = _mock_model("voice_design")
+        raw = np.zeros(2400, dtype=np.float32)
+        raw[:10] = [np.nan, np.inf, -np.inf, 0.5, -0.5, 0.0, 1.5, -1.5, 0.2, -0.2]
+        result = _mock_generation_result(samples=2400, final=True)
+        result.audio = mx.array(raw)
+        model.generate.return_value = iter([result])
+        with patch("mlx_audio.tts.utils.load", return_value=model):
+            engine.load()
+
+        pcm_bytes = b"".join([c async for c in engine.stream_speech("测试")])
+        pcm_array = np.frombuffer(pcm_bytes, dtype=np.int16)
+        assert not np.isnan(pcm_array).any()
+        assert not np.isinf(pcm_array).any()
+        assert pcm_array[0] == 0  # nan -> 0.0
+        assert pcm_array[1] == 32767  # posinf -> 1.0 -> 32767
+        assert pcm_array[2] == -32767  # neginf -> -1.0 -> -32767
+        assert pcm_array[3] == int(0.5 * 32767)
+        assert pcm_array[7] == -32768  # -1.5 -> clipped to -32768
 
     @pytest.mark.asyncio
     async def test_generation_token_budget_scales_and_is_capped(self, engine: TTSEngine) -> None:

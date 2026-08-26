@@ -86,6 +86,24 @@ class BridgeSettings(BaseSettings):
     sample_rate: int = Field(default=TTS_OUTPUT_SAMPLE_RATE, description="输出采样率 (Hz)")
     chunk_ms: int = Field(default=100, description="流式分块大小 (ms)")
     warmup_on_start: bool = Field(default=True, description="启动时预热模型")
+    repetition_penalty: float = Field(
+        default=1.25,
+        ge=1.0,
+        le=2.0,
+        description="自回归声学 Token 重复惩罚（防止声学死循环与长蜂鸣）",
+    )
+    temperature: float = Field(
+        default=0.85,
+        gt=0.0,
+        le=2.0,
+        description="TTS 自回归采样温度",
+    )
+    top_p: float = Field(
+        default=0.95,
+        gt=0.0,
+        le=1.0,
+        description="TTS 核采样阈值",
+    )
 
     @field_validator("sample_rate")
     @classmethod

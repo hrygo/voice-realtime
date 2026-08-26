@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .models import MeetingStatus, TranscriptWindow
 from .repository import MeetingRepository
+
+logger = logging.getLogger(__name__)
 
 
 class RecoveryJournalError(RuntimeError):
@@ -86,6 +89,12 @@ class RecoveryJournal:
                     raise
             except OSError as exc:
                 raise RecoveryJournalError("无法写入 recovery journal") from exc
+            logger.warning(
+                "RecoveryJournal: 追加恢复记录 (meeting=%s, seq=%d, op=%s)",
+                meeting_id,
+                envelope.sequence,
+                envelope.operation,
+            )
             return envelope
 
     async def replay(self, repository: MeetingRepository) -> int:
@@ -122,10 +131,20 @@ class RecoveryJournal:
                     MeetingStatus.STORAGE_ERROR,
                 }:
                     self._unlink(meeting_id)
+                    logger.info(
+                        "RecoveryJournal: 终态会议残留 journal 已清理 (meeting=%s, envelopes=%d)",
+                        meeting_id,
+                        len(envelopes),
+                    )
                     return len(envelopes)
             for envelope in envelopes:
                 await self._replay_one(repository, envelope)
             self._unlink(meeting_id)
+            logger.info(
+                "RecoveryJournal: 成功回放 %d 条记录并清理 journal (meeting=%s)",
+                len(envelopes),
+                meeting_id,
+            )
             return len(envelopes)
 
     async def discard(self, meeting_id: UUID) -> None:
@@ -133,6 +152,7 @@ class RecoveryJournal:
         lock = self._locks.setdefault(meeting_id, asyncio.Lock())
         async with lock:
             self._unlink(meeting_id)
+            logger.debug("RecoveryJournal: 丢弃已同步 journal (meeting=%s)", meeting_id)
 
     async def _ensure_directory(self) -> None:
         async with self._directory_lock:

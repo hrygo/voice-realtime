@@ -143,7 +143,7 @@ def prepare_whisperlivekit(settings: SubtitleSettings) -> str:
 
 
 def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Popen[str]:
-    """启动字幕服务子进程，stdout/stderr 落盘到 log_dir。"""
+    """启动字幕服务子进程，stdout/stderr 落盘到 log_dir（以追加模式避免重启覆盖历史）。"""
     executable = resolve_wlk_command(settings.repo_path)
     log_dir.mkdir(parents=True, exist_ok=True)
     argv = build_server_argv(settings, executable=executable)
@@ -151,8 +151,8 @@ def launch_subtitles(settings: SubtitleSettings, log_dir: Path) -> subprocess.Po
     stdout_path = log_dir / "subtitles.out.log"
     stderr_path = log_dir / "subtitles.err.log"
     with (
-        stdout_path.open("w", encoding="utf-8") as stdout,
-        stderr_path.open("w", encoding="utf-8") as stderr,
+        stdout_path.open("a", encoding="utf-8") as stdout,
+        stderr_path.open("a", encoding="utf-8") as stderr,
     ):
         return subprocess.Popen(
             argv,
@@ -170,7 +170,7 @@ def main() -> None:
 
     from voice_realtime.config import get_settings
 
-    setup_logging()
+    setup_logging("subtitles")
     settings = get_settings().subtitles
     log_dir = settings.output_dir
     prepare_whisperlivekit(settings)

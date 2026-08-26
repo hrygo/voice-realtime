@@ -940,7 +940,7 @@ def main() -> None:
     """`vr-ui` 控制台入口。"""
     import uvicorn
 
-    setup_logging()
+    setup_logging("ui")
     cfg = get_settings()
     logger.info("Voice Studio 启动: http://%s:%s", cfg.ui.host, cfg.ui.port)
     uvicorn.run(create_app(), host=cfg.ui.host, port=cfg.ui.port)
