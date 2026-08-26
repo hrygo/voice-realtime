@@ -74,12 +74,12 @@ export function MeetingMinutesViewer({
   return (
     <div className="minutes-pane">
       <div className="pane-header">
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span>✨ AI 结构化纪要</span>
+        <div className="pane-title-group">
+          <span className="pane-icon">✨</span>
+          <span className="pane-title">AI 结构化纪要</span>
           {minutesList.length > 1 && (
             <select
-              className="speaker-select"
-              style={{ padding: "2px 6px", fontSize: "0.72rem" }}
+              className="version-select"
               value={selectedVersion || minutes?.version || 1}
               onChange={(e) => onSelectVersion(Number(e.target.value))}
             >
@@ -92,23 +92,23 @@ export function MeetingMinutesViewer({
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+        <div className="pane-actions-group">
           <button
             type="button"
-            className="btn-secondary"
-            style={{ fontSize: "0.72rem", padding: "2px 8px" }}
+            className="pane-header-btn"
             onClick={() => setViewMode((m) => (m === "structured" ? "markdown" : "structured"))}
           >
-            {viewMode === "structured" ? "📄 Markdown 源码" : "📊 结构化视图"}
+            <span>{viewMode === "structured" ? "📄" : "📊"}</span>
+            <span>{viewMode === "structured" ? "Markdown 源码" : "结构化视图"}</span>
           </button>
           <button
             type="button"
-            className="btn-secondary"
-            style={{ fontSize: "0.72rem", padding: "2px 8px" }}
+            className={`pane-header-btn primary ${isGenerating ? "loading" : ""}`}
             onClick={() => void onRegenerate()}
             disabled={isGenerating}
           >
-            {isGenerating ? "生成中..." : minutes ? "🔄 重新生成" : "✨ 生成纪要"}
+            <span>{isGenerating ? "⏳" : minutes ? "🔄" : "✨"}</span>
+            <span>{isGenerating ? "生成中..." : minutes ? "重新生成" : "生成纪要"}</span>
           </button>
         </div>
       </div>
@@ -119,7 +119,7 @@ export function MeetingMinutesViewer({
             <span>⚠️ 说话人名称或转录内容在此纪要生成后发生变更，当前内容可能过时。</span>
             <button
               type="button"
-              className="btn-secondary"
+              className="pane-header-btn"
               style={{ fontSize: "0.68rem", padding: "2px 6px" }}
               onClick={() => void onRegenerate()}
               disabled={isGenerating}
@@ -130,18 +130,18 @@ export function MeetingMinutesViewer({
         )}
 
         {!minutes && !isGenerating && (
-          <div className="minutes-card" style={{ textAlign: "center", padding: "36px 16px" }}>
-            <div style={{ fontSize: "2rem", marginBottom: "8px" }}>✨</div>
-            <h4 style={{ fontSize: "0.95rem", color: "var(--text-primary)", marginBottom: "6px" }}>
+          <div className="minutes-card empty-state" style={{ textAlign: "center", padding: "36px 16px" }}>
+            <div style={{ fontSize: "2.4rem", marginBottom: "10px" }}>✨</div>
+            <h4 style={{ fontSize: "1rem", color: "var(--text-primary)", marginBottom: "6px" }}>
               尚未生成 AI 结构化纪要
             </h4>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "16px" }}>
-              已封存会议转录可随时提取议题、决议、待办、风险及证据追溯。
+            <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "18px", maxWidth: "360px", margin: "0 auto 18px" }}>
+              已封存会议转录可随时提取核心议题、决议事项、待办行动项及证据追溯。
             </p>
             <button
               type="button"
               className="btn-primary"
-              style={{ padding: "6px 16px", fontSize: "0.82rem" }}
+              style={{ padding: "8px 20px", fontSize: "0.85rem" }}
               onClick={() => void onRegenerate()}
             >
               ✨ 立即生成 AI 纪要
@@ -150,14 +150,34 @@ export function MeetingMinutesViewer({
         )}
 
         {isGenerating && (
-          <div className="minutes-card" style={{ textAlign: "center", padding: "32px 16px" }}>
-            <div className="spinner-lg" style={{ margin: "0 auto 12px" }} />
-            <h4 style={{ fontSize: "0.95rem", color: "var(--text-primary)" }}>
+          <div className="minutes-generating-card">
+            <div className="ai-generating-pulse-ring">
+              <div className="spinner-ai" />
+              <span className="ai-center-sparkle">✨</span>
+            </div>
+            <h4 className="ai-generating-title">
               正在提取并生成结构化 AI 纪要...
             </h4>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginTop: "4px" }}>
-              模型：{minutes?.model || "qwen/qwen3.8-27b"} (已封存转录可独立查看)
+            <p className="ai-generating-desc">
+              正在由本地大模型深度理解议题、决议、待办行动项及证据链
             </p>
+            <div className="ai-steps-flow">
+              <span className="ai-step-pill active">① 转录分段对齐</span>
+              <span className="ai-step-arrow">➔</span>
+              <span className="ai-step-pill active">② 核心议题提炼</span>
+              <span className="ai-step-arrow">➔</span>
+              <span className="ai-step-pill active">③ 决议与待办归纳</span>
+              <span className="ai-step-arrow">➔</span>
+              <span className="ai-step-pill">④ 证据链锚定</span>
+            </div>
+            <div className="ai-generating-footer">
+              <span className="ai-model-tag">
+                🤖 模型: {minutes?.model || "qwen/qwen3.8-27b"}
+              </span>
+              <span className="ai-safe-tip">
+                🛡️ 本地推理 · 左侧转录可独立查看与导出
+              </span>
+            </div>
           </div>
         )}
 

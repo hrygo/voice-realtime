@@ -142,12 +142,6 @@ export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
 
-function formatTabTimer(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
 interface StatusBarProps {
   commandSocket: CommandSocketApi;
   onOpenShortcuts?: () => void;
@@ -156,7 +150,6 @@ interface StatusBarProps {
   reconciling?: boolean;
   switchError?: string | null;
   onTabChange?: (tab: WorkspaceTab) => void;
-  recordingElapsed?: number;
 }
 
 function ThemeToggle() {
@@ -190,7 +183,6 @@ export default function StatusBar({
   reconciling = false,
   switchError = null,
   onTabChange,
-  recordingElapsed = 0,
 }: StatusBarProps) {
   const [services, setServices] = useState<ServiceInfo[]>([
     { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
@@ -460,9 +452,15 @@ export default function StatusBar({
               type="button"
               className={`status-tab-btn tab-assistant ${activeTab === "assistant" ? "active" : ""} ${switchTarget === "assistant" ? (switchError ? "switch-error" : "pending") : ""}`}
               onClick={() => onTabChange("assistant")}
-              disabled={pendingTab !== null}
+              disabled={pendingTab !== null || isMeetingRecording}
               aria-busy={switchTarget === "assistant" && !switchError ? true : undefined}
-              title={switchTarget === "assistant" ? switchError || `正在切换至语音助手${reconciling ? "（对账中）" : ""}` : "切换至语音助手 (快捷键 Cmd+1)"}
+              title={
+                isMeetingRecording
+                  ? "会议录制中，语音交互已挂起（请先结束会议）"
+                  : switchTarget === "assistant"
+                    ? switchError || `正在切换至语音助手${reconciling ? "（对账中）" : ""}`
+                    : "切换至语音助手 (快捷键 Cmd+1)"
+              }
             >
               <span className="tab-icon">🤖</span>
               <span className="tab-label">
@@ -491,7 +489,7 @@ export default function StatusBar({
               <kbd className="tab-kbd">⌘2</kbd>
               {isMeetingRecording && (
                 <span className="tab-status-chip recording" title="会议录制进行中">
-                  <span className="tab-recording-dot" /> 录制中 {recordingElapsed > 0 ? `(${formatTabTimer(recordingElapsed)})` : ""}
+                  <span className="tab-recording-dot" /> 录制中
                 </span>
               )}
             </button>
@@ -499,9 +497,15 @@ export default function StatusBar({
               type="button"
               className={`status-tab-btn tab-subtitles ${activeTab === "subtitles" ? "active" : ""} ${switchTarget === "subtitles" ? (switchError ? "switch-error" : "pending") : ""}`}
               onClick={() => onTabChange("subtitles")}
-              disabled={pendingTab !== null}
+              disabled={pendingTab !== null || isMeetingRecording}
               aria-busy={switchTarget === "subtitles" && !switchError ? true : undefined}
-              title={switchTarget === "subtitles" ? switchError || `正在切换至实时字幕${reconciling ? "（对账中）" : ""}` : "切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"}
+              title={
+                isMeetingRecording
+                  ? "会议录制中，请先结束会议再切换模式"
+                  : switchTarget === "subtitles"
+                    ? switchError || `正在切换至实时字幕${reconciling ? "（对账中）" : ""}`
+                    : "切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"
+              }
             >
               <span className="tab-icon">📝</span>
               <span className="tab-label">
@@ -509,11 +513,6 @@ export default function StatusBar({
                 <span className="tab-label-short">字幕</span>
               </span>
               <kbd className="tab-kbd">⌘3</kbd>
-              {isMeetingRecording && (
-                <span className="tab-status-chip sync" title="与会议转录同步中">
-                  同步中
-                </span>
-              )}
             </button>
           </nav>
           {switchAnnouncement && (

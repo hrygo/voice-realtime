@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { MeetingHealthState } from "../../stores/meetingStore";
+import { MeetingWaveform } from "./MeetingWaveform";
 
 interface MeetingIdleViewProps {
   health: MeetingHealthState;
@@ -38,6 +39,16 @@ export function MeetingIdleView({
       <p className="idle-subtitle">
         全本地会议转录与 AI 纪要。会议期间完全停用语音助手对话与 TTS 播报，所有发言持续持久化至 PostgreSQL。
       </p>
+
+      {/* 静息环境声学就绪波形 */}
+      <div className="idle-waveform-wrap">
+        <MeetingWaveform
+          isRecording={false}
+          hasPartial={false}
+          isMuted={health.mic_muted}
+        />
+      </div>
+
 
       <form className="idle-form-card" onSubmit={handleSubmit}>
         <div className="form-group">

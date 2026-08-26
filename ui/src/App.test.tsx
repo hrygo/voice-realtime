@@ -122,7 +122,7 @@ function commandError(code: string, message: string): Error & { code: string } {
 describe("resolveWorkspaceTab", () => {
   it("forces meeting and subtitles modes to their authoritative workspaces", () => {
     expect(resolveWorkspaceTab("meeting", "assistant", "assistant")).toBe("meeting");
-    expect(resolveWorkspaceTab("subtitles", "meeting", "meeting")).toBe("subtitles");
+    expect(resolveWorkspaceTab("subtitles", "assistant", "assistant")).toBe("subtitles");
   });
 
   it("falls back from stored subtitles for assistant and idle modes", () => {
@@ -133,6 +133,8 @@ describe("resolveWorkspaceTab", () => {
   it("preserves meeting history navigation outside meeting mode", () => {
     expect(resolveWorkspaceTab("assistant", "assistant", "meeting")).toBe("meeting");
     expect(resolveWorkspaceTab("idle", "meeting", null)).toBe("meeting");
+    expect(resolveWorkspaceTab("subtitles", "meeting", null)).toBe("meeting");
+    expect(resolveWorkspaceTab("subtitles", "assistant", "meeting")).toBe("meeting");
   });
 });
 
@@ -203,6 +205,7 @@ describe("App authoritative workspace state", () => {
     ["idle", "subtitles", "assistant-panel"],
     ["assistant", "meeting", "meeting-panel"],
     ["idle", "meeting", "meeting-panel"],
+    ["subtitles", "meeting", "meeting-panel"],
   ] as const)(
     "resolves mode %s with stored %s to %s",
     (mode, storedTab, panelTestId) => {

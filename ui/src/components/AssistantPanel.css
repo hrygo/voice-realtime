@@ -531,10 +531,12 @@
 .persona-preview-text {
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin: 0;
 }
+
 
 .persona-preview-hint {
   display: inline-block;
@@ -1114,16 +1116,30 @@
   height: 100%;
   overflow: hidden;
   position: relative;
+  background: radial-gradient(circle at 50% 0%, var(--mod-assistant-glow) 0%, transparent 60%),
+              transparent;
+}
+
+[data-theme="light"] .assistant-main-stage {
+  background: radial-gradient(circle at 50% 0%, rgba(99, 102, 241, 0.05) 0%, transparent 60%),
+              transparent;
 }
 
 .assistant-stage-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  gap: 12px;
+  padding: 10px 18px 4px 18px;
+  min-height: 46px;
+  box-sizing: border-box;
+  border-bottom: none;
+  background: transparent;
+  flex-shrink: 0;
 }
+
+
 
 .assistant-header-title-wrap {
   display: flex;
@@ -1332,8 +1348,8 @@
 .assistant-bubble-row {
   display: flex;
   flex-direction: column;
-  max-width: 78%;
-  animation: bubble-fade-in 0.2s ease-out forwards;
+  max-width: 80%;
+  animation: bubble-fade-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .assistant-bubble-row.user {
@@ -1367,16 +1383,18 @@
 }
 
 .bubble-turn-pill {
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
   background: var(--bg-tertiary);
   font-size: 0.65rem;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
+  border: 1px solid var(--border-dim);
 }
 
 .bubble-time-pill {
   font-size: 0.65rem;
   color: var(--text-muted);
+  font-family: var(--font-mono);
 }
 
 .bubble-interrupted-tag {
@@ -1386,20 +1404,20 @@
 
 .bubble-card {
   position: relative;
-  padding: 10px 14px;
+  padding: 11px 16px;
   border-radius: var(--radius-md);
-  font-size: 0.88rem;
-  line-height: 1.5;
+  font-size: 0.9rem;
+  line-height: 1.55;
   word-break: break-word;
   transition: all 0.2s ease;
 }
 
 .assistant-bubble-row.user .bubble-card {
-  background: var(--mod-assistant-user-bubble, color-mix(in srgb, var(--color-accent) 16%, var(--bg-card-solid)));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  background: var(--mod-assistant-user-bubble, color-mix(in srgb, var(--color-accent) 18%, var(--bg-card-solid)));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
   color: var(--text-primary);
   border-bottom-right-radius: var(--radius-xs);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 12px var(--mod-assistant-glow);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12), 0 0 14px var(--mod-assistant-glow);
 }
 
 .assistant-bubble-row.assistant .bubble-card {
@@ -1407,11 +1425,11 @@
   border: 1px solid var(--border);
   color: var(--text-primary);
   border-bottom-left-radius: var(--radius-xs);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
 }
 
 .bubble-card.streaming {
-  opacity: 0.88;
+  opacity: 0.92;
 }
 
 .bubble-card.streaming::after {
@@ -1423,7 +1441,7 @@
   vertical-align: -0.15em;
   background: var(--color-accent-light);
   border-radius: 1px;
-  box-shadow: 0 0 6px var(--color-accent-glow);
+  box-shadow: 0 0 8px var(--color-accent-glow);
   animation: typing-caret 0.8s step-end infinite;
 }
 
@@ -1436,12 +1454,15 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform: translateY(-2px);
 }
 
 .bubble-card:hover .bubble-actions-group {
   opacity: 1;
+  transform: translateY(0);
 }
+
 
 .bubble-action-btn {
   padding: 3px 6px;

@@ -50,6 +50,7 @@ export function generatePlainTextContent(
   meeting: MeetingDetail,
   segments: readonly TranscriptSegment[],
   minutes: MeetingMinutesVersion | null,
+  starredIds?: ReadonlySet<string>,
 ): string {
   const lines: string[] = [];
   lines.push(`会议主题：${meeting.title}`);
@@ -88,7 +89,9 @@ export function generatePlainTextContent(
 
   lines.push("【会议转录记录】\n");
   for (const seg of segments) {
-    lines.push(`[${msToReadableTime(seg.start_ms)} - ${msToReadableTime(seg.end_ms)}] ${seg.speaker_name}:`);
+    const isStarred = starredIds?.has(seg.id);
+    const starTag = isStarred ? " [⭐ 重点]" : "";
+    lines.push(`[${msToReadableTime(seg.start_ms)} - ${msToReadableTime(seg.end_ms)}] ${seg.speaker_name}${starTag}:`);
     lines.push(`  ${seg.text}\n`);
   }
 
@@ -99,8 +102,9 @@ export function generateMarkdownContent(
   meeting: MeetingDetail,
   segments: readonly TranscriptSegment[],
   minutes: MeetingMinutesVersion | null,
+  starredIds?: ReadonlySet<string>,
 ): string {
-  if (minutes?.content_markdown) {
+  if (minutes?.content_markdown && !starredIds?.size) {
     return minutes.content_markdown;
   }
 
@@ -162,11 +166,14 @@ export function generateMarkdownContent(
   }
 
   lines.push("## 逐字转录记录\n");
-  lines.push("| 时间 | 说话人 | 转录内容 |");
-  lines.push("|---|---|---|");
+  lines.push("| 时间 | 说话人 | 重点 | 转录内容 |");
+  lines.push("|---|---|:---:|---|");
   for (const seg of segments) {
     const time = `${msToReadableTime(seg.start_ms)}–${msToReadableTime(seg.end_ms)}`;
-    lines.push(`| \`${time}\` | **${seg.speaker_name}** | ${seg.text} |`);
+    const isStarred = starredIds?.has(seg.id);
+    const starTag = isStarred ? "⭐" : "-";
+    const textFormatted = isStarred ? `**${seg.text}**` : seg.text;
+    lines.push(`| \`${time}\` | **${seg.speaker_name}** | ${starTag} | ${textFormatted} |`);
   }
 
   return lines.join("\n");
@@ -206,6 +213,7 @@ export function exportMeetingData(
   segments: readonly TranscriptSegment[],
   minutes: MeetingMinutesVersion | null,
   format: ExportFormat,
+  starredIds?: ReadonlySet<string>,
 ): void {
   const safeTitle = (meeting.title || "meeting").replace(/[/\\?%*:|"<>]/g, "_");
 
@@ -216,7 +224,7 @@ export function exportMeetingData(
       break;
     }
     case "txt": {
-      const txt = generatePlainTextContent(meeting, segments, minutes);
+      const txt = generatePlainTextContent(meeting, segments, minutes, starredIds);
       clientSideDownload(txt, `${safeTitle}.txt`, "text/plain;charset=utf-8");
       break;
     }
@@ -227,7 +235,7 @@ export function exportMeetingData(
     }
     case "md":
     default: {
-      const md = generateMarkdownContent(meeting, segments, minutes);
+      const md = generateMarkdownContent(meeting, segments, minutes, starredIds);
       clientSideDownload(md, `${safeTitle}.md`, "text/markdown;charset=utf-8");
       break;
     }

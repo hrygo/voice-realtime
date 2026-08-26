@@ -47,6 +47,11 @@ export interface MeetingStoreState {
   readonly interruptionReason: string | null;
   readonly errorMessage: string | null;
 
+  // Starred / Key Segments Map (meetingId -> Set of segmentIds)
+  readonly starredMap: Record<string, ReadonlySet<string>>;
+  readonly toggleStarSegment: (meetingId: string, segmentId: string) => void;
+  readonly getStarredSegments: (meetingId: string) => ReadonlySet<string>;
+
   // History Browsing / Detail View
   readonly historyList: readonly MeetingSummary[];
   readonly nextCursor: string | null;
@@ -122,6 +127,30 @@ export interface MeetingStoreState {
   readonly deleteMeeting: (id: string) => Promise<void>;
 }
 
+function readStoredStarredSegments(meetingId: string): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(`voice-studio:meeting-stars:${meetingId}`);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch {
+    // Ignore
+  }
+  return new Set();
+}
+
+function persistStarredSegments(meetingId: string, starred: Set<string>): void {
+  try {
+    window.localStorage.setItem(
+      `voice-studio:meeting-stars:${meetingId}`,
+      JSON.stringify(Array.from(starred)),
+    );
+  } catch {
+    // Ignore
+  }
+}
+
 export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   // Active Recording Session Initial State
   activeMeetingId: null,
@@ -148,6 +177,39 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   sessionEndedAt: null,
   interruptionReason: null,
   errorMessage: null,
+
+  // Starred Segments
+  starredMap: {},
+  toggleStarSegment: (meetingId: string, segmentId: string) => {
+    if (!meetingId || !segmentId) return;
+    const current = get().starredMap[meetingId] || readStoredStarredSegments(meetingId);
+    const next = new Set(current);
+    if (next.has(segmentId)) {
+      next.delete(segmentId);
+    } else {
+      next.add(segmentId);
+    }
+    persistStarredSegments(meetingId, next);
+    set((state) => ({
+      starredMap: {
+        ...state.starredMap,
+        [meetingId]: next,
+      },
+    }));
+  },
+  getStarredSegments: (meetingId: string) => {
+    if (!meetingId) return new Set();
+    const map = get().starredMap;
+    if (map[meetingId]) return map[meetingId];
+    const loaded = readStoredStarredSegments(meetingId);
+    set((state) => ({
+      starredMap: {
+        ...state.starredMap,
+        [meetingId]: loaded,
+      },
+    }));
+    return loaded;
+  },
 
   // History Initial State
   historyList: [],

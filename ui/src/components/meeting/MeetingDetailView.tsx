@@ -5,7 +5,6 @@ import type {
   MeetingMinutesVersion,
   TranscriptSegment,
 } from "../../contracts/meetingContract";
-import { getStatusLabel } from "./MeetingHistorySidebar";
 import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
 import { meetingApi } from "../../services/meetingApi";
@@ -26,6 +25,8 @@ interface MeetingDetailViewProps {
   isMeetingActive?: boolean;
   activeMeetingTitle?: string | null;
   onReturnToActive?: () => void;
+  starredIds?: ReadonlySet<string>;
+  onToggleStarSegment?: (segmentId: string) => void;
 }
 
 export function MeetingDetailView({
@@ -42,6 +43,8 @@ export function MeetingDetailView({
   isMeetingActive = false,
   activeMeetingTitle,
   onReturnToActive,
+  starredIds,
+  onToggleStarSegment,
 }: MeetingDetailViewProps) {
   const [title, setTitle] = useState(meeting.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -129,8 +132,6 @@ export function MeetingDetailView({
     return () => window.removeEventListener("click", handleClickOutside);
   }, [isExportMenuOpen]);
 
-  const statusInfo = getStatusLabel(meeting.status);
-
   const handleTitleBlur = async () => {
     setIsEditingTitle(false);
     const trimmed = title.trim();
@@ -155,7 +156,7 @@ export function MeetingDetailView({
     } catch {
       // 降级使用前端客户端格式化导出
       try {
-        exportMeetingData(meeting, segments, minutes, format);
+        exportMeetingData(meeting, segments, minutes, format, starredIds);
         showToast(`已导出 ${format.toUpperCase()} 文件 (本地离线生成)`, "success");
       } catch (err) {
         showToast(err instanceof Error ? err.message : "导出失败", "error");
@@ -200,6 +201,18 @@ export function MeetingDetailView({
     showToast("待办事项清单 (Checklist) 已复制到剪贴板", "success");
   };
 
+  const handleCopyStarred = async () => {
+    if (!starredIds || starredIds.size === 0) {
+      showToast("当前会议暂无标记为重点的段落", "warning");
+      return;
+    }
+    const starredSegs = segments.filter((s) => starredIds.has(s.id));
+    const text = starredSegs.map((s) => `[${s.speaker_name}]: ${s.text}`).join("\n");
+    await navigator.clipboard.writeText(text);
+    showToast(`已复制 ${starredSegs.length} 段重点发言`, "success");
+    setIsExportMenuOpen(false);
+  };
+
   const handleRegenerate = async () => {
     setIsRegenerating(true);
     try {
@@ -220,118 +233,187 @@ export function MeetingDetailView({
     }, 3000);
   };
 
+function formatDuration(startedAt?: string | null, endedAt?: string | null): string {
+  if (!startedAt) return "";
+  const start = Date.parse(startedAt);
+  const end = endedAt ? Date.parse(endedAt) : Date.now();
+  if (isNaN(start) || isNaN(end) || end < start) return "";
+  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) {
+    return `${h}小时${m}分${s}秒`;
+  }
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatMeetingDateTime(dateStr?: string | null): string {
+  if (!dateStr) return "未知时间";
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "未知时间";
+  }
+}
+
+  const durationText = formatDuration(meeting.started_at, meeting.ended_at);
+  const speakerCount =
+    Object.keys(meeting.speakers || {}).length ||
+    new Set(segments.map((s) => s.speaker_key)).size ||
+    1;
+
   return (
     <div className="meeting-detail-view">
-      {/* 顶部多级返回导航 */}
-      <div className="detail-top-nav">
-        <button
-          type="button"
-          className={`detail-back-btn ${isMeetingActive ? "is-live-return" : ""}`}
-          onClick={onReturnToActive}
-          title={isMeetingActive ? "返回正在进行的会议录制工作台 (按 Esc)" : "返回会议发起页 (按 Esc)"}
-        >
-          <span className="back-arrow">‹</span>
-          {isMeetingActive ? (
+      {/* 顶部现代化全景导航与会议信息栏 */}
+      <header className="detail-top-nav-bar">
+        <div className="nav-left-section">
+          {isMeetingActive && onReturnToActive && (
             <>
-              <span className="btn-recording-pulse-dot" />
-              <span>返回正在进行的会议{activeMeetingTitle ? `（${activeMeetingTitle}）` : ""}</span>
-              <kbd className="nav-kbd">Esc</kbd>
-            </>
-          ) : (
-            <>
-              <span>返回发起新会议</span>
-              <kbd className="nav-kbd">Esc</kbd>
+              <button
+                type="button"
+                className="detail-nav-back-btn detail-back-btn is-live-return"
+                onClick={onReturnToActive}
+                title="返回正在进行的会议录制工作台 (按 Esc)"
+              >
+                <span className="back-arrow-icon">‹</span>
+                <span className="back-btn-text">
+                  <span className="live-rec-dot" />
+                  <span>返回正在进行的会议{activeMeetingTitle ? `（${activeMeetingTitle}）` : ""}</span>
+                </span>
+                <kbd className="nav-kbd-badge">Esc</kbd>
+              </button>
+              <div className="nav-section-divider" />
             </>
           )}
-        </button>
 
-        <div className="detail-nav-hint">
-          <span>当前查看：历史会议详情</span>
+          <div className="detail-title-block">
+            <div className="detail-title-row">
+              <input
+                className="detail-title-input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onFocus={() => setIsEditingTitle(true)}
+                onBlur={() => void handleTitleBlur()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") {
+                    setTitle(meeting.title);
+                    setIsEditingTitle(false);
+                  }
+                }}
+                placeholder="输入会议主题..."
+                title="点击修改会议标题 (按 Enter 确认)"
+              />
+              {isEditingTitle && (
+                <span className="detail-save-hint">
+                  (按 Enter 保存)
+                </span>
+              )}
+            </div>
+
+            <div className="detail-meta-row">
+              <span className="detail-meta-pill">
+                <span className="meta-icon">📅</span>
+                <span>{formatMeetingDateTime(meeting.started_at)}</span>
+              </span>
+              {durationText && (
+                <span className="detail-meta-pill">
+                  <span className="meta-icon">⏱️</span>
+                  <span>时长 {durationText}</span>
+                </span>
+              )}
+              <span className="detail-meta-pill">
+                <span className="meta-icon">🎙️</span>
+                <span>{segments.length} 段发言</span>
+              </span>
+              <span className="detail-meta-pill">
+                <span className="meta-icon">👥</span>
+                <span>{speakerCount} 位发言人</span>
+              </span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div className="detail-header">
-        <div className="detail-title-group">
-          <input
-            className="detail-title-input"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onFocus={() => setIsEditingTitle(true)}
-            onBlur={() => void handleTitleBlur()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-              if (e.key === "Escape") {
-                setTitle(meeting.title);
-                setIsEditingTitle(false);
-              }
-            }}
-            title="点击修改会议标题 (按 Enter 确认)"
-          />
-          <span className={`status-badge ${statusInfo.className}`}>
-            {statusInfo.text}
-          </span>
-          {isEditingTitle && (
-            <span style={{ fontSize: "0.72rem", color: "var(--color-accent-light)" }}>
-              (按回车保存)
-            </span>
-          )}
-        </div>
-
-        <div className="detail-actions">
+        <div className="nav-right-section">
           {/* 导出菜单 */}
           <div className="export-dropdown-wrapper">
             <button
               type="button"
-              className="btn-secondary"
+              className={`detail-action-btn export-btn ${isExportMenuOpen ? "active" : ""}`}
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
             >
-              <span>📥 导出</span>
-              <span style={{ fontSize: "0.65rem" }}>▼</span>
+              <span>📥 导出记录</span>
+              <span className="export-chevron">{isExportMenuOpen ? "▲" : "▼"}</span>
             </button>
 
             {isExportMenuOpen && (
-              <div className="export-menu">
+              <div className="export-dropdown-menu">
+                <div className="export-dropdown-header">导出与分享</div>
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item highlight"
                   onClick={() => void handleCopyReport()}
                 >
-                  📋 复制汇报格式
+                  <span className="item-icon">📋</span>
+                  <span className="item-label">复制会议汇报格式</span>
                 </button>
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item"
                   onClick={() => void handleCopyChecklist()}
                 >
-                  ☑️ 复制待办清单 (Checklist)
+                  <span className="item-icon">☑️</span>
+                  <span className="item-label">复制待办清单 (Checklist)</span>
                 </button>
+                {starredIds && starredIds.size > 0 && (
+                  <button
+                    type="button"
+                    className="export-menu-item highlight"
+                    onClick={() => void handleCopyStarred()}
+                  >
+                    <span className="item-icon">⭐</span>
+                    <span className="item-label">复制重点发言 ({starredIds.size} 段)</span>
+                  </button>
+                )}
+                <div className="export-dropdown-divider" />
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item"
                   onClick={() => void handleExport("md")}
                 >
-                  📝 Markdown (.md)
+                  <span className="item-icon">📝</span>
+                  <span className="item-label">Markdown (.md)</span>
                 </button>
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item"
                   onClick={() => void handleExport("txt")}
                 >
-                  📄 纯文本 (.txt)
+                  <span className="item-icon">📄</span>
+                  <span className="item-label">纯文本 (.txt)</span>
                 </button>
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item"
                   onClick={() => void handleExport("srt")}
                 >
-                  🎬 SRT 字幕 (.srt)
+                  <span className="item-icon">🎬</span>
+                  <span className="item-label">SRT 字幕 (.srt)</span>
                 </button>
                 <button
                   type="button"
-                  className="export-item"
+                  className="export-menu-item"
                   onClick={() => void handleExport("json")}
                 >
-                  ⚙️ 原始 JSON (.json)
+                  <span className="item-icon">⚙️</span>
+                  <span className="item-label">原始 JSON 时序 (.json)</span>
                 </button>
               </div>
             )}
@@ -339,16 +421,16 @@ export function MeetingDetailView({
 
           <button
             type="button"
-            className="btn-secondary"
-            style={{ color: "var(--color-red)" }}
+            className="detail-action-btn delete-btn"
             onClick={() => void onDeleteMeeting()}
-            title="删除会议"
+            title="永久删除此会议"
           >
-            🗑️
+            <span>🗑️</span>
           </button>
         </div>
-      </div>
+      </header>
 
+      {/* 双栏工作区 */}
       <div
         className={`dual-pane-grid ${isDraggingSplitter ? "is-resizing" : ""}`}
         ref={containerRef}
@@ -360,6 +442,8 @@ export function MeetingDetailView({
           segments={segments}
           highlightedSegmentId={highlightedSegmentId}
           onRenameSpeaker={onRenameSpeaker}
+          starredIds={starredIds}
+          onToggleStarSegment={onToggleStarSegment}
         />
         <div
           className="pane-splitter"

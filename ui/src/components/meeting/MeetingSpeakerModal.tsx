@@ -38,7 +38,7 @@ export function MeetingSpeakerModal({
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-dialog" onClick={(e) => e.stopPropagation()}>
+      <div className="modal-dialog modal-speaker-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h3 className="modal-title">重命名说话人</h3>
           <button
@@ -68,21 +68,26 @@ export function MeetingSpeakerModal({
               if (e.key === "Escape") onClose();
             }}
           />
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
-            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", alignSelf: "center" }}>
+          <div className="speaker-presets-section">
+            <span className="speaker-preset-label">
               快捷预设:
             </span>
-            {["🎤 主持人", "📊 汇报人", "💻 技术负责", "🎨 产品经理", "💼 决策人"].map((role) => (
-              <button
-                key={role}
-                type="button"
-                className="btn-secondary"
-                style={{ fontSize: "0.68rem", padding: "1px 6px" }}
-                onClick={() => setName(role.replace(/^.. /, ""))}
-              >
-                {role}
-              </button>
-            ))}
+            <div className="speaker-presets-list">
+              {["🎤 主持人", "📊 汇报人", "💻 技术负责", "🎨 产品经理", "💼 决策人"].map((role) => {
+                const roleName = role.replace(/^.. /, "");
+                const isSelected = name.trim() === roleName;
+                return (
+                  <button
+                    key={role}
+                    type="button"
+                    className={`speaker-preset-btn ${isSelected ? "active" : ""}`}
+                    onClick={() => setName(roleName)}
+                  >
+                    {role}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
 

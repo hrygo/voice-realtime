@@ -214,7 +214,7 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(handleStart).toHaveBeenCalled();
   });
 
-  it("renders MeetingRecordingView with active segments, partial text, and mute button", () => {
+  it("renders MeetingRecordingView with active segments, partial text, and controls", () => {
     const handleEnd = vi.fn().mockResolvedValue(undefined);
     const handleToggleMic = vi.fn();
     const handleRename = vi.fn();
@@ -236,11 +236,13 @@ describe("Meeting React Components DOM Rendering", () => {
       );
     });
 
-    expect(container.textContent).toContain("会议助手模式运行中：已完全静音交互与回复");
+    expect(container.textContent).toContain("已记录 4 个段落");
     expect(container.textContent).toContain("结束会议并生成纪要");
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("正在输入的临时转录片段...");
+
   });
+
 
   it("renders MeetingTranscriptViewer and supports search filtering", () => {
     const handleRename = vi.fn();
@@ -400,7 +402,7 @@ describe("Meeting React Components DOM Rendering", () => {
     });
 
     expect(container.textContent).toContain("返回正在进行的会议（进行中的架构评审）");
-    expect(container.textContent).toContain("当前查看：历史会议详情");
+    expect(container.textContent).toContain("4 段发言");
 
     const backBtn = container.querySelector(".detail-back-btn.is-live-return") as HTMLButtonElement;
     expect(backBtn).not.toBeNull();

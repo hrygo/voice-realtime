@@ -12,8 +12,10 @@ import { useUISettingsStore } from "../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import { showToast } from "./Toast";
 import { copyTextToClipboard } from "../utils/clipboard";
+import { SubtitleWaveform } from "./SubtitleWaveform";
 import "./SubtitleStream.css";
 import "./ModeSidebar.css";
+
 
 type FontSizeMode = "normal" | "medium" | "large";
 
@@ -527,6 +529,10 @@ export default function SubtitleStream({
               <h2>
                 <span>📝</span> 实时字幕
               </h2>
+              <span className={`subtitle-listening-pill ${connected ? "listening" : ""}`}>
+                <span className="subtitle-listening-dot" />
+                {connected ? (partial ? "实时转写中" : "实时收听中") : "等待连接"}
+              </span>
               <span className="subtitle-header-context">
                 {isMeetingRecording ? "会议转录同步中" : "本地实时转写工作区"}
               </span>
@@ -535,6 +541,17 @@ export default function SubtitleStream({
               <span className="subtitle-header-hint">双击字幕可复制 · Cmd+Shift+P 提词</span>
             </div>
           </header>
+
+          {/* 实时字幕流式拟真声学波形 */}
+          <div className="subtitle-waveform-container">
+            <SubtitleWaveform
+              connected={connected}
+              hasPartial={Boolean(partial)}
+              activeTextTrigger={partial || lines.length}
+            />
+          </div>
+
+
 
           <div
             className={`subtitle-stream-body font-${fontSizeMode}`}

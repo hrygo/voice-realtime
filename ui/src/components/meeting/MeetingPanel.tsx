@@ -331,7 +331,15 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             }
             isMeetingActive={isMeetingActive}
             activeMeetingTitle={store.activeMeeting?.title}
-            onReturnToActive={isMeetingActive ? store.returnToActiveMeeting : handleNewMeeting}
+            onReturnToActive={isMeetingActive ? store.returnToActiveMeeting : undefined}
+            starredIds={
+              store.selectedMeetingId
+                ? store.starredMap[store.selectedMeetingId] || store.getStarredSegments(store.selectedMeetingId)
+                : undefined
+            }
+            onToggleStarSegment={(segmentId) =>
+              store.selectedMeetingId && store.toggleStarSegment(store.selectedMeetingId, segmentId)
+            }
           />
         ) : store.status === "recording" ? (
           /* 2. 录制中视图 */
@@ -351,6 +359,14 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             onEndMeeting={handleEndMeeting}
             onRenameSpeaker={handleRenameSpeaker}
             isEnding={isEnding}
+            starredIds={
+              store.activeMeetingId
+                ? store.starredMap[store.activeMeetingId] || store.getStarredSegments(store.activeMeetingId)
+                : undefined
+            }
+            onToggleStarSegment={(segmentId) =>
+              store.activeMeetingId && store.toggleStarSegment(store.activeMeetingId, segmentId)
+            }
           />
         ) : store.status === "finalizing" ? (
           /* 3. 冲刷中视图 */
@@ -382,7 +398,15 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
               )
             }
             isMeetingActive={false}
-            onReturnToActive={handleNewMeeting}
+            onReturnToActive={undefined}
+            starredIds={
+              activeMeetingDetail.id
+                ? store.starredMap[activeMeetingDetail.id] || store.getStarredSegments(activeMeetingDetail.id)
+                : undefined
+            }
+            onToggleStarSegment={(segmentId) =>
+              activeMeetingDetail.id && store.toggleStarSegment(activeMeetingDetail.id, segmentId)
+            }
           />
         ) : (
           /* 5. 准备/闲置视图 */

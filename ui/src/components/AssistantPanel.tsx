@@ -878,8 +878,9 @@ export default function AssistantPanel({
 
       {/* 右侧主互动区 */}
       <main className="assistant-main-stage">
-        {/* 头部 */}
+        {/* 一体化高效生态交互 Hero 头部 */}
         <header className="assistant-stage-header">
+
           <div className="assistant-header-title-wrap">
             <h2>
               <span>🤖</span> 实时语音互动
@@ -890,14 +891,42 @@ export default function AssistantPanel({
             </span>
           </div>
 
-          <div
-            className={`assistant-phase-badge ${currentPhaseConfig.className}`}
-            title={currentPhaseConfig.desc}
-          >
-            <span>{currentPhaseConfig.icon}</span>
-            <span>{currentPhaseConfig.label}</span>
+          {/* 居中生态流体阶段流 */}
+          <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
+            <div className={`phase-step-item ${visiblePhase === "listening" ? "active step-listening" : ""}`}>
+              <span className="phase-step-icon">👂</span>
+              <span>聆听麦克风</span>
+            </div>
+            <span className="phase-flow-arrow" aria-hidden="true">→</span>
+            <div className={`phase-step-item ${visiblePhase === "thinking" ? "active step-thinking" : ""}`}>
+              <span className="phase-step-icon">🧠</span>
+              <span>LM Studio 推理</span>
+            </div>
+            <span className="phase-flow-arrow" aria-hidden="true">→</span>
+            <div className={`phase-step-item ${visiblePhase === "speaking" ? "active step-speaking" : ""}`}>
+              <span className="phase-step-icon">🗣️</span>
+              <span>Qwen3-TTS 播报</span>
+            </div>
+          </div>
+
+          <div className="assistant-stage-header-right">
+            {interruptionActive && duplexPresentation.interruptionEnabled && (
+              <span className="interruption-alert-chip" role="alert" title="已成功响应耳机插话打断并停止 TTS 播报">
+                <span className="interruption-pulse-dot" aria-hidden="true" />
+                <span>已响应插话打断</span>
+              </span>
+            )}
+
+            <div
+              className={`assistant-phase-badge ${currentPhaseConfig.className}`}
+              title={currentPhaseConfig.desc}
+            >
+              <span>{currentPhaseConfig.icon}</span>
+              <span>{currentPhaseConfig.label}</span>
+            </div>
           </div>
         </header>
+
 
         {isMeetingRecording && (
           <div className="assistant-meeting-suspension-banner" role="alert">
@@ -933,32 +962,16 @@ export default function AssistantPanel({
           </div>
         )}
 
-        {/* 状态步骤指示栏 + 打断插话指示 */}
-        <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
-          <div className={`phase-step-item ${visiblePhase === "listening" ? "active step-listening" : ""}`}>
-            <span className="phase-step-icon">👂</span>
-            <span>聆听麦克风</span>
-          </div>
-          <div className={`phase-step-item ${visiblePhase === "thinking" ? "active step-thinking" : ""}`}>
-            <span className="phase-step-icon">🧠</span>
-            <span>LM Studio 推理</span>
-          </div>
-          <div className={`phase-step-item ${visiblePhase === "speaking" ? "active step-speaking" : ""}`}>
-            <span className="phase-step-icon">🗣️</span>
-            <span>Qwen3-TTS 播报</span>
-          </div>
-
-          {interruptionActive && duplexPresentation.interruptionEnabled && (
-            <div className="interruption-alert-chip" role="alert">
-              <span>⚡ 已响应插话打断 (耳机)</span>
-            </div>
-          )}
-        </div>
-
-        {/* 60FPS 声学动态可视化波形 */}
+        {/* 专业 60FPS 拟真声学多谐波波形 */}
         <div className="assistant-waveform-container">
-          <ExtractedAssistantWaveform phase={visiblePhase} isMuted={micMuted} />
+          <ExtractedAssistantWaveform
+            phase={visiblePhase}
+            isMuted={micMuted}
+            activeTextTrigger={transcript}
+          />
         </div>
+
+
 
         <AssistantTranscript
           transcript={transcript}

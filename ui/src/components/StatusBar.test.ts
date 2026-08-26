@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeStateSnapshot } from "../protocol";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
+import { useMeetingStore } from "../stores/meetingStore";
 import StatusBar, { sessionElapsedSeconds } from "./StatusBar";
+
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -119,6 +121,37 @@ describe("StatusBar workspace switching state", () => {
     renderStatusBar(null, false, "模式已被占用");
     expect(container.querySelector(".status-tab-btn.switch-error")).not.toBeNull();
     expect(container.querySelector("[role='alert']")?.textContent).toContain("模式已被占用");
+  });
+
+  it("renders recording status chip without elapsed time timer in meeting tab and disables other tabs cleanly", () => {
+    act(() => {
+      useMeetingStore.setState({ status: "recording" });
+    });
+    renderStatusBar(null, false);
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const assistantButton = buttons.find((button) => button.textContent?.includes("语音助手"));
+    const meetingButton = buttons.find((button) => button.textContent?.includes("会议助手"));
+    const subtitlesButton = buttons.find((button) => button.textContent?.includes("实时字幕"));
+
+    const recordingChip = meetingButton?.querySelector(".tab-status-chip.recording");
+    expect(recordingChip).not.toBeNull();
+    expect(recordingChip?.textContent?.trim()).toBe("录制中");
+
+    // Assistant tab shows suspended chip and is disabled
+    expect(assistantButton?.querySelector(".tab-status-chip.suspended")).not.toBeNull();
+    expect(assistantButton?.disabled).toBe(true);
+
+    // Subtitles tab has no misleading sync chip and is disabled
+    expect(subtitlesButton?.querySelector(".tab-status-chip")).toBeNull();
+    expect(subtitlesButton?.disabled).toBe(true);
+
+    // Meeting tab is active/clickable
+    expect(meetingButton?.disabled).toBe(false);
+
+    act(() => {
+      useMeetingStore.setState({ status: "idle" });
+    });
   });
 });
 

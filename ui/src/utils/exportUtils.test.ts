@@ -55,7 +55,26 @@ describe("exportUtils", () => {
     expect(md).toContain("## 2. 核心议题");
     expect(md).toContain("## 3. 决策事项");
     expect(md).toContain("## 4. 待办行动项");
-    expect(md).toContain("| 时间 | 说话人 | 转录内容 |");
+    expect(md).toContain("| 时间 | 说话人 | 重点 | 转录内容 |");
+  });
+
+  it("generates markdown and plain text with highlighted starred segments", () => {
+    const starredSet = new Set([mockSegments[0].id]);
+    const md = generateMarkdownContent(
+      mockMeetingDetailCompleted,
+      mockSegments,
+      { ...mockMinutesCompleted, content_markdown: null },
+      starredSet,
+    );
+    expect(md).toContain("| ⭐ | **大家好");
+
+    const txt = generatePlainTextContent(
+      mockMeetingDetailCompleted,
+      mockSegments,
+      mockMinutesCompleted,
+      starredSet,
+    );
+    expect(txt).toContain("[⭐ 重点]:");
   });
 
   it("generates json export content", () => {

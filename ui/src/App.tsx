@@ -42,8 +42,9 @@ export function resolveWorkspaceTab(
   currentTab: WorkspaceTab | null,
 ): WorkspaceTab {
   if (mode === "meeting") return "meeting";
-  if (mode === "subtitles") return "subtitles";
   const candidate = currentTab ?? persistedTab;
+  if (candidate === "meeting") return "meeting";
+  if (mode === "subtitles") return "subtitles";
   return candidate === "subtitles" ? "assistant" : candidate;
 }
 
@@ -241,6 +242,10 @@ export default function App() {
       if (!commandSocket.snapshot) {
         return;
       }
+      if (isMeetingRecording && newTab !== "meeting") {
+        showToast("会议录制中，请先结束会议再切换模式", "warning");
+        return;
+      }
       if (newTab === "meeting") {
         commitWorkspaceTab("meeting");
         setSwitchError(null);
@@ -305,6 +310,7 @@ export default function App() {
       clearPendingSwitch,
       commandSocket,
       commitWorkspaceTab,
+      isMeetingRecording,
     ],
   );
 
@@ -352,7 +358,6 @@ export default function App() {
         reconciling={reconciling}
         switchError={switchError}
         onTabChange={handleTabChange}
-        recordingElapsed={recordingElapsed}
       />
 
       <main className="app-main">

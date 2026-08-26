@@ -3,6 +3,8 @@ import type { TranscriptSegment } from "../../contracts/meetingContract";
 import { formatTimeRange, MeetingGapAlert } from "./MeetingGapAlert";
 import type { TranscriptionGap } from "../../stores/meetingStore";
 import { showToast } from "../Toast";
+import { MeetingWaveform } from "./MeetingWaveform";
+
 
 export function formatElapsed(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -25,6 +27,8 @@ interface MeetingRecordingViewProps {
   onEndMeeting: () => Promise<void>;
   onRenameSpeaker: (speakerKey: string, currentName: string) => void;
   isEnding: boolean;
+  starredIds?: ReadonlySet<string>;
+  onToggleStarSegment?: (segmentId: string) => void;
 }
 
 export function MeetingRecordingView({
@@ -38,9 +42,14 @@ export function MeetingRecordingView({
   onEndMeeting,
   onRenameSpeaker,
   isEnding,
+  starredIds: propStarredIds,
+  onToggleStarSegment: propToggleStarSegment,
 }: MeetingRecordingViewProps) {
   const [elapsed, setElapsed] = useState(0);
-  const [starredIds, setStarredIds] = useState<Set<string>>(() => new Set());
+  const [localStarredIds, setLocalStarredIds] = useState<Set<string>>(() => new Set());
+  const starredIds = propStarredIds ?? localStarredIds;
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [filterStarredOnly, setFilterStarredOnly] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -58,29 +67,39 @@ export function MeetingRecordingView({
   }, [startedAt]);
 
   const toggleStarSegment = useCallback((id: string) => {
-    setStarredIds((prev) => {
+    if (propToggleStarSegment) {
+      const isCurrentlyStarred = starredIds.has(id);
+      propToggleStarSegment(id);
+      showToast(isCurrentlyStarred ? "已取消重点标记" : "⭐ 已标记此段落为重点", isCurrentlyStarred ? "info" : "success");
+      return;
+    }
+    setLocalStarredIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
         next.delete(id);
         showToast("已取消重点标记", "info");
       } else {
         next.add(id);
-        showToast("⭐ 已标记为此段落为重点", "success");
+        showToast("⭐ 已标记此段落为重点", "success");
       }
       return next;
     });
-  }, []);
+  }, [propToggleStarSegment, starredIds]);
 
-  const handleStarLatest = useCallback(() => {
+  const handleStarSelectedOrLatest = useCallback(() => {
+    if (selectedSegmentId) {
+      toggleStarSegment(selectedSegmentId);
+      return;
+    }
     if (segments.length === 0) {
       showToast("暂无转录段落可标记", "warning");
       return;
     }
     const latest = segments[segments.length - 1];
     toggleStarSegment(latest.id);
-  }, [segments, toggleStarSegment]);
+  }, [selectedSegmentId, segments, toggleStarSegment]);
 
-  // Keyboard shortcut: 'm' / 'M' to toggle mic, 's' / 'S' to star latest segment
+  // Keyboard shortcut: 'm' / 'M' to toggle mic, 's' / 'S' to star selected/latest segment
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -93,13 +112,13 @@ export function MeetingRecordingView({
       } else if (e.key === "s" || e.key === "S") {
         if (!e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          handleStarLatest();
+          handleStarSelectedOrLatest();
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [onToggleMic, handleStarLatest]);
+  }, [onToggleMic, handleStarSelectedOrLatest]);
 
   // Auto-scroll on new segments / partial
   useEffect(() => {
@@ -115,20 +134,12 @@ export function MeetingRecordingView({
     setAutoScroll(isAtBottom);
   };
 
+  const displayedSegments = filterStarredOnly
+    ? segments.filter((seg) => starredIds.has(seg.id))
+    : segments;
+
   return (
     <div className="recording-view">
-      <div className="recording-banner">
-        <span>⚠️ 会议助手模式运行中：已完全静音交互与回复，持续转录并记录到本机数据库</span>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={onToggleMic}
-          style={{ fontSize: "0.72rem", padding: "2px 8px" }}
-        >
-          {micMuted ? "🔇 解除静音 (M)" : "🎙️ 麦克风采集中 (M)"}
-        </button>
-      </div>
-
       <MeetingGapAlert gaps={gaps} />
 
       <div className="recording-toolbar">
@@ -137,7 +148,7 @@ export function MeetingRecordingView({
             <span className="recording-dot" />
             <span>{formatElapsed(elapsed)}</span>
           </div>
-          <div className="recording-vu-meter" title={micMuted ? "麦克风已静音" : "麦克风音频采集中"}>
+          <div className="recording-vu-meter" title={micMuted ? "麦克风已静音 (快捷键 M)" : "麦克风音频采集中 (快捷键 M)"}>
             <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "12px" }} />
             <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "16px" }} />
             <span className={`rec-vu-bar ${micMuted ? "muted" : "active"}`} style={{ height: micMuted ? "3px" : "10px" }} />
@@ -150,13 +161,29 @@ export function MeetingRecordingView({
 
           <button
             type="button"
-            className="btn-secondary btn-star-latest"
-            onClick={handleStarLatest}
-            title="将当前最新段落标为重点 (快捷键 S)"
-            style={{ fontSize: "0.72rem", padding: "2px 8px", marginLeft: "4px" }}
+            className={`btn-secondary btn-star-action ${selectedSegmentId ? "has-selection" : ""}`}
+            onClick={handleStarSelectedOrLatest}
+            title={
+              selectedSegmentId
+                ? "将当前选中段落标记/取消重点 (快捷键 S)"
+                : "将最新发言标记为重点 (或点击任意段落进行重点选择，快捷键 S)"
+            }
+            style={{ fontSize: "0.72rem", padding: "3px 10px", marginLeft: "4px" }}
           >
-            <span>⭐ 标记重点 (S)</span>
+            <span>⭐ {selectedSegmentId ? "标记选中段落 (S)" : "标记重点 (S)"}</span>
           </button>
+
+          {starredIds.size > 0 && (
+            <button
+              type="button"
+              className={`btn-secondary filter-starred-toggle ${filterStarredOnly ? "active" : ""}`}
+              onClick={() => setFilterStarredOnly((prev) => !prev)}
+              title={filterStarredOnly ? "查看全部转录段落" : "仅查看已标记为重点的段落"}
+              style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+            >
+              <span>{filterStarredOnly ? "📋 查看全部" : `⭐ 仅看重点 (${starredIds.size})`}</span>
+            </button>
+          )}
         </div>
 
         <button
@@ -174,33 +201,56 @@ export function MeetingRecordingView({
         </button>
       </div>
 
+      {/* 会议录制高保真拾音与声纹分轨拟真波形 */}
+      <div className="meeting-waveform-container">
+        <MeetingWaveform
+          isRecording={true}
+          hasPartial={Boolean(partialText)}
+          isMuted={micMuted}
+          activeTextTrigger={partialText || segments.length}
+        />
+      </div>
+
       <div
         className="live-transcript-container"
         ref={scrollRef}
         onScroll={handleScroll}
       >
-        {segments.length === 0 && !partialText && (
+        {displayedSegments.length === 0 && !partialText && (
           <div className="history-empty">
-            <span>🎙️ 正在倾听发言... 请保持讲话，实时转录将在此展示</span>
+            {filterStarredOnly ? (
+              <span>⭐ 暂无标记为重点的段落，点击段落右侧星号可随时标记</span>
+            ) : (
+              <span>🎙️ 正在倾听发言... 请保持讲话，实时转录将在此展示</span>
+            )}
           </div>
         )}
 
-        {segments.map((seg) => {
+        {displayedSegments.map((seg) => {
           const isStarred = starredIds.has(seg.id);
+          const isSelected = selectedSegmentId === seg.id;
           return (
-            <div key={seg.id} className={`segment-card ${isStarred ? "is-starred" : ""}`}>
+            <div
+              key={seg.id}
+              className={`segment-card ${isStarred ? "is-starred" : ""} ${isSelected ? "is-selected" : ""}`}
+              onClick={() => setSelectedSegmentId((curr) => (curr === seg.id ? null : seg.id))}
+              title="点击可选中此段落以进行重点标记或复制"
+            >
               <div className="segment-top">
                 <button
                   type="button"
                   className="speaker-tag-btn"
                   title="点击修改此说话人名称"
-                  onClick={() => onRenameSpeaker(seg.speaker_key, seg.speaker_name)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRenameSpeaker(seg.speaker_key, seg.speaker_name);
+                  }}
                 >
                   <span>👤</span>
                   <span>{seg.speaker_name}</span>
                   <span style={{ opacity: 0.6, fontSize: "0.68rem" }}>✎</span>
                 </button>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <div className="segment-actions-group" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   {isStarred && (
                     <span className="segment-starred-badge" title="重点发言段落">
                       ⭐ 重点
@@ -211,12 +261,15 @@ export function MeetingRecordingView({
                   </span>
                   <button
                     type="button"
-                    className="status-icon-btn"
-                    style={{ fontSize: "0.72rem", padding: "1px 4px", opacity: isStarred ? 1 : 0.6 }}
-                    title={isStarred ? "取消重点标记" : "标为此段为重点 (S)"}
-                    onClick={() => toggleStarSegment(seg.id)}
+                    className={`segment-star-btn ${isStarred ? "active" : ""}`}
+                    title={isStarred ? "取消重点标记" : "标记此段落为重点 (快捷键 S)"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleStarSegment(seg.id);
+                    }}
                   >
-                    {isStarred ? "⭐" : "✩"}
+                    <span>{isStarred ? "⭐" : "✩"}</span>
+                    <span className="star-btn-text">{isStarred ? "已标记" : "标为重点"}</span>
                   </button>
                 </div>
               </div>
