@@ -1,9 +1,10 @@
-"""共享日志配置：统一格式、控制台与滚动文件输出、环境变量动态配置与第三方降噪。"""
+"""共享日志配置：统一格式、控制台与滚动文件输出、敏感信息脱敏、环境变量动态配置与第三方降噪。"""
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -22,6 +23,49 @@ NOISY_LOGGERS = (
     "nv_one_logger",
     "transformers",
 )
+
+
+class SanitizingFilter(logging.Filter):
+    """过滤并遮蔽日志记录中可能携带的数据库密码、敏感凭据与认证 Token。"""
+
+    _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (
+            re.compile(
+                r"(postgres(?:ql)?://[^/:]+:)(.*?)@([^/@\s]+)(/|\s|$)",
+                re.IGNORECASE,
+            ),
+            r"\1***@\3\4",
+        ),
+        (re.compile(r"(Bearer\s+)[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE), r"\1***"),
+        (
+            re.compile(
+                r"(['\"]?(?:password|token|secret)['\"]?\s*[:=]\s*['\"])[^'\"]+(['\"])",
+                re.IGNORECASE,
+            ),
+            r"\1***\2",
+        ),
+    )
+
+    def _sanitize(self, text: str) -> str:
+        for pattern, repl in self._PATTERNS:
+            text = pattern.sub(repl, text)
+        return text
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self._sanitize(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {
+                    k: (self._sanitize(v) if isinstance(v, str) else v)
+                    for k, v in record.args.items()
+                }
+            elif isinstance(record.args, tuple):
+                record.args = tuple(
+                    self._sanitize(item) if isinstance(item, str) else item
+                    for item in record.args
+                )
+        return True
 
 
 def _parse_bool_env(key: str, default: bool) -> bool:
@@ -87,6 +131,7 @@ def setup_logging(
     )
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
+    sanitizer = SanitizingFilter()
     root_logger = logging.getLogger()
     root_logger.setLevel(resolved_level)
 
@@ -95,10 +140,15 @@ def setup_logging(
         root_logger.removeHandler(handler)
         handler.close()
 
+    for filter_item in list(root_logger.filters):
+        root_logger.removeFilter(filter_item)
+    root_logger.addFilter(sanitizer)
+
     if to_console:
         console_handler = logging.StreamHandler()
         console_handler.setFormatter(formatter)
         console_handler.setLevel(resolved_level)
+        console_handler.addFilter(sanitizer)
         root_logger.addHandler(console_handler)
 
     if to_file:
@@ -123,6 +173,7 @@ def setup_logging(
             )
             file_handler.setFormatter(formatter)
             file_handler.setLevel(resolved_level)
+            file_handler.addFilter(sanitizer)
             root_logger.addHandler(file_handler)
         except OSError:
             # 文件创建或权限受限时退化，仅靠 console 输出，不阻塞系统启动

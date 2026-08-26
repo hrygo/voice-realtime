@@ -31,6 +31,8 @@ else
         echo "👉 本机亦可: http://127.0.0.1:${VR_UI_PORT}"
     fi
 fi
+echo "📄  服务日志文件: runtime/logs/ui.log"
+echo "👉  实时查看日志: tail -n 50 -f runtime/logs/ui.log"
 echo "========================================================"
 
 exec uv run vr-ui "$@"

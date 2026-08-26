@@ -26,6 +26,8 @@ else
     echo "🏠 访问模式: 指定地址/局域网 (${VR_BRIDGE_HOST})"
     echo "👉 服务端点: http://${VR_BRIDGE_HOST}:${VR_BRIDGE_PORT}/v1/audio/speech"
 fi
+echo "📄  服务日志文件: runtime/logs/bridge.log"
+echo "👉  实时查看日志: tail -n 50 -f runtime/logs/bridge.log"
 echo "========================================================"
 
 exec uv run vr-bridge "$@"

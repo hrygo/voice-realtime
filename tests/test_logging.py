@@ -10,6 +10,7 @@ import pytest
 
 from voice_realtime.logging import (
     NOISY_LOGGERS,
+    SanitizingFilter,
     _parse_bool_env,
     _resolve_level,
     setup_logging,
@@ -74,6 +75,54 @@ def test_setup_logging_basic(tmp_path: Path) -> None:
 
     content = Path(file_handler.baseFilename).read_text(encoding="utf-8")
     assert "INFO test.module 测试一条信息" in content
+
+
+def test_setup_logging_sanitizes_credentials(tmp_path: Path) -> None:
+    log_dir = tmp_path / "logs"
+    setup_logging("test-svc", log_dir=log_dir, level=logging.INFO)
+
+    file_handler = next(
+        h for h in logging.getLogger().handlers if isinstance(h, RotatingFileHandler)
+    )
+    logger = logging.getLogger("test.security")
+    logger.info("连接数据库: postgresql://my_user:SuperSecretPass123@127.0.0.1:5432/knowledge")
+    logger.info("授权信息: %s", "Bearer my-secret-token-xyz-12345")
+    logger.info("配置项: 'password': 'my-raw-password'")
+    file_handler.flush()
+
+    content = Path(file_handler.baseFilename).read_text(encoding="utf-8")
+    assert "SuperSecretPass123" not in content
+    assert "postgresql://my_user:***@127.0.0.1:5432/knowledge" in content
+    assert "my-secret-token-xyz" not in content
+    assert "Bearer ***" in content
+    assert "'password': '***'" in content
+
+
+def test_sanitizing_filter_direct() -> None:
+    f = SanitizingFilter()
+    record = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="DSN: postgres://admin:p@ssw0rd@localhost/db, token: Bearer abc.123",
+        args=(),
+        exc_info=None,
+    )
+    assert f.filter(record) is True
+    assert record.msg == "DSN: postgres://admin:***@localhost/db, token: Bearer ***"
+
+    record_with_args = logging.LogRecord(
+        name="test",
+        level=logging.INFO,
+        pathname="",
+        lineno=0,
+        msg="Connecting with %s and %s",
+        args=("postgres://admin:secret@localhost/db", "password='secret'"),
+        exc_info=None,
+    )
+    assert f.filter(record_with_args) is True
+    assert record_with_args.args == ("postgres://admin:***@localhost/db", "password='***'")
 
 
 def test_setup_logging_disable_file(tmp_path: Path) -> None:

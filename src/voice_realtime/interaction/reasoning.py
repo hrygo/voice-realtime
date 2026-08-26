@@ -832,6 +832,12 @@ class LmStudioNativeLLMService(OpenAILLMService):
         if final_result is None:
             raise RuntimeError("LM Studio stream ended without a valid chat.end")
         if generation == self._request_generation:
+            logger.info(
+                "LM Studio: 流式推理完成 (input_tokens=%d, output_tokens=%d, ttft=%.2fs)",
+                final_result.stats.input_tokens,
+                final_result.stats.total_output_tokens,
+                final_result.stats.ttft_seconds,
+            )
             self._previous_response_id = final_result.response_id
             self._system_prompt = system_prompt
             self._completed_user_turns = user_turns

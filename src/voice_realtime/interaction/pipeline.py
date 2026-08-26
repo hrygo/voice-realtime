@@ -422,6 +422,7 @@ class SelfEchoFilter(FrameProcessor):
                 self._dropped += 1
                 logger.info("self-echo: 丢弃与机器人近端播报相似的用户转写 %r", frame.text)
                 return
+            logger.info("STT: 用户识别文本 %r", frame.text)
         await self.push_frame(frame, direction)
 
 

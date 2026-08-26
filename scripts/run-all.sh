@@ -45,6 +45,11 @@ else
     echo "🔊  TTS 语音合成桥:         http://${VR_BRIDGE_HOST}:${VR_BRIDGE_PORT}"
     echo "📝  字幕识别服务:           ws://${VR_SUBTITLE_HOST}:${VR_SUBTITLE_PORT}"
 fi
+echo "📄  服务日志目录:           runtime/logs/"
+echo "    - UI 控制台日志:        runtime/logs/ui.log"
+echo "    - TTS 合成桥日志:       runtime/logs/bridge.log"
+echo "    - 字幕识别服务日志:     runtime/logs/subtitles.log"
+echo "👉  实时跟踪日志: tail -n 50 -f runtime/logs/*.log"
 echo "========================================================"
 echo "按 Ctrl+C 停止所有服务"
 echo ""

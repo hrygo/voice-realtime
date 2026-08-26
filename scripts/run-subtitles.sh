@@ -26,6 +26,8 @@ else
     echo "🏠 访问模式: 指定地址/局域网 (${VR_SUBTITLE_HOST})"
     echo "👉 服务 WebSocket: ws://${VR_SUBTITLE_HOST}:${VR_SUBTITLE_PORT}"
 fi
+echo "📄  服务日志文件: runtime/logs/subtitles.log"
+echo "👉  实时查看日志: tail -n 50 -f runtime/logs/subtitles.log"
 echo "========================================================"
 
 exec uv run vr-subtitles "$@"
