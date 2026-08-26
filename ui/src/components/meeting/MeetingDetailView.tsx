@@ -9,6 +9,7 @@ import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
 import { meetingApi } from "../../services/meetingApi";
 import { exportMeetingData } from "../../utils/exportUtils";
+import { copyTextToClipboard } from "../../utils/clipboard";
 import { showToast } from "../Toast";
 
 interface MeetingDetailViewProps {
@@ -204,8 +205,12 @@ export function MeetingDetailView({
     if (j.action_items?.length) {
       report += `## 📌 待办行动项\n` + j.action_items.map((a) => `- [ ] ${a.task}${a.owner ? ` (@${a.owner})` : ""}${a.due_date ? ` (截止: ${a.due_date})` : ""}`).join("\n") + "\n\n";
     }
-    await navigator.clipboard.writeText(report);
-    showToast("会议汇报排版已成功复制到剪贴板", "success");
+    try {
+      await copyTextToClipboard(report);
+      showToast("会议汇报排版已成功复制到剪贴板", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
+    }
   };
 
   const handleCopyChecklist = async () => {
@@ -217,8 +222,12 @@ export function MeetingDetailView({
     const text = minutes.content_json.action_items
       .map((item) => `- [ ] ${item.task}${item.owner ? ` (@${item.owner})` : ""}${item.due_date ? ` (截止: ${item.due_date})` : ""}`)
       .join("\n");
-    await navigator.clipboard.writeText(text);
-    showToast("待办事项清单 (Checklist) 已复制到剪贴板", "success");
+    try {
+      await copyTextToClipboard(text);
+      showToast("待办事项清单 (Checklist) 已复制到剪贴板", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
+    }
   };
 
   const handleCopyStarred = async () => {
@@ -228,9 +237,13 @@ export function MeetingDetailView({
     }
     const starredSegs = segments.filter((s) => starredIds.has(s.id));
     const text = starredSegs.map((s) => `[${s.speaker_name}]: ${s.text}`).join("\n");
-    await navigator.clipboard.writeText(text);
-    showToast(`已复制 ${starredSegs.length} 段重点发言`, "success");
-    setIsExportMenuOpen(false);
+    try {
+      await copyTextToClipboard(text);
+      showToast(`已复制 ${starredSegs.length} 段重点发言`, "success");
+      setIsExportMenuOpen(false);
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
+    }
   };
 
   const handleRegenerate = async () => {

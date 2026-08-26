@@ -145,15 +145,15 @@ export function UnifiedAcousticWaveform({
         const speakingCadence = 0.38 + Math.sin(tick * 1.5) * 0.12;
         targetEnergy = Math.max(realAudioEnergy, textEnergy, speakingCadence);
       } else if (currentState === "listening") {
-        // 用户开口拾音中（VAD 检出语音）：以真实麦克风能量为主导，辅以轻柔拾音共鸣
-        const listeningSyllable = 0.22 + Math.sin(tick * 1.2) * 0.06;
-        targetEnergy = Math.max(realAudioEnergy, textEnergy, listeningSyllable);
+        // 聆听麦克风：以真实麦克风能量为主导，静默待命时维持温润微波，有声时敏锐激荡
+        const listeningBaseline = 0.08 + Math.sin(tick * 0.8) * 0.02;
+        targetEnergy = Math.max(realAudioEnergy, textEnergy, listeningBaseline);
       } else if (currentState === "thinking") {
         // 思考中：规律柔和神经突触微脉冲
         const thinkingPulse = 0.32 + Math.sin(tick * 2.0) * 0.10;
         targetEnergy = Math.max(realAudioEnergy, textEnergy, thinkingPulse);
       } else {
-        // 待命静息（idle / recording）：跟随真实麦克风输入，无声时维持平稳温润基线
+        // 待命静息（idle / stopped / degraded / recording）：跟随真实麦克风输入，无声时维持平稳温润基线
         targetEnergy = Math.max(realAudioEnergy, textEnergy, 0.08);
       }
 

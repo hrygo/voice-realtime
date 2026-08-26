@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
 import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeMode } from "../contracts/meetingContract";
@@ -550,17 +551,22 @@ export default function StatusBar({
             className = "mode-listening";
             icon = "👂";
             label = "助手聆听中";
-            title = "当前活跃模式：语音助手聆听中";
+            title = "当前活跃模式：语音助手聆听中（可直接对麦克风说话）";
           } else if (phase === "thinking") {
             className = "mode-thinking";
             icon = "🧠";
             label = "助手思考中";
-            title = "当前活跃模式：助手思考中";
+            title = "当前活跃模式：助手思考中（LM Studio 推理中）";
           } else if (phase === "degraded") {
             className = "mode-degraded";
             icon = "⚠️";
             label = "系统受限";
             title = "当前语音服务处于降级或受限状态";
+          } else if (phase === "stopped") {
+            className = "mode-stopped";
+            icon = "⏹️";
+            label = "助手已停止";
+            title = "当前语音交互会话已停止";
           }
 
           return (
@@ -662,7 +668,7 @@ export default function StatusBar({
                           onClick={(e) => {
                             e.stopPropagation();
                             const cmd = SERVICE_DIAGNOSTIC_COMMANDS[item.id];
-                            navigator.clipboard.writeText(cmd).then(
+                            void copyTextToClipboard(cmd).then(
                               () => showToast(`已复制启动命令: ${cmd}`, "success"),
                               () => showToast("复制失败", "error"),
                             );

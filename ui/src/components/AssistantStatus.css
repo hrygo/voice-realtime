@@ -27,7 +27,7 @@
   background: color-mix(in srgb, var(--color-green) 12%, var(--bg-card));
   border-color: color-mix(in srgb, var(--color-green) 40%, transparent);
   box-shadow: 0 0 12px var(--color-green-glow);
-  animation: listening-phase-pulse 1.35s ease-in-out infinite;
+  animation: listening-phase-pulse 2.4s ease-in-out infinite;
 }
 
 .assistant-phase-badge.phase-thinking {
@@ -118,19 +118,19 @@
   border-color: color-mix(in srgb, var(--color-green) 50%, transparent);
   background: color-mix(in srgb, var(--color-green) 14%, var(--bg-card-solid));
   box-shadow: 0 0 14px var(--color-green-glow);
-  animation: listening-phase-pulse 1.35s ease-in-out infinite;
+  animation: listening-phase-pulse 2.4s ease-in-out infinite;
 }
 
 .phase-step-item.active.step-listening .phase-step-icon {
   display: inline-flex;
   transform-origin: center;
-  animation: listening-icon-pulse 1.35s ease-in-out infinite;
+  animation: listening-icon-pulse 2.4s ease-in-out infinite;
 }
 
 @keyframes listening-phase-pulse {
   0%,
   100% {
-    box-shadow: 0 0 4px var(--color-green-glow);
+    box-shadow: 0 0 6px var(--color-green-glow);
   }
   50% {
     box-shadow: 0 0 16px var(--color-green-glow);
@@ -143,7 +143,7 @@
     transform: scale(1);
   }
   50% {
-    transform: scale(1.16);
+    transform: scale(1.12);
   }
 }
 

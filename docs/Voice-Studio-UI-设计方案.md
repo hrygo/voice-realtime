@@ -100,8 +100,7 @@ flowchart LR
 
 - `useEventSocket`：事件面和控制面复用的可取消指数退避实现。
 - `useCommandSocket`：状态握手、`request_id` 关联、超时和断线拒绝。
-- `assistantStore`：`user_speaking → listening`、`user_silence/STT final → thinking`、
-  `TTS started → speaking`、`TTS stopped → idle`，异常进入 degraded/stopped。
+- `assistantStore`：默认基准态为 `listening`（👂 聆听麦克风）、`user_silence` / STT `final` → `thinking`（🧠 LM Studio 推理）、`TTS started` → `speaking`（🗣️ Qwen3-TTS 播报）、`TTS stopped` → 闭环返回 `listening`，打断与超时亦安全恢复 `listening`，异常进入 `degraded`/`stopped`。
 - `subtitleStore`：完整快照 reducer、confirmed/partial 分离和 SRT 导出。
 - 会话计时使用服务端 `session_started_at`，不再使用页面加载时间。
 

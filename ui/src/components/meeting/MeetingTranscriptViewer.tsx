@@ -3,6 +3,7 @@ import type { TranscriptSegment } from "../../contracts/meetingContract";
 import { formatTimeRange } from "./MeetingGapAlert";
 import { showToast } from "../Toast";
 import { deriveReadingBlocks } from "./transcriptViewModel";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 interface MeetingTranscriptViewerProps {
   segments: readonly TranscriptSegment[];
@@ -138,18 +139,8 @@ export function MeetingTranscriptViewer({
 
   const handleCopySegment = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       showToast("转录文本已复制到剪贴板", "info");
-    } catch {
-      showToast("复制失败", "warning");
-    }
-  };
-
-  const handleCopyAll = async () => {
-    try {
-      const fullText = filtered.map((s) => `[${s.speaker_name}]: ${s.text}`).join("\n");
-      await navigator.clipboard.writeText(fullText);
-      showToast("全量转录文本已复制", "success");
     } catch {
       showToast("复制失败", "warning");
     }
@@ -198,17 +189,8 @@ export function MeetingTranscriptViewer({
             >
               <span>⭐</span>
               <span>{filterStarredOnly ? "查看全部" : `仅看重点 (${starredIds.size})`}</span>
-            </button>
+              </button>
           )}
-          <button
-            type="button"
-            className="pane-header-btn"
-            onClick={() => void handleCopyAll()}
-            title="复制当前筛选的全部转录文本"
-          >
-            <span>📋</span>
-            <span>复制全部</span>
-          </button>
         </div>
       </div>
 

@@ -18,6 +18,7 @@ import {
   type PersonaTemplate,
 } from "../stores/uiSettingsStore";
 import { playAudioBlob } from "../utils/audioPlayback";
+import { copyTextToClipboard } from "../utils/clipboard";
 import { useDisplayedAssistantPhase } from "./AssistantPhaseDisplay";
 import { AssistantWaveform as ExtractedAssistantWaveform } from "./AssistantWaveform";
 import { AssistantTranscript } from "./AssistantTranscript";
@@ -394,7 +395,7 @@ export default function AssistantPanel({
 
   /** 复制气泡文本 */
   const handleCopyBubble = useCallback((text: string, key: string) => {
-    navigator.clipboard.writeText(text).then(
+    void copyTextToClipboard(text).then(
       () => {
         setCopiedKey(key);
         showToast("已复制对话内容", "success");

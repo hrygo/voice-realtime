@@ -468,6 +468,12 @@
   box-shadow: 0 0 10px var(--color-yellow-glow);
 }
 
+.status-mode-pill.mode-stopped {
+  background: color-mix(in srgb, var(--bg-tertiary) 55%, var(--bg-card));
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
 .mode-pill-dot.recording {
   width: 6px;
   height: 6px;

@@ -63,9 +63,10 @@ interface AssistantStore extends AssistantSnapshot {
 
 const MAX_TURNS = 100;
 const IDLE_ACTIVITY: AssistantActivity = { listening: false, thinking: false, speaking: false };
+const DEFAULT_LISTENING_ACTIVITY: AssistantActivity = { listening: true, thinking: false, speaking: false };
 const INITIAL_SNAPSHOT: AssistantSnapshot = {
-  phase: "idle",
-  activity: IDLE_ACTIVITY,
+  phase: "listening",
+  activity: DEFAULT_LISTENING_ACTIVITY,
   speechSequence: 0,
   transcript: [],
   lastInterruptionTime: null,
@@ -74,7 +75,7 @@ const INITIAL_SNAPSHOT: AssistantSnapshot = {
 };
 
 export function createAssistantSnapshot(): AssistantSnapshot {
-  return { ...INITIAL_SNAPSHOT, activity: { ...IDLE_ACTIVITY }, transcript: [] };
+  return { ...INITIAL_SNAPSHOT, activity: { ...DEFAULT_LISTENING_ACTIVITY }, transcript: [] };
 }
 
 function formatTimeNow(): string {
@@ -162,7 +163,7 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       return withActivity(
         { ...snapshot, transcript: updateUserTranscript(snapshot.transcript, event) },
         event.state === "final"
-          ? (isMeaningful ? { listening: false, thinking: true, speaking: false } : IDLE_ACTIVITY)
+          ? (isMeaningful ? { listening: false, thinking: true, speaking: false } : DEFAULT_LISTENING_ACTIVITY)
           : { listening: true, thinking: false, speaking: false },
       );
     }
@@ -174,7 +175,7 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       if (event.state === "final") {
         return withActivity(updated, snapshot.activity.speaking
           ? { listening: false, thinking: false, speaking: true }
-          : IDLE_ACTIVITY);
+          : DEFAULT_LISTENING_ACTIVITY);
       }
       return withActivity(updated, { listening: false, thinking: true, speaking: false });
     }
@@ -183,12 +184,12 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
         const settledTranscript = snapshot.transcript.map((b) =>
           b.role === "assistant" && !b.final ? { ...b, final: true } : b
         );
-        return withActivity({ ...snapshot, transcript: settledTranscript }, IDLE_ACTIVITY);
+        return withActivity({ ...snapshot, transcript: settledTranscript }, DEFAULT_LISTENING_ACTIVITY);
       }
       if (event.state === "started" || event.state === "synthesizing" || snapshot.phase === "speaking") {
         return withActivity(snapshot, { listening: false, thinking: false, speaking: true });
       }
-      return withActivity(snapshot, IDLE_ACTIVITY);
+      return withActivity(snapshot, DEFAULT_LISTENING_ACTIVITY);
     case "interruption": {
       // 标记当前最后一个未落定的助手气泡为被打断状态
       const markedTranscript = snapshot.transcript.map((b, idx) => {
@@ -200,7 +201,7 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
       return {
         ...withActivity(
           { ...snapshot, transcript: markedTranscript },
-          IDLE_ACTIVITY,
+          DEFAULT_LISTENING_ACTIVITY,
         ),
         lastInterruptionTime: Date.now(),
         interruptionCount: snapshot.interruptionCount + 1,
@@ -208,7 +209,7 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
     }
     case "system":
       if (event.state === "pipeline_started") {
-        return { ...snapshot, phase: "idle", activity: IDLE_ACTIVITY };
+        return { ...snapshot, phase: "listening", activity: DEFAULT_LISTENING_ACTIVITY };
       }
       return {
         ...snapshot,
@@ -241,8 +242,8 @@ function armWatchdog(
           b.role === "assistant" && !b.final ? { ...b, final: true } : b,
         );
         return {
-          activity: IDLE_ACTIVITY,
-          phase: "idle",
+          activity: DEFAULT_LISTENING_ACTIVITY,
+          phase: "listening",
           transcript: settledTranscript,
         };
       }
@@ -274,11 +275,11 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
           );
           return {
             connected,
-            activity: IDLE_ACTIVITY,
+            activity: DEFAULT_LISTENING_ACTIVITY,
             phase:
               state.phase === "stopped" || state.phase === "degraded"
                 ? state.phase
-                : "idle",
+                : "listening",
             transcript: settledTranscript,
           };
         }
@@ -288,8 +289,8 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
   syncPipelineState: (pipelineState) =>
     set((state) => {
       if (pipelineState === "running") {
-        return state.phase === "stopped" || state.phase === "degraded"
-          ? { phase: "idle", activity: IDLE_ACTIVITY }
+        return state.phase === "stopped" || state.phase === "degraded" || state.phase === "idle"
+          ? { phase: "listening", activity: DEFAULT_LISTENING_ACTIVITY }
           : {};
       }
       clearWatchdog();
@@ -351,7 +352,16 @@ function updateUserTranscript(
   transcript: readonly AssistantBubble[],
   event: Extract<AssistantEvent, { readonly type: "stt" }>,
 ): readonly AssistantBubble[] {
-  if (!event.text.replace(/[。，！？,.!?\s]/g, "").trim()) return transcript;
+  const cleanText = event.text.replace(/[。，！？,.!?\s]/g, "").trim();
+  if (!cleanText) {
+    if (event.state === "final") {
+      const draftIndex = lastIndexOf(transcript, (bubble) => bubble.role === "user" && !bubble.final);
+      if (draftIndex >= 0) {
+        return transcript.filter((_, index) => index !== draftIndex);
+      }
+    }
+    return transcript;
+  }
 
   const draftIndex = lastIndexOf(transcript, (bubble) => bubble.role === "user" && !bubble.final);
   const time = formatTimeNow();
@@ -362,11 +372,16 @@ function updateUserTranscript(
       : limitTranscript([...transcript, { role: "user", text: event.text, final: false, timestamp: time }]);
   }
 
-  const duplicate = transcript.some((bubble) => bubble.role === "user" && bubble.final && bubble.text === event.text);
-  if (duplicate) return draftIndex >= 0 ? transcript.filter((_, index) => index !== draftIndex) : transcript;
-  return draftIndex >= 0
-    ? replaceBubble(transcript, draftIndex, { ...transcript[draftIndex], text: event.text, final: true })
-    : limitTranscript([...transcript, { role: "user", text: event.text, final: true, timestamp: time }]);
+  if (draftIndex >= 0) {
+    return replaceBubble(transcript, draftIndex, {
+      ...transcript[draftIndex],
+      text: event.text,
+      final: true,
+      timestamp: transcript[draftIndex].timestamp || time,
+    });
+  }
+
+  return limitTranscript([...transcript, { role: "user", text: event.text, final: true, timestamp: time }]);
 }
 
 function updateAssistantTranscript(

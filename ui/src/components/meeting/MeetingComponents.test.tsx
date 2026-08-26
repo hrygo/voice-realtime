@@ -270,11 +270,59 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("李四 (前端负责人)");
     expect(container.querySelector(".pane-actions-group")).not.toBeNull();
+    expect(container.querySelector("button[title='复制当前筛选的全部转录文本']")).toBeNull();
 
     // Check highlighted class
     const highlightedCard = container.querySelector(".segment-card.highlighted");
     expect(highlightedCard).not.toBeNull();
     expect(highlightedCard?.textContent).toContain("前端部分将严格依据 v1 OpenAPI");
+  });
+
+  it("uses the clipboard fallback when copying a meeting transcript segment", async () => {
+    const originalClipboard = navigator.clipboard;
+    const originalExecCommand = document.execCommand;
+    const execCommand = vi.fn().mockReturnValue(true);
+
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    try {
+      act(() => {
+        root.render(
+          <MeetingTranscriptViewer
+            segments={mockSegments}
+            highlightedSegmentId={null}
+            onRenameSpeaker={vi.fn()}
+          />,
+        );
+      });
+
+      const copyButton = container.querySelector(".segment-copy-btn") as HTMLButtonElement;
+      expect(copyButton).not.toBeNull();
+
+      await act(async () => {
+        copyButton.click();
+        await Promise.resolve();
+      });
+
+      expect(execCommand).toHaveBeenCalledWith("copy");
+      expect(container.querySelector("textarea[data-clipboard-fallback]")).toBeNull();
+    } finally {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: originalClipboard,
+      });
+      Object.defineProperty(document, "execCommand", {
+        configurable: true,
+        value: originalExecCommand,
+      });
+    }
   });
 
   it("renders MeetingMinutesViewer with all 7 structured sections and handles evidence clicks", () => {

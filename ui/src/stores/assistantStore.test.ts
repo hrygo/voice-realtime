@@ -9,6 +9,31 @@ import {
 } from "./assistantStore";
 
 describe("reduceAssistantEvent", () => {
+  it("initializes in listening mode and returns to listening when TTS stops", () => {
+    const initial = createAssistantSnapshot();
+    expect(initial.phase).toBe("listening");
+    expect(initial.activity.listening).toBe(true);
+
+    const pipelineStarted = reduceAssistantEvent(initial, {
+      type: "system",
+      state: "pipeline_started",
+    });
+    expect(pipelineStarted.phase).toBe("listening");
+
+    const speaking = reduceAssistantEvent(pipelineStarted, {
+      type: "tts",
+      state: "started",
+    });
+    expect(speaking.phase).toBe("speaking");
+
+    const finished = reduceAssistantEvent(speaking, {
+      type: "tts",
+      state: "stopped",
+    });
+    expect(finished.phase).toBe("listening");
+    expect(finished.activity.listening).toBe(true);
+  });
+
   it("enters thinking after user silence", () => {
     const listening = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "vad",
@@ -46,7 +71,7 @@ describe("reduceAssistantEvent", () => {
     expect(finalized.speechSequence).toBe(1);
   });
 
-  it("enters thinking after final STT with valid text, but stays idle on punctuation-only STT", () => {
+  it("enters thinking after final STT with valid text, but returns to listening on punctuation-only STT", () => {
     const valid = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "stt",
       state: "final",
@@ -59,10 +84,10 @@ describe("reduceAssistantEvent", () => {
       state: "final",
       text: "。",
     });
-    expect(punctuationOnly.phase).toBe("idle");
+    expect(punctuationOnly.phase).toBe("listening");
   });
 
-  it("resets thinking state to idle on interruption", () => {
+  it("resets thinking state to listening on interruption", () => {
     const thinking = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "stt",
       state: "final",
@@ -74,24 +99,25 @@ describe("reduceAssistantEvent", () => {
       type: "interruption",
       state: "detected",
     });
-    expect(interrupted.phase).toBe("idle");
+    expect(interrupted.phase).toBe("listening");
   });
 
-  it("does not return to thinking when the LLM final marker arrives after playback", () => {
+  it("does not return to thinking when the LLM final marker arrives after playback and stays in listening", () => {
     const speaking = reduceAssistantEvent(createAssistantSnapshot(), {
       type: "tts",
       state: "started",
     });
-    const idle = reduceAssistantEvent(speaking, { type: "tts", state: "stopped" });
+    const listening = reduceAssistantEvent(speaking, { type: "tts", state: "stopped" });
+    expect(listening.phase).toBe("listening");
 
-    const finalized = reduceAssistantEvent(idle, {
+    const finalized = reduceAssistantEvent(listening, {
       type: "llm",
       state: "final",
       text: "",
       turnId: 0,
     });
 
-    expect(finalized.phase).toBe("idle");
+    expect(finalized.phase).toBe("listening");
   });
 
   it("maps stopped and error system states deterministically", () => {
@@ -113,6 +139,39 @@ describe("reduceAssistantEvent", () => {
       .toMatchObject({ turnId: 7, sttMs: null, llmTtftMs: null });
   });
 
+  it("preserves repeated user inputs in subsequent conversation turns", () => {
+    let snapshot = createAssistantSnapshot();
+    // Turn 1: user says "没有", AI responds
+    snapshot = reduceAssistantEvent(snapshot, { type: "stt", state: "final", text: "没有" });
+    snapshot = reduceAssistantEvent(snapshot, {
+      type: "llm",
+      state: "final",
+      text: "心情不好呀？",
+      turnId: 1,
+    });
+    expect(snapshot.transcript).toHaveLength(2);
+    expect(snapshot.transcript[0].text).toBe("没有");
+
+    // Turn 2: user repeats "没有", AI responds
+    snapshot = reduceAssistantEvent(snapshot, { type: "stt", state: "interim", text: "没有" });
+    snapshot = reduceAssistantEvent(snapshot, { type: "stt", state: "final", text: "没有" });
+    expect(snapshot.transcript).toHaveLength(3);
+    expect(snapshot.transcript[2].role).toBe("user");
+    expect(snapshot.transcript[2].text).toBe("没有");
+
+    // Turn 3: user repeats "没有" again
+    snapshot = reduceAssistantEvent(snapshot, {
+      type: "llm",
+      state: "final",
+      text: "不想聊也没关系",
+      turnId: 2,
+    });
+    snapshot = reduceAssistantEvent(snapshot, { type: "stt", state: "final", text: "没有" });
+    expect(snapshot.transcript).toHaveLength(5);
+    expect(snapshot.transcript[4].role).toBe("user");
+    expect(snapshot.transcript[4].text).toBe("没有");
+  });
+
   it("exposes streaming and final agent replies for the subtitle panel", () => {
     const transcript = [
       { role: "user" as const, text: "你好", final: true },
@@ -126,7 +185,7 @@ describe("reduceAssistantEvent", () => {
 });
 
 describe("useAssistantStore runtime watchdog & disconnect", () => {
-  it("resets active thinking state on disconnect", () => {
+  it("resets active thinking state to listening on disconnect", () => {
     useAssistantStore.setState({
       phase: "thinking",
       activity: { listening: false, thinking: true, speaking: false },
@@ -135,7 +194,7 @@ describe("useAssistantStore runtime watchdog & disconnect", () => {
 
     useAssistantStore.getState().setConnected(false);
 
-    expect(useAssistantStore.getState().phase).toBe("idle");
+    expect(useAssistantStore.getState().phase).toBe("listening");
     expect(useAssistantStore.getState().activity.thinking).toBe(false);
   });
 });

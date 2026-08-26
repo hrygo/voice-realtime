@@ -5,6 +5,7 @@ import type { TranscriptionGap } from "../../stores/meetingStore";
 import { showToast } from "../Toast";
 import { MeetingWaveform } from "./MeetingWaveform";
 import { deriveReadingBlocks } from "./transcriptViewModel";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 export const SPEAKER_COLORS = [
   "#6366f1", // indigo
@@ -189,7 +190,7 @@ export function MeetingRecordingView({
 
   const handleCopyText = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      await copyTextToClipboard(text);
       showToast("文本已复制到剪贴板", "info");
     } catch {
       showToast("复制失败", "warning");

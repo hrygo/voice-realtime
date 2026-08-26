@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { showToast } from "../Toast";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 interface MarkdownRendererProps {
   content: string;
@@ -10,7 +11,7 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(code);
+      await copyTextToClipboard(code);
       setCopied(true);
       showToast("代码已复制到剪贴板", "success");
       setTimeout(() => setCopied(false), 2000);

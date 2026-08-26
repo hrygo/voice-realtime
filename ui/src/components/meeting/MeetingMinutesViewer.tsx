@@ -6,6 +6,7 @@ import type {
 import { getErrorMessageByCode } from "../../contracts/meetingContract";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { showToast } from "../Toast";
+import { copyTextToClipboard } from "../../utils/clipboard";
 
 interface MeetingMinutesViewerProps {
   minutes: MeetingMinutesVersion | null;
@@ -67,8 +68,22 @@ export function MeetingMinutesViewer({
           `${completedItems.has(i) ? "- [x]" : "- [ ]"} ${item.task}${item.owner ? ` (@${item.owner})` : ""}${item.due_date ? ` (截止: ${item.due_date})` : ""}`,
       )
       .join("\n");
-    await navigator.clipboard.writeText(text);
-    showToast("待办事项 Checklist 已成功复制", "success");
+    try {
+      await copyTextToClipboard(text);
+      showToast("待办事项 Checklist 已成功复制", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
+    }
+  };
+
+  const handleCopyMarkdown = async () => {
+    if (!minutes?.content_markdown) return;
+    try {
+      await copyTextToClipboard(minutes.content_markdown);
+      showToast("Markdown 纪要已复制到剪贴板", "success");
+    } catch {
+      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
+    }
   };
 
   return (
@@ -514,12 +529,7 @@ export function MeetingMinutesViewer({
                 type="button"
                 className="btn-secondary"
                 style={{ fontSize: "0.72rem", padding: "2px 8px" }}
-                onClick={async () => {
-                  if (minutes?.content_markdown) {
-                    await navigator.clipboard.writeText(minutes.content_markdown);
-                    showToast("Markdown 纪要已复制到剪贴板", "success");
-                  }
-                }}
+                onClick={() => void handleCopyMarkdown()}
               >
                 📋 复制 Markdown
               </button>

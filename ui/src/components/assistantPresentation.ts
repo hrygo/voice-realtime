@@ -18,8 +18,8 @@ export const PHASE_CONFIG: Record<
   AssistantPhase,
   { label: string; icon: string; desc: string; className: string }
 > = {
-  idle: { label: "待命", icon: "💤", desc: "系统就绪，请直接说话", className: "phase-idle" },
-  listening: { label: "聆听", icon: "👂", desc: "正在接收麦克风语音...", className: "phase-listening" },
+  idle: { label: "待命", icon: "💤", desc: "系统待命就绪", className: "phase-idle" },
+  listening: { label: "聆听", icon: "👂", desc: "正在接收麦克风语音，请直接说话...", className: "phase-listening" },
   thinking: { label: "思考", icon: "🧠", desc: "LM Studio 推理生成中...", className: "phase-thinking" },
   speaking: { label: "播报", icon: "🗣️", desc: "Qwen3-TTS 语音播报中...", className: "phase-speaking" },
   degraded: { label: "降级", icon: "⚠️", desc: "交互链路异常，请检查服务状态", className: "phase-idle" },
