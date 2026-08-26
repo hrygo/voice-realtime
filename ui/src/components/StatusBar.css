@@ -3,12 +3,18 @@
    ========================================================================== */
 
 .status-bar {
+  --meeting-accent: #5ea7b4;
+  --meeting-accent-light: #a5d6dc;
+  --meeting-accent-glow: rgba(94, 167, 180, 0.22);
+  --status-bar-height: 60px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 6px 18px;
-  min-height: 48px;
+  height: var(--status-bar-height);
+  min-height: var(--status-bar-height);
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
   backdrop-filter: blur(20px);
@@ -29,10 +35,10 @@
 
 .status-center {
   display: flex;
-  flex-direction: column;
+  position: relative;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  height: 100%;
   flex-shrink: 0;
 }
 
@@ -52,6 +58,7 @@
 }
 
 .status-tab-btn {
+  position: relative;
   padding: 4px 14px;
   height: 28px;
   box-sizing: border-box;
@@ -85,11 +92,94 @@
   background: transparent;
 }
 
+.status-tab-btn.pending:disabled {
+  opacity: 0.82;
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.status-tab-btn.pending::after,
+.status-tab-btn.switch-error::after {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  display: block;
+  width: 7px;
+  height: 7px;
+  transform: translateY(-50%);
+  border-radius: 50%;
+  content: "";
+}
+
+.status-tab-btn.pending::after {
+  border: 1px solid currentColor;
+  border-top-color: transparent;
+  animation: status-tab-spin 0.8s linear infinite;
+}
+
+.status-tab-btn.switch-error::after {
+  background: var(--color-red);
+  box-shadow: 0 0 6px var(--color-red-glow);
+}
+
 .status-tab-btn.active {
   background: color-mix(in srgb, var(--color-accent) 20%, var(--bg-card-solid));
   color: var(--color-accent-light);
   border-color: color-mix(in srgb, var(--color-accent) 40%, transparent);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25), 0 0 10px var(--color-accent-glow);
+}
+
+/* 1. Voice Assistant Tab Token Specialization */
+.status-tab-btn.tab-assistant:hover:not(:disabled) {
+  color: var(--mod-assistant-accent-light);
+  border-color: color-mix(in srgb, var(--mod-assistant-accent) 25%, transparent);
+}
+
+.status-tab-btn.tab-assistant.active {
+  background: color-mix(in srgb, var(--mod-assistant-accent) 22%, var(--bg-card-solid));
+  color: var(--mod-assistant-accent-light);
+  border-color: color-mix(in srgb, var(--mod-assistant-accent) 45%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 12px var(--mod-assistant-glow);
+}
+
+.status-tab-btn.tab-assistant.active .tab-kbd {
+  color: var(--mod-assistant-accent-light);
+  background: color-mix(in srgb, var(--mod-assistant-accent) 25%, transparent);
+}
+
+/* 2. Meeting Assistant Tab Token Specialization */
+.status-tab-btn.tab-meeting:hover:not(:disabled) {
+  color: var(--mod-meeting-accent-light);
+  border-color: color-mix(in srgb, var(--mod-meeting-accent) 25%, transparent);
+}
+
+.status-tab-btn.tab-meeting.active {
+  background: color-mix(in srgb, var(--mod-meeting-accent) 22%, var(--bg-card-solid));
+  color: var(--mod-meeting-accent-light);
+  border-color: color-mix(in srgb, var(--mod-meeting-accent) 45%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 12px var(--mod-meeting-glow);
+}
+
+.status-tab-btn.tab-meeting.active .tab-kbd {
+  color: var(--mod-meeting-accent-light);
+  background: color-mix(in srgb, var(--mod-meeting-accent) 25%, transparent);
+}
+
+/* 3. Live Subtitles Tab Token Specialization */
+.status-tab-btn.tab-subtitles:hover:not(:disabled) {
+  color: var(--mod-subtitle-accent-light);
+  border-color: color-mix(in srgb, var(--mod-subtitle-accent) 25%, transparent);
+}
+
+.status-tab-btn.tab-subtitles.active {
+  background: color-mix(in srgb, var(--mod-subtitle-accent) 22%, var(--bg-card-solid));
+  color: var(--mod-subtitle-accent-light);
+  border-color: color-mix(in srgb, var(--mod-subtitle-accent) 45%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 12px var(--mod-subtitle-glow);
+}
+
+.status-tab-btn.tab-subtitles.active .tab-kbd {
+  color: var(--mod-subtitle-accent-light);
+  background: color-mix(in srgb, var(--mod-subtitle-accent) 25%, transparent);
 }
 
 .status-tab-btn .tab-icon {
@@ -112,11 +202,7 @@
   color: var(--text-muted);
   font-weight: 500;
   margin-left: 2px;
-}
-
-.status-tab-btn.active .tab-kbd {
-  color: var(--color-accent-light);
-  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  transition: all 0.2s ease;
 }
 
 .status-tab-btn .tab-status-chip {
@@ -132,18 +218,18 @@
 }
 
 .status-tab-btn .tab-status-chip.recording {
-  background: color-mix(in srgb, var(--color-red) 22%, transparent);
-  color: var(--color-red);
-  border: 1px solid color-mix(in srgb, var(--color-red) 45%, transparent);
-  box-shadow: 0 0 6px var(--color-red-glow);
+  background: color-mix(in srgb, var(--meeting-accent) 22%, transparent);
+  color: var(--meeting-accent-light);
+  border: 1px solid color-mix(in srgb, var(--meeting-accent) 45%, transparent);
+  box-shadow: 0 0 6px var(--meeting-accent-glow);
 }
 
 .status-tab-btn .tab-recording-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--color-red);
-  box-shadow: 0 0 5px var(--color-red-glow);
+  background: var(--meeting-accent);
+  box-shadow: 0 0 5px var(--meeting-accent-glow);
   animation: pulse-dot 1.2s infinite;
 }
 
@@ -159,20 +245,16 @@
   border: 1px solid color-mix(in srgb, var(--color-green) 35%, transparent);
 }
 
-.workspace-switch-state {
-  min-height: 12px;
-  color: var(--color-accent-light);
-  font-size: 0.62rem;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.workspace-switch-state.error {
-  max-width: 320px;
+.status-switch-announcement {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
   overflow: hidden;
-  color: var(--color-red);
-  text-overflow: ellipsis;
+  clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+  border: 0;
 }
 
 .status-brand {
@@ -363,10 +445,16 @@
 }
 
 .status-mode-pill.mode-meeting {
-  background: color-mix(in srgb, var(--color-red) 16%, var(--bg-card));
-  color: var(--color-red);
-  border: 1px solid color-mix(in srgb, var(--color-red) 40%, transparent);
-  box-shadow: 0 0 10px var(--color-red-glow);
+  background: color-mix(in srgb, var(--meeting-accent) 16%, var(--bg-card));
+  color: var(--meeting-accent-light);
+  border: 1px solid color-mix(in srgb, var(--meeting-accent) 40%, transparent);
+  box-shadow: 0 0 10px var(--meeting-accent-glow);
+}
+
+[data-theme="light"] .status-bar {
+  --meeting-accent: #0f766e;
+  --meeting-accent-light: #134e4a;
+  --meeting-accent-glow: rgba(15, 118, 110, 0.18);
 }
 
 .status-mode-pill.mode-degraded {
@@ -383,6 +471,11 @@
   background: var(--color-red);
   box-shadow: 0 0 6px var(--color-red-glow);
   animation: pulse-dot 1.2s infinite;
+}
+
+.status-mode-pill.mode-meeting .mode-pill-dot.recording {
+  background: var(--meeting-accent);
+  box-shadow: 0 0 6px var(--meeting-accent-glow);
 }
 
 /* ==========================================================================
@@ -562,15 +655,25 @@
   background: color-mix(in srgb, var(--color-green) 15%, transparent);
 }
 
+.health-row-status.status-normal {
+  color: var(--color-green);
+  background: color-mix(in srgb, var(--color-green) 15%, transparent);
+}
+
 .health-row-status.status-checking {
   color: var(--color-yellow);
   background: color-mix(in srgb, var(--color-yellow) 15%, transparent);
 }
 
-.health-row-status.status-error,
-.health-row-status.status-unreachable {
+.health-row-status.status-required-error {
   color: var(--color-red);
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
+}
+
+.health-row-status.status-not-required {
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
 }
 
 .health-cmd-copy-btn {
@@ -632,6 +735,38 @@
 .light-dot.dot-checking {
   background: var(--text-muted);
   animation: pulse-dot 1.2s infinite;
+}
+
+.light-dot.health-state-dot {
+  animation: none;
+}
+
+.light-dot.health-state-dot.state-normal {
+  background: var(--color-green);
+  box-shadow: 0 0 8px var(--color-green-glow);
+}
+
+.light-dot.health-state-dot.state-required-error {
+  background: var(--color-red);
+  box-shadow: 0 0 6px var(--color-red-glow);
+}
+
+.light-dot.health-state-dot.state-checking {
+  background: var(--color-yellow);
+  box-shadow: 0 0 6px var(--color-yellow-glow);
+  animation: pulse-dot 1.2s infinite;
+}
+
+.light-dot.health-state-dot.state-not-required {
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  box-shadow: none;
+}
+
+@keyframes status-tab-spin {
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
 }
 
 /* VU Meter & Mic Widget */
@@ -738,41 +873,104 @@
   outline-offset: 2px;
 }
 
-@keyframes pulse-dot {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.6;
-    transform: scale(0.85);
-  }
+.title-short,
+.tab-label-short,
+.health-label-short {
+  display: none;
 }
 
-@media (max-width: 1100px) {
+/* ==========================================================================
+   StatusBar Responsive Graduated Breakpoints
+   ========================================================================== */
+
+/* 1. Wide Tablet / Compact Desktop (<= 1180px) */
+@media (max-width: 1180px) {
+  .status-badge-chip,
   .status-tab-btn .tab-kbd {
     display: none;
   }
 }
 
-@media (max-width: 960px) {
-  .status-badge-chip,
+/* 2. Medium Tablet (<= 1024px) */
+@media (max-width: 1024px) {
   .session-timer {
     display: none;
   }
-  .status-tab-btn {
-    padding: 4px 10px;
+  .mic-vu-label {
+    display: none;
+  }
+  .mic-vu-widget {
+    padding: 3px 8px;
   }
 }
 
-@media (max-width: 800px) {
-  .status-tab-btn .tab-label {
+/* 3. Small Tablet (<= 880px) */
+@media (max-width: 880px) {
+  .status-bar {
+    gap: 10px;
+    padding: 6px 12px;
+  }
+  .tab-label-full,
+  .health-label-full {
+    display: none;
+  }
+  .tab-label-short,
+  .health-label-short {
+    display: inline;
+  }
+  .status-tab-btn {
+    padding: 4px 9px;
+    font-size: 0.76rem;
+  }
+}
+
+/* 4. Mobile Screens (<= 720px) */
+@media (max-width: 720px) {
+  .status-bar {
+    --status-bar-height: 52px;
+    padding: 4px 8px;
+    gap: 6px;
+  }
+  .title-full {
+    display: none;
+  }
+  .title-short {
+    display: inline;
+  }
+  .tab-label {
     display: none;
   }
   .status-tab-btn {
-    padding: 4px 10px;
+    padding: 4px 8px;
   }
-  .status-bar {
-    padding: 6px 12px;
+  .status-mode-pill {
+    width: auto;
+    min-width: 0;
+    padding: 0 6px;
+  }
+  .health-master-label {
+    display: none;
+  }
+  .health-master-pill {
+    padding: 3px 6px;
+  }
+  .status-icon-btn.help-btn {
+    display: none;
+  }
+}
+
+/* 5. Extra Small Mobile (<= 480px) */
+@media (max-width: 480px) {
+  .status-title {
+    display: none;
+  }
+  .mode-pill-label {
+    display: none;
+  }
+  .status-mode-pill {
+    padding: 0 4px;
+  }
+  .mic-vu-widget .vu-bars {
+    display: none;
   }
 }

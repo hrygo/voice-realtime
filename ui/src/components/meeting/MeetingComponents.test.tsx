@@ -148,6 +148,39 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(handleReturnToActive).toHaveBeenCalledTimes(2);
   });
 
+  it("delegates history deletion without opening a second confirmation modal", () => {
+    const handleDelete = vi.fn().mockResolvedValue(undefined);
+
+    act(() => {
+      root.render(
+        <MeetingHistorySidebar
+          historyList={[mockMeetingSummaryCompleted]}
+          selectedMeetingId={null}
+          activeMeetingId={null}
+          activeStatus="idle"
+          isLoading={false}
+          onSelectMeeting={vi.fn()}
+          onReturnToActive={vi.fn()}
+          onNewMeeting={vi.fn()}
+          nextCursor={null}
+          onLoadMore={vi.fn()}
+          onDeleteMeeting={handleDelete}
+        />,
+      );
+    });
+
+    const deleteButton = container.querySelector(".history-delete-btn") as HTMLButtonElement;
+    expect(deleteButton).not.toBeNull();
+
+    act(() => {
+      deleteButton.click();
+    });
+
+    expect(handleDelete).toHaveBeenCalledTimes(1);
+    expect(handleDelete).toHaveBeenCalledWith(mockMeetingSummaryCompleted.id);
+    expect(container.querySelector(".modal-dialog")).toBeNull();
+  });
+
   it("renders MeetingIdleView with readiness checklist and triggers start", () => {
     const handleStart = vi.fn().mockResolvedValue(undefined);
 

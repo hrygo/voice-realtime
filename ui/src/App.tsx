@@ -343,7 +343,7 @@ export default function App() {
   const latestSnippet = partialText || (segments.length > 0 ? segments[segments.length - 1].text : "");
 
   return (
-    <div className="app-container">
+    <div className="app-container" data-workspace={activeTab || "assistant"}>
       <StatusBar
         commandSocket={commandSocket}
         onOpenShortcuts={() => setShortcutsOpen(true)}

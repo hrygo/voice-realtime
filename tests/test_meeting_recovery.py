@@ -14,7 +14,7 @@ from psycopg import AsyncConnection
 
 from voice_realtime.config import MeetingSettings
 from voice_realtime.meeting.migrations import run_migrations
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
+from voice_realtime.meeting.models import MeetingStatus, NormalizedSegment, TranscriptWindow
 from voice_realtime.meeting.recovery import (
     RecoveryEnvelope,
     RecoveryJournal,
@@ -133,6 +133,25 @@ async def test_journal_replay_is_idempotent_and_removes_file(
     assert await journal.replay(repository) == 0
     assert not files[0].exists()
     assert (await repository.get_transcript(meeting.id)).segments[0].text == "journal 内容"
+
+
+async def test_journal_replay_discards_residual_file_for_terminal_meeting(
+    tmp_path: Path,
+) -> None:
+    class TerminalRepository(FakeRecoveryRepository):
+        async def get_meeting(self, _meeting_id):
+            return type("Record", (), {"status": MeetingStatus.COMPLETED})()
+
+    journal = RecoveryJournal(tmp_path / "journal")
+    repository = TerminalRepository()
+    meeting_id = uuid4()
+    await journal.append(meeting_id, "finalize_transcript")
+    path = tmp_path / "journal" / f"{meeting_id}.jsonl"
+
+    assert await journal.replay(repository) == 1
+
+    assert not path.exists()
+    assert repository.calls == []
 
 
 @pytest.mark.asyncio

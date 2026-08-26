@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { MeetingStatus, MeetingSummary } from "../../contracts/meetingContract";
 import { formatElapsed } from "./MeetingRecordingView";
-import { MeetingDeleteModal } from "./MeetingDeleteModal";
 import "../ModeSidebar.css";
 
 export function formatMeetingDate(dateStr: string | null): string {
@@ -72,7 +71,6 @@ export function MeetingHistorySidebar({
   onLoadMore,
   onDeleteMeeting,
 }: MeetingHistorySidebarProps) {
-  const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "recording" | "completed">("all");
 
@@ -319,7 +317,7 @@ export function MeetingHistorySidebar({
                         title="删除此会议"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setDeleteTarget(m);
+                          void onDeleteMeeting(m.id);
                         }}
                       >
                         🗑️
@@ -347,17 +345,6 @@ export function MeetingHistorySidebar({
         </section>
       </div>
 
-      {deleteTarget && (
-        <MeetingDeleteModal
-          isOpen={true}
-          meetingTitle={deleteTarget.title}
-          onClose={() => setDeleteTarget(null)}
-          onConfirm={async () => {
-            await onDeleteMeeting(deleteTarget.id);
-            setDeleteTarget(null);
-          }}
-        />
-      )}
     </aside>
   );
 }

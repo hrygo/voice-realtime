@@ -1,12 +1,17 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { TranscriptSegment } from "../contracts/meetingContract";
 import { mockMinutesCompleted, mockSegments } from "../test/fixtures/meetingFixtures";
+import { meetingApi } from "../services/meetingApi";
 import { useMeetingStore } from "./meetingStore";
 
 describe("meetingStore", () => {
   beforeEach(() => {
     useMeetingStore.getState().resetActiveSession();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   describe("reconcileTranscript (§8 转录对账算法)", () => {
@@ -178,6 +183,49 @@ describe("meetingStore", () => {
       expect(state.transcriptRevision).toBe(10);
       expect(state.partialText).toBe("实时转录预览文字");
     });
+
+    it("does not let a stale baseline response overwrite a newer active meeting", async () => {
+      vi.spyOn(meetingApi, "fetchTranscript").mockResolvedValueOnce({
+        meeting_id: "m-old",
+        transcript_revision: 2,
+        content_revision: 2,
+        segments: [
+          {
+            id: "old-segment",
+            order: 0,
+            speaker_key: "spk-old",
+            speaker_name: "旧会议",
+            start_ms: 0,
+            end_ms: 100,
+            text: "旧会议内容",
+          },
+        ],
+      });
+      vi.spyOn(meetingApi, "fetchMeeting").mockRejectedValueOnce(new Error("stale request"));
+      useMeetingStore.setState({
+        activeMeetingId: "m-old",
+        segments: [],
+      });
+
+      const request = useMeetingStore.getState().syncBaselineTranscript("m-old");
+      useMeetingStore.setState({
+        activeMeetingId: "m-new",
+        segments: [
+          {
+            id: "new-segment",
+            order: 0,
+            speaker_key: "spk-new",
+            speaker_name: "新会议",
+            start_ms: 0,
+            end_ms: 100,
+            text: "新会议内容",
+          },
+        ],
+      });
+      await request;
+
+      expect(useMeetingStore.getState().segments[0]?.id).toBe("new-segment");
+    });
   });
 
   describe("updateMeetingState", () => {
@@ -198,6 +246,36 @@ describe("meetingStore", () => {
       expect(state.status).toBe("finalizing");
       expect(state.activeMeetingId).toBe("existing-id");
       expect(state.isFinalizing).toBe(true);
+    });
+
+    it("does not move the active view for a selected historical meeting event", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-current",
+        status: "recording",
+        selectedMeetingId: "m-history",
+        historyList: [
+          {
+            id: "m-history",
+            title: "历史会议",
+            status: "recording",
+            language: "Chinese",
+            started_at: "2026-08-21T10:00:00Z",
+            ended_at: null,
+            transcript_revision: 1,
+            content_revision: 1,
+            created_at: "2026-08-21T10:00:00Z",
+          },
+        ],
+      });
+
+      useMeetingStore
+        .getState()
+        .updateMeetingState("completed", null, "2026-08-21T10:30:00Z", null, "m-history");
+
+      const state = useMeetingStore.getState();
+      expect(state.activeMeetingId).toBe("m-current");
+      expect(state.status).toBe("recording");
+      expect(state.historyList[0]?.status).toBe("completed");
     });
   });
 
@@ -426,5 +504,4 @@ describe("meetingStore", () => {
     });
   });
 });
-
 

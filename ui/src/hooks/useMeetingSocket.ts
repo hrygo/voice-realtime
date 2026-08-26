@@ -25,6 +25,24 @@ export function isMeetingEventEnvelope(val: unknown): val is MeetingEventEnvelop
   );
 }
 
+type MeetingEventTargetState = {
+  activeMeetingId: string | null;
+  selectedMeetingId: string | null;
+  selectedMeeting: { id: string } | null;
+};
+
+export function isMeetingEventRelevant(
+  type: MeetingEventType,
+  meetingId: string,
+  state: MeetingEventTargetState,
+): boolean {
+  if (meetingId === state.activeMeetingId) return true;
+  if (type === "minutes_state_changed" || type === "meeting_state_changed") {
+    return meetingId === state.selectedMeetingId || meetingId === state.selectedMeeting?.id;
+  }
+  return false;
+}
+
 export function useMeetingSocket(url = "/ws/v1/meetings") {
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
 
@@ -42,6 +60,15 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
       const store = useMeetingStore.getState();
       const { type, meeting_id, payload } = envelope;
+      // 首次连接的 snapshot 是服务端当前会议的权威基线，允许它切换 active；
+      // snapshot 触发的异步 baseline 会在 store 内再次校验 meetingId。
+      const isSnapshotForCurrentView = type === "meeting_snapshot";
+      if (
+        !isSnapshotForCurrentView &&
+        !isMeetingEventRelevant(type as MeetingEventType, meeting_id, store)
+      ) {
+        return;
+      }
 
       switch (type as MeetingEventType) {
         case "meeting_snapshot": {
@@ -69,7 +96,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
         case "transcript_partial": {
           const p = payload as TranscriptPartialPayload;
-          store.setPartial(p.text, p.speaker_name || null);
+          store.setPartial(p.text, p.speaker_name || null, meeting_id);
           break;
         }
 
@@ -88,6 +115,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
               p.segments,
               p.transcript_revision,
               p.content_revision,
+              meeting_id,
             );
           }
           break;
@@ -95,7 +123,7 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
 
         case "speaker_updated": {
           const p = payload as SpeakerUpdatedPayload;
-          store.setSpeaker(p.speaker_key, p.display_name, p.content_revision);
+          store.setSpeaker(p.speaker_key, p.display_name, p.content_revision, meeting_id);
           break;
         }
 
@@ -121,13 +149,13 @@ export function useMeetingSocket(url = "/ws/v1/meetings") {
             transcription: p.transcription,
             mic_muted: p.mic_muted,
             recovery_journal_active: p.recovery_journal_active ?? false,
-          });
+          }, meeting_id);
           break;
         }
 
         case "transcription_gap": {
           const p = payload as TranscriptionGapPayload;
-          store.addGap(p.start_ms, p.end_ms, p.reason);
+          store.addGap(p.start_ms, p.end_ms, p.reason, meeting_id);
           break;
         }
 

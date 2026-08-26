@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isMeetingEventEnvelope } from "./useMeetingSocket";
+import { isMeetingEventEnvelope, isMeetingEventRelevant } from "./useMeetingSocket";
 
 describe("useMeetingSocket", () => {
   it("validates MeetingEventEnvelope format", () => {
@@ -28,5 +28,18 @@ describe("useMeetingSocket", () => {
     // Non object
     expect(isMeetingEventEnvelope(null)).toBe(false);
     expect(isMeetingEventEnvelope("string")).toBe(false);
+  });
+
+  it("rejects events from another meeting while preserving selected minutes updates", () => {
+    const state = {
+      activeMeetingId: "m-current",
+      selectedMeetingId: "m-history",
+      selectedMeeting: { id: "m-history" },
+    };
+
+    expect(isMeetingEventRelevant("transcript_partial", "m-old", state)).toBe(false);
+    expect(isMeetingEventRelevant("transcription_gap", "m-current", state)).toBe(true);
+    expect(isMeetingEventRelevant("minutes_state_changed", "m-history", state)).toBe(true);
+    expect(isMeetingEventRelevant("minutes_state_changed", "m-old", state)).toBe(false);
   });
 });

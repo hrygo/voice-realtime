@@ -281,6 +281,7 @@ class TestServices:
         resp = app.get("/api/services")
         assert resp.status_code == 200
         data = resp.json()
+        assert data["network_scope"] == "local"
         assert "services" in data
         names = {s["name"] for s in data["services"]}
         assert names == {"wlk", "tts", "lm"}
@@ -294,6 +295,22 @@ class TestServices:
             "tts": {},
             "last_transition": None,
         }
+
+    @pytest.mark.parametrize(
+        ("host", "expected_scope"),
+        [
+            ("127.0.0.1", "local"),
+            ("localhost", "local"),
+            ("192.168.1.20", "network"),
+            ("0.0.0.0", "network"),
+        ],
+    )
+    def test_network_scope_distinguishes_loopback_from_network_bindings(
+        self,
+        host: str,
+        expected_scope: str,
+    ) -> None:
+        assert server_module._network_scope(host) == expected_scope
 
     def test_services_adds_runtime_workload_diagnostics(self) -> None:
         """HTTP 探活与 paused workload 独立，并复制五类运行时诊断。"""

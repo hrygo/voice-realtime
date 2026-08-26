@@ -229,6 +229,8 @@ class MeetingSession:
                     timeout_window = getattr(exc, "last_window", None)
                 if timeout_window is not None:
                     await self._persist_window(meeting_id, timeout_window)
+                if await self._replay_pending_journal(meeting_id):
+                    self._storage_degraded = False
                 record = await self.repository.finalize_transcript(
                     meeting_id,
                     final_status=(
@@ -387,6 +389,18 @@ class MeetingSession:
         result = await recover()
         return int(result or 0)
 
+    async def _replay_pending_journal(self, meeting_id: UUID) -> int:
+        journal = self.recovery_journal
+        if journal is None:
+            return 0
+        replay = getattr(journal, "replay_meeting", None)
+        if replay is None:
+            return 0
+        result = replay(self.repository, meeting_id)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return int(result or 0)
+
     async def _on_window(self, window: TranscriptWindow) -> None:
         meeting_id = self._active_meeting_id
         if meeting_id is None:
@@ -432,6 +446,7 @@ class MeetingSession:
         if signature == self._last_window_signature:
             return None
         try:
+            await self._replay_pending_journal(meeting_id)
             result = await self.repository.reconcile_window(meeting_id, window)
         except Exception:
             self._storage_degraded = True

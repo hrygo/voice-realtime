@@ -98,14 +98,35 @@ class RecoveryJournal:
                 meeting_id = UUID(path.stem)
             except ValueError as exc:
                 raise RecoveryJournalError("journal 文件名不是会议 UUID") from exc
-            lock = self._locks.setdefault(meeting_id, asyncio.Lock())
-            async with lock:
-                envelopes = self._read(path, meeting_id)
-                for envelope in envelopes:
-                    await self._replay_one(repository, envelope)
-                self._unlink(meeting_id)
-                total += len(envelopes)
+            total += await self.replay_meeting(repository, meeting_id)
         return total
+
+    async def replay_meeting(self, repository: MeetingRepository, meeting_id: UUID) -> int:
+        """按序回放指定会议的 journal，并在成功后删除文件。
+
+        已经进入终态的会议不再接受转录或生命周期写入；这类残留通常来自旧版本
+        在 stop 失败清理后的 journal，安全删除可避免它阻塞整个服务启动。
+        """
+        path = self._path(meeting_id)
+        if not path.exists():
+            return 0
+        lock = self._locks.setdefault(meeting_id, asyncio.Lock())
+        async with lock:
+            envelopes = self._read(path, meeting_id)
+            get_meeting = getattr(repository, "get_meeting", None)
+            if get_meeting is not None:
+                record = await get_meeting(meeting_id)
+                if record is not None and record.status in {
+                    MeetingStatus.COMPLETED,
+                    MeetingStatus.INTERRUPTED,
+                    MeetingStatus.STORAGE_ERROR,
+                }:
+                    self._unlink(meeting_id)
+                    return len(envelopes)
+            for envelope in envelopes:
+                await self._replay_one(repository, envelope)
+            self._unlink(meeting_id)
+            return len(envelopes)
 
     async def discard(self, meeting_id: UUID) -> None:
         """仅删除指定会议的 journal；调用方应在 PG 事务成功后调用。"""

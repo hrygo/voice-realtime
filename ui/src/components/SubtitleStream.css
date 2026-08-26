@@ -3,6 +3,12 @@
    ========================================================================== */
 
 .subtitle-panel {
+  --color-accent: var(--mod-subtitle-accent);
+  --color-accent-hover: var(--mod-subtitle-accent-hover);
+  --color-accent-light: var(--mod-subtitle-accent-light);
+  --color-accent-subtle: var(--mod-subtitle-accent-subtle);
+  --color-accent-glow: var(--mod-subtitle-glow);
+  --border-glow: var(--mod-subtitle-badge-border);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -543,8 +549,8 @@
   gap: 8px;
   padding: 8px 12px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-cyan) 8%, var(--bg-card));
-  border: 1px dashed color-mix(in srgb, var(--color-cyan) 35%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--bg-card));
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 38%, transparent);
   animation: partial-pulse 2s infinite ease-in-out;
 }
 
@@ -552,8 +558,8 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-cyan);
-  box-shadow: 0 0 8px var(--color-cyan-glow);
+  background: var(--color-accent);
+  box-shadow: 0 0 8px var(--color-accent-glow);
   margin-top: 5px;
   flex-shrink: 0;
 }
@@ -561,7 +567,7 @@
 .subtitle-partial-text {
   font-size: 0.88rem;
   line-height: 1.45;
-  color: var(--color-cyan);
+  color: var(--color-accent-light);
   font-style: italic;
 }
 
@@ -620,11 +626,20 @@ mark.subtitle-highlight {
   }
 
   .subtitle-sidebar {
-    max-height: 270px;
+    width: 100%;
+    min-width: 0;
+    max-height: 140px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
 
   .subtitle-main-stage {
     flex: 1 1 auto;
+  }
+
+  .subtitle-tools-bar {
+    padding: 6px 10px;
+    gap: 6px;
   }
 }
 
@@ -632,19 +647,28 @@ mark.subtitle-highlight {
   .subtitle-header {
     align-items: flex-start;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
+    padding: 8px 12px;
   }
 
   .subtitle-header-right {
     width: 100%;
+    justify-content: space-between;
   }
 
-  .subtitle-header-hint {
+  .subtitle-header-hint,
+  .subtitle-footer-hint,
+  .subtitle-meta-stats {
     display: none;
   }
 
-  .subtitle-footer-hint {
-    display: none;
+  .subtitle-bottom-toolbar {
+    padding: 6px 10px;
+  }
+
+  .subtitle-actions-group {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 

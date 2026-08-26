@@ -4,9 +4,13 @@ import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStor
 import { useMeetingStore } from "../stores/meetingStore";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
+import type { RuntimeMode } from "../contracts/meetingContract";
 import "./StatusBar.css";
 
 type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
+type NetworkScope = "local" | "network";
+type HealthRequirement = "required" | "not-required";
+type HealthDisplayState = "normal" | "required-error" | "not-required";
 
 interface ServiceInfo {
   name: string;
@@ -23,15 +27,24 @@ interface ServiceInfo {
 interface ServicesResponse {
   services: ServiceInfo[];
   diagnostics?: unknown;
+  network_scope?: NetworkScope;
 }
 
 interface HealthItem {
   id: string;
   name: string;
   status: ServiceStatus;
-  statusLabel?: string;
+  requirement: HealthRequirement;
+  displayState: HealthDisplayState;
   details?: string[];
 }
+
+const REQUIRED_HEALTH_ITEMS = {
+  assistant: ["ws", "pipeline", "tts", "lm"],
+  subtitles: ["ws", "subtitle", "wlk"],
+  meeting: ["ws", "subtitle", "wlk", "storage", "lm"],
+  idle: ["ws"],
+} as const satisfies Record<RuntimeMode, readonly string[]>;
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
   wlk: "WhisperLiveKit (:8001)",
@@ -66,6 +79,29 @@ const THEME_TITLES: Record<Theme, string> = {
 };
 
 const THEME_CYCLE: readonly Theme[] = ["dark", "light", "system"];
+
+function browserNetworkScope(): NetworkScope {
+  if (typeof window === "undefined") return "local";
+  const hostname = window.location.hostname.toLowerCase();
+  return ["localhost", "127.0.0.1", "::1"].includes(hostname) ? "local" : "network";
+}
+
+function normalizeNetworkScope(value: unknown): NetworkScope {
+  return value === "network" || value === "local" ? value : browserNetworkScope();
+}
+
+export function classifyHealthState(
+  status: ServiceStatus,
+  requirement: HealthRequirement,
+): HealthDisplayState {
+  if (requirement === "not-required") return "not-required";
+  return status === "ok" ? "normal" : "required-error";
+}
+
+function isHealthItemRequired(id: string, mode: RuntimeMode | undefined): boolean {
+  const currentMode = mode ?? "idle";
+  return REQUIRED_HEALTH_ITEMS[currentMode].some((requiredId) => requiredId === id);
+}
 
 function formatDiagnosticText(value: unknown): string {
   return typeof value === "string" && value.trim().length > 0 ? value : "未知";
@@ -161,6 +197,7 @@ export default function StatusBar({
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);
+  const [networkScope, setNetworkScope] = useState<NetworkScope>(browserNetworkScope);
   const [sessionSeconds, setSessionSeconds] = useState(0);
   const [healthPopoverOpen, setHealthPopoverOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -253,6 +290,7 @@ export default function StatusBar({
       const resp = await fetch("/api/services");
       if (!resp.ok) return;
       const data: ServicesResponse = await resp.json();
+      setNetworkScope(normalizeNetworkScope(data.network_scope));
       if (Array.isArray(data.services) && data.services.length > 0) {
         setServices(data.services);
         if (isManual) showToast("服务健康状态已刷新", "info");
@@ -301,61 +339,69 @@ export default function StatusBar({
   // Compute aggregate system health
   const storageStatus: ServiceStatus =
     storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error";
+  const authoritativeMode = commandSocket.snapshot?.mode;
+  const createHealthItem = (
+    id: string,
+    name: string,
+    status: ServiceStatus,
+    details?: string[],
+  ): HealthItem => {
+    const requirement: HealthRequirement = isHealthItemRequired(id, authoritativeMode)
+      ? "required"
+      : "not-required";
+    return {
+      id,
+      name,
+      status,
+      requirement,
+      displayState: classifyHealthState(status, requirement),
+      details,
+    };
+  };
 
   const healthItems: HealthItem[] = [
-    {
-      id: "ws",
-      name: "控制 WebSocket",
-      status: commandSocket.ready ? "ok" : "checking",
-    },
-    {
-      id: "pipeline",
-      name: "交互管道 (Pipecat)",
-      status: pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking",
-    },
-    {
-      id: "subtitle",
-      name: "字幕代理 (SubtitleProxy)",
-      status: subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
-    },
-    {
-      id: "storage",
-      name: "PostgreSQL 知识库",
-      status: storageStatus,
-    },
+    createHealthItem("ws", "控制 WebSocket", commandSocket.ready ? "ok" : "checking"),
+    createHealthItem(
+      "pipeline",
+      "交互管道 (Pipecat)",
+      pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking",
+    ),
+    createHealthItem(
+      "subtitle",
+      "字幕代理 (SubtitleProxy)",
+      subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
+    ),
+    createHealthItem("storage", "PostgreSQL 知识库", storageStatus),
     ...services.map((s): HealthItem => {
       const details = serviceDiagnosticDetails(s);
-      return {
-        id: s.name,
-        name: SERVICE_DISPLAY_NAMES[s.name] || s.name,
-        status: s.status,
-        statusLabel: s.name === "wlk" || details.length > 0
-          ? `HTTP 进程状态：${STATUS_LABELS[s.status] || s.status}`
-          : undefined,
-        details,
-      };
+      return createHealthItem(s.name, SERVICE_DISPLAY_NAMES[s.name] || s.name, s.status, details);
     }),
   ];
 
-  const authoritativeMode = commandSocket.snapshot?.mode;
-  const aggregateHealthItems = healthItems.filter((item) => {
-    if (item.id === "subtitle") {
-      return !(authoritativeMode === "assistant" && subtitleStatus === "paused");
-    }
-    if (item.id === "pipeline") {
-      return !(
-        (authoritativeMode === "subtitles" || authoritativeMode === "meeting")
-        && pipelineStatus === "stopped"
-      );
-    }
-    return true;
+  const orderedHealthItems = [...healthItems].sort((a, b) => {
+    const priority = (item: HealthItem): number => {
+      if (item.status === "checking") return 1;
+      return item.displayState === "required-error" ? 0 : item.displayState === "normal" ? 1 : 2;
+    };
+    return priority(a) - priority(b);
   });
-  const okCount = aggregateHealthItems.filter((h) => h.status === "ok").length;
-  const totalCount = aggregateHealthItems.length;
-  const hasError = aggregateHealthItems.some(
-    (h) => h.status === "error" || h.status === "unreachable",
+  const requiredHealthItems = healthItems.filter((item) => item.requirement === "required");
+  const requiredOkCount = requiredHealthItems.filter((item) => item.status === "ok").length;
+  const requiredCount = requiredHealthItems.length;
+  const nonRequiredCount = healthItems.length - requiredCount;
+  const hasRequiredError = requiredHealthItems.some(
+    (item) => item.status !== "ok" && item.status !== "checking",
   );
-  const isAllOk = okCount === totalCount;
+  const hasRequiredChecking = requiredHealthItems.some((item) => item.status === "checking");
+  const isAllOk = !hasRequiredError && !hasRequiredChecking && requiredOkCount === requiredCount;
+  const switchTarget = pendingTab ?? (switchError ? activeTab : null);
+  const switchTargetLabel = switchTarget === "subtitles"
+    ? "实时字幕"
+    : switchTarget === "meeting"
+      ? "会议助手"
+      : "语音助手";
+  const switchAnnouncement = switchError
+    || (reconciling ? "正在对账" : pendingTab ? `正在切换至${switchTargetLabel}` : "");
 
   return (
     <header className="status-bar">
@@ -364,7 +410,10 @@ export default function StatusBar({
           <span className="status-logo-icon" role="img" aria-label="Voice Studio">
             🎙️
           </span>
-          <h1 className="status-title">Voice Studio</h1>
+          <h1 className="status-title">
+            <span className="title-full">Voice Studio</span>
+            <span className="title-short">VS</span>
+          </h1>
         </div>
         <span className="status-badge-chip">Apple Silicon / MLX</span>
 
@@ -399,7 +448,7 @@ export default function StatusBar({
               }}
             />
           </div>
-          <span>{micMuted ? "已静音" : "16kHz"}</span>
+          <span className="mic-vu-label">{micMuted ? "已静音" : "16kHz"}</span>
         </button>
       </div>
 
@@ -409,13 +458,17 @@ export default function StatusBar({
           <nav className="status-workspace-tabs" aria-label="工作区模式切换">
             <button
               type="button"
-              className={`status-tab-btn ${activeTab === "assistant" ? "active" : ""}`}
+              className={`status-tab-btn tab-assistant ${activeTab === "assistant" ? "active" : ""} ${switchTarget === "assistant" ? (switchError ? "switch-error" : "pending") : ""}`}
               onClick={() => onTabChange("assistant")}
               disabled={pendingTab !== null}
-              title="切换至语音助手 (快捷键 Cmd+1)"
+              aria-busy={switchTarget === "assistant" && !switchError ? true : undefined}
+              title={switchTarget === "assistant" ? switchError || `正在切换至语音助手${reconciling ? "（对账中）" : ""}` : "切换至语音助手 (快捷键 Cmd+1)"}
             >
               <span className="tab-icon">🤖</span>
-              <span className="tab-label">语音助手</span>
+              <span className="tab-label">
+                <span className="tab-label-full">语音助手</span>
+                <span className="tab-label-short">助手</span>
+              </span>
               <kbd className="tab-kbd">⌘1</kbd>
               {isMeetingRecording && (
                 <span className="tab-status-chip suspended" title="会议录制中，语音交互已挂起以防回声">
@@ -425,12 +478,16 @@ export default function StatusBar({
             </button>
             <button
               type="button"
-              className={`status-tab-btn ${activeTab === "meeting" ? "active" : ""}`}
+              className={`status-tab-btn tab-meeting ${activeTab === "meeting" ? "active" : ""} ${switchTarget === "meeting" ? (switchError ? "switch-error" : "pending") : ""}`}
               onClick={() => onTabChange("meeting")}
-              title="切换至会议助手 (快捷键 Cmd+2)"
+              aria-busy={switchTarget === "meeting" && !switchError ? true : undefined}
+              title={switchTarget === "meeting" ? switchError || `正在切换至会议助手${reconciling ? "（对账中）" : ""}` : "切换至会议助手 (快捷键 Cmd+2)"}
             >
               <span className="tab-icon">🎙️</span>
-              <span className="tab-label">会议助手</span>
+              <span className="tab-label">
+                <span className="tab-label-full">会议助手</span>
+                <span className="tab-label-short">会议</span>
+              </span>
               <kbd className="tab-kbd">⌘2</kbd>
               {isMeetingRecording && (
                 <span className="tab-status-chip recording" title="会议录制进行中">
@@ -440,13 +497,17 @@ export default function StatusBar({
             </button>
             <button
               type="button"
-              className={`status-tab-btn ${activeTab === "subtitles" ? "active" : ""}`}
+              className={`status-tab-btn tab-subtitles ${activeTab === "subtitles" ? "active" : ""} ${switchTarget === "subtitles" ? (switchError ? "switch-error" : "pending") : ""}`}
               onClick={() => onTabChange("subtitles")}
               disabled={pendingTab !== null}
-              title="切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"
+              aria-busy={switchTarget === "subtitles" && !switchError ? true : undefined}
+              title={switchTarget === "subtitles" ? switchError || `正在切换至实时字幕${reconciling ? "（对账中）" : ""}` : "切换至实时字幕 (快捷键 Cmd+3，已自动挂起 AI 助手以保证纯净转录)"}
             >
               <span className="tab-icon">📝</span>
-              <span className="tab-label">实时字幕</span>
+              <span className="tab-label">
+                <span className="tab-label-full">实时字幕</span>
+                <span className="tab-label-short">字幕</span>
+              </span>
               <kbd className="tab-kbd">⌘3</kbd>
               {isMeetingRecording && (
                 <span className="tab-status-chip sync" title="与会议转录同步中">
@@ -455,17 +516,13 @@ export default function StatusBar({
               )}
             </button>
           </nav>
-          {(pendingTab || switchError) && (
+          {switchAnnouncement && (
             <span
-              className={`workspace-switch-state ${switchError ? "error" : ""}`}
+              className="status-switch-announcement"
               role={switchError ? "alert" : "status"}
               aria-live="polite"
             >
-              {switchError
-                ? switchError
-                : reconciling
-                  ? "正在对账"
-                  : `切换中：${pendingTab === "subtitles" ? "实时字幕" : "语音助手"}`}
+              {switchAnnouncement}
             </span>
           )}
         </div>
@@ -518,16 +575,25 @@ export default function StatusBar({
         <div className="status-health-container" ref={popoverRef}>
           <button
             type="button"
-            className={`health-master-pill ${isAllOk ? "all-ok" : hasError ? "has-error" : "checking"}`}
+            className={`health-master-pill ${isAllOk ? "all-ok" : hasRequiredError ? "has-error" : "checking"}`}
             onClick={() => setHealthPopoverOpen((prev) => !prev)}
-            title="点击查看全系统 7 项服务健康状态与探活"
+            title="点击查看当前模式的服务健康状态与探活"
           >
             <span
-              className={`light-dot ${isAllOk ? "dot-ok" : hasError ? "dot-error" : "dot-checking"}`}
+              className={`light-dot ${isAllOk ? "dot-ok" : hasRequiredError ? "dot-error" : "dot-checking"}`}
               aria-hidden="true"
             />
             <span className="health-master-label">
-              {isAllOk ? `引擎全就绪 (${okCount}/${totalCount})` : hasError ? `异常 (${okCount}/${totalCount})` : `探活中 (${okCount}/${totalCount})`}
+              <span className="health-label-full">
+                {isAllOk
+                  ? `系统正常 (${requiredOkCount}/${requiredCount})`
+                  : hasRequiredError
+                    ? `核心组件异常 (${requiredOkCount}/${requiredCount})`
+                    : `核心组件探活中 (${requiredOkCount}/${requiredCount})`}
+              </span>
+              <span className="health-label-short">
+                {requiredOkCount}/{requiredCount}
+              </span>
             </span>
             <span className="health-master-chevron">{healthPopoverOpen ? "▲" : "▼"}</span>
           </button>
@@ -538,7 +604,8 @@ export default function StatusBar({
                 <div className="health-popover-title">
                   <span>🛡️ 系统服务健康状态</span>
                   <span className="health-summary-count">
-                    {okCount}/{totalCount} 项在线
+                    {requiredOkCount}/{requiredCount} 核心组件
+                    {nonRequiredCount > 0 ? ` · 非必需 ${nonRequiredCount} 项` : ""}
                   </span>
                 </div>
                 <button
@@ -552,24 +619,43 @@ export default function StatusBar({
               </div>
 
               <div className="health-popover-list">
-                {healthItems.map((item) => (
-                  <div key={item.id} className="health-popover-row">
+                {orderedHealthItems.map((item) => {
+                  const visualState = item.requirement === "not-required"
+                    ? "not-required"
+                    : item.status === "checking"
+                      ? "checking"
+                      : item.displayState;
+                  const statusLabel = item.requirement === "not-required"
+                    ? "当前模式非必需"
+                    : item.status === "ok"
+                      ? "运行正常"
+                      : item.status === "checking"
+                        ? "检测中"
+                        : "必须组件异常";
+                  const diagnosticTitle = item.details?.join(" · ");
+                  const title = item.requirement === "not-required"
+                    ? diagnosticTitle
+                      ? `当前模式不依赖此组件 · 当前状态：${STATUS_LABELS[item.status] || item.status} · ${diagnosticTitle}`
+                      : `当前模式不依赖此组件 · 当前状态：${STATUS_LABELS[item.status] || item.status}`
+                    : diagnosticTitle || STATUS_LABELS[item.status] || item.status;
+                  return (
+                  <div
+                    key={item.id}
+                    className={`health-popover-row state-${visualState}`}
+                    title={title}
+                  >
                     <div className="health-row-left">
-                      <span className={`light-dot dot-${item.status}`} aria-hidden="true" />
-                      <div>
-                        <span className="health-row-name">{item.name}</span>
-                        {item.details?.map((detail) => (
-                          <div key={detail} className="health-row-detail">
-                            {detail}
-                          </div>
-                        ))}
-                      </div>
+                      <span className={`light-dot health-state-dot state-${visualState}`} aria-hidden="true" />
+                      <span className="health-row-name">{item.name}</span>
                     </div>
                     <div className="health-row-right">
-                      <span className={`health-row-status status-${item.status}`}>
-                        {item.statusLabel || STATUS_LABELS[item.status] || item.status}
+                      <span className={`health-row-status status-${visualState}`}>
+                        {statusLabel}
                       </span>
-                      {item.status !== "ok" && SERVICE_DIAGNOSTIC_COMMANDS[item.id] && (
+                      {item.requirement === "required"
+                        && item.status !== "ok"
+                        && item.status !== "checking"
+                        && SERVICE_DIAGNOSTIC_COMMANDS[item.id] && (
                         <button
                           type="button"
                           className="health-cmd-copy-btn"
@@ -588,12 +674,15 @@ export default function StatusBar({
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="health-popover-footer">
                 <span className="health-footer-tip">
-                  全部服务运行于本地环回地址 (127.0.0.1)，数据不出本机
+                  {networkScope === "local"
+                    ? "全部服务运行于本地环回地址 (127.0.0.1)，数据不出本机"
+                    : "服务可通过局域网访问，数据可能在局域网内传输"}
                 </span>
               </div>
             </div>

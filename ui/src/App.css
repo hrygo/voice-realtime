@@ -8,6 +8,27 @@
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
+  position: relative;
+  transition: background 0.4s ease;
+}
+
+/* Ambient workspace backdrop highlights */
+.app-container[data-workspace="assistant"] {
+  background: radial-gradient(circle at 50% 0%, var(--mod-assistant-glow) 0%, transparent 55%),
+              radial-gradient(circle at 100% 100%, var(--mod-assistant-pulse) 0%, transparent 40%),
+              var(--bg-base);
+}
+
+.app-container[data-workspace="meeting"] {
+  background: radial-gradient(circle at 50% 0%, var(--mod-meeting-glow) 0%, transparent 55%),
+              radial-gradient(circle at 100% 100%, rgba(2, 132, 199, 0.08) 0%, transparent 40%),
+              var(--bg-base);
+}
+
+.app-container[data-workspace="subtitles"] {
+  background: radial-gradient(circle at 50% 0%, var(--mod-subtitle-glow) 0%, transparent 55%),
+              radial-gradient(circle at 100% 100%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+              var(--bg-base);
 }
 
 .app-main {
@@ -86,12 +107,31 @@
 
 /* Responsive Breakpoints */
 @media (max-width: 960px) {
-  .workspace-tabs {
-    padding: 6px 12px 0 12px;
-  }
-
   .app-main {
-    padding: 0 12px 12px 12px;
+    padding: 8px 12px 10px 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-main {
+    padding: 4px 6px 6px 6px;
+  }
+  .panel {
+    border-radius: var(--radius-md);
+  }
+  .panel-header {
+    padding: 8px 12px;
+  }
+  .active-meeting-mini-dock {
+    bottom: 10px;
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-width: none;
+    padding: 8px 10px;
+  }
+  .mini-dock-snippet {
+    display: none;
   }
 }
 
@@ -100,15 +140,17 @@
    ========================================================================== */
 
 .active-meeting-mini-dock {
+  --meeting-dock-accent: #5ea7b4;
+  --meeting-dock-accent-glow: rgba(94, 167, 180, 0.22);
   position: fixed;
   bottom: 24px;
   right: 24px;
   max-width: 440px;
   width: calc(100% - 48px);
   background: var(--bg-card-solid);
-  border: 1px solid rgba(239, 68, 68, 0.4);
+  border: 1px solid color-mix(in srgb, var(--meeting-dock-accent) 40%, transparent);
   border-radius: var(--radius-lg);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 16px rgba(239, 68, 68, 0.2);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4), 0 0 16px var(--meeting-dock-accent-glow);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   display: flex;
@@ -133,8 +175,8 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-red);
-  box-shadow: 0 0 8px var(--color-red-glow);
+  background: var(--meeting-dock-accent);
+  box-shadow: 0 0 8px var(--meeting-dock-accent-glow);
   animation: pulse-dot 1.2s infinite;
   flex-shrink: 0;
 }
@@ -156,8 +198,8 @@
 .mini-dock-tag {
   font-size: 0.65rem;
   font-weight: 700;
-  color: var(--color-red);
-  background: rgba(239, 68, 68, 0.15);
+  color: var(--meeting-dock-accent);
+  background: color-mix(in srgb, var(--meeting-dock-accent) 15%, transparent);
   padding: 1px 5px;
   border-radius: 4px;
   white-space: nowrap;
@@ -176,9 +218,14 @@
 .mini-dock-timer {
   font-size: 0.72rem;
   font-weight: 600;
-  color: var(--color-red);
+  color: var(--meeting-dock-accent);
   font-family: var(--font-mono);
   white-space: nowrap;
+}
+
+[data-theme="light"] .active-meeting-mini-dock {
+  --meeting-dock-accent: #347c88;
+  --meeting-dock-accent-glow: rgba(52, 124, 136, 0.18);
 }
 
 .mini-dock-snippet {

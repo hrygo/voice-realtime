@@ -73,7 +73,7 @@ describe("StatusBar workspace switching state", () => {
   });
 
   function renderStatusBar(
-    pendingTab: "assistant" | "subtitles" | null,
+    pendingTab: "assistant" | "meeting" | "subtitles" | null,
     reconciling: boolean,
     switchError: string | null = null,
   ): void {
@@ -89,7 +89,7 @@ describe("StatusBar workspace switching state", () => {
     });
   }
 
-  it("disables mode buttons and shows switching progress while a mode is pending", () => {
+  it("shows an inline pending indicator without adding a second status row", () => {
     renderStatusBar("subtitles", false);
 
     const buttons = Array.from(container.querySelectorAll("button"));
@@ -100,14 +100,24 @@ describe("StatusBar workspace switching state", () => {
     expect(assistantButton?.disabled).toBe(true);
     expect(subtitlesButton?.disabled).toBe(true);
     expect(meetingButton?.disabled).toBe(false);
-    expect(container.textContent).toContain("切换中");
+    expect(subtitlesButton?.classList.contains("pending")).toBe(true);
+    expect(subtitlesButton?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector(".workspace-switch-state")).toBeNull();
+  });
+
+  it("does not render a visible switch status row when idle", () => {
+    renderStatusBar(null, false);
+
+    expect(container.querySelector(".workspace-switch-state")).toBeNull();
+    expect(container.querySelector(".status-switch-announcement")).toBeNull();
   });
 
   it("shows reconcile and explicit failure states", () => {
     renderStatusBar("subtitles", true);
-    expect(container.textContent).toContain("正在对账");
+    expect(container.querySelector(".status-switch-announcement")?.textContent).toContain("正在对账");
 
     renderStatusBar(null, false, "模式已被占用");
+    expect(container.querySelector(".status-tab-btn.switch-error")).not.toBeNull();
     expect(container.querySelector("[role='alert']")?.textContent).toContain("模式已被占用");
   });
 });
@@ -138,18 +148,24 @@ describe("StatusBar service diagnostics", () => {
     vi.unstubAllGlobals();
   });
 
-  async function renderServices(services: readonly object[]): Promise<void> {
+  async function renderServices(
+    services: readonly object[],
+    mode: RuntimeStateSnapshot["mode"] = "assistant",
+    networkScope: "local" | "network" = "local",
+  ): Promise<void> {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ services }),
+      json: async () => ({ services, network_scope: networkScope }),
     }));
 
     await act(async () => {
-      root.render(createElement(StatusBar, { commandSocket }));
+      root.render(createElement(StatusBar, {
+        commandSocket: { ...commandSocket, snapshot: { ...assistantSnapshot, mode } },
+      }));
     });
 
     const healthButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.title.includes("点击查看全系统"));
+      .find((button) => button.title.includes("当前模式的服务健康状态"));
     expect(healthButton).toBeDefined();
     act(() => {
       healthButton?.click();
@@ -161,7 +177,7 @@ describe("StatusBar service diagnostics", () => {
       .find((row) => row.textContent?.includes(name));
   }
 
-  it("shows WLK process and voice workload diagnostics without changing the process light", async () => {
+  it("keeps WLK diagnostics in a compact tooltip without changing the process light", async () => {
     await renderServices([
       {
         name: "wlk",
@@ -174,17 +190,17 @@ describe("StatusBar service diagnostics", () => {
         dropped_chunks: 4,
         gap_count: 2,
       },
-    ]);
+    ], "subtitles");
 
     const row = findServiceRow("WhisperLiveKit");
-    expect(row?.textContent).toContain("HTTP 进程状态：运行正常");
-    expect(row?.textContent).toContain("语音工作负载：degraded");
-    expect(row?.textContent).toContain("WebSocket 状态：reconnecting");
-    expect(row?.textContent).toContain("重连次数：3");
-    expect(row?.textContent).toContain("距最近事件：12500 ms");
-    expect(row?.textContent).toContain("丢弃音频块：4");
-    expect(row?.textContent).toContain("音频缺口：2");
-    expect(row?.querySelector(".light-dot")?.classList.contains("dot-ok")).toBe(true);
+    expect(row?.textContent).toContain("运行正常");
+    expect(row?.textContent).not.toContain("语音工作负载：degraded");
+    expect(row?.textContent).not.toContain("WebSocket 状态：reconnecting");
+    expect(row?.textContent).not.toContain("重连次数：3");
+    expect(row?.getAttribute("title")).toContain("语音工作负载：degraded");
+    expect(row?.getAttribute("title")).toContain("WebSocket 状态：reconnecting");
+    expect(row?.getAttribute("title")).toContain("重连次数：3");
+    expect(row?.querySelector(".light-dot")?.classList.contains("state-normal")).toBe(true);
   });
 
   it("shows a long last-event age as an unclassified raw value", async () => {
@@ -196,16 +212,24 @@ describe("StatusBar service diagnostics", () => {
         workload: "degraded",
         last_event_age_ms: 987654,
       },
-    ]);
+    ], "subtitles");
 
     const row = findServiceRow("WhisperLiveKit");
-    const ageDetail = Array.from(row?.querySelectorAll<HTMLElement>(".health-row-detail") ?? [])
-      .find((detail) => detail.textContent?.includes("距最近事件：987654 ms"));
-    expect(ageDetail).toBeDefined();
-    expect(ageDetail?.className).not.toContain("error");
+    expect(row?.getAttribute("title")).toContain("距最近事件：987654 ms");
     expect(row?.textContent).not.toContain("关闭游戏");
     expect(row?.textContent).not.toContain("CPU");
     expect(row?.textContent).not.toContain("GPU");
+  });
+
+  it("uses network-aware footer copy when services are LAN-accessible", async () => {
+    await renderServices([
+      { name: "wlk", status: "ok", url: "http://192.168.1.20:8001" },
+    ], "subtitles", "network");
+
+    const footer = container.querySelector<HTMLElement>(".health-footer-tip");
+    expect(footer?.textContent).toContain("服务可通过局域网访问");
+    expect(footer?.textContent).toContain("数据可能在局域网内传输");
+    expect(footer?.textContent).not.toContain("数据不出本机");
   });
 
   it("keeps rendering the legacy three-service response", async () => {
@@ -215,9 +239,11 @@ describe("StatusBar service diagnostics", () => {
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
-    expect(findServiceRow("WhisperLiveKit")?.textContent).toContain("HTTP 进程状态：运行正常");
-    expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("连接超时");
-    expect(findServiceRow("LM Studio")?.textContent).toContain("服务未启动");
+    expect(findServiceRow("WhisperLiveKit")?.textContent).toContain("当前模式非必需");
+    expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("必须组件异常");
+    expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
+    expect(findServiceRow("Qwen3-TTS 桥")?.getAttribute("title")).toContain("连接超时");
+    expect(findServiceRow("LM Studio")?.getAttribute("title")).toContain("服务未启动");
     expect(container.querySelectorAll(".health-popover-row")).toHaveLength(7);
   });
 
@@ -237,15 +263,15 @@ describe("StatusBar service diagnostics", () => {
         workload: "future-workload",
         ws_state: "future-ws-state",
       },
-    ]);
+    ], "subtitles");
 
     const wlkRow = findServiceRow("WhisperLiveKit");
-    expect(wlkRow?.textContent).toContain("语音工作负载：未知");
-    expect(wlkRow?.textContent).toContain("WebSocket 状态：未知");
+    expect(wlkRow?.getAttribute("title")).toContain("语音工作负载：未知");
+    expect(wlkRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
 
     const futureRow = findServiceRow("wlk-future");
-    expect(futureRow?.textContent).toContain("语音工作负载：future-workload");
-    expect(futureRow?.textContent).toContain("WebSocket 状态：future-ws-state");
+    expect(futureRow?.getAttribute("title")).toContain("语音工作负载：future-workload");
+    expect(futureRow?.getAttribute("title")).toContain("WebSocket 状态：future-ws-state");
   });
 });
 
@@ -318,7 +344,7 @@ describe("StatusBar aggregate health", () => {
     const healthButton = await renderHealth("assistant", "running", "paused", "subtitles");
 
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(healthButton.textContent).toContain("引擎全就绪 (6/6)");
+    expect(healthButton.textContent).toContain("系统正常 (4/4)");
   });
 
   it.each(["subtitles", "meeting"] as const)(
@@ -327,21 +353,62 @@ describe("StatusBar aggregate health", () => {
       const healthButton = await renderHealth(mode, "stopped", "connected", "assistant");
 
       expect(healthButton.classList.contains("all-ok")).toBe(true);
-      expect(healthButton.textContent).toContain("引擎全就绪 (6/6)");
+      expect(healthButton.textContent).toContain(mode === "subtitles" ? "系统正常 (3/3)" : "系统正常 (5/5)");
     },
   );
 
   it.each([
-    ["assistant", "running", "error"],
-    ["subtitles", "error", "connected"],
-  ] as const)("keeps unexpected %s workload errors in aggregate health", async (
+    ["assistant", "error", "paused", "核心组件异常 (3/4)"],
+    ["subtitles", "stopped", "error", "核心组件异常 (2/3)"],
+  ] as const)("marks required %s workload errors in aggregate health", async (
     mode,
     pipelineStatus,
     subtitleStatus,
+    expectedLabel,
   ) => {
     const healthButton = await renderHealth(mode, pipelineStatus, subtitleStatus, "meeting");
 
     expect(healthButton.classList.contains("has-error")).toBe(true);
-    expect(healthButton.textContent).toContain("异常 (6/7)");
+    expect(healthButton.textContent).toContain(expectedLabel);
+  });
+
+  it("renders non-required services as neutral even when they are unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        services: [
+          { name: "wlk", status: "unreachable", url: "http://127.0.0.1:8001" },
+          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
+          { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
+        ],
+      }),
+    }));
+
+    const healthButton = await renderHealth("assistant", "running", "paused", "assistant");
+    act(() => {
+      healthButton.click();
+    });
+
+    const wlkRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("WhisperLiveKit"));
+    expect(healthButton.classList.contains("all-ok")).toBe(true);
+    expect(wlkRow?.textContent).toContain("当前模式非必需");
+    expect(wlkRow?.classList.contains("state-not-required")).toBe(true);
+  });
+
+  it("marks required rows and keeps optional rows visually separate", async () => {
+    const healthButton = await renderHealth("assistant", "error", "paused", "assistant");
+    act(() => {
+      healthButton.click();
+    });
+
+    const pipelineRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("交互管道"));
+    const subtitleRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("字幕代理"));
+    expect(pipelineRow?.textContent).toContain("必须组件异常");
+    expect(pipelineRow?.classList.contains("state-required-error")).toBe(true);
+    expect(subtitleRow?.textContent).toContain("当前模式非必需");
+    expect(subtitleRow?.classList.contains("state-not-required")).toBe(true);
   });
 });

@@ -934,6 +934,70 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
     gateway.abort_capture.assert_not_awaited()
 
 
+async def test_window_recovery_replays_journal_before_next_window_and_stop(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    class ReplayJournal:
+        def __init__(self) -> None:
+            self.pending: list[tuple[UUID, TranscriptWindow]] = []
+            self.replay_calls = 0
+
+        def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+            self.pending.append((meeting_id, window))
+
+        async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
+            self.replay_calls += 1
+            pending = [window for target_id, window in self.pending if target_id == meeting_id]
+            self.pending = [
+                (target_id, window)
+                for target_id, window in self.pending
+                if target_id != meeting_id
+            ]
+            for window in pending:
+                await target_repository.reconcile_window(meeting_id, window)
+            return len(pending)
+
+    journal = ReplayJournal()
+    repository.reconcile_error = RuntimeError("database unavailable")
+    session = MeetingSession(repository, gateway, recovery_journal=journal)
+    await _start_session(session)
+    first_window = TranscriptWindow(
+        source_epoch=1,
+        segments=(
+            NormalizedSegment(
+                order=0,
+                source_epoch=1,
+                speaker_key="epoch:1:speaker:1",
+                start_ms=0,
+                end_ms=10,
+                text="先写入 journal",
+            ),
+        ),
+    )
+    second_window = first_window.model_copy(
+        update={
+            "source_epoch": 2,
+            "segments": (
+                first_window.segments[0].model_copy(
+                    update={"source_epoch": 2, "text": "恢复后写入"}
+                ),
+            ),
+        }
+    )
+
+    assert await session._persist_window(session.active_meeting_id, first_window) is None
+    repository.reconcile_error = None
+    await session._persist_window(session.active_meeting_id, second_window)
+
+    assert journal.replay_calls == 2
+    assert journal.pending == []
+    assert repository.calls[-2:] == ["reconcile", "reconcile"]
+
+    await session.stop()
+    assert journal.pending == []
+    assert journal.replay_calls == 4
+
+
 async def test_window_persistence_failure_without_journal_aborts_capture(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:

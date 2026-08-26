@@ -3,6 +3,12 @@
    ========================================================================== */
 
 .assistant-workspace {
+  --color-accent: var(--mod-assistant-accent);
+  --color-accent-hover: var(--mod-assistant-accent-hover);
+  --color-accent-light: var(--mod-assistant-accent-light);
+  --color-accent-subtle: var(--mod-assistant-accent-subtle);
+  --color-accent-glow: var(--mod-assistant-glow);
+  --border-glow: var(--mod-assistant-badge-border);
   display: flex;
   height: 100%;
   width: 100%;
@@ -1389,17 +1395,19 @@
 }
 
 .assistant-bubble-row.user .bubble-card {
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-card-solid));
+  background: var(--mod-assistant-user-bubble, color-mix(in srgb, var(--color-accent) 16%, var(--bg-card-solid)));
   border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
   color: var(--text-primary);
   border-bottom-right-radius: var(--radius-xs);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 0 12px var(--mod-assistant-glow);
 }
 
 .assistant-bubble-row.assistant .bubble-card {
-  background: var(--bg-secondary);
+  background: var(--mod-assistant-bot-bubble, var(--bg-secondary));
   border: 1px solid var(--border);
   color: var(--text-primary);
   border-bottom-left-radius: var(--radius-xs);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .bubble-card.streaming {
@@ -1611,14 +1619,43 @@
   }
   .assistant-sidebar {
     width: 100%;
+    min-width: 0;
     max-width: 100%;
-    max-height: 260px;
+    max-height: 220px;
     border-right: none;
     border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    flex-wrap: wrap;
+    overflow-x: auto;
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  .sidebar-group {
+    flex: 1 1 200px;
+    min-width: 180px;
+  }
+  .assistant-bubble-row {
+    max-width: 90%;
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 640px) {
+  .assistant-sidebar {
+    max-height: 180px;
+    padding: 6px 8px;
+    gap: 6px;
+  }
+  .sidebar-group {
+    flex: 1 1 100%;
+    padding: 6px 8px;
+  }
+  .assistant-bubble-row {
+    max-width: 95%;
+  }
+  .assistant-input-bar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
   .command-status-tag {
     width: 100%;
     margin-left: 0;

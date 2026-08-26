@@ -11,7 +11,7 @@
 }
 
 .modal-content.shortcuts-modal {
-  width: min(480px, 92vw);
+  width: min(580px, 94vw);
   background: var(--bg-card, #111827);
   border: 1px solid var(--border-light, rgba(255, 255, 255, 0.12));
   border-radius: var(--radius-lg, 14px);
@@ -25,7 +25,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 16px 22px;
   border-bottom: 1px solid var(--border-dim, rgba(255, 255, 255, 0.08));
 }
 
@@ -67,7 +67,7 @@
 }
 
 .shortcuts-list {
-  padding: 16px 20px;
+  padding: 16px 22px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -77,12 +77,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   font-size: 0.86rem;
-  padding: 4px 0;
+  padding: 3px 0;
 }
 
 .shortcut-desc {
   color: var(--text-secondary, #cbd5e1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
 }
 
 .shortcut-key,
@@ -97,13 +103,18 @@ kbd {
   padding: 3px 8px;
   border-radius: 6px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  padding: 14px 22px;
   border-top: 1px solid var(--border-dim, rgba(255, 255, 255, 0.08));
   background: var(--bg-secondary, #0b0f19);
 }
@@ -127,6 +138,30 @@ kbd {
 
 .btn-primary:hover {
   background: var(--color-accent-hover, #4f46e5);
+}
+
+/* Explicit Light Theme */
+[data-theme="light"] .modal-content.shortcuts-modal {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .shortcuts-modal .modal-header,
+[data-theme="light"] .shortcuts-modal .modal-footer {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .shortcuts-modal .modal-footer {
+  background: #f8fafc;
+}
+
+[data-theme="light"] .shortcuts-modal .shortcut-key,
+[data-theme="light"] .shortcuts-modal kbd {
+  color: var(--color-accent-light, #312e81);
+  background: #f1f5f9;
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 
 @keyframes modal-fade-in {

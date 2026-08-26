@@ -60,12 +60,17 @@ export interface MeetingStoreState {
   readonly isLoadingSelected: boolean;
 
   // Active Session Actions
-  readonly setPartial: (text: string | null, speakerName?: string | null) => void;
+  readonly setPartial: (
+    text: string | null,
+    speakerName?: string | null,
+    meetingId?: string | null,
+  ) => void;
   readonly reconcileTranscript: (
     replaceFromMs: number,
     newSegments: TranscriptSegment[],
     transcriptRevision: number,
     contentRevision: number,
+    meetingId?: string | null,
   ) => void;
   readonly applySnapshot: (snapshot: MeetingSnapshotPayload) => void;
   readonly updateMeetingState: (
@@ -75,7 +80,12 @@ export interface MeetingStoreState {
     reason?: string | null,
     meetingId?: string | null,
   ) => void;
-  readonly setSpeaker: (speakerKey: string, displayName: string, contentRevision: number) => void;
+  readonly setSpeaker: (
+    speakerKey: string,
+    displayName: string,
+    contentRevision: number,
+    meetingId?: string | null,
+  ) => void;
   readonly setMinutesState: (
     version: number,
     status: MinutesStatus,
@@ -86,8 +96,16 @@ export interface MeetingStoreState {
     minutesId?: string | null,
   ) => void;
   readonly setActiveMinutesVersion: (version: number) => void;
-  readonly addGap: (start_ms: number, end_ms: number, reason?: string) => void;
-  readonly updateHealth: (health: Partial<MeetingHealthState>) => void;
+  readonly addGap: (
+    start_ms: number,
+    end_ms: number,
+    reason?: string,
+    meetingId?: string | null,
+  ) => void;
+  readonly updateHealth: (
+    health: Partial<MeetingHealthState>,
+    meetingId?: string | null,
+  ) => void;
   readonly setErrorMessage: (msg: string | null) => void;
   readonly resetActiveSession: () => void;
   readonly syncBaselineTranscript: (meetingId: string) => Promise<void>;
@@ -143,7 +161,8 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   selectedMinutesList: [],
   isLoadingSelected: false,
 
-  setPartial: (text, speakerName) => {
+  setPartial: (text, speakerName, meetingId) => {
+    if (meetingId && meetingId !== get().activeMeetingId) return;
     set({
       partialText: text || null,
       partialSpeaker: speakerName || null,
@@ -157,7 +176,14 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
    * 3. 插入当前窗口的最新段并按 start_ms, order 稳定排序
    * 4. 更新 revision，清空已提交对应的 partial
    */
-  reconcileTranscript: (replaceFromMs, newSegments, transcriptRevision, contentRevision) => {
+  reconcileTranscript: (
+    replaceFromMs,
+    newSegments,
+    transcriptRevision,
+    contentRevision,
+    meetingId,
+  ) => {
+    if (meetingId && meetingId !== get().activeMeetingId) return;
     const currentSegments = get().segments;
 
     // 保留与新窗口无重叠的历史（结束时间在替换起始点之前或等于替换点）
@@ -254,19 +280,27 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
         }
       }
 
+      const shouldUpdateActive =
+        !meetingId || !state.activeMeetingId || meetingId === state.activeMeetingId;
+
       return {
-        status,
-        activeMeetingId: effectiveMeetingId,
-        isFinalizing: status === "finalizing",
-        sessionStartedAt: startedAt !== undefined ? startedAt : state.sessionStartedAt,
-        sessionEndedAt: endedAt !== undefined ? endedAt : state.sessionEndedAt,
-        interruptionReason: reason !== undefined ? reason : state.interruptionReason,
+        ...(shouldUpdateActive
+          ? {
+              status,
+              activeMeetingId: effectiveMeetingId,
+              isFinalizing: status === "finalizing",
+              sessionStartedAt: startedAt !== undefined ? startedAt : state.sessionStartedAt,
+              sessionEndedAt: endedAt !== undefined ? endedAt : state.sessionEndedAt,
+              interruptionReason: reason !== undefined ? reason : state.interruptionReason,
+            }
+          : {}),
         historyList: updatedHistoryList,
       };
     });
   },
 
-  setSpeaker: (speakerKey, displayName, contentRevision) => {
+  setSpeaker: (speakerKey, displayName, contentRevision, meetingId) => {
+    if (meetingId && meetingId !== get().activeMeetingId) return;
     set((state) => {
       const existingSpeaker = state.speakers[speakerKey];
       const updatedSpeakers = {
@@ -309,9 +343,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   ) => {
     set((state) => {
       const isTargetActive =
-        !meetingId ||
-        meetingId === state.activeMeetingId ||
-        (!state.selectedMeetingId && Boolean(state.activeMeetingId));
+        !meetingId ? Boolean(state.activeMeetingId) : meetingId === state.activeMeetingId;
       const isTargetSelected =
         Boolean(meetingId) &&
         (meetingId === state.selectedMeetingId || meetingId === state.selectedMeeting?.id);
@@ -412,13 +444,15 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
     }
   },
 
-  addGap: (start_ms, end_ms, reason) => {
+  addGap: (start_ms, end_ms, reason, meetingId) => {
+    if (meetingId && meetingId !== get().activeMeetingId) return;
     set((state) => ({
       gaps: [...state.gaps, { start_ms, end_ms, reason }],
     }));
   },
 
-  updateHealth: (healthUpdate) => {
+  updateHealth: (healthUpdate, meetingId) => {
+    if (meetingId && meetingId !== get().activeMeetingId) return;
     set((state) => ({
       health: { ...state.health, ...healthUpdate },
     }));
@@ -467,23 +501,27 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
 
       if (transcriptResp.status === "fulfilled") {
         const resp = transcriptResp.value;
-        set({
-          segments: resp.segments,
-          transcriptRevision: resp.transcript_revision,
-          contentRevision: resp.content_revision,
-        });
+        if (get().activeMeetingId === meetingId) {
+          set({
+            segments: resp.segments,
+            transcriptRevision: resp.transcript_revision,
+            contentRevision: resp.content_revision,
+          });
+        }
       }
 
       if (meetingDetail.status === "fulfilled") {
         const detail = meetingDetail.value;
-        set((state) => ({
-          activeMeeting: detail,
-          speakers: detail.speakers || state.speakers,
-          minutes: detail.latest_minutes || state.minutes,
-          minutesHistory: detail.latest_minutes
-            ? [detail.latest_minutes]
-            : state.minutesHistory,
-        }));
+        if (get().activeMeetingId === meetingId) {
+          set((state) => ({
+            activeMeeting: detail,
+            speakers: detail.speakers || state.speakers,
+            minutes: detail.latest_minutes || state.minutes,
+            minutesHistory: detail.latest_minutes
+              ? [detail.latest_minutes]
+              : state.minutesHistory,
+          }));
+        }
       }
     } catch {
       // 网络瞬时异常，由重连退避重试

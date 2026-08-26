@@ -14,8 +14,8 @@
   --bg-active: rgba(255, 255, 255, 0.1);
 
   --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
 
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.15);
@@ -27,20 +27,84 @@
   --color-accent-light: #a5b4fc;
   --color-accent-glow: rgba(99, 102, 241, 0.25);
 
-  --color-cyan: #06b6d4;
-  --color-cyan-glow: rgba(6, 182, 212, 0.25);
-  --color-green: #10b981;
-  --color-green-glow: rgba(16, 185, 129, 0.25);
-  --color-yellow: #f59e0b;
-  --color-yellow-glow: rgba(245, 158, 11, 0.25);
-  --color-red: #ef4444;
-  --color-red-glow: rgba(239, 68, 68, 0.25);
-  --color-purple: #a855f7;
-  --color-purple-glow: rgba(168, 85, 247, 0.25);
+  --color-cyan: #22d3ee;
+  --color-cyan-glow: rgba(34, 211, 238, 0.25);
+  --color-green: #34d399;
+  --color-green-glow: rgba(52, 211, 153, 0.25);
+  --color-yellow: #fbbf24;
+  --color-yellow-glow: rgba(251, 191, 36, 0.25);
+  --color-red: #f87171;
+  --color-red-glow: rgba(248, 113, 113, 0.25);
+  --color-purple: #c084fc;
+  --color-purple-glow: rgba(192, 132, 252, 0.25);
 
   --bg-elevated: #18233a;
   --color-accent-subtle: rgba(99, 102, 241, 0.12);
   --border-glow: rgba(99, 102, 241, 0.35);
+
+  /* ========================================================================
+     Module Differentiated Design Tokens (Dark Theme Defaults)
+     ======================================================================== */
+
+  /* 1. Voice Assistant (Electric Iris & Radiant Violet AI Glow) */
+  --mod-assistant-accent: #6366f1;
+  --mod-assistant-accent-hover: #4f46e5;
+  --mod-assistant-accent-light: #a5b4fc;
+  --mod-assistant-accent-subtle: rgba(99, 102, 241, 0.12);
+  --mod-assistant-glow: rgba(99, 102, 241, 0.28);
+  --mod-assistant-secondary: #a855f7;
+  --mod-assistant-pulse: rgba(168, 85, 247, 0.35);
+  --mod-assistant-badge-bg: rgba(99, 102, 241, 0.15);
+  --mod-assistant-badge-border: rgba(99, 102, 241, 0.35);
+  --mod-assistant-user-bubble: rgba(99, 102, 241, 0.14);
+  --mod-assistant-bot-bubble: rgba(30, 41, 59, 0.65);
+
+  /* 2. Meeting Assistant (Marine Teal & Sage Emerald Evidence Visuals) */
+  --mod-meeting-accent: #14b8a6;
+  --mod-meeting-accent-hover: #0d9488;
+  --mod-meeting-accent-light: #5eead4;
+  --mod-meeting-accent-subtle: rgba(20, 184, 166, 0.12);
+  --mod-meeting-glow: rgba(20, 184, 166, 0.25);
+  --mod-meeting-secondary: #0284c7;
+  --mod-meeting-recording: #f43f5e;
+  --mod-meeting-recording-glow: rgba(244, 63, 94, 0.35);
+  --mod-meeting-badge-bg: rgba(20, 184, 166, 0.15);
+  --mod-meeting-badge-border: rgba(20, 184, 166, 0.35);
+
+  /* Speaker Palette (High-Contrast Diarization Visuals on Dark) */
+  --speaker-1: #2dd4bf;
+  --speaker-1-bg: rgba(45, 212, 191, 0.14);
+  --speaker-1-glow: rgba(45, 212, 191, 0.25);
+  --speaker-2: #34d399;
+  --speaker-2-bg: rgba(52, 211, 153, 0.14);
+  --speaker-2-glow: rgba(52, 211, 153, 0.25);
+  --speaker-3: #fbbf24;
+  --speaker-3-bg: rgba(251, 191, 36, 0.14);
+  --speaker-3-glow: rgba(251, 191, 36, 0.25);
+  --speaker-4: #fb7185;
+  --speaker-4-bg: rgba(251, 113, 133, 0.14);
+  --speaker-4-glow: rgba(251, 113, 133, 0.25);
+  --speaker-5: #c084fc;
+  --speaker-5-bg: rgba(192, 132, 252, 0.14);
+  --speaker-5-glow: rgba(192, 132, 252, 0.25);
+  --speaker-6: #38bdf8;
+  --speaker-6-bg: rgba(56, 189, 248, 0.14);
+  --speaker-6-glow: rgba(56, 189, 248, 0.25);
+  --speaker-default: #94a3b8;
+  --speaker-default-bg: rgba(148, 163, 184, 0.14);
+
+  /* 3. Live Subtitles (Cyber Amber & Broadcast Cinema Glow) */
+  --mod-subtitle-accent: #f59e0b;
+  --mod-subtitle-accent-hover: #d97706;
+  --mod-subtitle-accent-light: #fde68a;
+  --mod-subtitle-accent-subtle: rgba(245, 158, 11, 0.12);
+  --mod-subtitle-glow: rgba(245, 158, 11, 0.28);
+  --mod-subtitle-live: #34d399;
+  --mod-subtitle-live-glow: rgba(52, 211, 153, 0.35);
+  --mod-subtitle-canvas: rgba(11, 17, 33, 0.85);
+  --mod-subtitle-partial-glow: rgba(245, 158, 11, 0.38);
+  --mod-subtitle-badge-bg: rgba(245, 158, 11, 0.15);
+  --mod-subtitle-badge-border: rgba(245, 158, 11, 0.35);
 
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -69,7 +133,7 @@
   --radius: var(--radius-md);
 }
 
-/* Explicit Light Theme */
+/* Explicit Light Theme (WCAG AA/AAA Compliant High Contrast) */
 [data-theme="light"] {
   --bg-base: #f8fafc;
   --bg-secondary: #f1f5f9;
@@ -80,33 +144,90 @@
   --bg-active: rgba(0, 0, 0, 0.08);
 
   --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
 
   --border: rgba(0, 0, 0, 0.08);
   --border-light: rgba(0, 0, 0, 0.16);
   --border-dim: rgba(0, 0, 0, 0.04);
-  --border-focus: #4f46e5;
+  --border-focus: #4338ca;
 
-  --color-accent: #4f46e5;
-  --color-accent-hover: #4338ca;
-  --color-accent-light: #6366f1;
-  --color-accent-glow: rgba(79, 70, 229, 0.18);
+  --color-accent: #4338ca;
+  --color-accent-hover: #3730a3;
+  --color-accent-light: #312e81;
+  --color-accent-glow: rgba(67, 56, 202, 0.18);
 
-  --color-cyan: #0284c7;
-  --color-cyan-glow: rgba(2, 132, 199, 0.18);
-  --color-green: #059669;
-  --color-green-glow: rgba(5, 150, 105, 0.18);
-  --color-yellow: #d97706;
-  --color-yellow-glow: rgba(217, 119, 6, 0.18);
-  --color-red: #dc2626;
-  --color-red-glow: rgba(220, 38, 38, 0.18);
-  --color-purple: #9333ea;
+  --color-cyan: #0369a1;
+  --color-cyan-glow: rgba(3, 105, 161, 0.18);
+  --color-green: #047857;
+  --color-green-glow: rgba(4, 120, 87, 0.18);
+  --color-yellow: #b45309;
+  --color-yellow-glow: rgba(180, 83, 9, 0.18);
+  --color-red: #be123c;
+  --color-red-glow: rgba(190, 18, 60, 0.18);
+  --color-purple: #7e22ce;
+
+  /* Module Differentiated Light Tokens (Contrast >= 5.0:1) */
+  --mod-assistant-accent: #4338ca;
+  --mod-assistant-accent-hover: #3730a3;
+  --mod-assistant-accent-light: #312e81;
+  --mod-assistant-accent-subtle: rgba(67, 56, 202, 0.08);
+  --mod-assistant-glow: rgba(67, 56, 202, 0.18);
+  --mod-assistant-secondary: #6d28d9;
+  --mod-assistant-pulse: rgba(109, 40, 217, 0.2);
+  --mod-assistant-badge-bg: rgba(67, 56, 202, 0.1);
+  --mod-assistant-badge-border: rgba(67, 56, 202, 0.25);
+  --mod-assistant-user-bubble: rgba(67, 56, 202, 0.08);
+  --mod-assistant-bot-bubble: #f1f5f9;
+
+  --mod-meeting-accent: #0f766e;
+  --mod-meeting-accent-hover: #115e59;
+  --mod-meeting-accent-light: #134e4a;
+  --mod-meeting-accent-subtle: rgba(15, 118, 110, 0.08);
+  --mod-meeting-glow: rgba(15, 118, 110, 0.18);
+  --mod-meeting-secondary: #0369a1;
+  --mod-meeting-recording: #be123c;
+  --mod-meeting-recording-glow: rgba(190, 18, 60, 0.25);
+  --mod-meeting-badge-bg: rgba(15, 118, 110, 0.1);
+  --mod-meeting-badge-border: rgba(15, 118, 110, 0.25);
+
+  --speaker-1: #0f766e;
+  --speaker-1-bg: rgba(15, 118, 110, 0.1);
+  --speaker-1-glow: rgba(15, 118, 110, 0.15);
+  --speaker-2: #047857;
+  --speaker-2-bg: rgba(4, 120, 87, 0.1);
+  --speaker-2-glow: rgba(4, 120, 87, 0.15);
+  --speaker-3: #b45309;
+  --speaker-3-bg: rgba(180, 83, 9, 0.1);
+  --speaker-3-glow: rgba(180, 83, 9, 0.15);
+  --speaker-4: #be123c;
+  --speaker-4-bg: rgba(190, 18, 60, 0.1);
+  --speaker-4-glow: rgba(190, 18, 60, 0.15);
+  --speaker-5: #7e22ce;
+  --speaker-5-bg: rgba(126, 34, 206, 0.1);
+  --speaker-5-glow: rgba(126, 34, 206, 0.15);
+  --speaker-6: #0369a1;
+  --speaker-6-bg: rgba(3, 105, 161, 0.1);
+  --speaker-6-glow: rgba(3, 105, 161, 0.15);
+  --speaker-default: #475569;
+  --speaker-default-bg: rgba(71, 85, 105, 0.1);
+
+  --mod-subtitle-accent: #b45309;
+  --mod-subtitle-accent-hover: #92400e;
+  --mod-subtitle-accent-light: #78350f;
+  --mod-subtitle-accent-subtle: rgba(180, 83, 9, 0.08);
+  --mod-subtitle-glow: rgba(180, 83, 9, 0.18);
+  --mod-subtitle-live: #047857;
+  --mod-subtitle-live-glow: rgba(4, 120, 87, 0.22);
+  --mod-subtitle-canvas: rgba(248, 250, 252, 0.96);
+  --mod-subtitle-partial-glow: rgba(180, 83, 9, 0.25);
+  --mod-subtitle-badge-bg: rgba(180, 83, 9, 0.1);
+  --mod-subtitle-badge-border: rgba(180, 83, 9, 0.25);
 
   --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
   --shadow-card: 0 8px 24px -2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.06);
-  --shadow-glow: 0 0 24px rgba(79, 70, 229, 0.12);
+  --shadow-glow: 0 0 24px rgba(67, 56, 202, 0.12);
 }
 
 /* Explicit Dark Theme */
@@ -120,8 +241,8 @@
   --bg-active: rgba(255, 255, 255, 0.1);
 
   --text-primary: #f8fafc;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
 
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.15);

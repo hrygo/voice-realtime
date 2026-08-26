@@ -17,7 +17,7 @@ from dataclasses import is_dataclass
 from datetime import UTC, datetime
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -47,6 +47,8 @@ from voice_realtime.ui.runtime_events import RuntimeStateClient
 
 logger = logging.getLogger(__name__)
 
+NetworkScope = Literal["local", "network"]
+
 _CONTROL_RESPONSE_QUEUE_SIZE = 8
 _SUBTITLE_INACTIVE_CODE = 4409
 _SUBTITLE_INACTIVE_REASON = "字幕模式未激活"
@@ -69,6 +71,11 @@ _WLK_WORKLOAD_KEYS = (
 def _probe_url(host: str, port: int, path: str = "/health") -> str:
     target_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     return f"http://{target_host}:{port}{path}"
+
+
+def _network_scope(host: str) -> NetworkScope:
+    normalized = host.strip().lower()
+    return "local" if normalized in {"127.0.0.1", "localhost", "::1", "[::1]"} else "network"
 
 
 async def _do_probe_async(
@@ -259,6 +266,7 @@ def create_app(
             if wlk_service is not None:
                 wlk_service.update(workload_diagnostics)
         return {
+            "network_scope": _network_scope(cfg.ui.host),
             "services": service_results,
             "diagnostics": _runtime_diagnostics(runtime),
         }
