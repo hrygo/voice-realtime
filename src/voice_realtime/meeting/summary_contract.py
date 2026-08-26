@@ -20,37 +20,37 @@ class _ModelContract(BaseModel):
 
 
 class ModelTopic(_ModelContract):
-    title: str = Field(min_length=1, max_length=200)
-    summary: str = Field(min_length=1, max_length=1_000)
-    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=6)
+    title: str = Field(min_length=1, max_length=80)
+    summary: str = Field(min_length=1, max_length=250)
+    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=4)
 
 
 class ModelDecision(_ModelContract):
-    content: str = Field(min_length=1, max_length=1_000)
-    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=6)
+    content: str = Field(min_length=1, max_length=250)
+    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=4)
 
 
 class ModelActionItem(_ModelContract):
-    task: str = Field(min_length=1, max_length=1_000)
-    owner: str | None = Field(default=None, max_length=200)
+    task: str = Field(min_length=1, max_length=250)
+    owner: str | None = Field(default=None, max_length=80)
     due_date: str | None = Field(default=None, max_length=64)
-    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=6)
+    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=4)
 
 
 class ModelEvidenceItem(_ModelContract):
-    content: str = Field(min_length=1, max_length=1_000)
-    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=6)
+    content: str = Field(min_length=1, max_length=200)
+    evidence_segment_ids: tuple[str, ...] = Field(default=(), max_length=4)
 
 
 class ModelMinutesResult(_ModelContract):
     title: str | None = Field(default=None, max_length=64)
-    overview: str = Field(min_length=1, max_length=3_000)
-    topics: tuple[ModelTopic, ...] = Field(default=(), max_length=12)
-    decisions: tuple[ModelDecision, ...] = Field(default=(), max_length=12)
-    action_items: tuple[ModelActionItem, ...] = Field(default=(), max_length=12)
-    risks: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=8)
-    open_questions: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=8)
-    highlights: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=12)
+    overview: str = Field(min_length=1, max_length=600)
+    topics: tuple[ModelTopic, ...] = Field(default=(), max_length=8)
+    decisions: tuple[ModelDecision, ...] = Field(default=(), max_length=8)
+    action_items: tuple[ModelActionItem, ...] = Field(default=(), max_length=8)
+    risks: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=4)
+    open_questions: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=4)
+    highlights: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=6)
 
 
 def resolve_minutes_result(

@@ -487,9 +487,9 @@ class MeetingSettings(BaseSettings):
         default=600.0, ge=30.0, le=1800.0, description="整条纪要任务总时限（秒）"
     )
     summary_map_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
-    summary_reduce_max_output_tokens: int = Field(default=4096, ge=256, le=16384)
+    summary_reduce_max_output_tokens: int = Field(default=10240, ge=256, le=16384)
     summary_title_max_output_tokens: int = Field(default=128, ge=32, le=512)
-    summary_max_output_chars: int = Field(default=32_768, ge=2_048, le=262_144)
+    summary_max_output_chars: int = Field(default=65_536, ge=2_048, le=262_144)
     summary_max_input_chars: int = Field(default=20_000, ge=4_000, le=96_000)
     summary_chunk_max_duration_ms: int = Field(
         default=1_200_000, ge=60_000, le=7_200_000, description="单个 map chunk 最大时长"

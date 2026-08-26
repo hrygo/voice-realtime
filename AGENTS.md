@@ -71,6 +71,7 @@
   `VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 可回滚。断链必须先恢复记忆再重试当前 user，
   禁止静默空链降级。详见 ADR-003。
 - `LmStudioNativeLLMService`（`interaction/reasoning.py`）与 `MeetingSummaryService`（`meeting/summary.py`）均封装原生端点；**切勿改回**向 OpenAI 端点注入 `extra_body` 的方案。
+- 会议纪要默认 map/reduce 输出上限为 `2048/10240` tokens，客户端字符熔断为 `65536`；模型侧契约必须保持紧凑，token 触顶且 JSON 未闭合时归类为 `output_limit`，不得循环 repair。
 
 ### 2. 离线优先与模型下载源
 - 默认 `allow_model_downloads=False` 且使用 `local_files_only=True`，只有显式授权才允许联网。

@@ -265,7 +265,7 @@ class MinutesRecord(_FrozenModel):
     status: MinutesStatus = MinutesStatus.QUEUED
     source_content_revision: int = Field(default=0, ge=0)
     model: str = Field(default="", max_length=256)
-    prompt_version: str = Field(default="v2-bounded", max_length=64)
+    prompt_version: str = Field(default="v3-bounded-10240", max_length=64)
     content_json: MinutesResult | None = None
     content_markdown: str | None = None
     raw_output: str | None = None

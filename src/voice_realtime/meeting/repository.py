@@ -866,7 +866,7 @@ class PostgresMeetingRepository:
                         MinutesStatus.QUEUED.value,
                         meeting.content_revision,
                         self.settings.summary_model,
-                        "v2-bounded",
+                        "v3-bounded-10240",
                         idempotency_key,
                         now,
                         now,

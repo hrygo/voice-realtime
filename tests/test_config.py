@@ -207,3 +207,11 @@ def test_meeting_diarization_smoothing_defaults() -> None:
     assert settings.diarization_smoothing_enabled is True
     assert settings.diarization_min_duration_ms == 350
     assert settings.diarization_hangover_gap_ms == 800
+
+
+def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> None:
+    settings = MeetingSettings()
+    assert settings.summary_map_max_output_tokens == 2048
+    assert settings.summary_reduce_max_output_tokens == 10240
+    assert settings.summary_max_output_chars == 65536
+    assert settings.summary_job_timeout_secs == 600.0

@@ -41,6 +41,13 @@ repair 会重新发送完整转写；数据库 lease 也不能主动取消仍在
 9. PostgreSQL 仍是标题事实源。手动改标题、AI 标题和纪要自动标题持久化成功后统一发布
    `meeting_title_updated`，前端原子更新当前会议、活动会议和历史列表；AI 标题操作只发起一次写请求。
 
+2026-08-26 的 `v2-bounded` 长会议复测表明，最终 repair 在 4096-token 边界生成 4095 tokens 后被截断，
+并在只完成 topics 时产生第 13 个条目。为让最终 JSON 有足够闭合预算且不恢复无界生成，默认
+reduce/repair 上限调整为 10240 tokens、字符熔断调整为 65536；map 仍保持 2048。模型侧契约同时收紧
+为最多 8 个主题、8 个决策、8 个行动项、4 个风险、4 个开放问题和 6 个亮点，并限制概览与单项长度。
+若 `chat.end.stats.total_output_tokens` 已触顶且结构仍无效，任务直接以 `output_limit` 失败，不再用同一预算
+重复生成。
+
 ## 备选方案
 
 ### 只增大 HTTP timeout
@@ -91,7 +98,7 @@ lease 适合任务认领和崩溃恢复，不会自动取消进程内仍活跃�
 - 最终 evidence 只能包含本次转写中存在的 UUID；
 - repair 不得携带完整转写；不得记录 prompt、转写和原始正文到统计日志；
 - `meeting_title_updated` 是 additive durable event，断线时仍以 HTTP/`meeting_snapshot` 回源；
-- prompt 版本固定为 `v2-bounded`，后续策略变化需更新版本并保留旧数据可读。
+- 当前 prompt 版本为 `v3-bounded-10240`；后续策略变化需继续更新版本并保留旧数据可读。
 
 ## 关联文档
 

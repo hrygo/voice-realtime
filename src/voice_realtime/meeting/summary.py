@@ -36,7 +36,7 @@ from voice_realtime.network import local_async_client
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PROMPT_VERSION = "v2-bounded"
+SUMMARY_PROMPT_VERSION = "v3-bounded-10240"
 NATIVE_CHAT_PATH = "/api/v1/chat"
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
 _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
@@ -62,6 +62,7 @@ def _summary_schema_contract() -> str:
         "所有证据字段只能命名为 evidence_segment_ids；"
         "action_items 中任务字段只能命名为 task。"
         "禁止使用 segments，也禁止用 content 代替 action_items.task。"
+        "必须优先保留高价值信息并保持简洁，不得为凑数量扩写；没有内容的分类返回空数组。"
     )
 
 
@@ -526,13 +527,13 @@ class MeetingSummaryClient:
             getattr(settings, "summary_request_timeout_secs", 180.0) or 180.0
         )
         self.max_output_chars = int(
-            getattr(settings, "summary_max_output_chars", 32_768) or 32_768
+            getattr(settings, "summary_max_output_chars", 65_536) or 65_536
         )
         self.map_max_output_tokens = int(
             getattr(settings, "summary_map_max_output_tokens", 2_048) or 2_048
         )
         self.reduce_max_output_tokens = int(
-            getattr(settings, "summary_reduce_max_output_tokens", 4_096) or 4_096
+            getattr(settings, "summary_reduce_max_output_tokens", 10_240) or 10_240
         )
         self.title_max_output_tokens = int(
             getattr(settings, "summary_title_max_output_tokens", 128) or 128
@@ -690,6 +691,43 @@ class MeetingSummaryClient:
     def reset_call_stats(self) -> None:
         self.call_stats.clear()
 
+    def _output_token_limit_reached(
+        self,
+        stage: str,
+        max_output_tokens: int,
+        stats_start: int,
+    ) -> bool:
+        """判断最近一次同阶段调用是否耗尽模型输出预算。"""
+
+        for stats in reversed(self.call_stats[stats_start:]):
+            if stats.get("stage") != stage:
+                continue
+            total = stats.get("total_output_tokens")
+            return (
+                isinstance(total, (int, float))
+                and not isinstance(total, bool)
+                and total >= max_output_tokens - 1
+            )
+        return False
+
+    def _parse_bounded_output(
+        self,
+        raw: str,
+        references: Mapping[str, UUID],
+        *,
+        stage: str,
+        max_output_tokens: int,
+        stats_start: int,
+    ) -> MinutesContent:
+        try:
+            return _parse_model_output(raw, references)
+        except SummaryValidationError as exc:
+            if self._output_token_limit_reached(stage, max_output_tokens, stats_start):
+                raise SummaryOutputLimitError(
+                    f"AI 纪要 {stage} 输出达到 {max_output_tokens} token 上限，JSON 未完整闭合"
+                ) from exc
+            raise
+
     async def generate(
         self,
         document: Any,
@@ -712,6 +750,7 @@ class MeetingSummaryClient:
         )
         if repair:
             instructions += "上一次输出格式无效；只修复 JSON 结构，不新增转录中不存在的事实。"
+        stats_start = len(self.call_stats)
         raw = await self._stream_text(
             self._build_payload(
                 instructions,
@@ -720,7 +759,13 @@ class MeetingSummaryClient:
             ),
             stage="map",
         )
-        return _parse_model_output(raw, references)
+        return self._parse_bounded_output(
+            raw,
+            references,
+            stage="map",
+            max_output_tokens=self.map_max_output_tokens,
+            stats_start=stats_start,
+        )
 
     async def generate_title(
         self,
@@ -792,6 +837,7 @@ class MeetingSummaryClient:
         )
         references = _segment_references(document)
         try:
+            stats_start = len(self.call_stats)
             raw = await self._stream_text(
                 self._build_payload(
                     instructions,
@@ -800,7 +846,13 @@ class MeetingSummaryClient:
                 ),
                 stage="reduce",
             )
-            return _parse_model_output(raw, references)
+            return self._parse_bounded_output(
+                raw,
+                references,
+                stage="reduce",
+                max_output_tokens=self.reduce_max_output_tokens,
+                stats_start=stats_start,
+            )
         except SummaryValidationError as exc:
             raw_output = getattr(exc, "raw_output", None)
             if not raw_output:
@@ -831,15 +883,23 @@ class MeetingSummaryClient:
             f"证据引用只能从以下编号选择：{allowed_refs}。"
             f"{_summary_schema_contract()}"
         )
+        resolved_max_output_tokens = max_output_tokens or self.map_max_output_tokens
+        stats_start = len(self.call_stats)
         raw = await self._stream_text(
             self._build_payload(
                 instructions,
                 raw_output[: self.max_output_chars],
-                max_output_tokens=max_output_tokens or self.map_max_output_tokens,
+                max_output_tokens=resolved_max_output_tokens,
             ),
             stage="repair",
         )
-        return _parse_model_output(raw, references)
+        return self._parse_bounded_output(
+            raw,
+            references,
+            stage="repair",
+            max_output_tokens=resolved_max_output_tokens,
+            stats_start=stats_start,
+        )
 
     async def close(self) -> None:
         if self._closed:

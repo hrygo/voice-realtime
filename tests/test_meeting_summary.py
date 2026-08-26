@@ -8,12 +8,13 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from voice_realtime.meeting.summary import (
     MeetingSummaryClient,
     MeetingSummaryService,
     MinutesContent,
+    SummaryOutputLimitError,
     SummaryUnavailableError,
     SummaryValidationError,
     format_transcript,
@@ -21,6 +22,7 @@ from voice_realtime.meeting.summary import (
     render_minutes_markdown,
     validate_evidence,
 )
+from voice_realtime.meeting.summary_contract import ModelMinutesResult
 
 
 def _document() -> SimpleNamespace:
@@ -479,6 +481,37 @@ async def test_summary_client_captures_chat_end_stats_without_content_logging() 
 
 
 @pytest.mark.asyncio
+async def test_summary_client_classifies_token_cap_truncation_as_output_limit() -> None:
+    delta = json.dumps(
+        {"type": "message.delta", "content": '{"overview":"未闭合'},
+        ensure_ascii=False,
+    )
+    ended = json.dumps(
+        {
+            "type": "chat.end",
+            "result": {
+                "stats": {
+                    "input_tokens": 100,
+                    "total_output_tokens": 10239,
+                    "reasoning_output_tokens": 0,
+                }
+            },
+        }
+    )
+    client = _stream_client((f"data: {delta}", f"data: {ended}"))
+
+    with pytest.raises(SummaryOutputLimitError) as exc_info:
+        await client.repair_output(
+            "{invalid",
+            _document(),
+            (),
+            max_output_tokens=10240,
+        )
+
+    assert exc_info.value.code == "output_limit"
+
+
+@pytest.mark.asyncio
 async def test_summary_client_rejects_empty_transcript_and_adds_repair_instruction() -> None:
     client = _stream_client(
         (
@@ -584,7 +617,21 @@ async def test_summary_client_reduce_repairs_only_the_invalid_json() -> None:
 
     result = await client.reduce((_content(_document().segments[0].id),), _document(), ())
     assert result.overview == "确定发布计划。"
-    assert repair_inputs == [("{invalid-reduce", 4096)]
+    assert repair_inputs == [("{invalid-reduce", 10240)]
+
+
+def test_model_summary_contract_keeps_final_reduce_compact() -> None:
+    topics = [
+        {
+            "title": f"主题 {index}",
+            "summary": "摘要",
+            "evidence_segment_ids": [],
+        }
+        for index in range(9)
+    ]
+
+    with pytest.raises(ValidationError):
+        ModelMinutesResult.model_validate({"overview": "概览", "topics": topics})
 
 
 def test_invalid_summary_is_a_typed_validation_error() -> None:
