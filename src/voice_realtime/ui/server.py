@@ -228,7 +228,7 @@ def create_app(
             if repository is not None:
                 await repository.close()
 
-    app = FastAPI(title="Voice Studio", version="1.2.0", lifespan=lifespan)
+    app = FastAPI(title="Voice Studio", version="1.3.0", lifespan=lifespan)
     app.state.accepted_control_tasks = set()
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(

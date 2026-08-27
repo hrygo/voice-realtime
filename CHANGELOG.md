@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.3.0] - 2026-08-27
+
+### Added
+
+- 增加 CAM++ 192 维声纹嵌入特征提取（阿里 3D-Speaker ONNX ~27MB，CPU 单段仅 ~12ms，纯内存处理，绝不落盘原始音频）。
+- 增加会议实时在线声纹质心池跟踪（`CentroidPool`），相似度 $\ge 0.75$ 时自动映射归并。
+- 增加会后全局 AHC 层次凝聚聚类二次修正（`AHCClusterer`），余弦距离 $\le 0.35$ 且受 `max_speakers` 强约束。
+- 增加 1:N 已知说话人声纹注册与自动命名匹配器（`VoiceprintProfileMatcher`）。
+- 增加 Sortformer 迟滞双门限判定机制（onset=0.50, offset=0.35, silence=0.25）与防静音吸气通道抖动。
+- 增加动态参会人数容量先验 `max_speakers`（1~4）全链路贯通（前端 UI 下拉选择器 ➔ 控制协议 ➔ 后端协调器 ➔ WLK Sortformer）。
+- 增加 `PostgresMeetingRepository.apply_speaker_remapping` 单事务原子更新段落与合并说话人记录。
+- 增加架构决策记录 [ADR-008](docs/decisions/0008-speaker-diarization-and-voiceprint-clustering.md)。
+
+### Changed
+
+- 统一升级项目版本号至 `1.3.0`（包含后端 FastAPI、前端控制台与契约层）。
+- 完善 `DiarizationSmoother` 时序平滑器，支持跨 Epoch 相同声道自然平滑（间隙扩至 1000ms）。
+
+### Fixed
+
+- 彻底根除会议模式下“一人多号 / 说话人过度分裂 / 静音漂移”缺陷。
+- 修复短片段杂音与多段连续短闪烁翻转（$A-B-A$ 及 $A-B-B-A$ 序列平滑纠偏）。
+- 修复跨 Epoch 重连导致说话人自定义名称丢失的问题，支持跨 Epoch 继承与原子重命名同步。
+
+### Verification
+
+- Python：`1269 passed, 1 warning`，分支覆盖率 `83.17%`（$\ge 80.0\%$）。
+- Frontend：`166 passed`（20 test files），TypeScript/Vite 生产构建成功。
+- `mypy`（strict，91 源文件全绿）、`ruff`（全通过）。
+
 ## [1.2.0] - 2026-08-26
 
 ### Added
