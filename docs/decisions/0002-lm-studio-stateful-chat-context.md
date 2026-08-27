@@ -1,3 +1,27 @@
+---
+title: "ADR-002：LM Studio 交互上下文采用原生有状态会话链"
+description: "废弃 OpenAI 兼容端点，改用 LM Studio 原生 /api/v1/chat + reasoning: 'off' 及 previous_response_id 保持真实角色链"
+status: accepted
+type: decision_record
+category: interaction
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-interaction"
+tags:
+  - adr
+  - lm-studio
+  - stateful-context
+  - native-api
+  - reasoning-off
+scope:
+  - "voice_realtime.interaction"
+related_documents:
+  - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/decisions/0003-lm-studio-context-compaction.md"
+---
+
 # ADR-002：LM Studio 交互上下文采用原生有状态会话链
 
 ## 状态

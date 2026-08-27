@@ -1,3 +1,22 @@
+---
+title: "Voice Realtime 架构整治详细设计"
+description: "解决多进程割裂、重复采集与端口混乱的架构整治设计规范"
+status: implemented
+type: technical_spec
+category: architecture
+version: "v1.0.0"
+date: 2026-08-20
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - architecture-remediation
+  - audiohub
+  - pipecat
+  - vr-ui
+---
+
 # Voice Realtime 架构缺陷修复设计
 
 ## 状态

@@ -1,3 +1,20 @@
+---
+title: "Voice Realtime 架构整治实施计划"
+description: "单源采集 AudioHub、Pipecat 管道内嵌与端口收敛的执行任务清单"
+status: implemented
+type: execution_plan
+category: architecture
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - architecture-remediation
+---
+
 # Voice Realtime Architecture Remediation Implementation Plan
 
 **Status:** 已完成（2026-08-21）。逐项证据见

@@ -1,3 +1,28 @@
+---
+title: "ADR-001：交互管道采用单一所有者运行时"
+description: "确定 vr-ui 为交互管道唯一所有者，vr-interact 为互斥无UI替代入口，统一 InteractionSession 生命周期"
+status: accepted
+type: decision_record
+category: interaction
+date: 2026-08-20
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - adr
+  - architecture
+  - interaction
+  - single-owner
+  - lock
+scope:
+  - "voice_realtime.interaction"
+  - "voice_realtime.ui"
+related_documents:
+  - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/decisions/0005-server-side-runtime-workload-arbitration.md"
+---
+
 # ADR-001：交互管道采用单一所有者运行时
 
 ## 状态

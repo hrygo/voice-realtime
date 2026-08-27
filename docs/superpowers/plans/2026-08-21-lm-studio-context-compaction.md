@@ -1,3 +1,21 @@
+---
+title: "LM Studio 会话滚动压缩实施计划"
+description: "基于原生 /api/v1/chat 的结构化滚动记忆压缩执行计划"
+status: implemented
+type: execution_plan
+category: interaction
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - lm-studio
+  - context-compaction
+---
+
 # LM Studio Context Compaction Implementation Plan
 
 > 历史说明：本计划记录首次实现时的 6000/10000/2500 tokens 与最近四组问答默认值；

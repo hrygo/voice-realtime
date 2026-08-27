@@ -1,3 +1,29 @@
+---
+title: "Qwen3-ASR 实时语音转文字开发对接手册"
+description: "指导外部客户端接入 Qwen3-ASR 1.7B 语音识别服务，实现低延迟 WebSocket 流式转文字与 REST 音频文件转写的接口规范与对接指南"
+status: active
+type: manual
+category: asr
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-subtitles"
+tags:
+  - qwen3-asr
+  - websocket
+  - rest-api
+  - streaming-transcription
+  - developer-guide
+scope:
+  - "voice_realtime.subtitles"
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
+---
+
 # Qwen3-ASR 实时语音转文字开发对接手册
 
 > 本手册用于指导外部客户端接入 **Qwen3-ASR 1.7B 语音识别服务**，实现**实时流式音频识别（低延迟字字上屏）**与**录音文件转文字**。

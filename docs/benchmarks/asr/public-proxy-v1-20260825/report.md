@@ -1,3 +1,29 @@
+---
+title: "ASR Public Proxy v1 预评测报告"
+description: "ASR 公共代理语料初测与流程校验报告"
+status: archived
+type: benchmark_report
+category: asr
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - benchmark
+  - pilot-test
+  - qwen3-asr
+  - fun-asr
+  - sensevoice
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/benchmarks/asr/public-operational-proxy-v2-20260825/report.md"
+---
+
 # ASR Public Proxy Core 对比报告
 
 **执行时间：** 2026-08-25（Asia/Shanghai）  

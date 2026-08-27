@@ -1,3 +1,21 @@
+---
+title: "会议助手前后端分离实施计划"
+description: "基于 contracts/ 的公共契约冻结、Mock 服务与独立联调门禁执行任务清单"
+status: implemented
+type: execution_plan
+category: meeting
+version: "v1.0.0"
+date: 2026-08-26
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - meeting-assistant
+  - frontend-backend-separation
+---
+
 # 会议助手前后端分离式开发实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

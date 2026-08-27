@@ -1,3 +1,30 @@
+---
+title: "ASR Public Operational Proxy v2 盲测评测报告"
+description: "基于 AISHELL-4 与 ASCEND 的序贯盲测实验报告与结论"
+status: completed
+type: benchmark_report
+category: asr
+version: "v1.3.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - benchmark
+  - blind-test
+  - futility-stopping
+  - qwen3-asr
+  - fun-asr
+  - sensevoice
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/benchmarks/asr/corpus-v12-20260825/source-inventory.md"
+---
+
 # ASR Public Operational Proxy v2 Core 报告
 
 **执行日期：** 2026-08-25（Asia/Shanghai）  

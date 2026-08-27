@@ -1,3 +1,30 @@
+---
+title: "ASR Stage 0 v1.2 可行性门禁报告"
+description: "Qwen3-ASR、SenseVoiceSmall 与 Fun-ASR-Nano 的 Stage 0 可行性门禁与资源消耗测试报告"
+status: completed
+type: benchmark_report
+category: asr
+version: "v1.2.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - benchmark
+  - stage0
+  - feasibility-gate
+  - qwen3-asr
+  - fun-asr
+  - sensevoice
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/decisions/0004-asr-sequential-evaluation.md"
+---
+
 # ASR Stage 0 v1.2 可行性门禁报告
 
 **执行日期：** 2026-08-25（Asia/Shanghai）  

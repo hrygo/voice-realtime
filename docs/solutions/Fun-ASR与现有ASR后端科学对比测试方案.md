@@ -1,3 +1,32 @@
+---
+title: "Fun-ASR 与现有 ASR 后端科学对比测试方案"
+description: "Qwen3-ASR vs Fun-ASR vs SenseVoiceSmall 的序贯盲测与科学选型评测方案（60 min Core + 45 min Reserve 序贯盲测与决策结论）"
+status: completed
+type: benchmark_report
+category: asr
+version: "v1.3.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - fun-asr
+  - qwen3-asr
+  - sensevoice
+  - benchmark
+  - sequential-evaluation
+scope:
+  - "voice_realtime.asr"
+  - "voice_realtime.subtitles"
+  - "voice_realtime.interaction"
+related_documents:
+  - "docs/decisions/0004-asr-sequential-evaluation.md"
+  - "docs/benchmarks/asr/stage0-v12-20260825/report.md"
+  - "docs/benchmarks/asr/public-operational-proxy-v2-20260825/report.md"
+---
+
 # Fun-ASR 与现有 ASR 后端科学对比测试方案
 
 > **环境基准**：Apple M5 Max / 128GB 统一内存 / macOS 26.6.2 / Python 3.12.14 / PyTorch 2.13.0 (MPS)
@@ -9,7 +38,7 @@
 > Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；三个 primary
 > 实验臂已完成统一 Stage 0；Stage 2/4 先 screen、finalist 再 confirm；Stage 3 候选的前 30 分钟与 60 分钟
 > reliability 长跑共用同一连续会话；Stage 5 只由每个决策方向的最终候选执行；生产收敛不重复已有
-> Stage 3/4/5 主测量。决策理由见 [ADR-004](decisions/0004-asr-sequential-evaluation.md)。
+> Stage 3/4/5 主测量。决策理由见 [ADR-004](../decisions/0004-asr-sequential-evaluation.md)。
 
 > **v1.3 执行摘要**：由于本机没有已授权的私有目标域录音，采用 AISHELL-4 Test + ASCEND 构建
 > `public-operational-proxy-v2-20260825`。它满足预冻结、互斥 cluster、盲推理、显式开盲和程序化决策
@@ -90,7 +119,7 @@
 > [!IMPORTANT]
 > **决策原则**：两个决策分别给结论，不把不同目标、协议和延迟预算合并成一个“总冠军”。质量优先于内存节省，但实时性、数据完整性、离线边界与长期稳定性是硬门禁。
 
-本方案复用 [`ASR 后端可插拔架构评估与前置设计`](superpowers/specs/2026-08-24-asr-backend-pluggability-design.md) 及其 [实施计划](superpowers/plans/2026-08-24-asr-backend-pluggability.md) 已经完成的统一契约、adapter、registry 与 benchmark runner。生产环境冷切换不再是科学对比的前置条件：模型候选必须先在独立 runner 中证明可行且值得晋级。最终只部署胜出的单一后端，不建设生产运行时切换事务。
+本方案复用 [`ASR 后端可插拔架构评估与前置设计`](../superpowers/specs/2026-08-24-asr-backend-pluggability-design.md) 及其 [实施计划](../superpowers/plans/2026-08-24-asr-backend-pluggability.md) 已经完成的统一契约、adapter、registry 与 benchmark runner。生产环境冷切换不再是科学对比的前置条件：模型候选必须先在独立 runner 中证明可行且值得晋级。最终只部署胜出的单一后端，不建设生产运行时切换事务。
 
 ---
 
@@ -317,7 +346,7 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 
 - **统计边界**：Warm 指标从原始运行顺序排除第一条计算；首条 wall 同时包含模型加载、首次编译和推理，不能当作纯加载时间。Stage 0 的 Qwen 旧产物只覆盖父进程；runner 已在 Stage 1 前增加隔离子进程树 RSS 采样，后续结果不得复用旧 RSS。
 - **已修复故障**：修复 Qwen venv 解释器入口被错误解析、SenseVoice 不完整旧 snapshot 被误选，以及 Fun-ASR MPS 超时后残留推理与下一样本重叠导致的 SIGSEGV。失败 run 单独保留，未混入最终结果。
-- **门禁结论**：三个 primary 臂均可进入独立 blind 质量比较；本轮 gate-only CER 仍受模型自带/合成样例偏倚，严禁作为选型依据。完整聚合证据见 [`docs/benchmarks/asr/stage0-v12-20260825/report.md`](benchmarks/asr/stage0-v12-20260825/report.md)。
+- **门禁结论**：三个 primary 臂均可进入独立 blind 质量比较；本轮 gate-only CER 仍受模型自带/合成样例偏倚，严禁作为选型依据。完整聚合证据见 [`docs/benchmarks/asr/stage0-v12-20260825/report.md`](../benchmarks/asr/stage0-v12-20260825/report.md)。
 
 ---
 
@@ -340,7 +369,7 @@ Fun-ASR MPS。三个 primary 臂均为 10/10 完成、0 失败，状态均为 `f
 
 截至 2026-08-25，已获取并校验 AliMeeting Eval、ASCEND、HI-MIA-CW 与 AISHELL-4 Test，原始制品
 均位于项目外；来源、许可、SHA-256、speaker/session 实测与预分配见
-[`source-inventory.md`](benchmarks/asr/corpus-v12-20260825/source-inventory.md)。Public Proxy v1 继续作为
+[`source-inventory.md`](../benchmarks/asr/corpus-v12-20260825/source-inventory.md)。Public Proxy v1 继续作为
 runner 校准历史；Public Operational Proxy v2 使用 AISHELL-4 Test + ASCEND，在缺少私有目标域数据时
 承担候选筛选。后者虽然绑定 `formal` analysis plan，仍必须以 `evidence_class=public-operational-proxy`
 报告，不能据此产生生产 `Promote`。
@@ -349,14 +378,14 @@ runner 校准历史；Public Operational Proxy v2 使用 AISHELL-4 Test + ASCEND
 均为 1,185/1,185、0 失败；macro CER 分别为 10.11%、13.69%、13.34%。Fun-ASR 相对 Qwen 的
 配对 cluster-bootstrap CER 差为 +3.23pp，95% CI [+2.31pp, +3.85pp]；相对 SenseVoice 为
 -0.36pp，95% CI [-1.60pp, +0.63pp]。完整结果与污染边界见
-[`public-proxy-v1-20260825/report.md`](benchmarks/asr/public-proxy-v1-20260825/report.md)。Proxy Reserve
+[`public-proxy-v1-20260825/report.md`](../benchmarks/asr/public-proxy-v1-20260825/report.md)。Proxy Reserve
 保持封存。该结果不触发 Stage 1 的 `Advance/Continue/Reject`，也不与 §4.2 的 v2 序贯证据合并。
 
 Public Operational Proxy v2 随后按 v1.3 规则完成 Core：Qwen、SenseVoice、Fun-ASR 均为
 802/802、0 失败；宏平均 CER 分别为 11.47%、13.90%、14.39%，RTF P95 分别为 0.173、0.352、
 0.092。Fun-ASR 的 57 条负样本非空率为 15.79%，低于 Qwen 的 100% 与 SenseVoice 的 33.33%，
 因此三项已可测非劣门禁通过；但两个质量 family 都触发 futility。完整聚合结果见
-[`public-operational-proxy-v2-20260825/report.md`](benchmarks/asr/public-operational-proxy-v2-20260825/report.md)。
+[`public-operational-proxy-v2-20260825/report.md`](../benchmarks/asr/public-operational-proxy-v2-20260825/report.md)。
 
 ---
 

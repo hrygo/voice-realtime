@@ -1,3 +1,21 @@
+---
+title: "ASR Stage 2–5 统一执行器设计"
+description: "ASR 科学对比 Stage 2-5 统一生命周期执行器与决策报告生成设计"
+status: implemented
+type: technical_spec
+category: asr
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - stage-runner
+  - benchmark-runner
+---
+
 # ASR Stage 2–5 统一执行器设计
 
 ## 1. 文档状态
@@ -8,7 +26,7 @@
 - 代码基线：`0d098b1d9ffe39d9288cda849e65cd2680639851`
 - 索引证据：Codebase Memory Tier 2，generation `2026-08-24T19:50:07Z`，与上述
   `HEAD` 匹配；相关路径无已记录索引缺口（best-effort，不代表绝对完整）
-- 上位方案：[`Fun-ASR 与现有 ASR 后端科学对比测试方案`](../../Fun-ASR与现有ASR后端科学对比测试方案.md)
+- 上位方案：[`Fun-ASR 与现有 ASR 后端科学对比测试方案`](../../solutions/Fun-ASR与现有ASR后端科学对比测试方案.md)
 
 ## 2. 背景与问题
 

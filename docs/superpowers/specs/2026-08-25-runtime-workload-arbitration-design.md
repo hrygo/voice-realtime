@@ -1,3 +1,21 @@
+---
+title: "服务端运行时工作负载仲裁设计"
+description: "RuntimeModeCoordinator 四模式状态机、单 PCM 所有者与两阶段切换设计"
+status: implemented
+type: technical_spec
+category: architecture
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - runtime-arbitration
+  - workload-arbitration
+  - pcm-owner
+---
+
 # 运行时语音工作负载仲裁设计
 
 ## 1. 文档状态

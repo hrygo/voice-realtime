@@ -1,3 +1,21 @@
+---
+title: "LM Studio 原生有状态会话滚动压缩设计"
+description: "LM Studio 原生对话链长会话滚动摘要压缩与原子换链详细设计"
+status: implemented
+type: technical_spec
+category: interaction
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - lm-studio
+  - context-compaction
+  - memory-management
+---
+
 # LM Studio 原生会话上下文压缩设计
 
 ## 目标

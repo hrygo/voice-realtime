@@ -1,3 +1,30 @@
+---
+title: "ADR-007：AI 会议纪要采用有界分段生成与服务端事件收敛"
+description: "为会议纪要与标题生成建立多层超时、字符熔断与 output_limit 边界，防止长文本无限循环"
+status: accepted
+type: decision_record
+category: meeting
+date: 2026-08-26
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-meeting"
+tags:
+  - adr
+  - meeting-summary
+  - lm-studio
+  - bounded-generation
+  - timeout-budget
+  - title-generation
+scope:
+  - "voice_realtime.meeting"
+related_documents:
+  - "docs/manuals/会议助手后端运行与前后端联调.md"
+  - "docs/decisions/0002-lm-studio-stateful-chat-context.md"
+contracts:
+  - "contracts/meeting-assistant/v1/"
+---
+
 # ADR-007：AI 会议纪要采用有界分段生成与服务端事件收敛
 
 ## 状态
@@ -43,10 +70,11 @@ repair 会重新发送完整转写；数据库 lease 也不能主动取消仍在
 
 2026-08-26 的 `v2-bounded` 长会议复测表明，最终 repair 在 4096-token 边界生成 4095 tokens 后被截断，
 并在只完成 topics 时产生第 13 个条目。为让最终 JSON 有足够闭合预算且不恢复无界生成，默认
-reduce/repair 上限调整为 10240 tokens、字符熔断调整为 65536；map 仍保持 2048。模型侧契约同时收紧
-为最多 8 个主题、8 个决策、8 个行动项、4 个风险、4 个开放问题和 6 个亮点，并限制概览与单项长度。
-若 `chat.end.stats.total_output_tokens` 已触顶且结构仍无效，任务直接以 `output_limit` 失败，不再用同一预算
-重复生成。
+reduce/repair 上限调整为 10240 tokens、字符熔断调整为 65536；map 仍保持 2048。最终 reduce/repair 的模型侧
+契约同时收紧为最多 8 个主题、8 个决策、8 个行动项、4 个风险、4 个开放问题和 6 个亮点，并限制概览与单项
+长度。map 中间结果则允许使用领域模型容量（主题/决策/行动项/亮点最多 12 个，风险/开放问题最多 8 个），
+避免把一个合法分块在进入 reduce 前按最终结果上限误拒绝。若 `chat.end.stats.total_output_tokens` 已触顶且
+结构仍无效，任务直接以 `output_limit` 失败，不再用同一预算重复生成。
 
 ## 备选方案
 
@@ -98,11 +126,11 @@ lease 适合任务认领和崩溃恢复，不会自动取消进程内仍活跃�
 - 最终 evidence 只能包含本次转写中存在的 UUID；
 - repair 不得携带完整转写；不得记录 prompt、转写和原始正文到统计日志；
 - `meeting_title_updated` 是 additive durable event，断线时仍以 HTTP/`meeting_snapshot` 回源；
-- 当前 prompt 版本为 `v3-bounded-10240`；后续策略变化需继续更新版本并保留旧数据可读。
+- 当前 prompt 版本为 `v4-map-domain-10240`；后续策略变化需继续更新版本并保留旧数据可读。
 
 ## 关联文档
 
-- [`docs/会议助手后端运行与前后端联调.md`](../会议助手后端运行与前后端联调.md)
+- [`docs/manuals/会议助手后端运行与前后端联调.md`](../manuals/会议助手后端运行与前后端联调.md)
 - [`contracts/meeting-assistant/v1/asyncapi.yaml`](../../contracts/meeting-assistant/v1/asyncapi.yaml)
 - [`contracts/meeting-assistant/CHANGELOG.md`](../../contracts/meeting-assistant/CHANGELOG.md)
 - [ADR-002：LM Studio 交互上下文采用原生有状态会话链](./0002-lm-studio-stateful-chat-context.md)

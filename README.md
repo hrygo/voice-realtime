@@ -136,6 +136,8 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 1. 打开 **LM Studio**，下载并加载推荐模型：
    - **推荐统一模型（交互 / 纪要 / 标题）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b-instruct` / `qwen2.5-14b-instruct`）
 2. 在 LM Studio 中启动 Local Server，监听 `localhost:1234`。
+3. 如果 Local Server 开启了 API authentication，将 key 写入项目根目录 `.env` 的
+   `VR_INTERACTION_LLM_API_KEY`；程序会以 `Bearer` header 发送，启动配置表会自动脱敏。
 
 ### 步骤 5：启动系统服务
 
@@ -145,10 +147,10 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 # 仅本机访问（默认）
 scripts/run-all.sh
 
-# 仅绑定当前活动局域网 IP
+# 同时支持 localhost 与局域网访问（监听全部 IPv4 接口）
 VR_BIND_HOST=lan scripts/run-all.sh
 
-# 绑定全部网络接口
+# 显式绑定全部网络接口（与 lan 的监听效果相同）
 VR_BIND_HOST=0.0.0.0 scripts/run-all.sh
 ```
 
@@ -218,18 +220,19 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `VR_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；支持 `0.0.0.0` / `localhost` / `lan` / 自定义 IP） |
+| `VR_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；`lan` 同时支持 localhost 与局域网，实际监听 `0.0.0.0`；也支持显式 `0.0.0.0` / 自定义 IP） |
 | `VR_UI_HOST` | `127.0.0.1` | Voice Studio Web 服务绑定地址（优先于全局变量） |
 | `VR_UI_PORT` | `8100` | Voice Studio Web 服务端口 |
 | `VR_BRIDGE_HOST` | `127.0.0.1` | Qwen3-TTS 桥服务绑定地址（优先于全局变量） |
 | `VR_BRIDGE_PORT` | `8765` | Qwen3-TTS 桥服务端口 |
 | `VR_SUBTITLE_HOST` | `127.0.0.1` | WhisperLiveKit 字幕服务绑定地址（优先于全局变量） |
 | `VR_SUBTITLE_PORT` | `8001` | WhisperLiveKit 字幕服务端口 |
-| `VR_LMSTUDIO_BASE_URL` | `http://localhost:1234` | LM Studio API 服务地址 |
-| `VR_INTERACTION_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
+| `VR_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
+| `VR_INTERACTION_LLM_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
+| `VR_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
 | `VR_INTERACTION_TTS_BRIDGE_URL` | `http://127.0.0.1:8765/v1` | 交互管道使用的 TTS 端点；`scripts/run-all.sh` 未显式配置时按桥监听地址自动推导 |
 | `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
-| `VR_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
+| `VR_MEETING_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
 | `VR_SUBTITLE_MODEL_DIR` | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master` | Qwen3-ASR 项目外模型目录 |
@@ -251,7 +254,7 @@ uv run python3 scripts/validate-meeting-contract.py
 
 默认 mock 地址为 `http://127.0.0.1:8200`，事件 WS 为
 `ws://127.0.0.1:8200/ws/v1/meetings`；场景和故障参数见
-[`docs/联调记录模板.md`](docs/联调记录模板.md)。
+[`docs/operations/联调记录模板.md`](docs/operations/联调记录模板.md)。
 
 ```bash
 # 1. 后端单元与集成测试 (带分支覆盖率，fail_under=80，实测 1161 passed, 10 skipped，覆盖率 ~82%)
@@ -308,13 +311,15 @@ uv run vr-interact
 
 深入了解系统内部架构、契约定义与设计决策：
 
-- 📖 [系统总体架构与详细设计方案](docs/系统总体架构与详细设计方案.md)
-- 📖 [全链路语音交互与会议助手-技术方案与实施方案](docs/全链路语音交互与会议助手-技术方案与实施方案.md)
-- 📖 [实时语音交互与字幕-方案与最佳实践](docs/实时语音交互与字幕-方案与最佳实践.md)
-- 📖 [会议助手后端运行与前后端联调手册](docs/会议助手后端运行与前后端联调.md)
-- 📖 [Voice Studio UI 设计方案](docs/Voice-Studio-UI-设计方案.md)
-- 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/Qwen3-ASR-实时语音转文字开发对接手册.md)
-- 📖 [声学防回声与全双工交互设计方案](docs/声学防回声与全双工交互设计方案.md)
+- 🧭 [**Voice Realtime 文档中心总览**](docs/README.md)
+- 📖 [系统总体架构与详细设计方案](docs/architecture/系统总体架构与详细设计方案.md)
+- 📖 [全链路语音交互与会议助手-技术方案与实施方案](docs/architecture/全链路语音交互与会议助手-技术方案与实施方案.md)
+- 📖 [实时语音交互与字幕-方案与最佳实践](docs/architecture/实时语音交互与字幕-方案与最佳实践.md)
+- 📖 [声学防回声与全双工交互设计方案](docs/architecture/声学防回声与全双工交互设计方案.md)
+- 📖 [会议模式多说话人精准识别与声纹聚类技术方案](docs/solutions/会议模式多说话人精准识别与声纹聚类技术方案.md)
+- 📖 [会议助手后端运行与前后端联调手册](docs/manuals/会议助手后端运行与前后端联调.md)
+- 📖 [Voice Studio UI 设计方案](docs/manuals/Voice-Studio-UI-设计方案.md)
+- 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/manuals/Qwen3-ASR-实时语音转文字开发对接手册.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
 - 📝 [架构决策记录 (ADR-001 ~ ADR-007)](docs/decisions)
 

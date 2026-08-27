@@ -1,3 +1,27 @@
+---
+title: "ADR-004：ASR 选型采用两阶段序贯盲测与 Finalist-Only 验收"
+description: "确立 ASR 评测采用 Stage 0 可行性门禁 + Core/Reserve 序贯盲测，防止偏倚与算力浪费"
+status: accepted
+type: decision_record
+category: asr
+date: 2026-08-24
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - adr
+  - asr
+  - benchmark
+  - sequential-evaluation
+  - futility-stopping
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md"
+---
+
 # ADR-004：ASR 选型采用两阶段序贯盲测与 Finalist-Only 验收
 
 ## 状态
@@ -68,7 +92,7 @@ sequential CI。直接把普通 bootstrap CI 套到 O'Brien–Fleming 边界会�
 
 ## 参考
 
-- `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
-- `docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md`
+- [`../solutions/Fun-ASR与现有ASR后端科学对比测试方案.md`](../solutions/Fun-ASR与现有ASR后端科学对比测试方案.md)
+- [`../superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md`](../superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md)
 - https://www.fda.gov/media/78495/download
 - https://doi.org/10.1016/S0197-2456(00)00057-X

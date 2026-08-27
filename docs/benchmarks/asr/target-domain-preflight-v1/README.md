@@ -1,3 +1,28 @@
+---
+title: "ASR 目标域预检协议与规范"
+description: "目标域 ASR 录音盲测预检协议、脱敏约束与外部数据规范"
+status: archived
+type: benchmark_report
+category: asr
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - benchmark
+  - preflight
+  - target-domain
+  - privacy
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/benchmarks/asr/corpus-v12-20260825/source-inventory.md"
+---
+
 # 目标域 ASR blind metadata-only 前置包
 
 状态：`tooling_ready / data_not_provided`（2026-08-25）。本目录只保存操作契约，不保存音频、逐字稿、

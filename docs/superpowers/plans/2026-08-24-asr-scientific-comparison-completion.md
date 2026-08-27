@@ -1,3 +1,21 @@
+---
+title: "ASR 科学对比闭环实施计划"
+description: "完成 Qwen3-ASR vs Fun-ASR vs SenseVoiceSmall 科学评测的执行任务清单"
+status: implemented
+type: execution_plan
+category: asr
+version: "v1.0.0"
+date: 2026-08-24
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - asr
+  - benchmark
+---
+
 # ASR Scientific Comparison Completion Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

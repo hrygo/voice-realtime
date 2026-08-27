@@ -1,3 +1,32 @@
+---
+title: "ADR-006：会议助手契约优先前后端分离"
+description: "在单仓架构下以 contracts/ 目录为唯一事实源，分离后端领域生产与前端派生消费"
+status: accepted
+type: decision_record
+category: meeting
+date: 2026-08-26
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - adr
+  - meeting-assistant
+  - contract-first
+  - separation-of-concerns
+  - openapi
+  - asyncapi
+scope:
+  - "voice_realtime.meeting"
+  - "ui"
+  - "contracts"
+related_documents:
+  - "docs/operations/会议助手前后端分离式开发准备方案.md"
+  - "docs/operations/会议助手前后端分离工作交接清单.md"
+contracts:
+  - "contracts/meeting-assistant/v1/"
+---
+
 # ADR-006：以契约优先支持会议助手前后端团队分离
 
 ## 状态
@@ -82,6 +111,6 @@ Accepted
 
 ## 关联文档
 
-- [`docs/会议助手前后端分离式开发准备方案.md`](../会议助手前后端分离式开发准备方案.md)
+- [`docs/operations/会议助手前后端分离式开发准备方案.md`](../operations/会议助手前后端分离式开发准备方案.md)
 - [`contracts/meeting-assistant/v1/openapi.json`](../../contracts/meeting-assistant/v1/openapi.json)
 - [`contracts/meeting-assistant/v1/asyncapi.yaml`](../../contracts/meeting-assistant/v1/asyncapi.yaml)

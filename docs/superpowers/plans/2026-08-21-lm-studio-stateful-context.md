@@ -1,3 +1,21 @@
+---
+title: "LM Studio 原生有状态对话链实施计划"
+description: "接入 LM Studio 原生 /api/v1/chat + reasoning: 'off' 的执行任务清单"
+status: implemented
+type: execution_plan
+category: interaction
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - lm-studio
+  - stateful-context
+---
+
 # LM Studio Stateful Context Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.

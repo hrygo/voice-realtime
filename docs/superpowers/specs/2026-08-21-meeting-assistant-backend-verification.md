@@ -1,3 +1,21 @@
+---
+title: "会议助手后端全链路验收规范"
+description: "会议助手 V1 后端全链路黑盒与白盒测试验收规范"
+status: implemented
+type: test_record
+category: meeting
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - meeting-assistant
+  - acceptance-testing
+  - verification
+---
+
 # 会议助手后端 V1 验收记录
 
 日期：2026-08-21（Asia/Shanghai）

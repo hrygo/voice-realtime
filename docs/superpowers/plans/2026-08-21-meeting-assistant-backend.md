@@ -1,3 +1,21 @@
+---
+title: "会议助手后端实施计划"
+description: "实现 Sortformer 接入、PostgreSQL 持久化、窗口对账与 AI 纪要的执行任务清单"
+status: implemented
+type: execution_plan
+category: meeting
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - meeting-assistant
+  - backend
+---
+
 # Meeting Assistant Backend Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

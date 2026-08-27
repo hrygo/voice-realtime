@@ -1,3 +1,22 @@
+---
+title: "ASR 后端可插拔架构评估与前置设计"
+description: "ASR 统一契约、适配器、注册表与基准执行器设计"
+status: implemented
+type: technical_spec
+category: asr
+version: "v1.0.0"
+date: 2026-08-24
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - pluggability
+  - adapter
+  - benchmark-runner
+---
+
 # ASR 后端可插拔架构评估与前置设计
 
 > **决策修订（2026-08-24）：** 可插拔契约、adapter、registry 和 benchmark runner 继续用于科学
@@ -10,7 +29,7 @@
 - 代码证据：当前工作树 `HEAD`，代码知识图 generation `2026-08-24T10:44:36Z`
 - 外部候选：`QwenAudio/Fun-ASR` `53a56d80667320b44a7dd779f5bf8c024b6c30a8`
 - 目标：先建立可验证、可回退的 ASR 适配边界，再执行
-  [`Fun-ASR 与现有 ASR 后端科学对比测试方案`](../../Fun-ASR与现有ASR后端科学对比测试方案.md)
+  [`Fun-ASR 与现有 ASR 后端科学对比测试方案`](../../solutions/Fun-ASR与现有ASR后端科学对比测试方案.md)
 
 ## 2. 结论先行
 

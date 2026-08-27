@@ -1,3 +1,27 @@
+---
+title: "ADR-003：LM Studio 长会话滚动记忆压缩"
+description: "基于输入 token 与 TTFT 动态监控，采用结构化摘要预热新链并原子换链，防止长会话显存与延迟退化"
+status: accepted
+type: decision_record
+category: interaction
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-interaction"
+tags:
+  - adr
+  - lm-studio
+  - context-compaction
+  - memory-management
+  - long-session
+scope:
+  - "voice_realtime.interaction"
+related_documents:
+  - "docs/decisions/0002-lm-studio-stateful-chat-context.md"
+  - "docs/superpowers/specs/2026-08-21-lm-studio-context-compaction-design.md"
+---
+
 # ADR-003：LM Studio 长会话采用结构化记忆预热与原子换链
 
 ## 状态
@@ -69,7 +93,7 @@ OpenAI 兼容接口可以表达 roles，但当前模型在该端点无法可靠�
 
 ## 参考
 
-- `docs/decisions/0002-lm-studio-stateful-chat-context.md`
-- `docs/superpowers/specs/2026-08-21-lm-studio-context-compaction-design.md`
+- [`0002-lm-studio-stateful-chat-context.md`](./0002-lm-studio-stateful-chat-context.md)
+- [`../superpowers/specs/2026-08-21-lm-studio-context-compaction-design.md`](../superpowers/specs/2026-08-21-lm-studio-context-compaction-design.md)
 - https://lmstudio.ai/docs/developer/rest/stateful-chats
 - https://docs.pipecat.ai/pipecat/fundamentals/context-summarization

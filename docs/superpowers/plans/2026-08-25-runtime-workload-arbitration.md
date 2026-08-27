@@ -1,3 +1,21 @@
+---
+title: "运行时工作负载仲裁实施计划"
+description: "实现 RuntimeModeCoordinator 四模式切换与单 PCM owner 仲裁的执行任务清单"
+status: implemented
+type: execution_plan
+category: architecture
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - runtime-arbitration
+  - workload-arbitration
+---
+
 # Runtime Workload Arbitration Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

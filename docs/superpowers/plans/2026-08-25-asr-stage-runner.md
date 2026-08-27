@@ -1,3 +1,21 @@
+---
+title: "ASR Stage 2–5 执行器实施计划"
+description: "实现 Stage 2-5 统一 Runner 与自动决策生成的执行任务清单"
+status: implemented
+type: execution_plan
+category: asr
+version: "v1.0.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - asr
+  - stage-runner
+---
+
 # ASR Stage 2–5 统一执行器实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,3 +1,30 @@
+---
+title: "ADR-005：服务端统一工作负载仲裁与单 PCM 所有者"
+description: "确立 RuntimeModeCoordinator 四模式状态机与单 PCM owner 仲裁，杜绝并发竞争与音频多路分发混乱"
+status: accepted
+type: decision_record
+category: architecture
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - adr
+  - runtime-arbitration
+  - state-machine
+  - pcm-owner
+  - audiohub
+scope:
+  - "voice_realtime.meeting"
+  - "voice_realtime.audio"
+  - "voice_realtime.ui"
+related_documents:
+  - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
+  - "docs/decisions/0001-single-owner-interaction-runtime.md"
+---
+
 # ADR-005：由服务端状态机统一仲裁语音推理工作负载
 
 ## 状态

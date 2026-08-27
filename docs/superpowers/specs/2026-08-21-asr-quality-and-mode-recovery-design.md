@@ -1,3 +1,22 @@
+---
+title: "ASR 质量提升与字幕模式恢复设计"
+description: "恢复会议后的普通字幕链路并以离线 Qwen3-ASR 1.7B 提升转写准确率的设计规范"
+status: implemented
+type: technical_spec
+category: subtitles
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - qwen3-asr
+  - whisperlivekit
+  - subtitles
+  - mode-recovery
+---
+
 # ASR 质量与模式恢复设计
 
 ## 目标

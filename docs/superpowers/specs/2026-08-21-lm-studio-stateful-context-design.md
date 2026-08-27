@@ -1,3 +1,21 @@
+---
+title: "LM Studio 原生有状态对话链集成设计"
+description: "通过 LM Studio 原生 /api/v1/chat + reasoning: 'off' 实现真实对话链的详细设计"
+status: implemented
+type: technical_spec
+category: interaction
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - lm-studio
+  - stateful-context
+  - native-api
+---
+
 # LM Studio 角色感知上下文设计
 
 ## 目标

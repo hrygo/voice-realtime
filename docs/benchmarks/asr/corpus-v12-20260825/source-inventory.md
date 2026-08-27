@@ -1,3 +1,28 @@
+---
+title: "ASR 语料库 v1.2/v1.3 资产清单与源溯源"
+description: "ASR 评测语料清单、切片来源、许可协议与哈希资产台账"
+status: completed
+type: benchmark_report
+category: asr
+version: "v1.3.0"
+date: 2026-08-25
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - asr
+  - benchmark
+  - corpus
+  - source-inventory
+  - dataset
+scope:
+  - "voice_realtime.asr"
+related_documents:
+  - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
+  - "docs/benchmarks/asr/public-operational-proxy-v2-20260825/report.md"
+---
+
 # ASR v1.3 公共代理语料来源与完整性清单
 
 **核验时间：** 2026-08-25（Asia/Shanghai）  

@@ -1,3 +1,22 @@
+---
+title: "结构化会议助手详细设计规范"
+description: "Sortformer 说话人分离、PostgreSQL 持久化、窗口事务对账与 AI 纪要生成设计"
+status: implemented
+type: technical_spec
+category: meeting
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - meeting-assistant
+  - diarization
+  - reconciliation
+  - postgresql
+---
+
 # Voice Studio 会议助手模式设计规格
 
 ## 1. 文档状态

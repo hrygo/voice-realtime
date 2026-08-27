@@ -1,3 +1,31 @@
+---
+title: "Voice Studio UI 设计方案"
+description: "Voice Studio 前端控制台架构设计、单源麦克风控制面、组件状态机、WebSocket 协议桥接与交互设计规范"
+status: active
+type: guide
+category: frontend
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-ui"
+tags:
+  - voice-studio
+  - react
+  - zustand
+  - ui-design
+  - state-machine
+  - websocket-bridge
+scope:
+  - "voice_realtime.ui"
+  - "ui"
+related_documents:
+  - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
+  - "docs/manuals/会议助手后端运行与前后端联调.md"
+---
+
 # Voice Studio UI 设计方案（架构整治版，2026-08-21）
 
 ## 1. 目标与边界

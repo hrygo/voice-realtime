@@ -1,3 +1,21 @@
+---
+title: "ASR 后端可插拔实施计划"
+description: "实现 ASR 契约抽象、适配层与评测执行器的执行任务清单"
+status: implemented
+type: execution_plan
+category: asr
+version: "v1.0.0"
+date: 2026-08-24
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - execution-plan
+  - asr
+  - pluggability
+---
+
 # ASR Backend Pluggability Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

@@ -1,3 +1,21 @@
+---
+title: "架构整治验收与质量门禁规范"
+description: "Voice Realtime 架构整治后的功能与性能验收测试规范"
+status: implemented
+type: test_record
+category: architecture
+version: "v1.0.0"
+date: 2026-08-21
+last_updated: 2026-08-27
+author: "Voice Realtime Core Team"
+owners:
+  - "voice-realtime-core"
+tags:
+  - verification
+  - quality-gate
+  - architecture-remediation
+---
+
 # Voice Realtime 架构整治验收记录
 
 ## 结论
