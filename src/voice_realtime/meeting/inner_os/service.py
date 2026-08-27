@@ -151,14 +151,51 @@ class InnerOSQueryService:
                     document, question=question, focus_segment_ids=focus_segment_ids
                 )
                 await emit("inner_os_answer_started", query_id, {"status": "started"})
+                if not snapshot.evidence:
+                    answer = InnerOSAnswer.model_validate(
+                        {
+                            "intent": intent,
+                            "evidence": [],
+                            "facts": [],
+                            "judgements": [],
+                            "draft": None,
+                            "limitations": [
+                                {
+                                    "code": "insufficient_evidence",
+                                    "message": "当前会议还没有可引用的已确认转录。",
+                                }
+                            ],
+                        }
+                    )
+                    exchange = self._make_exchange(
+                        query_id,
+                        meeting_id,
+                        question,
+                        answer,
+                        snapshot.transcript_revision,
+                        snapshot.content_revision,
+                        ephemeral_context,
+                    )
+                    self._store_completed(query_id, exchange)
+                    await emit(
+                        "inner_os_answer_completed", query_id, answer.model_dump(mode="json")
+                    )
+                    return
                 evidence = "\n".join(
                     f"{item.alias}: {item.text}" for item in snapshot.evidence
                 )
                 request = NativeChatRequest(
                     model=self.model,
                     system_prompt=(
-                        "仅依据证据回答，输出 JSON；事实必须引用证据别名，"
-                        "证据不足时说明限制。"
+                        "仅依据证据回答，严格只输出一个 JSON 对象，不要 Markdown 代码围栏。"
+                        "JSON 必须严格包含 intent、evidence、facts、judgements、draft、"
+                        "limitations。"
+                        "evidence 是证据数组；facts 每项必须含 text 和 evidence_segment_ids；"
+                        "judgements 每项必须含 text、basis_segment_ids、uncertainty、"
+                        "uncertainty_reason；draft 无法提供时为 null；"
+                        "limitations 每项含 code 和 message。"
+                        "事实引用只能使用证据别名（如 S0001）；证据不足时使用空 facts、"
+                        "draft 为 null，并加入 code=insufficient_evidence 的 limitation。"
                     ),
                     input=self._build_input(
                         intent, question, evidence, ephemeral_context
@@ -178,7 +215,11 @@ class InnerOSQueryService:
                     raise InnerOSServiceError(
                         "inner_os_model_unavailable", "模型连接未正常结束"
                     )
-                raw = json.loads("".join(parts))
+                raw_text = "".join(parts).strip()
+                if raw_text.startswith("```"):
+                    raw_text = raw_text.split("\n", 1)[-1]
+                    raw_text = raw_text.rsplit("```", 1)[0].strip()
+                raw = json.loads(raw_text)
                 if not isinstance(raw, dict):
                     raise ValueError("answer must be an object")
                 alias_map = {
@@ -207,21 +248,18 @@ class InnerOSQueryService:
                     for item in snapshot.evidence
                 ]
                 answer = InnerOSAnswer.model_validate(raw)
-                exchange = {
-                    "id": query_id,
-                    "meeting_id": meeting_id,
-                    "question": question,
-                    "intent": answer.intent,
-                    "answer": answer,
-                    "source_transcript_revision": snapshot.transcript_revision,
-                    "source_content_revision": snapshot.content_revision,
-                    "used_ephemeral_context": bool(ephemeral_context),
-                    "model": self.model,
-                    "reasoning": "off",
-                    "prompt_version": "inner-os-v1",
-                }
-                if not self._completed.put(query_id, exchange):
-                    raise ValueError("inner_os_answer_too_large")
+                self._store_completed(
+                    query_id,
+                    self._make_exchange(
+                        query_id,
+                        meeting_id,
+                        question,
+                        answer,
+                        snapshot.transcript_revision,
+                        snapshot.content_revision,
+                        ephemeral_context,
+                    ),
+                )
                 await emit(
                     "inner_os_answer_completed", query_id, answer.model_dump(mode="json")
                 )
@@ -269,6 +307,36 @@ class InnerOSQueryService:
 
     def peek_completed(self, exchange_id: UUID) -> dict[str, Any] | None:
         return self._completed.get(exchange_id)
+
+    def _store_completed(self, query_id: UUID, exchange: dict[str, Any]) -> None:
+        if not self._completed.put(query_id, exchange):
+            raise InnerOSServiceError(
+                "inner_os_output_limit", "答案超过了未保存结果的大小限制"
+            )
+
+    def _make_exchange(
+        self,
+        query_id: UUID,
+        meeting_id: UUID,
+        question: str,
+        answer: InnerOSAnswer,
+        transcript_revision: int,
+        content_revision: int,
+        ephemeral_context: dict[str, str] | None,
+    ) -> dict[str, Any]:
+        return {
+            "id": query_id,
+            "meeting_id": meeting_id,
+            "question": question,
+            "intent": answer.intent,
+            "answer": answer,
+            "source_transcript_revision": transcript_revision,
+            "source_content_revision": content_revision,
+            "used_ephemeral_context": bool(ephemeral_context),
+            "model": self.model,
+            "reasoning": "off",
+            "prompt_version": "inner-os-v1",
+        }
 
     async def close(self) -> None:
         await self.cancel_all(reason="connection_closed")
