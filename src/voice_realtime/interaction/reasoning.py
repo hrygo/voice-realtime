@@ -50,6 +50,7 @@ from voice_realtime.interaction.context_memory import (
 )
 from voice_realtime.lm_studio import (
     LM_STUDIO_NATIVE_CHAT_PATH,
+    LMStudioClient,
     lm_studio_auth_headers,
     lm_studio_root_url,
 )
@@ -269,6 +270,9 @@ class LmStudioNativeLLMService(OpenAILLMService):
                 write=10.0,
                 pool=5.0,
             ),
+        )
+        self._lm_studio = LMStudioClient(
+            base_url=root_url, api_key=normalized_api_key, http_client=self._http
         )
         self._native_client_closed = False
         self._previous_response_id: str | None = None
@@ -740,7 +744,7 @@ class LmStudioNativeLLMService(OpenAILLMService):
         saw_content = False
         content_parts: list[str] = []
         final_result: NativeChatResult | None = None
-        async with self._http.stream("POST", _NATIVE_CHAT_PATH, json=payload) as resp:
+        async with self._lm_studio.stream_request(payload) as resp:
             try:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as exc:

@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from voice_realtime.lm_studio import (
     DEFAULT_LM_STUDIO_API_KEY,
     LM_STUDIO_NATIVE_CHAT_PATH,
+    LMStudioClient,
     lm_studio_auth_headers,
     lm_studio_root_url,
 )
@@ -573,6 +574,9 @@ class MeetingSummaryClient:
                 pool=5.0,
             ),
         )
+        self._lm_studio = LMStudioClient(
+            base_url=self.base_url, api_key=self._api_key, http_client=self._http
+        )
         self._closed = False
         self.call_stats: list[dict[str, Any]] = []
 
@@ -602,12 +606,17 @@ class MeetingSummaryClient:
         *,
         stage: str = "summary",
     ) -> str:
+        # Keep legacy tests/integrators that replace ``_http`` compatible while
+        # routing the request lifecycle through the shared LM Studio client.
+        self._lm_studio = LMStudioClient(
+            base_url=self.base_url, api_key=self._api_key, http_client=self._http
+        )
         parts: list[str] = []
         output_chars = 0
         started = time.monotonic()
         try:
             async with asyncio.timeout(self.request_timeout_secs):
-                async with self._http.stream("POST", NATIVE_CHAT_PATH, json=payload) as response:
+                async with self._lm_studio.stream_request(payload) as response:
                     raise_for_status = getattr(response, "raise_for_status", None)
                     if raise_for_status is not None:
                         raise_for_status()

@@ -6,10 +6,57 @@ import pytest
 
 from voice_realtime.lm_studio import (
     DEFAULT_LM_STUDIO_API_KEY,
+    LMStudioClient,
+    NativeChatRequest,
     lm_studio_auth_headers,
     lm_studio_openai_models_url,
     lm_studio_root_url,
 )
+
+
+def test_native_chat_request_uses_safe_defaults_and_optional_parameters() -> None:
+    request = NativeChatRequest(model="m", input="你好")
+    assert request.to_payload() == {
+        "model": "m", "input": "你好", "stream": True, "store": False,
+        "reasoning": "off",
+    }
+    payload = NativeChatRequest(
+        model="m", input="hi", system_prompt="sys", temperature=0.2,
+        max_output_tokens=32, previous_response_id="resp_x",
+    ).to_payload()
+    assert payload["system_prompt"] == "sys"
+    assert payload["previous_response_id"] == "resp_x"
+
+
+async def test_native_client_parses_sse_without_leaking_non_message_events() -> None:
+    import httpx
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/chat"
+        body = await request.aread()
+        assert b'"model":"m"' in body
+        return httpx.Response(
+            200,
+            content=(
+                b'data: {"type":"chat.start"}\n\n'
+                b'data: {"type":"reasoning.delta","content":"hidden"}\n\n'
+                b'data: {"type":"message.delta","content":"hello"}\n\n'
+                b'data: {"type":"chat.end","result":{"output":[],"stats":{}}}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = LMStudioClient(
+        base_url="http://localhost:1234",
+        api_key="test",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    events = [event async for event in client.stream_chat(NativeChatRequest(model="m", input="hi"))]
+    await client.aclose()
+    assert [event.type for event in events] == [
+        "chat.start", "reasoning.delta", "message.delta", "chat.end"
+    ]
+    assert events[2].content == "hello"
 
 
 def test_lm_studio_default_api_key_is_backward_compatible() -> None:

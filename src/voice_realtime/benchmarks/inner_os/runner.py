@@ -8,11 +8,14 @@ from typing import Any
 from .dataset import EvaluationDataset, EvaluationQuestion, Evidence, load_dataset
 
 
-def build_payload(question: EvaluationQuestion, evidence: list[Evidence]) -> dict[str, Any]:
+def build_payload(
+    question: EvaluationQuestion, evidence: list[Evidence], *, model: str = ""
+) -> dict[str, Any]:
     evidence_text = "\n".join(
         f"{index + 1:04d}: {item.text}" for index, item in enumerate(evidence)
     )
     return {
+        "model": model,
         "system_prompt": "仅依据给定合成会议证据回答；证据不足时明确拒答。",
         "input": f"问题：{question.question}\n证据：\n{evidence_text}",
         "stream": True,
