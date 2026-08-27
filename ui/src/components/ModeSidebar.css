@@ -14,7 +14,7 @@
   padding: 12px 10px;
   overflow: hidden;
   position: relative;
-  contain: layout;
+  z-index: 40;
   background: var(--bg-card-solid);
   border-right: 1px solid var(--border);
   transition:
@@ -135,9 +135,11 @@
   width: 52px !important;
   min-width: 52px !important;
   max-width: 52px !important;
-  padding: 12px 6px !important;
+  padding: 10px 6px !important;
   align-items: center !important;
   overflow: visible !important;
+  contain: none !important;
+  z-index: 200 !important;
 }
 
 .mode-sidebar.is-collapsed .meeting-sidebar-full-content {
@@ -158,11 +160,21 @@
   visibility: visible;
   position: relative;
   top: 0;
-  transform: scale(1);
+  transform: none !important;
+  overflow: visible !important;
   transition:
     opacity 0.22s 0.06s ease-in,
-    transform 0.22s 0.06s cubic-bezier(0.16, 1, 0.3, 1),
     visibility 0.22s;
+}
+
+/* Collapsed Rail Divider */
+.collapsed-rail-divider {
+  width: 26px;
+  height: 1px;
+  background: var(--border);
+  margin: 2px auto;
+  flex-shrink: 0;
+  opacity: 0.8;
 }
 
 /* Action Button Wrapper for Positioning Floating Tooltips */
@@ -171,15 +183,17 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 100%;
+  width: 38px;
+  height: 38px;
+  margin: 0 auto;
 }
 
 .meeting-sidebar-toggle-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
   border-radius: 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -218,8 +232,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 6px 4px;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 2px;
   border-radius: 10px;
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(244, 63, 94, 0.1));
   border: 1px solid rgba(239, 68, 68, 0.38);
@@ -228,9 +243,10 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-weight: 600;
   cursor: pointer;
-  width: 40px;
+  width: 38px;
   box-sizing: border-box;
   text-align: center;
+  margin: 0 auto;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -310,8 +326,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
+  margin: 0 auto;
   border-radius: 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
@@ -373,23 +390,23 @@
 
 .collapsed-item-flyout {
   position: absolute;
-  left: calc(100% + 12px);
+  left: calc(100% + 10px);
   top: 50%;
   transform: translateY(-50%) translateX(6px);
   opacity: 0;
   pointer-events: none;
   visibility: hidden;
-  background: rgba(15, 23, 42, 0.94);
+  background: rgba(15, 23, 42, 0.96);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   box-shadow:
-    0 10px 25px -5px rgba(0, 0, 0, 0.5),
-    0 0 0 1px rgba(255, 255, 255, 0.05);
+    0 12px 28px -4px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 6px 10px;
   white-space: nowrap;
-  z-index: 120;
+  z-index: 99999 !important;
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -397,6 +414,16 @@
     opacity 0.15s ease,
     transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
     visibility 0.15s;
+}
+
+/* Bridge gap between button and flyout to prevent flicker */
+.collapsed-item-flyout::after {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: -8px;
+  bottom: -8px;
+  width: 14px;
 }
 
 .collapsed-item-flyout.action-flyout {
@@ -416,7 +443,8 @@
   transform: translateY(-50%);
   border-width: 5px;
   border-style: solid;
-  border-color: transparent rgba(15, 23, 42, 0.94) transparent transparent;
+  border-color: transparent rgba(15, 23, 42, 0.96) transparent transparent;
+  z-index: 100000;
 }
 
 .collapsed-action-btn-wrapper:hover > .collapsed-item-flyout,
@@ -459,13 +487,15 @@
 }
 
 [data-theme="light"] .collapsed-item-flyout {
-  background: rgba(255, 255, 255, 0.96);
-  border-color: rgba(0, 0, 0, 0.1);
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow:
+    0 12px 28px -4px rgba(0, 0, 0, 0.15),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
 }
 
 [data-theme="light"] .collapsed-item-flyout::before {
-  border-color: transparent rgba(255, 255, 255, 0.96) transparent transparent;
+  border-color: transparent rgba(255, 255, 255, 0.98) transparent transparent;
 }
 
 [data-theme="light"] .flyout-title {

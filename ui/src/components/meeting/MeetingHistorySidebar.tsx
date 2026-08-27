@@ -156,40 +156,43 @@ export function MeetingHistorySidebar({
 
         {/* 正在录制中的 Mini Wave 拟真声学跳动胶囊 */}
         {isMeetingActive && (
-          <div
-            className="meeting-sidebar-collapsed-pulse is-recording"
-            onClick={onReturnToActive}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onReturnToActive();
-              }
-            }}
-          >
-            <div className="collapsed-pulse-top">
-              <span className="pinned-live-dot" />
-              <span className="collapsed-mini-wave" aria-hidden="true">
-                <span className="mini-wave-bar bar-1" />
-                <span className="mini-wave-bar bar-2" />
-                <span className="mini-wave-bar bar-3" />
-              </span>
-            </div>
-            <span className="collapsed-timer">{formatElapsed(elapsed)}</span>
-
-            {/* Hover Flyout Preview Card */}
-            <div className="collapsed-item-flyout" role="tooltip">
-              <div className="flyout-title">{activeMeetingTitle || "当前会议"}</div>
-              <div className="flyout-meta">
-                <span className="status-badge-chip-sm recording">
-                  {activeStatus === "recording" ? "录制中" : "封存中"}
+          <>
+            <div
+              className="meeting-sidebar-collapsed-pulse is-recording"
+              onClick={onReturnToActive}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onReturnToActive();
+                }
+              }}
+            >
+              <div className="collapsed-pulse-top">
+                <span className="pinned-live-dot" />
+                <span className="collapsed-mini-wave" aria-hidden="true">
+                  <span className="mini-wave-bar bar-1" />
+                  <span className="mini-wave-bar bar-2" />
+                  <span className="mini-wave-bar bar-3" />
                 </span>
-                <span>{formatElapsed(elapsed)}</span>
-                {micMuted && <span>(🔇 静音)</span>}
+              </div>
+              <span className="collapsed-timer">{formatElapsed(elapsed)}</span>
+
+              {/* Hover Flyout Preview Card */}
+              <div className="collapsed-item-flyout" role="tooltip">
+                <div className="flyout-title">{activeMeetingTitle || "当前会议"}</div>
+                <div className="flyout-meta">
+                  <span className="status-badge-chip-sm recording">
+                    {activeStatus === "recording" ? "录制中" : "封存中"}
+                  </span>
+                  <span>{formatElapsed(elapsed)}</span>
+                  {micMuted && <span>(🔇 静音)</span>}
+                </div>
               </div>
             </div>
-          </div>
+            <div className="collapsed-rail-divider" />
+          </>
         )}
 
         {/* 快速新建会议 */}
@@ -228,6 +231,8 @@ export function MeetingHistorySidebar({
             <kbd className="flyout-kbd">/</kbd>
           </div>
         </div>
+
+        <div className="collapsed-rail-divider" />
 
         {/* 最近会议快速导轨与悬浮预览卡片 */}
         {historyList.length > 0 && (
@@ -295,31 +300,6 @@ export function MeetingHistorySidebar({
             </span>
           </h2>
           <div className="sidebar-header-actions">
-            {onToggleCollapse && (
-              <button
-                type="button"
-                className="btn-refresh-history btn-collapse-sidebar"
-                onClick={onToggleCollapse}
-                title="收起历史边栏 (⌘+B)"
-                aria-label="收起历史边栏"
-              >
-                <PanelLeftCloseIcon size={15} />
-              </button>
-            )}
-            {onRefresh && (
-              <button
-                type="button"
-                className="btn-refresh-history"
-                onClick={onRefresh}
-                disabled={isLoading}
-                title="刷新历史会议列表"
-                aria-label="刷新历史会议列表"
-              >
-                <span className={isLoading ? "spin-icon" : ""}>
-                  <RefreshCwIcon size={13} />
-                </span>
-              </button>
-            )}
             {isMeetingActive ? (
               selectedMeetingId ? (
                 <button
@@ -349,6 +329,31 @@ export function MeetingHistorySidebar({
               >
                 <PlusIcon size={13} />
                 <span>新会议</span>
+              </button>
+            )}
+            {onRefresh && (
+              <button
+                type="button"
+                className="btn-refresh-history"
+                onClick={onRefresh}
+                disabled={isLoading}
+                title="刷新历史会议列表"
+                aria-label="刷新历史会议列表"
+              >
+                <span className={isLoading ? "spin-icon" : ""}>
+                  <RefreshCwIcon size={13} />
+                </span>
+              </button>
+            )}
+            {onToggleCollapse && (
+              <button
+                type="button"
+                className="btn-refresh-history btn-collapse-sidebar"
+                onClick={onToggleCollapse}
+                title="收起历史边栏 (⌘+B)"
+                aria-label="收起历史边栏"
+              >
+                <PanelLeftCloseIcon size={15} />
               </button>
             )}
           </div>

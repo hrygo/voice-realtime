@@ -2376,6 +2376,7 @@
   padding: 12px 10px;
   gap: 10px;
   position: relative;
+  z-index: 50;
   background: var(--bg-card-solid);
 }
 
@@ -2383,9 +2384,11 @@
   width: 52px !important;
   min-width: 52px !important;
   max-width: 52px !important;
-  padding: 12px 6px !important;
+  padding: 10px 6px !important;
   align-items: center !important;
   overflow: visible !important;
+  contain: none !important;
+  z-index: 200 !important;
 }
 
 [data-theme="light"] .mode-sidebar.meeting-sidebar {
