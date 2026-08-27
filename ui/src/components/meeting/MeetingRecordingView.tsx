@@ -41,8 +41,6 @@ export interface MeetingRecordingViewProps {
   isCalibrating?: boolean;
   starredIds?: ReadonlySet<string>;
   onToggleStarSegment?: (segmentId: string) => void;
-  isSidebarCollapsed?: boolean;
-  onToggleSidebarCollapse?: () => void;
 }
 
 export function MeetingRecordingView({
@@ -59,8 +57,6 @@ export function MeetingRecordingView({
   isCalibrating = false,
   starredIds: propStarredIds,
   onToggleStarSegment: propToggleStarSegment,
-  isSidebarCollapsed = false,
-  onToggleSidebarCollapse,
 }: MeetingRecordingViewProps) {
   const [elapsed, setElapsed] = useState(0);
   const [localStarredIds, setLocalStarredIds] = useState<Set<string>>(() => new Set());
@@ -237,22 +233,11 @@ export function MeetingRecordingView({
       </div>
 
       {/* Re-clustered Toolbar: Left / Center / Right */}
+      {/* Re-clustered Toolbar: Left (Status & VU) / Center (Views & Star) / Right (Inner OS & Actions) */}
       <div className="recording-toolbar">
         {/* Cluster 1 (Left): 状态与声学 */}
         <div className="toolbar-cluster cluster-status">
-          {onToggleSidebarCollapse && (
-            <button
-              type="button"
-              className="btn-sidebar-toggle-inline"
-              onClick={onToggleSidebarCollapse}
-              title={isSidebarCollapsed ? "展开历史侧边栏 (⌘+B)" : "收起历史侧边栏 (⌘+B)"}
-              aria-label="切换侧边栏折叠"
-            >
-              ◨
-            </button>
-          )}
-
-          <div className="recording-timer">
+          <div className="recording-timer" title="当前会议录制时长">
             <span className="recording-dot" />
             <span>{formatElapsed(elapsed)}</span>
           </div>
@@ -308,24 +293,26 @@ export function MeetingRecordingView({
             </button>
           </div>
 
+          <div className="toolbar-cluster-divider" />
+
           <button
             type="button"
-            className={`btn-secondary btn-star-action ${selectedSegmentId ? "has-selection" : ""}`}
+            className={`btn-toolbar-action btn-star-action ${selectedSegmentId ? "has-selection" : ""}`}
             onClick={handleStarSelectedOrLatest}
             aria-pressed={Boolean(selectedSegmentId && starredIds.has(selectedSegmentId))}
-            title="标记重点 (快捷键 S)"
-            style={{ fontSize: "0.72rem", padding: "3px 10px" }}
+            title="标记重点发言 (快捷键 S)"
           >
-            <span>⭐ {selectedSegmentId ? "标选中段 (S)" : "标重点 (S)"}</span>
+            <span className="btn-star-icon">⭐</span>
+            <span>{selectedSegmentId ? "标选中段" : "标重点"}</span>
+            <kbd className="toolbar-kbd">S</kbd>
           </button>
 
           {starredIds.size > 0 && (
             <button
               type="button"
-              className={`btn-secondary filter-starred-toggle ${filterStarredOnly ? "active" : ""}`}
+              className={`btn-toolbar-pill filter-starred-toggle ${filterStarredOnly ? "active" : ""}`}
               onClick={() => setFilterStarredOnly((prev) => !prev)}
               title={filterStarredOnly ? "查看全部转录片段" : "仅查看重点片段"}
-              style={{ fontSize: "0.72rem", padding: "3px 10px" }}
             >
               <span>{filterStarredOnly ? "📋 全部" : `⭐ 重点 (${starredIds.size})`}</span>
             </button>
@@ -343,17 +330,18 @@ export function MeetingRecordingView({
           >
             <span className="btn-inneros-icon">🔒</span>
             <span>内心 OS</span>
+            <kbd className="toolbar-kbd inneros-kbd">⌘K</kbd>
             {isGenerating && <span className="btn-inneros-pulse" />}
           </button>
 
           <button
             type="button"
-            className={`btn-secondary btn-mic-toggle ${micMuted ? "is-muted" : ""}`}
+            className={`btn-toolbar-action btn-mic-toggle ${micMuted ? "is-muted" : ""}`}
             onClick={onToggleMic}
             title={micMuted ? "点击取消静音 (快捷键 M)" : "点击静音麦克风 (快捷键 M)"}
-            style={{ fontSize: "0.75rem", padding: "5px 10px" }}
           >
             <span>{micMuted ? "🔇 已静音" : "🎤 麦克风"}</span>
+            <kbd className="toolbar-kbd">M</kbd>
           </button>
 
           <button
@@ -361,6 +349,7 @@ export function MeetingRecordingView({
             className={`btn-end-meeting ${isEnding ? "is-ending" : ""}`}
             onClick={() => void onEndMeeting()}
             disabled={isEnding}
+            title="结束当前会议并冲刷转录生成 AI 纪要"
           >
             {isEnding ? (
               <span className="btn-spinner-sm" />

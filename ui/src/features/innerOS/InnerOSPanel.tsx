@@ -5,6 +5,7 @@ import { useInnerOSSocket } from "./useInnerOSSocket";
 import { InnerOSEphemeralContextDrawer } from "./InnerOSEphemeralContext";
 import { InnerOSQuickPills } from "./InnerOSQuickPills";
 import { InnerOSAnswerCard } from "./InnerOSAnswerCard";
+import { PanelRightCloseIcon } from "../../components/Icons";
 import type {
   InnerOSEphemeralContext,
   InnerOSIntent,
@@ -172,8 +173,10 @@ export const InnerOSPanel: React.FC<Props> = ({ onSelectEvidence }) => {
             className="inner-os-collapse-btn"
             onClick={togglePanel}
             title="收起内心 OS 面板 (⌘+K)"
+            aria-label="收起内心 OS 面板"
           >
-            ✕
+            <PanelRightCloseIcon size={14} />
+            <kbd className="inner-os-kbd-badge">⌘K</kbd>
           </button>
         </div>
       </div>

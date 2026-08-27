@@ -426,8 +426,6 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             onRenameSpeaker={handleRenameSpeaker}
             isEnding={isEnding}
             isCalibrating={store.isCalibrating}
-            isSidebarCollapsed={isSidebarCollapsed}
-            onToggleSidebarCollapse={toggleSidebarCollapse}
             starredIds={
               store.activeMeetingId
                 ? store.starredMap[store.activeMeetingId] || store.getStarredSegments(store.activeMeetingId)

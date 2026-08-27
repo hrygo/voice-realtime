@@ -88,19 +88,41 @@
 }
 
 .inner-os-collapse-btn {
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-dim);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
   cursor: pointer;
-  padding: 6px 8px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
-  transition: all 0.15s ease;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .inner-os-collapse-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+  border-color: var(--border-light);
+  transform: translateY(-1px);
+}
+
+.inner-os-kbd-badge {
+  font-size: 0.58rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(139, 92, 246, 0.2);
+  color: #ddd6fe;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  line-height: 1;
+}
+
+[data-theme="light"] .inner-os-kbd-badge {
+  background: rgba(139, 92, 246, 0.1);
+  color: #7c3aed;
+  border-color: rgba(139, 92, 246, 0.25);
 }
 
 /* Security Alert */

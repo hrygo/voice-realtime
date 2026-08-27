@@ -11,6 +11,7 @@ import { InnerOSHistoryTab } from "../../features/innerOS";
 import { exportMeetingData } from "../../utils/exportUtils";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { showToast } from "../Toast";
+import { ChevronLeftIcon } from "../Icons";
 
 interface MeetingDetailViewProps {
   meeting: MeetingDetail;
@@ -286,6 +287,7 @@ export function MeetingDetailView({
                 title="返回当前正在录制的会议工作台 (快捷键 Esc)"
               >
                 <span className="live-rec-dot" />
+                <ChevronLeftIcon size={13} />
                 <span className="back-btn-text">返回正在进行的会议（{activeMeetingTitle || "当前会议"}）</span>
                 <kbd className="nav-kbd-badge">Esc</kbd>
               </button>

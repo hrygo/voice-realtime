@@ -310,6 +310,14 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("正在输入的临时转录片段...");
 
+    // Verify de-duplication: no redundant inline sidebar toggle in recording toolbar
+    expect(container.querySelector(".btn-sidebar-toggle-inline")).toBeNull();
+    expect(container.querySelector(".btn-star-action")).not.toBeNull();
+    expect(container.querySelector(".btn-inneros-toggle")).not.toBeNull();
+    expect(container.querySelector(".btn-mic-toggle")).not.toBeNull();
+    expect(container.querySelector(".btn-end-meeting")).not.toBeNull();
+    expect(container.querySelector(".toolbar-kbd")).not.toBeNull();
+
     // Switch to reading view
     const readingBtn = container.querySelector("button[title*='阅读视图']") as HTMLButtonElement;
     expect(readingBtn).not.toBeNull();
