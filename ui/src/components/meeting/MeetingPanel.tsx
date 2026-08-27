@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useMeetingStore } from "../../stores/meetingStore";
 import { useUISettingsStore } from "../../stores/uiSettingsStore";
+import { useInnerOSStore, InnerOSUnsavedTray } from "../../features/innerOS";
 import type { CommandSocketApi } from "../../hooks/useCommandSocket";
 import { MeetingHistorySidebar } from "./MeetingHistorySidebar";
 import { MeetingIdleView } from "./MeetingIdleView";
@@ -23,6 +24,53 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   const [isEnding, setIsEnding] = useState(false);
 
   const isMeetingActive = store.status === "recording" || store.status === "finalizing";
+
+  // Collapsible sidebar state & persistence
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        return window.localStorage.getItem("voice-studio:meeting-sidebar-collapsed") === "true";
+      }
+    } catch {
+      // Ignore
+    }
+    return false;
+  });
+
+  const toggleSidebarCollapse = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem("voice-studio:meeting-sidebar-collapsed", String(next));
+        }
+      } catch {
+        // Ignore
+      }
+      return next;
+    });
+  }, []);
+
+  // Global ⌘+B shortcut for sidebar collapse
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebarCollapse();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleSidebarCollapse]);
+
+  // Inner OS unsaved tray state
+  const unsavedExchanges = useInnerOSStore((s) => s.unsavedExchanges);
+  const saveExchangeAction = useInnerOSStore((s) => s.saveExchangeAction);
+  const dismissUnsavedItem = useInnerOSStore((s) => s.dismissUnsavedItem);
 
   // Speaker modal
   const [speakerModalOpen, setSpeakerModalOpen] = useState(false);
@@ -128,7 +176,15 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         void store.fetchHistory();
       }
       showToast("已成功开启会议模式", "success");
-      // Deselect history to focus on live recording
+      // Auto-collapse sidebar during recording to provide full focus
+      setIsSidebarCollapsed(true);
+      try {
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem("voice-studio:meeting-sidebar-collapsed", "true");
+        }
+      } catch {
+        // Ignore
+      }
       store.returnToActiveMeeting();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "开始会议失败", "error");
@@ -234,6 +290,8 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         micMuted={store.health.mic_muted}
         nextCursor={store.nextCursor}
         isLoading={store.isLoadingHistory}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapse}
         onSelectMeeting={(id) => void store.selectMeeting(id)}
         onReturnToActive={isMeetingActive ? () => store.returnToActiveMeeting() : handleNewMeeting}
         onNewMeeting={handleNewMeeting}
@@ -298,6 +356,17 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
               </button>
             </div>
           </div>
+        )}
+
+        {/* Unsaved Inner OS Tray for Finalizing or Completed Meetings */}
+        {unsavedExchanges.length > 0 && (store.status === "finalizing" || store.status === "completed") && (
+          <InnerOSUnsavedTray
+            items={unsavedExchanges}
+            onSaveItem={async (mId, qId) => {
+              await saveExchangeAction(mId, qId);
+            }}
+            onDismissItem={dismissUnsavedItem}
+          />
         )}
 
         {/* 视图分发 */}
@@ -366,6 +435,8 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             onRenameSpeaker={handleRenameSpeaker}
             isEnding={isEnding}
             isCalibrating={store.isCalibrating}
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebarCollapse={toggleSidebarCollapse}
             starredIds={
               store.activeMeetingId
                 ? store.starredMap[store.activeMeetingId] || store.getStarredSegments(store.activeMeetingId)

@@ -3678,3 +3678,179 @@
     padding: 10px 12px;
   }
 }
+
+/* ==========================================================================
+   Inner OS & 3-Cluster Toolbar Enhancements
+   ========================================================================== */
+
+.recording-toolbar {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card-solid);
+  flex-wrap: nowrap;
+}
+
+.toolbar-cluster {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.toolbar-cluster.cluster-status {
+  flex: 0 0 auto;
+}
+
+.toolbar-cluster.cluster-views {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+
+.toolbar-cluster.cluster-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+}
+
+.btn-sidebar-toggle-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: all 0.15s ease;
+}
+
+.btn-sidebar-toggle-inline:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-light);
+}
+
+.btn-inneros-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: var(--inneros-accent-subtle, rgba(139, 92, 246, 0.12));
+  border: 1px solid var(--inneros-border, rgba(139, 92, 246, 0.25));
+  color: var(--inneros-accent-light, #c4b5fd);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-inneros-toggle:hover {
+  background: var(--inneros-accent, #8b5cf6);
+  color: #ffffff;
+  box-shadow: 0 0 12px var(--inneros-accent-glow, rgba(139, 92, 246, 0.25));
+}
+
+.btn-inneros-toggle.is-active {
+  background: var(--inneros-accent, #8b5cf6);
+  color: #ffffff;
+  border-color: var(--inneros-accent-light, #c4b5fd);
+  box-shadow: 0 0 12px var(--inneros-accent-glow, rgba(139, 92, 246, 0.25));
+}
+
+.btn-inneros-toggle.is-generating .btn-inneros-pulse {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  animation: inneros-pulse 1s infinite alternate;
+}
+
+.recording-workspace-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.recording-transcript-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-right-pane-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-card-solid);
+}
+
+.detail-segmented-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-tab-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.detail-tab-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.detail-tab-btn.active {
+  background: var(--bg-card);
+  border-color: var(--border);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.detail-tab-btn.tab-inneros.active {
+  background: var(--inneros-accent-subtle, rgba(139, 92, 246, 0.12));
+  border-color: var(--inneros-border, rgba(139, 92, 246, 0.3));
+  color: var(--inneros-accent-light, #c4b5fd);
+}
+
+.detail-tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.raw-markdown-view {
+  padding: 20px;
+  overflow-y: auto;
+}
+

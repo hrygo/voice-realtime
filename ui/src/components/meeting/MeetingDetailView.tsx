@@ -7,7 +7,8 @@ import type {
 } from "../../contracts/meetingContract";
 import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
-import { meetingApi } from "../../services/meetingApi";
+import { MarkdownRenderer } from "./MarkdownRenderer";
+import { InnerOSHistoryTab } from "../../features/innerOS";
 import { exportMeetingData } from "../../utils/exportUtils";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { showToast } from "../Toast";
@@ -55,6 +56,7 @@ export function MeetingDetailView({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [activeRightTab, setActiveRightTab] = useState<"minutes" | "inner_os" | "markdown">("minutes");
 
   const handleGenerateTitle = async () => {
     if (isGeneratingTitle) return;
@@ -73,20 +75,156 @@ export function MeetingDetailView({
     }
   };
 
-  // Split ratio (left pane percentage, e.g. 48)
+  const handleSaveTitle = async () => {
+    if (!title.trim() || title === meeting.title) {
+      setIsEditingTitle(false);
+      setTitle(meeting.title);
+      return;
+    }
+    try {
+      await onUpdateTitle(title.trim());
+      setIsEditingTitle(false);
+      showToast("会议标题已更新", "success");
+    } catch {
+      showToast("更新标题失败", "error");
+    }
+  };
+
+  const handleExport = async (format: ExportFormat) => {
+    try {
+      exportMeetingData(meeting, segments, minutes, format, starredIds);
+      setIsExportMenuOpen(false);
+      showToast(`已成功下载 .${format} 文件`, "success");
+    } catch {
+      showToast("导出失败", "error");
+    }
+  };
+
+  const handleCopyReport = async () => {
+    if (!minutes?.content_json) {
+      showToast("当前暂无结构化纪要可供复制", "warning");
+      return;
+    }
+    const c = minutes.content_json;
+    let text = `# 会议总结与汇报：${meeting.title}\n\n`;
+    text += `## 会议概述\n${c.overview || "无"}\n\n`;
+    if (c.topics && c.topics.length > 0) {
+      text += `## 核心议题\n`;
+      c.topics.forEach((t, i) => {
+        text += `${i + 1}. **${t.title}**\n   ${t.summary}\n`;
+      });
+      text += "\n";
+    }
+    if (c.decisions && c.decisions.length > 0) {
+      text += `## 决策事项\n`;
+      c.decisions.forEach((d, i) => {
+        text += `${i + 1}. **${d.content}**\n`;
+      });
+      text += "\n";
+    }
+    if (c.action_items && c.action_items.length > 0) {
+      text += `## 待办行动项\n`;
+      c.action_items.forEach((a) => {
+        const owner = a.owner ? `@${a.owner}` : "未指定负责人";
+        const dueDate = a.due_date ? ` (截止: ${a.due_date})` : "";
+        text += `- [ ] ${a.task} [${owner}${dueDate}]\n`;
+      });
+    }
+    await copyTextToClipboard(text);
+    setIsExportMenuOpen(false);
+    showToast("已复制会议汇报格式到剪贴板 📋", "success");
+  };
+
+  const handleCopyChecklist = async () => {
+    if (!minutes?.content_json?.action_items || minutes.content_json.action_items.length === 0) {
+      showToast("当前纪要中暂无待办事项", "warning");
+      return;
+    }
+    let text = `### 待办任务清单 (${meeting.title})\n\n`;
+    minutes.content_json.action_items.forEach((a) => {
+      const owner = a.owner ? ` (@${a.owner})` : "";
+      const dueDate = a.due_date ? ` [截止: ${a.due_date}]` : "";
+      text += `- [ ] ${a.task}${owner}${dueDate}\n`;
+    });
+    await copyTextToClipboard(text);
+    setIsExportMenuOpen(false);
+    showToast("已复制待办清单 (Checklist) 📋", "success");
+  };
+
+  const handleCopyStarred = async () => {
+    if (!starredIds || starredIds.size === 0) {
+      showToast("当前会议暂无重点发言", "warning");
+      return;
+    }
+    const starredSegments = segments.filter((s) => starredIds.has(s.id));
+    let text = `### 重点发言摘录 (${meeting.title})\n\n`;
+    starredSegments.forEach((s, idx) => {
+      text += `${idx + 1}. **${s.speaker_name}**: ${s.text}\n`;
+    });
+    await copyTextToClipboard(text);
+    setIsExportMenuOpen(false);
+    showToast(`已复制 ${starredSegments.length} 段重点发言 📋`, "success");
+  };
+
+  const handleRegenerate = async () => {
+    if (isRegenerating) return;
+    setIsRegenerating(true);
+    try {
+      await onRegenerateMinutes();
+      showToast("已触发纪要重新生成", "info");
+    } catch {
+      showToast("触发重新生成失败", "error");
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  const handleEvidenceClick = (segmentId: string) => {
+    setHighlightedSegmentId(segmentId);
+    setTimeout(() => {
+      const el = document.getElementById(`segment-${segmentId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.remove("is-evidence-target-inneros");
+        void el.offsetWidth;
+        el.classList.add("is-evidence-target-inneros");
+        setTimeout(() => {
+          el.classList.remove("is-evidence-target-inneros");
+        }, 3000);
+      }
+    }, 50);
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isMeetingActive && onReturnToActive) {
+          e.preventDefault();
+          onReturnToActive();
+          return;
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMeetingActive, onReturnToActive]);
+
+  // Dual Pane Split Dragging
   const [splitPercent, setSplitPercent] = useState<number>(() => {
     try {
-      const stored = localStorage.getItem("voice-studio:meeting-split-ratio");
-      if (stored) {
-        const val = parseFloat(stored);
-        if (val >= 25 && val <= 75) return val;
+      if (typeof window !== "undefined" && window.localStorage) {
+        const saved = window.localStorage.getItem("voice-studio:meeting-split-percent");
+        if (saved) {
+          const val = parseFloat(saved);
+          if (!isNaN(val) && val >= 25 && val <= 75) return val;
+        }
       }
     } catch {
-      // Ignore
+      // Ignore localStorage access restrictions
     }
     return 48;
   });
-
   const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -95,308 +233,150 @@ export function MeetingDetailView({
     setIsDraggingSplitter(true);
   };
 
+  const handleResetSplit = () => {
+    setSplitPercent(48);
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem("voice-studio:meeting-split-percent", "48");
+      }
+    } catch {
+      // Ignore
+    }
+    showToast("已恢复默认双栏分屏比例 (48 : 52)");
+  };
+
   useEffect(() => {
     if (!isDraggingSplitter) return;
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      if (rect.width <= 0) return;
-      const offset = e.clientX - rect.left;
-      const pct = Math.min(75, Math.max(25, (offset / rect.width) * 100));
-      setSplitPercent(pct);
+      const relativeX = e.clientX - rect.left;
+      const percent = (relativeX / rect.width) * 100;
+      const clamped = Math.min(Math.max(percent, 25), 75);
+      setSplitPercent(clamped);
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingSplitter(false);
       try {
-        localStorage.setItem("voice-studio:meeting-split-ratio", pct.toFixed(1));
+        if (typeof window !== "undefined" && window.localStorage) {
+          window.localStorage.setItem("voice-studio:meeting-split-percent", splitPercent.toFixed(1));
+        }
       } catch {
         // Ignore
       }
     };
 
-    const handleMouseUp = () => {
-      setIsDraggingSplitter(false);
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [isDraggingSplitter]);
-
-  const handleResetSplit = () => {
-    setSplitPercent(48);
-    try {
-      localStorage.setItem("voice-studio:meeting-split-ratio", "48");
-    } catch {
-      // Ignore
-    }
-    showToast("双栏比例已重置为默认", "info");
-  };
-
-  // Sync title when selected meeting changes
-  useEffect(() => {
-    setTitle(meeting.title);
-    setIsEditingTitle(false);
-  }, [meeting.id, meeting.title]);
-
-  // Click outside to close export menu
-  useEffect(() => {
-    if (!isExportMenuOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (!target.closest(".export-dropdown-wrapper")) {
-        setIsExportMenuOpen(false);
-      }
-    };
-    window.addEventListener("click", handleClickOutside);
-    return () => window.removeEventListener("click", handleClickOutside);
-  }, [isExportMenuOpen]);
-
-  const handleTitleBlur = async () => {
-    setIsEditingTitle(false);
-    const trimmed = title.trim();
-    if (trimmed && trimmed !== meeting.title) {
-      try {
-        await onUpdateTitle(trimmed);
-        showToast("会议标题已更新", "success");
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : "标题修改失败", "error");
-        setTitle(meeting.title);
-      }
-    } else {
-      setTitle(meeting.title);
-    }
-  };
-
-  const handleExport = async (format: ExportFormat) => {
-    setIsExportMenuOpen(false);
-    try {
-      await meetingApi.downloadExport(meeting.id, format, meeting.title);
-      showToast(`已导出 ${format.toUpperCase()} 文件`, "success");
-    } catch {
-      // 降级使用前端客户端格式化导出
-      try {
-        exportMeetingData(meeting, segments, minutes, format, starredIds);
-        showToast(`已导出 ${format.toUpperCase()} 文件 (本地离线生成)`, "success");
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : "导出失败", "error");
-      }
-    }
-  };
-
-  const handleCopyReport = async () => {
-    setIsExportMenuOpen(false);
-    if (!minutes?.content_json) {
-      showToast("暂无可导出的结构化纪要", "warning");
-      return;
-    }
-    const j = minutes.content_json;
-    let report = `# 📢 会议总结: ${meeting.title}\n\n`;
-    report += `**会议时间**: ${meeting.started_at ? new Date(meeting.started_at).toLocaleString() : "未知"}\n`;
-    report += `**说话人**: ${Object.values(meeting.speakers || {}).map((s) => s.display_name).join(", ") || "发言人"}\n\n`;
-    if (j.overview) report += `## 📋 会议概要\n${j.overview}\n\n`;
-    if (j.topics?.length) {
-      report += `## 💡 核心议题\n` + j.topics.map((t, idx) => `${idx + 1}. **${t.title}**: ${t.summary}`).join("\n") + "\n\n";
-    }
-    if (j.decisions?.length) {
-      report += `## ✅ 决策事项\n` + j.decisions.map((d) => `- ${d.content}`).join("\n") + "\n\n";
-    }
-    if (j.action_items?.length) {
-      report += `## 📌 待办行动项\n` + j.action_items.map((a) => `- [ ] ${a.task}${a.owner ? ` (@${a.owner})` : ""}${a.due_date ? ` (截止: ${a.due_date})` : ""}`).join("\n") + "\n\n";
-    }
-    try {
-      await copyTextToClipboard(report);
-      showToast("会议汇报排版已成功复制到剪贴板", "success");
-    } catch {
-      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
-    }
-  };
-
-  const handleCopyChecklist = async () => {
-    setIsExportMenuOpen(false);
-    if (!minutes?.content_json?.action_items?.length) {
-      showToast("暂无可复制的待办事项", "warning");
-      return;
-    }
-    const text = minutes.content_json.action_items
-      .map((item) => `- [ ] ${item.task}${item.owner ? ` (@${item.owner})` : ""}${item.due_date ? ` (截止: ${item.due_date})` : ""}`)
-      .join("\n");
-    try {
-      await copyTextToClipboard(text);
-      showToast("待办事项清单 (Checklist) 已复制到剪贴板", "success");
-    } catch {
-      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
-    }
-  };
-
-  const handleCopyStarred = async () => {
-    if (!starredIds || starredIds.size === 0) {
-      showToast("当前会议暂无标记为重点的段落", "warning");
-      return;
-    }
-    const starredSegs = segments.filter((s) => starredIds.has(s.id));
-    const text = starredSegs.map((s) => `[${s.speaker_name}]: ${s.text}`).join("\n");
-    try {
-      await copyTextToClipboard(text);
-      showToast(`已复制 ${starredSegs.length} 段重点发言`, "success");
-      setIsExportMenuOpen(false);
-    } catch {
-      showToast("复制失败，请检查浏览器剪贴板权限", "warning");
-    }
-  };
-
-  const handleRegenerate = async () => {
-    setIsRegenerating(true);
-    try {
-      await onRegenerateMinutes();
-      showToast("已提交重新生成纪要请求", "info");
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : "生成纪要失败", "error");
-    } finally {
-      setIsRegenerating(false);
-    }
-  };
-
-  const handleEvidenceClick = (segmentId: string) => {
-    setHighlightedSegmentId(segmentId);
-    // 3秒后清除呼吸高亮效果
-    setTimeout(() => {
-      setHighlightedSegmentId((prev) => (prev === segmentId ? null : prev));
-    }, 3000);
-  };
-
-function formatDuration(startedAt?: string | null, endedAt?: string | null): string {
-  if (!startedAt) return "";
-  const start = Date.parse(startedAt);
-  const end = endedAt ? Date.parse(endedAt) : Date.now();
-  if (isNaN(start) || isNaN(end) || end < start) return "";
-  const totalSeconds = Math.max(0, Math.floor((end - start) / 1000));
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  if (h > 0) {
-    return `${h}小时${m}分${s}秒`;
-  }
-  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-function formatMeetingDateTime(dateStr?: string | null): string {
-  if (!dateStr) return "未知时间";
-  try {
-    const d = new Date(dateStr);
-    return d.toLocaleString("zh-CN", {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  } catch {
-    return "未知时间";
-  }
-}
-
-  const durationText = formatDuration(meeting.started_at, meeting.ended_at);
-  const speakerCount =
-    Object.keys(meeting.speakers || {}).length ||
-    new Set(segments.map((s) => s.speaker_key)).size ||
-    1;
+  }, [isDraggingSplitter, splitPercent]);
 
   return (
-    <div className="meeting-detail-view">
-      {/* 顶部现代化全景导航与会议信息栏 */}
-      <header className="detail-top-nav-bar">
-        <div className="nav-left-section">
-          {isMeetingActive && onReturnToActive && (
-            <>
+    <div className="detail-view">
+      {/* 顶部导航与状态条 */}
+      <div className="detail-top-nav-bar">
+        {isMeetingActive && onReturnToActive && (
+          <button
+            type="button"
+            className="detail-back-btn is-live-return"
+            onClick={onReturnToActive}
+            title="返回当前正在录制的会议工作台 (快捷键 Esc)"
+          >
+            <span className="live-pulse-dot" />
+            <span>返回正在进行的会议（{activeMeetingTitle || "当前会议"}）</span>
+            <kbd className="nav-kbd">Esc</kbd>
+          </button>
+        )}
+      </div>
+
+      {/* 顶部主信息栏 */}
+      <header className="detail-header">
+        <div className="detail-header-main">
+          {isEditingTitle ? (
+            <div className="title-edit-wrap">
+              <input
+                type="text"
+                className="title-edit-input"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                onBlur={() => void handleSaveTitle()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleSaveTitle();
+                  if (e.key === "Escape") {
+                    setTitle(meeting.title);
+                    setIsEditingTitle(false);
+                  }
+                }}
+                autoFocus
+                maxLength={200}
+              />
               <button
                 type="button"
-                className="detail-nav-back-btn detail-back-btn is-live-return"
-                onClick={onReturnToActive}
-                title="返回正在进行的会议录制工作台 (按 Esc)"
+                className="btn-primary-sm"
+                onClick={() => void handleSaveTitle()}
               >
-                <span className="back-arrow-icon">‹</span>
-                <span className="back-btn-text">
-                  <span className="live-rec-dot" />
-                  <span>返回正在进行的会议{activeMeetingTitle ? `（${activeMeetingTitle}）` : ""}</span>
-                </span>
-                <kbd className="nav-kbd-badge">Esc</kbd>
+                保存
               </button>
-              <div className="nav-section-divider" />
-            </>
+            </div>
+          ) : (
+            <div className="title-display-wrap">
+              <h1 className="detail-title">{meeting.title}</h1>
+              <button
+                type="button"
+                className="btn-edit-title"
+                onClick={() => setIsEditingTitle(true)}
+                title="修改标题"
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                className="btn-generate-title ai-title-gen-btn"
+                onClick={() => void handleGenerateTitle()}
+                disabled={isGeneratingTitle}
+                title="根据完整会议转录由 AI 提炼最佳标题"
+              >
+                {isGeneratingTitle ? (
+                  <span className="btn-spinner-sm" />
+                ) : (
+                  <span>✨ AI 提炼标题</span>
+                )}
+              </button>
+            </div>
           )}
 
-          <div className="detail-title-block">
-            <div className="detail-title-row">
-              <div className={`detail-title-input-wrapper ${isEditingTitle || isGeneratingTitle ? "is-focused" : ""}`}>
-                <input
-                  className="detail-title-input"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  onFocus={() => setIsEditingTitle(true)}
-                  onBlur={() => void handleTitleBlur()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") e.currentTarget.blur();
-                    if (e.key === "Escape") {
-                      setTitle(meeting.title);
-                      setIsEditingTitle(false);
-                    }
-                  }}
-                  placeholder="输入会议主题..."
-                  title="点击修改会议标题 (按 Enter 确认)"
-                />
-                <button
-                  type="button"
-                  className={`ai-title-gen-btn ${isGeneratingTitle ? "loading" : ""}`}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => void handleGenerateTitle()}
-                  disabled={isGeneratingTitle || segments.length === 0}
-                  title={segments.length === 0 ? "暂无转录内容，无法提炼标题" : "根据会议转录由 AI 提炼并更新会议标题"}
-                >
-                  <span className="ai-btn-icon">{isGeneratingTitle ? "⏳" : "✨"}</span>
-                  <span className="ai-btn-text">{isGeneratingTitle ? "提炼中..." : "AI 智能命名"}</span>
-                </button>
-              </div>
-              {isEditingTitle && (
-                <span className="detail-save-hint">
-                  (按 Enter 保存)
-                </span>
-              )}
-            </div>
-
-            <div className="detail-meta-row">
-              <span className="detail-meta-pill">
-                <span className="meta-icon">📅</span>
-                <span>{formatMeetingDateTime(meeting.started_at)}</span>
+          <div className="detail-meta-row">
+            <span className="detail-meta-item">
+              📅 {new Date(meeting.started_at || meeting.created_at).toLocaleString()}
+            </span>
+            <span className="detail-meta-item">
+              🎙️ {segments.length} 段发言
+            </span>
+            {starredIds && starredIds.size > 0 && (
+              <span className="detail-meta-item" style={{ color: "var(--color-yellow)" }}>
+                ⭐ {starredIds.size} 个重点发言
               </span>
-              {durationText && (
-                <span className="detail-meta-pill">
-                  <span className="meta-icon">⏱️</span>
-                  <span>时长 {durationText}</span>
-                </span>
-              )}
-              <span className="detail-meta-pill">
-                <span className="meta-icon">🎙️</span>
-                <span>{segments.length} 段发言</span>
-              </span>
-              <span className="detail-meta-pill">
-                <span className="meta-icon">👥</span>
-                <span>{speakerCount} 位发言人</span>
-              </span>
-            </div>
+            )}
+            <span className={`status-badge ${meeting.status}`}>
+              {meeting.status === "completed" ? "已完成" : meeting.status}
+            </span>
           </div>
         </div>
 
-        <div className="nav-right-section">
-          {/* 导出菜单 */}
-          <div className="export-dropdown-wrapper">
+        <div className="detail-header-actions">
+          <div className="export-menu-container">
             <button
               type="button"
-              className={`detail-action-btn export-btn ${isExportMenuOpen ? "active" : ""}`}
+              className={`detail-action-btn export-trigger-btn ${isExportMenuOpen ? "active" : ""}`}
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
             >
-              <span>📥 导出记录</span>
-              <span className="export-chevron">{isExportMenuOpen ? "▲" : "▼"}</span>
+              <span>📥 导出与分享</span>
+              <span className="dropdown-arrow">{isExportMenuOpen ? "▲" : "▼"}</span>
             </button>
 
             {isExportMenuOpen && (
@@ -499,15 +479,64 @@ function formatMeetingDateTime(dateStr?: string | null): string {
         >
           <div className="splitter-handle-bar" />
         </div>
-        <MeetingMinutesViewer
-          minutes={minutes}
-          minutesList={minutesList}
-          selectedVersion={selectedMinutesVersion}
-          onSelectVersion={onSelectMinutesVersion}
-          onRegenerate={handleRegenerate}
-          onSelectEvidence={handleEvidenceClick}
-          isRegenerating={isRegenerating}
-        />
+
+        {/* 右侧多维面板 (Segmented Tabs: 纪要 / 内心 OS / Markdown) */}
+        <div className="detail-right-pane-wrapper">
+          <div className="detail-segmented-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "minutes"}
+              className={`detail-tab-btn ${activeRightTab === "minutes" ? "active" : ""}`}
+              onClick={() => setActiveRightTab("minutes")}
+            >
+              ✨ AI 结构化纪要
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "inner_os"}
+              className={`detail-tab-btn tab-inneros ${activeRightTab === "inner_os" ? "active" : ""}`}
+              onClick={() => setActiveRightTab("inner_os")}
+            >
+              🔒 内心 OS 档案
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeRightTab === "markdown"}
+              className={`detail-tab-btn ${activeRightTab === "markdown" ? "active" : ""}`}
+              onClick={() => setActiveRightTab("markdown")}
+            >
+              📝 纯 Markdown
+            </button>
+          </div>
+
+          <div className="detail-tab-content">
+            {activeRightTab === "minutes" && (
+              <MeetingMinutesViewer
+                minutes={minutes}
+                minutesList={minutesList}
+                selectedVersion={selectedMinutesVersion}
+                onSelectVersion={onSelectMinutesVersion}
+                onRegenerate={handleRegenerate}
+                onSelectEvidence={handleEvidenceClick}
+                isRegenerating={isRegenerating}
+              />
+            )}
+            {activeRightTab === "inner_os" && (
+              <InnerOSHistoryTab
+                meetingId={meeting.id}
+                onSelectEvidence={handleEvidenceClick}
+              />
+            )}
+            {activeRightTab === "markdown" && (
+              <div className="raw-markdown-view">
+                <MarkdownRenderer content={minutes?.content_markdown || "暂无纪要 Markdown 内容"} />
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

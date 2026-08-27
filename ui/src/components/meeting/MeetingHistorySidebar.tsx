@@ -34,7 +34,7 @@ export function getStatusLabel(status: MeetingStatus): { text: string; className
   }
 }
 
-interface MeetingHistorySidebarProps {
+export interface MeetingHistorySidebarProps {
   historyList: readonly MeetingSummary[];
   selectedMeetingId: string | null;
   activeMeetingId: string | null;
@@ -45,6 +45,8 @@ interface MeetingHistorySidebarProps {
   micMuted?: boolean;
   nextCursor: string | null;
   isLoading: boolean;
+  isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
   onSelectMeeting: (id: string | null) => void;
   onReturnToActive: () => void;
   onNewMeeting: () => void;
@@ -64,6 +66,8 @@ export function MeetingHistorySidebar({
   micMuted = false,
   nextCursor,
   isLoading,
+  isCollapsed = false,
+  onToggleCollapse,
   onSelectMeeting,
   onReturnToActive,
   onNewMeeting,
@@ -99,6 +103,52 @@ export function MeetingHistorySidebar({
     return m.title.toLowerCase().includes(searchQuery.toLowerCase().trim());
   });
 
+  // Collapsed Sidebar View
+  if (isCollapsed) {
+    return (
+      <aside className="mode-sidebar meeting-sidebar is-collapsed" aria-label="会议导航">
+        <div className="meeting-sidebar-collapsed-strip">
+          <button
+            type="button"
+            className="meeting-sidebar-toggle-btn"
+            onClick={onToggleCollapse}
+            title="展开历史会议边栏 (⌘+B)"
+            aria-label="展开历史会议边栏"
+          >
+            ◨
+          </button>
+          {isMeetingActive && (
+            <div
+              className="meeting-sidebar-collapsed-pulse"
+              onClick={onReturnToActive}
+              title={`当前会议录制中: ${formatElapsed(elapsed)} (点击返回)`}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onReturnToActive();
+                }
+              }}
+            >
+              <span className="pinned-live-dot" />
+              <span>{formatElapsed(elapsed)}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            className="meeting-sidebar-toggle-btn"
+            onClick={onNewMeeting}
+            title="发起新会议"
+            aria-label="发起新会议"
+          >
+            +
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
   return (
     <aside className="mode-sidebar meeting-sidebar" aria-label="会议导航">
       <div className="sidebar-header meeting-sidebar-header">
@@ -110,6 +160,17 @@ export function MeetingHistorySidebar({
           </span>
         </h2>
         <div className="sidebar-header-actions">
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="btn-refresh-history btn-collapse-sidebar"
+              onClick={onToggleCollapse}
+              title="收起历史边栏 (⌘+B)"
+              aria-label="收起历史边栏"
+            >
+              ◧
+            </button>
+          )}
           {onRefresh && (
             <button
               type="button"
@@ -344,7 +405,6 @@ export function MeetingHistorySidebar({
           </div>
         </section>
       </div>
-
     </aside>
   );
 }

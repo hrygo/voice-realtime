@@ -17,6 +17,11 @@ export interface RuntimeStateSnapshot {
   readonly voice?: string;
   readonly duplex_mode?: DuplexMode;
   readonly session_started_at?: string | null;
+  readonly capabilities?: {
+    readonly inner_os_enabled: boolean;
+    readonly inner_os_analysis_enabled: boolean;
+    readonly inner_os_channel: "loopback_only";
+  };
 }
 
 export type ControlCommand =
@@ -68,7 +73,15 @@ export function isRuntimeState(value: unknown): value is RuntimeStateSnapshot {
     && (value.persona === undefined || typeof value.persona === "string" || value.persona === null)
     && (value.voice === undefined || typeof value.voice === "string")
     && (value.duplex_mode === undefined || value.duplex_mode === "speaker_focus" || value.duplex_mode === "headphone_duplex")
-    && (value.session_started_at === undefined || typeof value.session_started_at === "string" || value.session_started_at === null);
+    && (value.session_started_at === undefined || typeof value.session_started_at === "string" || value.session_started_at === null)
+    && (value.capabilities === undefined || isRuntimeCapabilities(value.capabilities));
+}
+
+function isRuntimeCapabilities(value: unknown): value is RuntimeStateSnapshot["capabilities"] {
+  return isRecord(value)
+    && typeof value.inner_os_enabled === "boolean"
+    && typeof value.inner_os_analysis_enabled === "boolean"
+    && value.inner_os_channel === "loopback_only";
 }
 
 function isRuntimeMode(value: unknown): value is RuntimeMode {
