@@ -76,6 +76,39 @@ reduce/repair 上限调整为 10240 tokens、字符熔断调整为 65536；map �
 避免把一个合法分块在进入 reduce 前按最终结果上限误拒绝。若 `chat.end.stats.total_output_tokens` 已触顶且
 结构仍无效，任务直接以 `output_limit` 失败，不再用同一预算重复生成。
 
+### Map 与 Reduce 的契约边界
+
+两层契约分别服务于不同目标，不能用最终 reduce 的集合上限提前校验 map：
+
+```text
+confirmed segments
+        │
+        ▼
+按 segment 边界切块（20,000 字符或 20 分钟，overlap=1）
+        │
+        ├─ MAP-1 ─┐
+        ├─ MAP-2 ─┼─► 应用解析 S0001… → 真实 UUID → REDUCE → 最终 MinutesResult
+        └─ MAP-N ─┘
+```
+
+- **领域/对外契约**：`contracts/meeting-assistant/v1/schemas/minutes-content.schema.json` 允许
+  `topics/decisions/action_items/risks/open_questions/highlights` 为 `12/12/12/8/8/12`，用于表达
+  最终可持久化的领域容量。
+- **MAP 模型契约**：沿用上述集合容量，并保持标题、概览、单项字段和 evidence 字段的长度约束；每个分块
+  使用本地的 `S0001` 短引用，避免在中间结果阶段丢弃独立事实。
+- **REDUCE/REPAIR 模型契约**：收紧为 `8/8/8/4/4/6`，并使用 `10240` token 预算；reduce 只接收已经
+  通过 evidence 校验的 map JSON，不再次接收全量转录。
+
+应用负责把每个分块的短引用解析为真实 segment UUID，并在最终落库前再次校验引用归属。短会议只有一次
+map 调用；长会议才执行多个 map 调用后再执行一次 reduce。各阶段的 repair 使用对应契约，最多执行一次。
+
+### 2026-08-27 故障复盘
+
+最新会议第一次生成时，模型返回的是合法 JSON，但 map 中间结果包含 9 个主题和 7 个亮点；旧版将最终
+reduce/repair 上限（主题 8、亮点 6）提前用于 map，因此在 reduce 之前以 `invalid_schema` 失败。短引用形态、
+证据解析结果和数据库状态均排除了 ASR 封存、evidence 映射及 PostgreSQL 持久化故障。修复后以
+`v4-map-domain-10240` 分离两层契约，并加入“map 结果超过最终上限但未超过领域上限”的回归测试。
+
 ## 备选方案
 
 ### 只增大 HTTP timeout

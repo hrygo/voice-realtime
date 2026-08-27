@@ -58,6 +58,7 @@ def build_wlk_registry(
             ),
         ):
             raise TypeError("non-WLK profile cannot be constructed by the WLK registry")
+        max_speakers = getattr(profile, "diarization_max_speakers", None)
         if stream_factory is None:
             return WLKStreamingAdapter(
                 url=service_url,
@@ -65,6 +66,7 @@ def build_wlk_registry(
                 context=context,
                 backend_id=profile.kind,
                 supports_speaker_labels=profile.speaker_labels,
+                max_speakers=max_speakers,
                 raw_event_sink=raw_event_sink,
             )
         return WLKStreamingAdapter(
@@ -73,6 +75,7 @@ def build_wlk_registry(
             context=context,
             backend_id=profile.kind,
             supports_speaker_labels=profile.speaker_labels,
+            max_speakers=max_speakers,
             stream_factory=stream_factory,
             raw_event_sink=raw_event_sink,
         )

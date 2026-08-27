@@ -768,14 +768,15 @@ class PostgresMeetingRepository:
                 raise MeetingNotFoundError("说话人不存在")
             if str(row[0]) == display_name:
                 return meeting
+            raw_speaker = speaker_key.rsplit(":", 1)[-1]
             now = _utc_now()
             await connection.execute(
                 f"""
                 UPDATE {self._schema}.meeting_speakers
                 SET display_name = %s, updated_at = %s
-                WHERE meeting_id = %s AND speaker_key = %s
+                WHERE meeting_id = %s AND (speaker_key = %s OR raw_speaker = %s)
                 """,
-                (display_name, now, meeting_id, speaker_key),
+                (display_name, now, meeting_id, speaker_key, raw_speaker),
             )
             content_revision = meeting.content_revision + 1
             await connection.execute(
@@ -799,6 +800,95 @@ class PostgresMeetingRepository:
             updated = await cursor.fetchone()
             if updated is None:
                 raise RepositoryUnavailableError("说话人更新后无法读取会议")
+            return _meeting_from_row(updated)
+
+    async def apply_speaker_remapping(
+        self, meeting_id: UUID, remapping: dict[str, str]
+    ) -> MeetingRecord:
+        """会后将聚类后的说话人重映射原子应用至数据库，更新 segments 与 speakers。"""
+        if not remapping:
+            record = await self.get_meeting(meeting_id)
+            if record is None:
+                raise MeetingNotFoundError("会议不存在")
+            return record
+
+        async with self._connection() as connection, connection.transaction():
+            meeting = await self._lock_meeting(connection, meeting_id)
+            if meeting is None:
+                raise MeetingNotFoundError("会议不存在")
+
+            now = _utc_now()
+            for src_spk, dst_spk in remapping.items():
+                if src_spk == dst_spk:
+                    continue
+                # 更新 segments 表中的说话人
+                await connection.execute(
+                    f"""
+                    UPDATE {self._schema}.transcript_segments
+                    SET speaker_key = %s
+                    WHERE meeting_id = %s AND speaker_key = %s
+                    """,
+                    (dst_spk, meeting_id, src_spk),
+                )
+                # 检查源说话人是否有自定义名称
+                src_cursor = await connection.execute(
+                    f"""
+                    SELECT display_name, default_label FROM {self._schema}.meeting_speakers
+                    WHERE meeting_id = %s AND speaker_key = %s
+                    """,
+                    (meeting_id, src_spk),
+                )
+                src_row = await src_cursor.fetchone()
+                if src_row:
+                    src_display, src_default = str(src_row[0]), str(src_row[1])
+                    if src_display != src_default:
+                        # 尝试将自定义名称迁移至目标说话人（若目标尚为默认名称）
+                        await connection.execute(
+                            f"""
+                            UPDATE {self._schema}.meeting_speakers
+                            SET display_name = %s, updated_at = %s
+                            WHERE meeting_id = %s
+                              AND speaker_key = %s
+                              AND display_name = default_label
+                            """,
+                            (src_display, now, meeting_id, dst_spk),
+                        )
+                # 删除已被合并的旧说话人记录
+                await connection.execute(
+                    f"""
+                    DELETE FROM {self._schema}.meeting_speakers
+                    WHERE meeting_id = %s AND speaker_key = %s
+                    """,
+                    (meeting_id, src_spk),
+                )
+
+            content_revision = meeting.content_revision + 1
+            transcript_revision = meeting.transcript_revision + 1
+            await connection.execute(
+                f"""
+                UPDATE {self._schema}.meetings
+                SET content_revision = %s, transcript_revision = %s, updated_at = %s
+                WHERE id = %s
+                """,
+                (content_revision, transcript_revision, now, meeting_id),
+            )
+            await self._insert_event(
+                connection,
+                meeting_id,
+                "speaker_remapped",
+                {
+                    "remapping": remapping,
+                    "content_revision": content_revision,
+                    "transcript_revision": transcript_revision,
+                },
+            )
+            cursor = await connection.execute(
+                f"SELECT {_MEETING_COLUMNS} FROM {self._schema}.meetings WHERE id = %s",
+                (meeting_id,),
+            )
+            updated = await cursor.fetchone()
+            if updated is None:
+                raise RepositoryUnavailableError("重映射后无法读取会议")
             return _meeting_from_row(updated)
 
     async def create_minutes(
@@ -870,7 +960,7 @@ class PostgresMeetingRepository:
                         MinutesStatus.QUEUED.value,
                         meeting.content_revision,
                         self.settings.summary_model,
-                        "v3-bounded-10240",
+                        "v4-map-domain-10240",
                         idempotency_key,
                         now,
                         now,
@@ -1102,6 +1192,18 @@ class PostgresMeetingRepository:
     ) -> None:
         raw_speaker = segment.speaker_key.rsplit(":", 1)[-1]
         default_label = f"说话人 {raw_speaker}"
+
+        cursor = await connection.execute(
+            f"""
+            SELECT display_name FROM {self._schema}.meeting_speakers
+            WHERE meeting_id = %s AND raw_speaker = %s AND display_name != default_label
+            ORDER BY updated_at DESC LIMIT 1
+            """,
+            (meeting_id, raw_speaker),
+        )
+        existing = await cursor.fetchone()
+        display_name = str(existing[0]) if existing and existing[0] else default_label
+
         await connection.execute(
             f"""
             INSERT INTO {self._schema}.meeting_speakers
@@ -1111,6 +1213,12 @@ class PostgresMeetingRepository:
                 source_epoch = EXCLUDED.source_epoch,
                 raw_speaker = EXCLUDED.raw_speaker,
                 default_label = EXCLUDED.default_label,
+                display_name = CASE
+                    WHEN {self._schema}.meeting_speakers.display_name
+                         != {self._schema}.meeting_speakers.default_label
+                    THEN {self._schema}.meeting_speakers.display_name
+                    ELSE EXCLUDED.display_name
+                END,
                 updated_at = now()
             """,
             (
@@ -1119,7 +1227,7 @@ class PostgresMeetingRepository:
                 segment.source_epoch,
                 raw_speaker,
                 default_label,
-                default_label,
+                display_name,
             ),
         )
 

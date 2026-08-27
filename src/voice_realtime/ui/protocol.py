@@ -81,6 +81,7 @@ class SetMicMutedCommand(CommandBase):
 class StartMeetingCommand(CommandBase):
     cmd: Literal["start_meeting"]
     title: MeetingTitle | None = None
+    max_speakers: int | None = Field(default=None, ge=1, le=4)
     contract_version: Literal["1"] | None = None
 
 

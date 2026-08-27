@@ -142,16 +142,19 @@ class WLKStreamingAdapter:
         backend_id: str = "wlk",
         supports_speaker_labels: bool = True,
         token: str | None = None,
+        max_speakers: int | None = None,
         stream_factory: WLKStreamFactory | None = None,
         raw_event_sink: WLKRawEventSink | None = None,
     ) -> None:
         self.backend_id = backend_id
         self._context = context
         resolved_stream_factory = stream_factory or SubtitleStream
-        if token is None:
-            self._stream = resolved_stream_factory(url=url, language=language)
-        else:
-            self._stream = resolved_stream_factory(url=url, language=language, token=token)
+        stream_kwargs: dict[str, Any] = {"url": url, "language": language}
+        if token is not None:
+            stream_kwargs["token"] = token
+        if max_speakers is not None:
+            stream_kwargs["max_speakers"] = max_speakers
+        self._stream = resolved_stream_factory(**stream_kwargs)
         self._normalizer = TranscriptNormalizer()
         self._raw_event_sink = raw_event_sink
         self._last_window: TranscriptWindow | None = None

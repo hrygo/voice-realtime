@@ -186,7 +186,7 @@ def test_meeting_settings_are_local_and_bounded(tmp_path: Path) -> None:
         recovery_dir=tmp_path / "recovery",
     )
     assert settings.schema == "voice_realtime"
-    assert settings.summary_model == "qwen/qwen3.8-27b"
+    assert settings.summary_model == "qwen/qwen3.6-35b-a3b"
     assert settings.summary_reasoning == "off"
     assert settings.finalization_timeout_secs == 30
     assert settings.summary_concurrency == 1
@@ -502,7 +502,7 @@ Define exact Pydantic result types for overview/topics/decisions/action items/ri
 
 - [ ] **Step 5: Implement long-meeting map/reduce and worker recovery**
 
-Use a conservative token estimator, split only at segment boundaries, retain overlap IDs, map chunks into the same evidence schema, then reduce and deduplicate by normalized content plus evidence set. `run_once()` claims one row, persists completed/failed state, and requeues safely when recording priority interrupts it.
+Use a conservative token estimator, split only at segment boundaries, retain overlap IDs, map chunks into the domain-capacity evidence schema, then reduce with the compact final schema and deduplicate by normalized content plus evidence set. `run_once()` claims one row, persists completed/failed state, and requeues safely when recording priority interrupts it.
 
 - [ ] **Step 6: Run targeted checks**
 

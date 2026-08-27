@@ -21,6 +21,7 @@ from voice_realtime.asr.profiles import (
     WLKSenseVoiceProfile,
 )
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
+from voice_realtime.lm_studio import DEFAULT_LM_STUDIO_API_KEY
 from voice_realtime.model_cache import (
     huggingface_snapshot_path,
     modelscope_snapshot_path,
@@ -124,6 +125,11 @@ class InteractionSettings(BaseSettings):
         default=DEFAULT_LM_STUDIO_URL, description="LM Studio OpenAI 兼容端点"
     )
     llm_model: str = Field(default=DEFAULT_LLM_MODEL, description="交互 LLM 模型 ID")
+    llm_api_key: str = Field(
+        default=DEFAULT_LM_STUDIO_API_KEY,
+        min_length=1,
+        description="LM Studio API key；仅通过 Authorization header 发送，日志中脱敏",
+    )
     llm_temperature: float = Field(default=0.7, description="非 thinking 采样温度")
     context_compaction_enabled: bool = Field(
         default=True,
@@ -310,6 +316,13 @@ class InteractionSettings(BaseSettings):
             return stripped or None
         return v
 
+    @field_validator("llm_api_key", mode="before")
+    @classmethod
+    def _normalize_llm_api_key(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
     @model_validator(mode="after")
     def _validate_input_device_selector(self) -> InteractionSettings:
         if self.input_device is not None and self.input_device_name is not None:
@@ -443,6 +456,7 @@ class SubtitleSettings(BaseSettings):
                 host=self.host,
                 port=self.port,
                 speaker_labels=self.diarization,
+                diarization_max_speakers=self.diarization_max_speakers,
             )
         if self.backend == "auto":
             return WLKAutoProfile(
@@ -451,6 +465,7 @@ class SubtitleSettings(BaseSettings):
                 host=self.host,
                 port=self.port,
                 speaker_labels=self.diarization,
+                diarization_max_speakers=self.diarization_max_speakers,
             )
         return WLKQwen3Profile(
             model_dir=self.model_dir,
@@ -458,6 +473,7 @@ class SubtitleSettings(BaseSettings):
             host=self.host,
             port=self.port,
             speaker_labels=self.diarization,
+            diarization_max_speakers=self.diarization_max_speakers,
             device=self.qwen3_streaming_device,
             chunk_sec=self.qwen3_streaming_chunk_sec,
             left_context_sec=self.qwen3_streaming_left_context_sec,
@@ -532,6 +548,32 @@ class MeetingSettings(BaseSettings):
         le=5000,
         description="同一说话人相邻段落合并最大时间间隙（毫秒）",
     )
+    voiceprint_clustering_enabled: bool = Field(
+        default=True,
+        description="是否在会议模式启用 CAM++ 声纹质心跟踪与全局 AHC 聚类",
+    )
+    voiceprint_model_path: Path = Field(
+        default_factory=lambda: (
+            huggingface_snapshot_path(
+                "csukuangfj/speaker-embedding-models",
+                revision="0743f301363dec56491a490f6d6cbc9d67f9a3bf",
+            )
+            / "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+        ),
+        description="本地 CAM++ 声纹 ONNX 模型路径",
+    )
+    voiceprint_ahc_threshold: float = Field(
+        default=0.35,
+        ge=0.1,
+        le=0.9,
+        description="AHC 聚类余弦距离截断阈值",
+    )
+    voiceprint_merge_threshold: float = Field(
+        default=0.75,
+        ge=0.5,
+        le=0.99,
+        description="实时质心池自动合并说话人余弦相似度阈值",
+    )
     allowed_origins: list[str] = Field(
         default_factory=lambda: [
             "http://127.0.0.1:8100",
@@ -592,7 +634,11 @@ class Settings(BaseSettings):
         for section in (self.bridge, self.interaction, self.subtitles, self.meeting, self.ui):
             lines.append(f"\n[{type(section).__name__}]")
             for key, value in section.model_dump(by_alias=True).items():
-                safe_value = "<redacted>" if key == "database_url" else value
+                safe_value = (
+                    "<redacted>"
+                    if key == "database_url" or key.endswith("_api_key")
+                    else value
+                )
                 lines.append(f"  {key}: {safe_value}")
         return "\n".join(lines)
 

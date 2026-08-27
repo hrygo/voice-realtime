@@ -4,7 +4,7 @@ import { MeetingWaveform } from "./MeetingWaveform";
 
 interface MeetingIdleViewProps {
   health: MeetingHealthState;
-  onStartMeeting: (title: string) => Promise<void>;
+  onStartMeeting: (title: string, maxSpeakers?: number) => Promise<void>;
   isStarting: boolean;
 }
 
@@ -21,6 +21,7 @@ export function MeetingIdleView({
   })}`;
 
   const [title, setTitle] = useState(defaultTitle);
+  const [maxSpeakers, setMaxSpeakers] = useState<number>(4);
 
   const isStorageReady = health.storage === "ok" || health.storage === "degraded";
   const isTranscriptionReady = health.transcription === "ok";
@@ -29,7 +30,7 @@ export function MeetingIdleView({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!canStart) return;
-    void onStartMeeting(title.trim() || defaultTitle);
+    void onStartMeeting(title.trim() || defaultTitle, maxSpeakers);
   };
 
   return (
@@ -66,6 +67,24 @@ export function MeetingIdleView({
           />
         </div>
 
+        <div className="form-group">
+          <label className="form-label" htmlFor="meeting-speakers-select">
+            预期发言人数（先验约束）
+          </label>
+          <select
+            id="meeting-speakers-select"
+            className="form-input"
+            value={maxSpeakers}
+            onChange={(e) => setMaxSpeakers(Number(e.target.value))}
+            disabled={isStarting}
+            style={{ cursor: "pointer" }}
+          >
+            <option value={1}>1 人（单人口述 / 独白总结）</option>
+            <option value={2}>2 人（1v1 访谈 / 双人对话）</option>
+            <option value={4}>3~4 人（标准多人会议讨论）</option>
+          </select>
+        </div>
+
         <div className="checklist-group">
           <div className="check-item">
             <span>🗄️ PostgreSQL 知识库存储 (voice_realtime)</span>
@@ -99,7 +118,7 @@ export function MeetingIdleView({
 
           <div className="check-item">
             <span>👥 Sortformer 说话人分离 (Diarization)</span>
-            <span className="check-status-tag ok">● 已启用 (4通道)</span>
+            <span className="check-status-tag ok">● 已启用 ({maxSpeakers}通道上限)</span>
           </div>
 
           <div className="check-item">

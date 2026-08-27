@@ -20,7 +20,7 @@ from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from voice_realtime.config import Settings, SubtitleSettings
+from voice_realtime.config import InteractionSettings, Settings, SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
 from voice_realtime.ui import server as server_module
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
@@ -229,7 +229,10 @@ class TestHealth:
         assert resp.json()["pipeline"] == "running"
 
     async def test_meeting_backend_lifecycle_is_injected(self) -> None:
-        settings = Settings()
+        settings = Settings(
+            _env_file=None,
+            interaction=InteractionSettings(_env_file=None, llm_api_key="test-key"),
+        )
         app = create_app(settings, initialize_meeting=False)
         runtime = Mock()
         runtime.subtitle_proxy = Mock()
@@ -243,6 +246,7 @@ class TestHealth:
         summary_service = Mock()
         summary_service.start = AsyncMock()
         summary_service.stop = AsyncMock()
+        summary_client = Mock()
         meeting_session = Mock()
 
         with patch(
@@ -253,8 +257,8 @@ class TestHealth:
         ), patch(
             "voice_realtime.ui.server.RecoveryJournal", return_value=journal
         ), patch(
-            "voice_realtime.ui.server.MeetingSummaryClient"
-        ), patch(
+            "voice_realtime.ui.server.MeetingSummaryClient", return_value=summary_client
+        ) as summary_client_factory, patch(
             "voice_realtime.ui.server.MeetingSummaryService",
             return_value=summary_service,
         ), patch(
@@ -272,6 +276,11 @@ class TestHealth:
         repository.recover_stale.assert_awaited_once()
         runtime.configure_meeting.assert_called_once_with(meeting_session)
         summary_service.start.assert_awaited_once()
+        summary_client_factory.assert_called_once_with(
+            settings.meeting,
+            base_url=settings.interaction.llm_base_url,
+            api_key=settings.interaction.llm_api_key,
+        )
         assert app.state.meeting_repository is repository
 
 
@@ -401,6 +410,43 @@ class TestServices:
         }
         assert "must-not-leak" not in response.text
 
+    def test_services_probe_authenticates_only_lm_models_request(self) -> None:
+        settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9998},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "llm_api_key": "test-key",
+            },
+        )
+        app = create_app(settings, initialize_meeting=False)
+        mock_resp = Mock(status_code=200)
+        mock_resp.json.return_value = {"data": [{"id": settings.interaction.llm_model}]}
+
+        with (
+            patch("voice_realtime.ui.server.UIRuntime") as fake_cls,
+            patch(
+                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                new_callable=AsyncMock,
+                return_value=mock_resp,
+            ) as get,
+        ):
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                response = client.get("/api/services")
+
+        assert response.status_code == 200
+        lm_call = next(
+            call for call in get.call_args_list if call.args[0].endswith("/v1/models")
+        )
+        assert lm_call.kwargs["headers"] == {"Authorization": "Bearer test-key"}
+        non_lm_calls = [
+            call for call in get.call_args_list if not call.args[0].endswith("/v1/models")
+        ]
+        assert len(non_lm_calls) == 2
+        assert all(call.kwargs["headers"] is None for call in non_lm_calls)
+
     def test_services_http_ok_reports_backoff_workload_as_degraded(self) -> None:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
         runtime.subtitle_proxy._state = SubtitleProxyState.BACKOFF
@@ -499,7 +545,7 @@ class TestServices:
         peak = 0
         all_started = asyncio.Event()
 
-        async def concurrent_get(_url: str) -> Mock:
+        async def concurrent_get(_url: str, **_: object) -> Mock:
             nonlocal active, peak
             active += 1
             peak = max(peak, active)

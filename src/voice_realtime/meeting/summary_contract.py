@@ -1,6 +1,7 @@
-"""LM Studio 会议纪要的受限模型侧契约。
+"""LM Studio 会议纪要的分阶段模型侧契约。
 
-模型只处理紧凑的 ``S0001`` 证据引用；应用在边界处把引用解析回真实
+模型只处理紧凑的 ``S0001`` 证据引用；map 中间结果允许达到领域模型容量，
+最终 reduce/repair 结果使用更紧凑的集合上限。应用在边界处把引用解析回真实
 segment UUID。这样既减少输出 token，也避免模型复制长 UUID 时退化。
 """
 
@@ -43,6 +44,8 @@ class ModelEvidenceItem(_ModelContract):
 
 
 class ModelMinutesResult(_ModelContract):
+    """最终 reduce/repair 使用的紧凑模型侧纪要契约。"""
+
     title: str | None = Field(default=None, max_length=64)
     overview: str = Field(min_length=1, max_length=600)
     topics: tuple[ModelTopic, ...] = Field(default=(), max_length=8)
@@ -53,8 +56,19 @@ class ModelMinutesResult(_ModelContract):
     highlights: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=6)
 
 
+class ModelMapMinutesResult(ModelMinutesResult):
+    """分块 map 的中间契约，允许完整领域模型容量以内的结果。"""
+
+    topics: tuple[ModelTopic, ...] = Field(default=(), max_length=12)
+    decisions: tuple[ModelDecision, ...] = Field(default=(), max_length=12)
+    action_items: tuple[ModelActionItem, ...] = Field(default=(), max_length=12)
+    risks: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=8)
+    open_questions: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=8)
+    highlights: tuple[ModelEvidenceItem, ...] = Field(default=(), max_length=12)
+
+
 def resolve_minutes_result(
-    result: ModelMinutesResult,
+    result: ModelMinutesResult | ModelMapMinutesResult,
     references: Mapping[str, UUID],
 ) -> MinutesResult:
     """把模型侧短引用或兼容 UUID 引用转换为最终领域模型。"""
@@ -92,8 +106,14 @@ def resolve_minutes_result(
     return MinutesResult.model_validate(payload)
 
 
-def model_schema() -> dict[str, Any]:
-    return ModelMinutesResult.model_json_schema()
+def model_schema(*, for_map: bool = False) -> dict[str, Any]:
+    contract = ModelMapMinutesResult if for_map else ModelMinutesResult
+    return contract.model_json_schema()
 
 
-__all__ = ["ModelMinutesResult", "model_schema", "resolve_minutes_result"]
+__all__ = [
+    "ModelMapMinutesResult",
+    "ModelMinutesResult",
+    "model_schema",
+    "resolve_minutes_result",
+]

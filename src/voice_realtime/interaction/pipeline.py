@@ -690,6 +690,7 @@ def build_pipeline(
     llm = LmStudioNativeLLMService(
         model=settings.llm_model,
         base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
         temperature=settings.llm_temperature,
         reasoning="off",
         compaction_config=settings.context_compaction_config(),

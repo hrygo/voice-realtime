@@ -283,21 +283,22 @@ retention 与裁剪。因此禁止按 `(start, text)` 盲目追加。
 ### 10.1 模型与调用
 
 - 独立 `MeetingSummaryClient` 调用 LM Studio 原生 `/api/v1/chat`。
-- 本机默认模型：`qwen/qwen3.8-27b`；通过 `MeetingSettings.summary_model` 配置。
+- 本机默认模型：`qwen/qwen3.6-35b-a3b`；通过 `MeetingSettings.summary_model` 配置。
 - 默认 `reasoning="off"`，温度采用非 thinking 精确抽取预设。
 - 不复用语音助手 system prompt、Pipecat frame、TTS 或助手上下文。
 - 当前会议录制优先于纪要任务；开始新会议时正在生成的纪要安全取消并重新排队。
 
 ### 10.2 输入与提示安全
 
-输入段格式固定为：
+模型输入段格式固定为：
 
 ```text
-[SEG:8c31…][00:42:18.120–00:42:31.400][张三] 发言内容
+[S0001][00:42:18.120–00:42:31.400][张三] 发言内容
 ```
 
-转录被包裹为不可信资料。提示明确禁止执行转录中的指令。所有模型输出必须通过 Pydantic schema
-校验；模型不得从缺失信息推断负责人、截止时间或决策状态。
+编号只在当前 map 分块内有效；转录被包裹为不可信资料，提示明确禁止执行转录中的指令。所有模型输出必须
+通过 Pydantic schema 校验；模型不得从缺失信息推断负责人、截止时间或决策状态。应用在 map 校验后将短引用
+映射为真实 segment UUID，reduce 不再接收全量转录。
 
 ### 10.3 输出 schema
 
@@ -314,12 +315,45 @@ retention 与裁剪。因此禁止按 `(start, text)` 盲目追加。
 服务端验证所有 evidence ID 存在于该会议，随后渲染稳定 Markdown。格式错误只允许一次“只修复
 结构、不改变事实”的重试。再次失败保存 `failed` 版本，不发布伪完整纪要。
 
+领域契约 `contracts/meeting-assistant/v1/schemas/minutes-content.schema.json` 的集合容量为
+`topics/decisions/action_items/risks/open_questions/highlights = 12/12/12/8/8/12`。为避免模型在最终
+归并前丢弃分块内的独立事实，map 使用这组领域容量；最终 reduce/repair 使用更紧凑的
+`8/8/8/4/4/6` 模型契约。两者的单项字段、evidence 字段和 `title` 仍受长度与类型约束。
+
 ### 10.4 长会议
 
-- 保守估算输入 token，并为 system prompt、输出和修复预留空间。
-- 阈值以内单次生成。
-- 超阈值按时间与 speaker 边界分块，保留少量重叠段。
-- map 阶段抽取带 evidence ID 的结构，reduce 阶段去重并生成全局纪要。
+- 保守估算输入 token，并为 system prompt、输出和修复预留空间；当前默认单块上限为 20,000 字符或
+  20 分钟，二者先达到者触发切分，且只在 segment 边界切分，重叠 1 个 segment。
+- 阈值以内执行一次 map，校验并解析 evidence 后直接形成 `MinutesResult`；不需要 reduce。
+- 超过阈值时按以下流程执行。map 当前按分块顺序调用，reduce 只接收已验证的 map JSON：
+
+```text
+confirmed segments
+        │
+        ├─ 未越界 ─► MAP ─► 短引用解析/证据校验 ─► MinutesResult
+        │
+        └─ 越界
+             │
+             ▼
+       segment 边界切块（20,000 字符 / 20 分钟 / overlap=1）
+             │
+       ┌─────┼─────┐
+       ▼     ▼     ▼
+     MAP-1 MAP-2  MAP-N
+       └─────┴─────┘
+             │ 解析 S0001… 为真实 UUID，并校验属于本次会议
+             ▼
+       REDUCE（去重、合并证据、生成全局概览）
+             │
+             ▼
+       最终契约校验 ─► Markdown / PostgreSQL
+```
+
+| 阶段 | 输入与输出 | 集合上限 | 输出预算与修复 |
+|---|---|---|---|
+| MAP | 单个分块的短引用转录 → 中间纪要 | `12/12/12/8/8/12` | `2048` tokens；失败时按 map 契约最多 repair 一次 |
+| REDUCE | 已验证、已解析 UUID 的 map JSON → 全局纪要 | `8/8/8/4/4/6` | `10240` tokens；失败时按最终契约最多 repair 一次 |
+
 - 纪要保存生成时的 `source_content_revision`；转录或 speaker 名称变化后标记旧版本 stale。
 
 ### 10.5 任务恢复
@@ -593,7 +627,7 @@ pipeline, subtitle, storage, mic_muted, runtime_revision
 |---|---|
 | `database_url` | 本机 `knowledge`，不得包含写入日志的明文凭据 |
 | `schema` | `voice_realtime` |
-| `summary_model` | `qwen/qwen3.8-27b` |
+| `summary_model` | `qwen/qwen3.6-35b-a3b` |
 | `summary_temperature` | 非 thinking 精确抽取预设 |
 | `summary_reasoning` | `off` |
 | `finalization_timeout_secs` | 30 |

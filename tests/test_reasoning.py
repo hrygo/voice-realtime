@@ -233,6 +233,12 @@ class TestLmStudioNativeLLMService:
         svc = LmStudioNativeLLMService(model="test-model", base_url="http://localhost:1234")
         assert svc._reasoning == "off"
 
+    def test_native_client_uses_bearer_api_key(self) -> None:
+        svc = LmStudioNativeLLMService(
+            model="test-model", base_url="http://localhost:1234", api_key="test-key"
+        )
+        assert svc._http.headers["Authorization"] == "Bearer test-key"
+
     def test_reasoning_configurable(self) -> None:
         svc = LmStudioNativeLLMService(
             model="test-model", base_url="http://localhost:1234", reasoning="low"

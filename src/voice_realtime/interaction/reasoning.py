@@ -48,6 +48,11 @@ from voice_realtime.interaction.context_memory import (
     serialize_memory_packet,
     should_compact,
 )
+from voice_realtime.lm_studio import (
+    LM_STUDIO_NATIVE_CHAT_PATH,
+    lm_studio_auth_headers,
+    lm_studio_root_url,
+)
 from voice_realtime.network import local_async_client
 
 logger = logging.getLogger(__name__)
@@ -75,7 +80,7 @@ DEFAULT_SYSTEM_PROMPT = (
     "- 不知道或不方便回答时坦诚说明，不要编造。\n"
 )
 
-_NATIVE_CHAT_PATH = "/api/v1/chat"
+_NATIVE_CHAT_PATH = LM_STUDIO_NATIVE_CHAT_PATH
 _NATIVE_MODELS_PATH = "/api/v1/models"
 _RESPONSE_ID_RE = re.compile(r"^resp_[A-Za-z0-9_-]+$")
 _RECOVERY_RECENT_TURN_PAIRS = 4
@@ -238,9 +243,11 @@ class LmStudioNativeLLMService(OpenAILLMService):
         compaction_config: ContextCompactionConfig | None = None,
         **kwargs: Any,
     ) -> None:
+        normalized_api_key = api_key.strip()
+        auth_headers = lm_studio_auth_headers(normalized_api_key)
         super().__init__(
             base_url=base_url,
-            api_key=api_key,
+            api_key=normalized_api_key,
             settings=self.Settings(
                 model=model,
                 temperature=temperature,
@@ -252,11 +259,10 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._temperature = temperature
         self._compaction_config = compaction_config or ContextCompactionConfig(enabled=False)
         # 原生端点挂在 LM Studio 根路径下；兼容配置里带 "/v1" 的写法。
-        root_url = base_url.rstrip("/")
-        if root_url.endswith("/v1"):
-            root_url = root_url[: -len("/v1")]
+        root_url = lm_studio_root_url(base_url)
         self._http = local_async_client(
             base_url=root_url,
+            headers=auth_headers,
             timeout=httpx.Timeout(
                 connect=5.0,
                 read=_NATIVE_STREAM_READ_TIMEOUT_SECONDS,

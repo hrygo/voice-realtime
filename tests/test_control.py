@@ -125,6 +125,21 @@ class TestDispatch:
         assert resp["ok"] is True
         runtime.start_meeting.assert_awaited_once_with("周会")
 
+    async def test_start_meeting_with_max_speakers_delegates_to_runtime(
+        self, runtime: MagicMock, bridge: ControlBridge
+    ) -> None:
+        runtime.start_meeting = AsyncMock()
+        resp = await bridge.handle(
+            {
+                "request_id": "meeting-cap-1",
+                "cmd": "start_meeting",
+                "title": "双人访谈",
+                "max_speakers": 2,
+            }
+        )
+        assert resp["ok"] is True
+        runtime.start_meeting.assert_awaited_once_with("双人访谈", 2)
+
     async def test_end_meeting_delegates_to_runtime(
         self, runtime: MagicMock, bridge: ControlBridge
     ) -> None:

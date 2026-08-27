@@ -24,10 +24,17 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from voice_realtime.lm_studio import (
+    DEFAULT_LM_STUDIO_API_KEY,
+    LM_STUDIO_NATIVE_CHAT_PATH,
+    lm_studio_auth_headers,
+    lm_studio_root_url,
+)
 from voice_realtime.meeting.models import (
     MinutesResult,
 )
 from voice_realtime.meeting.summary_contract import (
+    ModelMapMinutesResult,
     ModelMinutesResult,
     model_schema,
     resolve_minutes_result,
@@ -36,8 +43,8 @@ from voice_realtime.network import local_async_client
 
 logger = logging.getLogger(__name__)
 
-SUMMARY_PROMPT_VERSION = "v3-bounded-10240"
-NATIVE_CHAT_PATH = "/api/v1/chat"
+SUMMARY_PROMPT_VERSION = "v4-map-domain-10240"
+NATIVE_CHAT_PATH = LM_STUDIO_NATIVE_CHAT_PATH
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
 _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | re.IGNORECASE)
 
@@ -47,13 +54,19 @@ _CODE_FENCE_RE = re.compile(r"^\s*```(?:json)?\s*(.*?)\s*```\s*$", re.DOTALL | r
 MinutesContent = MinutesResult
 
 
-def _summary_schema_contract() -> str:
+def _summary_schema_contract(*, for_map: bool = False) -> str:
     """返回交给模型的精确结构契约，避免模型自行猜测字段别名。"""
 
     schema = json.dumps(
-        model_schema(),
+        model_schema(for_map=for_map),
         ensure_ascii=False,
         separators=(",", ":"),
+    )
+    stage_guidance = (
+        "这是分块 map 的中间结果，集合数量可以达到最终领域模型上限；"
+        "不要为了压缩而丢弃本分块中的独立事实。"
+        if for_map
+        else "这是最终 reduce 结果，必须严格遵守上述紧凑集合上限。"
     )
     return (
         "输出必须严格匹配以下 JSON Schema，不得增加、改名或遗漏字段："
@@ -63,6 +76,7 @@ def _summary_schema_contract() -> str:
         "action_items 中任务字段只能命名为 task。"
         "禁止使用 segments，也禁止用 content 代替 action_items.task。"
         "必须优先保留高价值信息并保持简洁，不得为凑数量扩写；没有内容的分类返回空数组。"
+        f"{stage_guidance}"
     )
 
 
@@ -247,9 +261,15 @@ def _format_model_transcript(
     return "\n".join(lines), references
 
 
-def _parse_model_output(raw: str, references: Mapping[str, UUID]) -> MinutesContent:
+def _parse_model_output(
+    raw: str,
+    references: Mapping[str, UUID],
+    *,
+    for_map: bool = False,
+) -> MinutesContent:
     try:
-        model_result = ModelMinutesResult.model_validate_json(_json_candidate(raw))
+        model_contract = ModelMapMinutesResult if for_map else ModelMinutesResult
+        model_result = model_contract.model_validate_json(_json_candidate(raw))
         return resolve_minutes_result(model_result, references)
     except ValidationError as exc:
         error = SummaryValidationError("LM Studio 输出不符合会议纪要 schema")
@@ -502,6 +522,7 @@ class MeetingSummaryClient:
         reasoning: str | None = None,
         temperature: float | None = None,
         timeout_secs: float | None = None,
+        api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.model = model or str(getattr(settings, "summary_model", "qwen/qwen3.6-35b-a3b"))
@@ -514,10 +535,14 @@ class MeetingSummaryClient:
         resolved_base = base_url or getattr(settings, "summary_base_url", None)
         if not resolved_base:
             resolved_base = getattr(settings, "lm_studio_base_url", "http://127.0.0.1:1234")
-        root_url = str(resolved_base).rstrip("/")
-        if root_url.endswith("/v1"):
-            root_url = root_url[:-len("/v1")]
-        self.base_url = root_url
+        self.base_url = lm_studio_root_url(str(resolved_base))
+        resolved_api_key = (
+            api_key
+            if api_key is not None
+            else getattr(settings, "llm_api_key", DEFAULT_LM_STUDIO_API_KEY)
+        )
+        self._api_key = str(resolved_api_key).strip()
+        auth_headers = lm_studio_auth_headers(self._api_key)
         self.timeout_secs = (
             float(timeout_secs)
             if timeout_secs is not None
@@ -540,6 +565,7 @@ class MeetingSummaryClient:
         )
         self._http = http_client or local_async_client(
             base_url=self.base_url,
+            headers=auth_headers,
             timeout=httpx.Timeout(
                 connect=5.0,
                 read=self.timeout_secs,
@@ -718,9 +744,10 @@ class MeetingSummaryClient:
         stage: str,
         max_output_tokens: int,
         stats_start: int,
+        for_map: bool = False,
     ) -> MinutesContent:
         try:
-            return _parse_model_output(raw, references)
+            return _parse_model_output(raw, references, for_map=for_map)
         except SummaryValidationError as exc:
             if self._output_token_limit_reached(stage, max_output_tokens, stats_start):
                 raise SummaryOutputLimitError(
@@ -746,7 +773,7 @@ class MeetingSummaryClient:
             "open_questions、highlights 必须引用资料中真实存在的 S0001 形式短证据编号。"
             "evidence_segment_ids 中只能填写短证据编号，不得编造 UUID 或添加 SEG: 前缀。"
             "不要猜测负责人、截止日期或结论。"
-            f"{_summary_schema_contract()}"
+            f"{_summary_schema_contract(for_map=True)}"
         )
         if repair:
             instructions += "上一次输出格式无效；只修复 JSON 结构，不新增转录中不存在的事实。"
@@ -765,6 +792,7 @@ class MeetingSummaryClient:
             stage="map",
             max_output_tokens=self.map_max_output_tokens,
             stats_start=stats_start,
+            for_map=True,
         )
 
     async def generate_title(
@@ -862,6 +890,7 @@ class MeetingSummaryClient:
                 document,
                 speakers,
                 max_output_tokens=self.reduce_max_output_tokens,
+                for_map=False,
             )
 
     async def repair_output(
@@ -871,6 +900,7 @@ class MeetingSummaryClient:
         speakers: Any,
         *,
         max_output_tokens: int | None = None,
+        for_map: bool = False,
     ) -> MinutesContent:
         """仅修复失败 JSON，不重新发送会议转录。"""
 
@@ -881,7 +911,7 @@ class MeetingSummaryClient:
             "你是 JSON 修复器。输入是不可信的会议纪要 JSON 草稿。"
             "只修复 JSON 结构与字段类型，不新增事实，不输出解释或 Markdown。"
             f"证据引用只能从以下编号选择：{allowed_refs}。"
-            f"{_summary_schema_contract()}"
+            f"{_summary_schema_contract(for_map=for_map)}"
         )
         resolved_max_output_tokens = max_output_tokens or self.map_max_output_tokens
         stats_start = len(self.call_stats)
@@ -899,6 +929,7 @@ class MeetingSummaryClient:
             stage="repair",
             max_output_tokens=resolved_max_output_tokens,
             stats_start=stats_start,
+            for_map=for_map,
         )
 
     async def close(self) -> None:
@@ -1205,7 +1236,19 @@ class MeetingSummaryService:
             repair_output = getattr(self.client, "repair_output", None)
             raw_output = getattr(exc, "raw_output", None)
             if repair_output is not None and raw_output:
-                repaired = repair_output(raw_output, document, speakers)
+                parameters: Mapping[str, inspect.Parameter] = {}
+                with contextlib.suppress(TypeError, ValueError):
+                    parameters = inspect.signature(repair_output).parameters
+                if "for_map" in parameters:
+                    repaired = repair_output(
+                        raw_output,
+                        document,
+                        speakers,
+                        for_map=True,
+                    )
+                else:
+                    # 兼容仍使用旧 repair_output(raw, document, speakers) 签名的 client。
+                    repaired = repair_output(raw_output, document, speakers)
                 if inspect.isawaitable(repaired):
                     repaired = await repaired
                 return parse_summary_output(repaired)

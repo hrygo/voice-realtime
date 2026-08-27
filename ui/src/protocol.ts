@@ -28,7 +28,7 @@ export type ControlCommand =
   | { readonly cmd: "set_voice"; readonly voice: string }
   | { readonly cmd: "set_duplex_mode"; readonly mode: DuplexMode }
   | { readonly cmd: "set_mic_muted"; readonly muted: boolean }
-  | { readonly cmd: "start_meeting"; readonly title?: string; readonly contract_version?: "1" }
+  | { readonly cmd: "start_meeting"; readonly title?: string; readonly max_speakers?: number; readonly contract_version?: "1" }
   | { readonly cmd: "end_meeting"; readonly meeting_id?: string; readonly contract_version?: "1" }
   | { readonly cmd: "start_assistant"; readonly contract_version?: "1" }
   | { readonly cmd: "start_subtitles"; readonly contract_version?: "1" }

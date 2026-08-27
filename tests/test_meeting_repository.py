@@ -311,3 +311,60 @@ async def test_recover_stale_and_interrupted_finalization(
     )
     assert interrupted.status is MeetingStatus.INTERRUPTED
     assert interrupted.interruption_reason == "finalization_timeout"
+
+
+@pytest.mark.asyncio
+async def test_apply_speaker_remapping_merges_speakers_and_updates_segments(
+    repository: PostgresMeetingRepository,
+) -> None:
+    meeting = await repository.create_meeting(
+        "声纹聚类重映射", language="Chinese", audio_source="microphone"
+    )
+    # Reconcile window with two segments from epoch0:s0 and epoch1:s1
+    window = TranscriptWindow(
+        source_epoch=0,
+        segments=(
+            NormalizedSegment(
+                id=uuid4(),
+                order=0,
+                source_epoch=0,
+                speaker_key="epoch0:s0",
+                start_ms=0,
+                end_ms=1000,
+                text="张三的第一句",
+            ),
+            NormalizedSegment(
+                id=uuid4(),
+                order=1,
+                source_epoch=1,
+                speaker_key="epoch1:s1",
+                start_ms=1500,
+                end_ms=2500,
+                text="张三重连后的第二句",
+            ),
+        ),
+    )
+    await repository.reconcile_window(meeting.id, window)
+    speakers = await repository.get_speakers(meeting.id)
+    assert len(speakers) == 2
+
+    # Rename epoch1:s1 to "张三"
+    await repository.rename_speaker(meeting.id, "epoch1:s1", "张三")
+
+    # Apply remapping: epoch1:s1 -> epoch0:s0
+    updated_meeting = await repository.apply_speaker_remapping(
+        meeting.id, {"epoch1:s1": "epoch0:s0"}
+    )
+    assert updated_meeting.content_revision > meeting.content_revision
+
+    # Verify segments now all have speaker_key = "epoch0:s0"
+    transcript = await repository.get_transcript(meeting.id)
+    for seg in transcript.segments:
+        assert seg.speaker_key == "epoch0:s0"
+
+    # Verify speakers table has merged to single speaker with customized name inherited
+    merged_speakers = await repository.get_speakers(meeting.id)
+    assert len(merged_speakers) == 1
+    assert merged_speakers[0].speaker_key == "epoch0:s0"
+    assert merged_speakers[0].display_name == "张三"
+

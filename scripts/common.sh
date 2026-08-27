@@ -58,7 +58,8 @@ resolve_bind_host() {
 
     case "$lower_target" in
         lan|lan_ip|local_network)
-            get_lan_ip
+            # 通配监听同时覆盖本机回环与局域网；实际 LAN IP 仅用于启动横幅展示。
+            echo "0.0.0.0"
             ;;
         localhost|local|loopback|127.0.0.1)
             echo "127.0.0.1"

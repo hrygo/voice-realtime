@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
+from voice_realtime.lm_studio import lm_studio_auth_headers, lm_studio_openai_models_url
 from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
@@ -39,6 +40,12 @@ from voice_realtime.meeting.recovery import RecoveryJournal
 from voice_realtime.meeting.repository import PostgresMeetingRepository
 from voice_realtime.meeting.session import MeetingSession
 from voice_realtime.meeting.summary import MeetingSummaryClient, MeetingSummaryService
+from voice_realtime.meeting.voiceprint import (
+    AHCClusterer,
+    CAMPlusExtractor,
+    CentroidPool,
+    MeetingVoiceprintManager,
+)
 from voice_realtime.network import local_async_client
 from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import ErrorCode, RuntimeStateEvent, RuntimeStateSnapshot
@@ -83,10 +90,12 @@ async def _do_probe_async(
     name: str,
     url: str,
     expected_model: str | None = None,
+    *,
+    headers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """并发异步探活单个服务。"""
     try:
-        resp = await client.get(url)
+        resp = await client.get(url, headers=headers)
         result: dict[str, Any] = {
             "name": name,
             "status": "ok" if resp.status_code < 400 else "error",
@@ -245,14 +254,19 @@ def create_app(
         bridge = cfg.bridge
         lm = cfg.interaction
         paths = [
-            ("wlk", _probe_url(wlk.host, wlk.port), None),
-            ("tts", _probe_url(bridge.host, bridge.port), None),
-            ("lm", _lm_models_url(lm.llm_base_url), lm.llm_model),
+            ("wlk", _probe_url(wlk.host, wlk.port), None, None),
+            ("tts", _probe_url(bridge.host, bridge.port), None, None),
+            (
+                "lm",
+                lm_studio_openai_models_url(lm.llm_base_url),
+                lm.llm_model,
+                lm_studio_auth_headers(lm.llm_api_key),
+            ),
         ]
         async with local_async_client(timeout=timeout) as client:
             tasks = [
-                _do_probe_async(client, name, url, expected_model)
-                for name, url, expected_model in paths
+                _do_probe_async(client, name, url, expected_model, headers=headers)
+                for name, url, expected_model, headers in paths
             ]
             results = await asyncio.gather(*tasks)
         service_results = list(results)
@@ -333,6 +347,7 @@ async def _initialize_meeting_backend(
         summary_client = MeetingSummaryClient(
             cfg.meeting,
             base_url=cfg.interaction.llm_base_url,
+            api_key=cfg.interaction.llm_api_key,
         )
         broadcaster = _meeting_broadcaster(app)
         summary_service = MeetingSummaryService(
@@ -346,6 +361,24 @@ async def _initialize_meeting_backend(
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,
             hangover_gap_ms=cfg.meeting.diarization_hangover_gap_ms,
         )
+        voiceprint_manager = None
+        if cfg.meeting.voiceprint_clustering_enabled:
+            with contextlib.suppress(Exception):
+                extractor = None
+                if cfg.meeting.voiceprint_model_path.exists():
+                    extractor = CAMPlusExtractor(cfg.meeting.voiceprint_model_path)
+                centroid_pool = CentroidPool(
+                    merge_threshold=cfg.meeting.voiceprint_merge_threshold
+                )
+                clusterer = AHCClusterer(
+                    distance_threshold=cfg.meeting.voiceprint_ahc_threshold
+                )
+                voiceprint_manager = MeetingVoiceprintManager(
+                    extractor=extractor,
+                    centroid_pool=centroid_pool,
+                    clusterer=clusterer,
+                    enabled=True,
+                )
         meeting_session = MeetingSession(
             repository,
             runtime.subtitle_proxy,
@@ -354,6 +387,7 @@ async def _initialize_meeting_backend(
             recovery_journal=journal,
             event_publisher=broadcaster.publish_event,
             diarization_smoother=smoother,
+            voiceprint_manager=voiceprint_manager,
         )
         runtime.configure_meeting(meeting_session)
         app.state.meeting_repository = repository
@@ -381,11 +415,6 @@ async def _initialize_meeting_backend(
 def _get_runtime(app: FastAPI) -> UIRuntime | None:
     """取 lifespan 装配的 runtime；未装配（测试直连）返回 None。"""
     return getattr(app.state, "runtime", None)
-
-
-def _lm_models_url(base_url: str) -> str:
-    """LM Studio OpenAI 兼容端点 → /models 探活地址。"""
-    return base_url.rstrip("/") + "/models"
 
 
 def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:

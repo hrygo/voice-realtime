@@ -137,8 +137,11 @@ class SubtitleStream:
         url: str,
         language: str = "Chinese",
         token: str | None = None,
+        max_speakers: int | None = None,
     ) -> None:
         params = [f"language={language}", "mode=full"]
+        if max_speakers is not None and 1 <= max_speakers <= 4:
+            params.append(f"max_speakers={max_speakers}")
         query = "&".join(params)
         self._uri = f"{url}/asr?{query}"
         if token:

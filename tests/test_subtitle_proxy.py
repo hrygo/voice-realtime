@@ -539,6 +539,30 @@ class TestMeetingCapture:
         assert proxy.state == "paused"
         await proxy.stop()
 
+    async def test_prepare_capture_with_max_speakers_updates_capture_profile(
+        self, settings: SubtitleSettings
+    ) -> None:
+        captured_stream = ControlledTranscriber()
+        proxy = SubtitleProxy(
+            settings,
+            transcriber_factory=lambda _context: captured_stream,
+        )
+        await proxy.start()
+
+        task = asyncio.create_task(
+            proxy.prepare_capture("meeting:capped", timeout_secs=0.2, max_speakers=2)
+        )
+        await captured_stream.connected.wait()
+        await captured_stream.emit(ASREvent(kind="ready"))
+        prep = await task
+
+        assert proxy._capture_profile is not None
+        assert getattr(proxy._capture_profile, "diarization_max_speakers", None) == 2
+        await proxy.abort_prepared_capture(prep)
+        assert proxy._capture_profile is None
+        await proxy.stop()
+
+
     async def test_send_loop_waits_for_reconnected_stream_with_pending_audio(
         self,
         settings: SubtitleSettings,

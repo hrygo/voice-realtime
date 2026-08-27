@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 from uuid import UUID
 
 import pytest
@@ -22,6 +22,7 @@ from voice_realtime.meeting.session import (
     MeetingSession,
     MeetingStorageUnavailableError,
 )
+from voice_realtime.meeting.voiceprint import MeetingVoiceprintManager
 
 
 class FakeRepository:
@@ -167,6 +168,17 @@ async def test_prepare_creates_record_and_listeners_without_activating_or_publis
     publish.assert_not_awaited()
 
 
+async def test_prepare_passes_max_speakers_to_gateway(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    session = MeetingSession(repository, gateway, event_publisher=AsyncMock())
+    preparation = await session.prepare_start("1v1", max_speakers=2)
+
+    gateway.prepare_capture.assert_awaited_once_with(
+        f"meeting:{preparation.record.id}", timeout_secs=5.0, max_speakers=2
+    )
+
+
 async def test_commit_synchronously_activates_capture_without_publishing(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
@@ -282,6 +294,29 @@ async def test_stop_flushes_transcript_and_returns_completed(
     gateway.finish_capture.assert_awaited_once()
     assert repository.calls.index("finalizing") < repository.calls.index("finalize")
     assert "minutes" in repository.calls
+
+
+async def test_stop_invokes_voiceprint_clustering_and_applies_remapping(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    voiceprint_manager = MagicMock(spec=MeetingVoiceprintManager)
+    voiceprint_manager.compute_global_remapping.return_value = {"epoch1:s1": "epoch0:s0"}
+    repository.apply_speaker_remapping = AsyncMock(return_value=MeetingRecord(title="聚类后"))
+
+    session = MeetingSession(
+        repository,
+        gateway,
+        voiceprint_manager=voiceprint_manager,
+    )
+    await _start_session(session)
+    result = await session.stop()
+
+    voiceprint_manager.compute_global_remapping.assert_called_once_with(max_speakers=4)
+    repository.apply_speaker_remapping.assert_awaited_once_with(
+        result.id, {"epoch1:s1": "epoch0:s0"}
+    )
+    voiceprint_manager.clear.assert_called()
+
 
 
 async def test_partial_only_updates_do_not_reconcile_again(

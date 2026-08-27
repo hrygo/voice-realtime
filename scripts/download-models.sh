@@ -20,6 +20,13 @@ p = snapshot_download("FunAudioLLM/SenseVoiceSmall")
 print(f"SenseVoice 缓存: {p}")
 PY
 
+echo "== 下载 CAM++ 声纹识别模型 (3D-Speaker ONNX) =="
+uv run python - <<'PY'
+from huggingface_hub import hf_hub_download
+p = hf_hub_download("csukuangfj/speaker-embedding-models", "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")
+print(f"CAM++ 声纹模型缓存: {p}")
+PY
+
 echo "== 下载 Qwen3-ASR streaming (WhisperLiveKit) =="
 uv run modelscope download --model Qwen/Qwen3-ASR-1.7B
 

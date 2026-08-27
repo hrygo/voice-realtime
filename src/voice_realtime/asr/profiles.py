@@ -16,6 +16,7 @@ class _WLKProfile(BaseModel):
     host: str = Field(min_length=1, max_length=255)
     port: int = Field(ge=1, le=65535)
     speaker_labels: bool = True
+    diarization_max_speakers: int = Field(default=4, ge=1, le=4)
 
     @field_validator("language", "host")
     @classmethod

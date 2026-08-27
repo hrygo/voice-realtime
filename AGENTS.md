@@ -44,7 +44,7 @@
 | 模块 | 职责与功能 | 关键文件 |
 |---|---|---|
 | `voice_realtime.asr` | ASR 多引擎契约与适配层：流式识别适配器、模型 profiles、worker 队列管理与结果呈现 | `contracts.py`<br>`profiles.py`<br>`registry.py`<br>`defaults.py`<br>`presenters.py` |
-| `voice_realtime.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、说话人映射、Sortformer 接入、异步 AI 纪要生成、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`summary.py`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
+| `voice_realtime.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、说话人映射、Sortformer 接入与平滑、CAM++ 声纹质心与 AHC 聚类、异步 AI 纪要生成、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`voiceprint.py`<br>`diarization_smoother.py`<br>`summary.py`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
 | `voice_realtime.ui` | 默认运行时主入口：`RuntimeModeCoordinator` 模式协调、`SubtitleProxy`（带 PCM 重连快照与 ready_to_stop 优雅停机）、严格控制协议网关（`request_id` ack）、助手桥接 | `server.py`<br>`runtime.py`<br>`control.py`<br>`assistant_bridge.py`<br>`subtitle_proxy.py`<br>`protocol.py` |
 | `voice_realtime.interaction` | 共享交互会话/所有权 + Pipecat 管道 + LM Studio 原生服务 + 双层回声防线 + 滚动记忆压缩与 NLTK 依赖自愈 | `session.py`<br>`ownership.py`<br>`pipeline.py`<br>`reasoning.py`<br>`context_memory.py`<br>`runner.py`<br>`nltk_data.py` |
 | `voice_realtime.subtitles` | WhisperLiveKit 启动器、Sortformer Diarization 参数注入、WS 字幕事件桥、事件去重与 SRT 持久化 | `launcher.py`<br>`consumer.py`<br>`events.py` |

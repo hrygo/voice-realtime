@@ -232,7 +232,11 @@ class UIRuntime:
     def meeting_state(self) -> Any | None:
         return self._coordinator.meeting_state
 
-    async def start_meeting(self, title: str | None = None) -> Any:
+    async def start_meeting(
+        self, title: str | None = None, max_speakers: int | None = None
+    ) -> Any:
+        if max_speakers is not None:
+            return await self._coordinator.start_meeting(title, max_speakers=max_speakers)
         return await self._coordinator.start_meeting(title)
 
     async def end_meeting(self, meeting_id: str | None = None) -> Any:

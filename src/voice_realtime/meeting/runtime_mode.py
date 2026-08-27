@@ -59,7 +59,9 @@ class MeetingWorkload(Protocol):
     @property
     def record(self) -> MeetingRecord | None: ...
 
-    async def prepare_start(self, title: str | None = None) -> Any: ...
+    async def prepare_start(
+        self, title: str | None = None, max_speakers: int | None = None
+    ) -> Any: ...
 
     def commit_start(self, preparation: Any) -> MeetingRecord: ...
 
@@ -219,13 +221,15 @@ class RuntimeModeCoordinator:
     async def start_subtitles(self) -> None:
         await self._run_serialized(RuntimeMode.SUBTITLES, self._start_subtitles_locked)
 
-    async def start_meeting(self, title: str | None = None) -> MeetingRecord:
+    async def start_meeting(
+        self, title: str | None = None, max_speakers: int | None = None
+    ) -> MeetingRecord:
         meeting = self.meeting
         if meeting is None:
             raise MeetingUnavailable("meeting service unavailable")
 
         async def command() -> tuple[Any, MeetingRecord]:
-            return await self._start_meeting_locked(title)
+            return await self._start_meeting_locked(title, max_speakers=max_speakers)
 
         async def publish_started(result: tuple[Any, MeetingRecord]) -> None:
             preparation, _record = result
@@ -390,7 +394,7 @@ class RuntimeModeCoordinator:
         )
 
     async def _start_meeting_locked(
-        self, title: str | None
+        self, title: str | None, max_speakers: int | None = None
     ) -> tuple[Any, MeetingRecord]:
         if self._mode is RuntimeMode.MEETING:
             raise ModeConflict("meeting 已经在录制")
@@ -399,6 +403,8 @@ class RuntimeModeCoordinator:
             raise MeetingUnavailable("meeting service unavailable")
 
         async def prepare() -> Any:
+            if max_speakers is not None:
+                return await meeting.prepare_start(title, max_speakers=max_speakers)
             return await meeting.prepare_start(title)
 
         def commit(preparation: Any) -> MeetingRecord:

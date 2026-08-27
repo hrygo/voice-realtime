@@ -18,6 +18,7 @@ from voice_realtime.asr.adapters.wlk import WLKStreamFactory
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
 from voice_realtime.asr.defaults import build_wlk_registry
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
+from voice_realtime.asr.profiles import ASRProfile
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
@@ -28,6 +29,7 @@ ClientSender = Callable[[str], Awaitable[None]]
 TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 CaptureListener = Callable[[TranscriptWindow], Awaitable[None]]
 GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
+AudioListener = Callable[[bytes], None]
 
 
 class FinalizationTimeoutError(TimeoutError):
@@ -164,15 +166,19 @@ class SubtitleProxy:
         self._capture_last_window: TranscriptWindow | None = None
         self._event_listeners: list[CaptureListener] = []
         self._gap_listeners: list[GapListener] = []
+        self._audio_listeners: list[AudioListener] = []
         self._last_event_at: float | None = None
         self._reconnect_count = 0
         self._dropped_chunks = 0
         self._gap_count = 0
+        self._capture_profile: ASRProfile | None = None
 
-    def _create_transcriber(self, context: ASRSessionContext) -> StreamingTranscriber:
+    def _create_transcriber(
+        self, context: ASRSessionContext, profile: ASRProfile | None = None
+    ) -> StreamingTranscriber:
         if self._transcriber_factory is not None:
             return self._transcriber_factory(context)
-        return self._registry.create_streaming(self._profile, context)
+        return self._registry.create_streaming(profile or self._profile, context)
 
     @property
     def state(self) -> str:
@@ -222,6 +228,14 @@ class SubtitleProxy:
     def remove_gap_listener(self, listener: GapListener) -> None:
         with contextlib.suppress(ValueError):
             self._gap_listeners.remove(listener)
+
+    def add_audio_listener(self, listener: AudioListener) -> None:
+        if listener not in self._audio_listeners:
+            self._audio_listeners.append(listener)
+
+    def remove_audio_listener(self, listener: AudioListener) -> None:
+        with contextlib.suppress(ValueError):
+            self._audio_listeners.remove(listener)
 
     def add_client(self, ws_send: ClientSender) -> str:
         """注册浏览器发送端；每个客户端拥有独立有界队列并立即接收当前最新快照。"""
@@ -427,7 +441,11 @@ class SubtitleProxy:
         await self._close_browser_connection()
 
     async def prepare_capture(
-        self, owner: str, *, timeout_secs: float
+        self,
+        owner: str,
+        *,
+        timeout_secs: float,
+        max_speakers: int | None = None,
     ) -> CapturePreparation:
         """建立会议流并等待 ready，但不接收 PCM。"""
         owner = owner.strip()
@@ -460,13 +478,20 @@ class SubtitleProxy:
         self._capture_ready_to_stop.clear()
         self._capture_last_window = None
         self._state = SubtitleProxyState.CONNECTING
+
+        profile = self._profile
+        if max_speakers is not None and 1 <= max_speakers <= 4 and hasattr(profile, "model_copy"):
+            profile = profile.model_copy(update={"diarization_max_speakers": max_speakers})
+        self._capture_profile = profile
+
         try:
             stream = self._create_transcriber(
                 ASRSessionContext(
                     source_epoch=self._capture_epoch,
                     offset_ms=self._capture_offset_ms,
                     purpose="meeting",
-                )
+                ),
+                profile=profile,
             )
             self._capture_stream = stream
             async with asyncio.timeout(timeout_secs):
@@ -741,7 +766,8 @@ class SubtitleProxy:
                         source_epoch=self._capture_epoch,
                         offset_ms=self._capture_offset_ms,
                         purpose="meeting",
-                    )
+                    ),
+                    profile=self._capture_profile or self._profile,
                 )
                 await stream.connect()
                 self._capture_stream = stream
@@ -949,6 +975,11 @@ class SubtitleProxy:
     async def push_audio(self, data: bytes) -> None:
         """接收 s16le 音频；会议租约存在时不依赖浏览器订阅。"""
         if self._capture_accept_audio:
+            for listener in list(self._audio_listeners):
+                try:
+                    listener(data)
+                except Exception as exc:
+                    logger.warning("SubtitleProxy: 音频监听器处理失败: %s", exc)
             duration_ms = len(data) // 32
             start_ms = self._capture_input_ms
             self._capture_input_ms += duration_ms
@@ -1146,6 +1177,7 @@ class SubtitleProxy:
             with contextlib.suppress(Exception):
                 await stream.close()
         self._capture_owner = None
+        self._capture_profile = None
         self._drain_audio_buffer()
         if self._running:
             self._state = (

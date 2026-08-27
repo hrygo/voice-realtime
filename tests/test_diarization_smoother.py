@@ -118,3 +118,35 @@ def test_diarization_smoother_latin_text_spacing() -> None:
 
     assert len(smoothed.segments) == 1
     assert smoothed.segments[0].text == "Hello world"
+
+
+def test_diarization_smoother_abba_flicker_correction() -> None:
+    smoother = DiarizationSmoother(min_duration_ms=350, hangover_gap_ms=1000)
+    # A -> B -> B -> A 模式，中间两段 B 共 300ms
+    seg_a1 = _make_segment(0, "speaker:s0", 0, 1000, "第一阶段的")
+    seg_b1 = _make_segment(1, "speaker:s1", 1050, 1200, "核心")
+    seg_b2 = _make_segment(2, "speaker:s1", 1210, 1350, "工作是")
+    seg_a2 = _make_segment(3, "speaker:s0", 1400, 2500, "治理说话人漂移。")
+
+    window = TranscriptWindow(source_epoch=1, segments=(seg_a1, seg_b1, seg_b2, seg_a2))
+    smoothed = smoother.smooth_window(window)
+
+    assert len(smoothed.segments) == 1
+    assert smoothed.segments[0].speaker_key == "speaker:s0"
+    assert "第一阶段的核心工作是治理说话人漂移。" in smoothed.segments[0].text
+
+
+def test_diarization_smoother_cross_epoch_merging() -> None:
+    smoother = DiarizationSmoother(hangover_gap_ms=800)
+    # 两个同说话人段落跨 source_epoch，间隙 100ms
+    seg1 = _make_segment(0, "epoch:0:speaker:0", 0, 1000, "第一句在断线前，", epoch=0)
+    seg2 = _make_segment(1, "epoch:0:speaker:0", 1100, 2000, "第二句在重连后。", epoch=1)
+
+    window = TranscriptWindow(source_epoch=1, segments=(seg1, seg2))
+    smoothed = smoother.smooth_window(window)
+
+    assert len(smoothed.segments) == 1
+    assert smoothed.segments[0].text == "第一句在断线前，第二句在重连后。"
+    assert smoothed.segments[0].start_ms == 0
+    assert smoothed.segments[0].end_ms == 2000
+

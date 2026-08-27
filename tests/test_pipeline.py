@@ -80,6 +80,7 @@ def settings() -> InteractionSettings:
     return InteractionSettings(
         llm_base_url="http://localhost:1234/v1",
         llm_model="qwen/qwen3.6-35b-a3b",
+        llm_api_key="test-lm-key",
         tts_bridge_url="http://127.0.0.1:8765/v1",
         silence_secs=0.8,
         sample_rate=16000,
@@ -193,6 +194,7 @@ class TestBuildPipeline:
         llm_mock.assert_called_once_with(
             model="qwen/qwen3.6-35b-a3b",
             base_url="http://localhost:1234/v1",
+            api_key="test-lm-key",
             temperature=0.7,
             reasoning="off",
             compaction_config=settings.context_compaction_config(),

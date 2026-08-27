@@ -9,6 +9,7 @@ from voice_realtime.config import (
     BridgeSettings,
     InteractionSettings,
     MeetingSettings,
+    Settings,
     SubtitleSettings,
     UISettings,
 )
@@ -16,6 +17,26 @@ from voice_realtime.config import (
 
 def test_interaction_session_has_no_default_runtime_expiry() -> None:
     assert InteractionSettings().max_session_seconds == 0
+
+
+def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VR_INTERACTION_LLM_API_KEY", raising=False)
+    assert InteractionSettings(_env_file=None).llm_api_key == "lm-studio"
+
+
+def test_interaction_llm_api_key_strips_surrounding_whitespace() -> None:
+    settings = InteractionSettings(_env_file=None, llm_api_key="  test-key  ")
+    assert settings.llm_api_key == "test-key"
+
+
+def test_settings_dump_table_redacts_llm_api_key() -> None:
+    interaction = InteractionSettings(_env_file=None, llm_api_key="test-key")
+    table = Settings(_env_file=None, interaction=interaction).dump_table()
+
+    assert "test-key" not in table
+    assert "llm_api_key: <redacted>" in table
 
 
 def test_interaction_vad_defaults() -> None:

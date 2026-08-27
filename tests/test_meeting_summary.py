@@ -22,7 +22,7 @@ from voice_realtime.meeting.summary import (
     render_minutes_markdown,
     validate_evidence,
 )
-from voice_realtime.meeting.summary_contract import ModelMinutesResult
+from voice_realtime.meeting.summary_contract import ModelMinutesResult, model_schema
 
 
 def _document() -> SimpleNamespace:
@@ -273,6 +273,17 @@ def test_summary_client_payload_is_native_and_role_free() -> None:
 
 
 @pytest.mark.asyncio
+async def test_summary_client_uses_bearer_api_key() -> None:
+    client = MeetingSummaryClient(
+        model="m", base_url="http://127.0.0.1:1234/v1", api_key="test-key"
+    )
+    try:
+        assert client._http.headers["Authorization"] == "Bearer test-key"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
 async def test_summary_client_consumes_only_native_message_delta() -> None:
     client = MeetingSummaryClient(model="m", base_url="http://127.0.0.1:1234/v1")
 
@@ -457,6 +468,46 @@ async def test_summary_client_uses_compact_segment_refs_and_map_budget() -> None
 
 
 @pytest.mark.asyncio
+async def test_summary_client_accepts_map_results_with_domain_cardinality() -> None:
+    model_output = {
+        "overview": "覆盖多个学习主题。",
+        "topics": [
+            {
+                "title": f"主题 {index}",
+                "summary": "对应转录中的一个讨论点。",
+                "evidence_segment_ids": ["S0001"],
+            }
+            for index in range(9)
+        ],
+        "decisions": [],
+        "action_items": [],
+        "risks": [],
+        "open_questions": [],
+        "highlights": [
+            {
+                "content": f"重点 {index}",
+                "evidence_segment_ids": ["S0001"],
+            }
+            for index in range(7)
+        ],
+    }
+    event = json.dumps(
+        {"type": "message.delta", "content": json.dumps(model_output, ensure_ascii=False)},
+        ensure_ascii=False,
+    )
+    client = _stream_client((f"data: {event}",))
+
+    try:
+        result = await client.generate(_document(), ())
+    finally:
+        await client.close()
+
+    assert len(result.topics) == 9
+    assert len(result.highlights) == 7
+    assert result.topics[-1].title == "主题 8"
+
+
+@pytest.mark.asyncio
 async def test_summary_client_captures_chat_end_stats_without_content_logging() -> None:
     event = json.dumps(
         {
@@ -608,8 +659,10 @@ async def test_summary_client_reduce_repairs_only_the_invalid_json() -> None:
         _speakers: object,
         *,
         max_output_tokens: int | None = None,
+        for_map: bool = True,
     ) -> MinutesContent:
         repair_inputs.append((raw_output, max_output_tokens))
+        assert for_map is False
         return _content(document.segments[0].id)
 
     client._stream_text = stream_text  # type: ignore[method-assign]
@@ -632,6 +685,16 @@ def test_model_summary_contract_keeps_final_reduce_compact() -> None:
 
     with pytest.raises(ValidationError):
         ModelMinutesResult.model_validate({"overview": "概览", "topics": topics})
+
+
+def test_model_summary_contract_allows_more_items_only_for_map() -> None:
+    final_properties = model_schema()["properties"]
+    map_properties = model_schema(for_map=True)["properties"]
+
+    assert final_properties["topics"]["maxItems"] == 8
+    assert final_properties["highlights"]["maxItems"] == 6
+    assert map_properties["topics"]["maxItems"] == 12
+    assert map_properties["highlights"]["maxItems"] == 12
 
 
 def test_invalid_summary_is_a_typed_validation_error() -> None:

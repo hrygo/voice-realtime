@@ -81,14 +81,16 @@ fi
     )
     assert result.returncode == 0, result.stderr
 
-    return dict(line.split("=", 1) for line in capture_path.read_text().splitlines())
+    captured = dict(line.split("=", 1) for line in capture_path.read_text().splitlines())
+    captured["__stdout__"] = result.stdout
+    return captured
 
 
 @pytest.mark.parametrize(
     ("bind_host", "expected_bind_host", "expected_tts_url"),
     [
         ("localhost", "127.0.0.1", "http://127.0.0.1:8765/v1"),
-        ("lan", "192.168.50.8", "http://192.168.50.8:8765/v1"),
+        ("lan", "0.0.0.0", "http://127.0.0.1:8765/v1"),
         ("0.0.0.0", "0.0.0.0", "http://127.0.0.1:8765/v1"),
     ],
 )
@@ -116,6 +118,13 @@ def test_run_all_preserves_explicit_tts_bridge_url(tmp_path: Path) -> None:
     )
 
     assert captured["VR_INTERACTION_TTS_BRIDGE_URL"] == explicit_url
+
+
+def test_run_all_lan_mode_advertises_localhost_and_lan_urls(tmp_path: Path) -> None:
+    captured = _run_all_with_stubbed_services(tmp_path, bind_host="lan")
+
+    assert "本机访问: http://127.0.0.1:8100" in captured["__stdout__"]
+    assert "局域网访问: http://192.168.50.8:8100" in captured["__stdout__"]
 
 
 def test_run_all_shutdown_terminates_service_descendants(tmp_path: Path) -> None:

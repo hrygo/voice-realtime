@@ -82,7 +82,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
     void store.fetchHistory();
   }, []);
 
-  const handleStartMeeting = async (title: string) => {
+  const handleStartMeeting = async (title: string, maxSpeakers?: number) => {
     if (!commandSocket.ready) {
       showToast("控制端连接中，请稍候再试", "warning");
       return;
@@ -93,6 +93,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
       const resp = await commandSocket.sendCommand({
         cmd: "start_meeting",
         title,
+        max_speakers: maxSpeakers,
         contract_version: "1",
       });
       if (resp.active_meeting_id) {

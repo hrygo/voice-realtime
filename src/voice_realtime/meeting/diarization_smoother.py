@@ -46,7 +46,7 @@ class DiarizationSmoother:
         *,
         enabled: bool = True,
         min_duration_ms: int = 350,
-        hangover_gap_ms: int = 800,
+        hangover_gap_ms: int = 1000,
     ) -> None:
         self.enabled = enabled
         self.min_duration_ms = min_duration_ms
@@ -82,7 +82,7 @@ class DiarizationSmoother:
         segments: Sequence[NormalizedSegment],
         *,
         min_duration_ms: int = 350,
-        hangover_gap_ms: int = 800,
+        hangover_gap_ms: int = 1000,
     ) -> list[NormalizedSegment]:
         """对分段序列进行短噪声过滤、A-B-A 纠偏和同说话人合并。"""
         if not segments:
@@ -99,17 +99,38 @@ class DiarizationSmoother:
         if not filtered:
             return []
 
-        # 步骤 2：A-B-A 说话人闪烁纠偏（单次短时突变且被同一人包围）
+        # 步骤 2：说话人闪烁纠偏（单片段 A-B-A 及双片段 A-B-B-A 短时突变）
         n = len(filtered)
         speaker_keys = [seg.speaker_key for seg in filtered]
+
+        # 2a. 单片段 A-B-A 纠偏
         for i in range(1, n - 1):
             prev_spk = speaker_keys[i - 1]
             curr_spk = speaker_keys[i]
             next_spk = speaker_keys[i + 1]
             curr_dur = filtered[i].end_ms - filtered[i].start_ms
-
-            if prev_spk == next_spk and curr_spk != prev_spk and curr_dur < min_duration_ms:
+            if (
+                prev_spk == next_spk
+                and curr_spk != prev_spk
+                and curr_dur <= max(min_duration_ms, 500)
+            ):
                 speaker_keys[i] = prev_spk
+
+        # 2b. 双片段 A-B-B-A 纠偏
+        for i in range(1, n - 2):
+            prev_spk = speaker_keys[i - 1]
+            b1_spk = speaker_keys[i]
+            b2_spk = speaker_keys[i + 1]
+            next_spk = speaker_keys[i + 2]
+            b_total_dur = filtered[i + 1].end_ms - filtered[i].start_ms
+            if (
+                prev_spk == next_spk
+                and b1_spk == b2_spk
+                and b1_spk != prev_spk
+                and b_total_dur <= max(min_duration_ms, 600)
+            ):
+                speaker_keys[i] = prev_spk
+                speaker_keys[i + 1] = prev_spk
 
         corrected_segments: list[NormalizedSegment] = []
         for i, seg in enumerate(filtered):
@@ -131,7 +152,7 @@ class DiarizationSmoother:
             else:
                 corrected_segments.append(seg)
 
-        # 步骤 3：合并相邻同说话人且时间间隙在 hangover_gap_ms 内的片段
+        # 步骤 3：合并相邻同说话人且时间间隙在 hangover_gap_ms 内的片段（允许跨重连 epoch 合并）
         merged: list[NormalizedSegment] = []
         for seg in corrected_segments:
             if not merged:
@@ -142,7 +163,6 @@ class DiarizationSmoother:
             gap = seg.start_ms - last.end_ms
             if (
                 last.speaker_key == seg.speaker_key
-                and last.source_epoch == seg.source_epoch
                 and gap <= hangover_gap_ms
             ):
                 # 合并 last 与 seg
