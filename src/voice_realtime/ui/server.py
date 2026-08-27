@@ -249,6 +249,8 @@ def create_app(
     )
     app.state.meeting_events = MeetingEventBroadcaster()
     install_meeting_api(app)
+    # Register before the catch-all static mount; dependencies resolve lazily.
+    install_inner_os_api(app)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -375,7 +377,6 @@ async def _initialize_meeting_backend(
                 LocalLLMWorkloadGate(),
                 model=cfg.meeting.summary_model,
             )
-            install_inner_os_api(app)
         smoother = DiarizationSmoother(
             enabled=cfg.meeting.diarization_smoothing_enabled,
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,
