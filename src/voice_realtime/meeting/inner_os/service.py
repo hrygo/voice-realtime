@@ -2,19 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID, uuid4
 
-import httpx
-
-from voice_realtime.lm_studio import LMStudioClient, NativeChatRequest
 from voice_realtime.meeting.inner_os.cache import BoundedTTLCache
 from voice_realtime.meeting.inner_os.context import build_context_snapshot
 from voice_realtime.meeting.inner_os.contracts import InnerOSAnswer
-from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
-from voice_realtime.meeting.models import MeetingStatus
+from voice_realtime.meeting.inner_os.model_client import InnerOSModel, InnerOSModelError
+from voice_realtime.meeting.models import (
+    MeetingRecord,
+    MeetingStatus,
+    TranscriptDocument,
+)
+
+
+class InnerOSReadRepository(Protocol):
+    async def get_meeting(self, meeting_id: UUID) -> MeetingRecord | None: ...
+
+    async def get_transcript(self, meeting_id: UUID) -> TranscriptDocument: ...
 
 
 class InnerOSServiceError(RuntimeError):
@@ -29,19 +35,19 @@ class InnerOSQueryService:
 
     def __init__(
         self,
-        repository: Any,
-        client: LMStudioClient,
-        gate: LocalLLMWorkloadGate,
+        repository: InnerOSReadRepository,
+        model_client: InnerOSModel,
         *,
-        model: str = "qwen/qwen3.6-35b-a3b",
         cache_ttl_secs: int = 1800,
         cache_max_entries: int = 128,
         cache_max_bytes: int = 4 * 1024 * 1024,
+        max_context_chars: int = 48_000,
+        recent_context_chars: int = 16_000,
     ) -> None:
         self.repository = repository
-        self.client = client
-        self.gate = gate
-        self.model = model
+        self.model_client = model_client
+        self._max_context_chars = max_context_chars
+        self._recent_context_chars = recent_context_chars
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
         self._completed = BoundedTTLCache[UUID, dict[str, Any]](
             ttl_secs=cache_ttl_secs,
@@ -136,133 +142,44 @@ class InnerOSQueryService:
         emit: Callable[[str, UUID, dict[str, Any]], Awaitable[None]],
     ) -> None:
         try:
-            async with self.gate.slot("inner_os", acquire_timeout_secs=2.0):
-                get_meeting = getattr(self.repository, "get_meeting", None)
-                if get_meeting is not None:
-                    meeting = await get_meeting(meeting_id)
-                    meeting_status = getattr(meeting, "status", None)
-                    meeting_status = getattr(meeting_status, "value", meeting_status)
-                    if meeting is None or meeting_status != MeetingStatus.RECORDING.value:
-                        raise InnerOSServiceError(
-                            "inner_os_not_active", "当前会议不在录音状态"
-                        )
-                document = await self.repository.get_transcript(meeting_id)
-                snapshot = build_context_snapshot(
-                    document, question=question, focus_segment_ids=focus_segment_ids
+            meeting = await self.repository.get_meeting(meeting_id)
+            if meeting is None or meeting.status != MeetingStatus.RECORDING:
+                raise InnerOSServiceError(
+                    "inner_os_not_active", "当前会议不在录音状态"
                 )
-                await emit("inner_os_answer_started", query_id, {"status": "started"})
-                if not snapshot.evidence:
-                    answer = InnerOSAnswer.model_validate(
-                        {
-                            "intent": intent,
-                            "evidence": [],
-                            "facts": [],
-                            "judgements": [],
-                            "draft": None,
-                            "limitations": [
-                                {
-                                    "code": "insufficient_evidence",
-                                    "message": "当前会议还没有可引用的已确认转录。",
-                                }
-                            ],
-                        }
-                    )
-                    exchange = self._make_exchange(
-                        query_id,
-                        meeting_id,
-                        question,
-                        answer,
-                        snapshot.transcript_revision,
-                        snapshot.content_revision,
-                        ephemeral_context,
-                    )
-                    self._store_completed(query_id, exchange)
-                    await emit(
-                        "inner_os_answer_completed", query_id, answer.model_dump(mode="json")
-                    )
-                    return
-                evidence = "\n".join(
-                    f"{item.alias}: {item.text}" for item in snapshot.evidence
+            document = await self.repository.get_transcript(meeting_id)
+            snapshot = build_context_snapshot(
+                document,
+                question=question,
+                focus_segment_ids=focus_segment_ids,
+                max_chars=self._max_context_chars,
+                recent_chars=self._recent_context_chars,
+            )
+            await emit("inner_os_answer_started", query_id, {"status": "started"})
+            if not snapshot.evidence:
+                answer = _empty_evidence_answer(intent)
+            else:
+                answer = await self.model_client.generate(
+                    snapshot=snapshot,
+                    question=question,
+                    intent=intent,
+                    ephemeral_context=ephemeral_context,
                 )
-                request = NativeChatRequest(
-                    model=self.model,
-                    system_prompt=(
-                        "仅依据证据回答，严格只输出一个 JSON 对象，不要 Markdown 代码围栏。"
-                        "JSON 必须严格包含 intent、evidence、facts、judgements、draft、"
-                        "limitations。"
-                        "evidence 是证据数组；facts 每项必须含 text 和 evidence_segment_ids；"
-                        "judgements 每项必须含 text、basis_segment_ids、uncertainty、"
-                        "uncertainty_reason；draft 无法提供时为 null；"
-                        "limitations 每项含 code 和 message。"
-                        "事实引用只能使用证据别名（如 S0001）；证据不足时使用空 facts、"
-                        "draft 为 null，并加入 code=insufficient_evidence 的 limitation。"
-                    ),
-                    input=self._build_input(
-                        intent, question, evidence, ephemeral_context
-                    ),
-                    reasoning="off",
-                    stream=True,
-                    store=False,
-                )
-                parts: list[str] = []
-                saw_end = False
-                async for event in self.client.stream_chat(request):
-                    if event.type == "message.delta" and event.content:
-                        parts.append(event.content)
-                    if event.type in {"chat.end", "chat.end.result"}:
-                        saw_end = True
-                if not saw_end:
-                    raise InnerOSServiceError(
-                        "inner_os_model_unavailable", "模型连接未正常结束"
-                    )
-                raw_text = "".join(parts).strip()
-                if raw_text.startswith("```"):
-                    raw_text = raw_text.split("\n", 1)[-1]
-                    raw_text = raw_text.rsplit("```", 1)[0].strip()
-                raw = json.loads(raw_text)
-                if not isinstance(raw, dict):
-                    raise ValueError("answer must be an object")
-                alias_map = {
-                    item.alias: str(item.segment_id) for item in snapshot.evidence
-                }
-                for item in raw.get("facts", []):
-                    item["evidence_segment_ids"] = [
-                        alias_map.get(value, value)
-                        for value in item.get("evidence_segment_ids", [])
-                    ]
-                for item in raw.get("judgements", []):
-                    item["basis_segment_ids"] = [
-                        alias_map.get(value, value)
-                        for value in item.get("basis_segment_ids", [])
-                    ]
-                raw["evidence"] = [
-                    {
-                        "segment_id": str(item.segment_id),
-                        "start_ms": item.start_ms,
-                        "end_ms": item.end_ms,
-                        "speaker_key": item.speaker_key,
-                        "speaker_name": item.speaker_name,
-                        "text": item.text,
-                        "content_hash": f"sha256:{item.content_hash}",
-                    }
-                    for item in snapshot.evidence
-                ]
-                answer = InnerOSAnswer.model_validate(raw)
-                self._store_completed(
+            self._store_completed(
+                query_id,
+                self._make_exchange(
                     query_id,
-                    self._make_exchange(
-                        query_id,
-                        meeting_id,
-                        question,
-                        answer,
-                        snapshot.transcript_revision,
-                        snapshot.content_revision,
-                        ephemeral_context,
-                    ),
-                )
-                await emit(
-                    "inner_os_answer_completed", query_id, answer.model_dump(mode="json")
-                )
+                    meeting_id,
+                    question,
+                    answer,
+                    snapshot.transcript_revision,
+                    snapshot.content_revision,
+                    ephemeral_context,
+                ),
+            )
+            await emit(
+                "inner_os_answer_completed", query_id, answer.model_dump(mode="json")
+            )
         except TimeoutError:
             await emit(
                 "inner_os_answer_failed",
@@ -282,11 +199,11 @@ class InnerOSQueryService:
                 query_id,
                 {"error": {"code": exc.code, "message": exc.message}},
             )
-        except httpx.TimeoutException:
+        except InnerOSModelError as exc:
             await emit(
                 "inner_os_answer_failed",
                 query_id,
-                {"error": {"code": "inner_os_timeout", "message": "模型响应超时"}},
+                {"error": {"code": exc.code, "message": exc.message}},
             )
         except Exception as exc:
             del exc
@@ -333,27 +250,29 @@ class InnerOSQueryService:
             "source_transcript_revision": transcript_revision,
             "source_content_revision": content_revision,
             "used_ephemeral_context": bool(ephemeral_context),
-            "model": self.model,
+            "model": self.model_client.model,
             "reasoning": "off",
-            "prompt_version": "inner-os-v1",
+            "prompt_version": self.model_client.prompt_version,
         }
 
     async def close(self) -> None:
         await self.cancel_all(reason="connection_closed")
-        await self.client.aclose()
+        await self.model_client.close()
 
-    @staticmethod
-    def _build_input(
-        intent: str,
-        question: str,
-        evidence: str,
-        ephemeral_context: dict[str, str] | None,
-    ) -> str:
-        context = ""
-        if ephemeral_context:
-            values = "\n".join(
-                f"{key}: {value}" for key, value in ephemeral_context.items() if value
-            )
-            if values:
-                context = "\n临时背景（仅本次请求使用，不属于会议事实）：\n" + values
-        return f"intent={intent}\n问题：{question}{context}\n证据：\n{evidence}"
+
+def _empty_evidence_answer(intent: str) -> InnerOSAnswer:
+    return InnerOSAnswer.model_validate(
+        {
+            "intent": intent,
+            "evidence": [],
+            "facts": [],
+            "judgements": [],
+            "draft": None,
+            "limitations": [
+                {
+                    "code": "insufficient_evidence",
+                    "message": "当前会议还没有可引用的已确认转录。",
+                }
+            ],
+        }
+    )

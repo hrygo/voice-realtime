@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Protocol
@@ -24,13 +24,19 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from voice_realtime.inference.scheduler import LocalInferenceScheduler, WorkloadKind
 from voice_realtime.lm_studio import (
     DEFAULT_LM_STUDIO_API_KEY,
     LM_STUDIO_NATIVE_CHAT_PATH,
     LMStudioClient,
+    LMStudioOutputLimitError,
+    LMStudioProtocolError,
+    LMStudioResponseError,
+    NativeChatRequest,
     lm_studio_auth_headers,
     lm_studio_root_url,
 )
+from voice_realtime.meeting.minutes_rendering import render_minutes_markdown
 from voice_realtime.meeting.models import (
     MinutesResult,
 )
@@ -353,67 +359,6 @@ def parse_summary_output(raw: Any) -> MinutesContent:
     raise SummaryValidationError("LM Studio 输出必须是 JSON 对象")
 
 
-def _evidence_suffix(ids: Iterable[UUID]) -> str:
-    ids_list = [str(item) for item in ids]
-    return f" 证据：{', '.join(f'[{item}]' for item in ids_list)}" if ids_list else ""
-
-
-def render_minutes_markdown(result: MinutesContent) -> str:
-    """从结构化结果稳定渲染 Markdown，避免直接发布模型自由文本。"""
-
-    title = str(_attr(result, "title", "") or "").strip()
-    if title:
-        if title.startswith("#"):
-            header = title
-        elif not title.startswith("会议纪要"):
-            header = f"# 会议纪要：{title}"
-        else:
-            header = f"# {title}"
-    else:
-        header = "# 会议纪要"
-    lines = [header, "", "## 概要", "", str(result.overview).strip(), ""]
-    topics = list(result.topics)
-    if topics:
-        lines.extend(["## 议题", ""])
-        for topic in topics:
-            lines.extend(
-                [
-                    f"### {topic.title.strip()}",
-                    "",
-                    topic.summary.strip() + _evidence_suffix(topic.evidence_segment_ids),
-                    "",
-                ]
-            )
-
-    sections: tuple[tuple[str, str, str], ...] = (
-        ("决策", "decisions", "content"),
-        ("行动项", "action_items", "task"),
-        ("风险", "risks", "content"),
-        ("待确认问题", "open_questions", "content"),
-        ("重点", "highlights", "content"),
-    )
-    for heading, field, content_field in sections:
-        values = list(_attr(result, field, ()) or ())
-        if not values:
-            continue
-        lines.extend([f"## {heading}", ""])
-        for item in values:
-            text = str(_attr(item, content_field, "")).strip()
-            if field == "action_items":
-                owner = _attr(item, "owner")
-                due_date = _attr(item, "due_date")
-                metadata: list[str] = []
-                if owner:
-                    metadata.append(f"负责人：{owner}")
-                if due_date:
-                    metadata.append(f"截止：{due_date}")
-                if metadata:
-                    text += "（" + "；".join(metadata) + "）"
-            text += _evidence_suffix(_attr(item, "evidence_segment_ids", ()))
-            lines.extend([f"- {text}", ""])
-    return "\n".join(lines).rstrip() + "\n"
-
-
 def _copy_document(document: Any, segments: Sequence[Any]) -> Any:
     if hasattr(document, "model_copy"):
         return document.model_copy(update={"segments": tuple(segments)})
@@ -525,6 +470,7 @@ class MeetingSummaryClient:
         timeout_secs: float | None = None,
         api_key: str | None = None,
         http_client: httpx.AsyncClient | None = None,
+        scheduler: LocalInferenceScheduler | None = None,
     ) -> None:
         self.model = model or str(getattr(settings, "summary_model", "qwen/qwen3.6-35b-a3b"))
         self.reasoning = reasoning or str(getattr(settings, "summary_reasoning", "off"))
@@ -577,6 +523,7 @@ class MeetingSummaryClient:
         self._lm_studio = LMStudioClient(
             base_url=self.base_url, api_key=self._api_key, http_client=self._http
         )
+        self.scheduler = scheduler
         self._closed = False
         self.call_stats: list[dict[str, Any]] = []
 
@@ -606,89 +553,45 @@ class MeetingSummaryClient:
         *,
         stage: str = "summary",
     ) -> str:
+        if self.scheduler is None:
+            return await self._stream_text_admitted(payload, stage=stage)
+        async with self.scheduler.lease(workload=WorkloadKind.SUMMARY):
+            return await self._stream_text_admitted(payload, stage=stage)
+
+    async def _stream_text_admitted(
+        self,
+        payload: dict[str, Any],
+        *,
+        stage: str,
+    ) -> str:
         # Keep legacy tests/integrators that replace ``_http`` compatible while
         # routing the request lifecycle through the shared LM Studio client.
         self._lm_studio = LMStudioClient(
             base_url=self.base_url, api_key=self._api_key, http_client=self._http
         )
-        parts: list[str] = []
-        output_chars = 0
         started = time.monotonic()
         try:
             async with asyncio.timeout(self.request_timeout_secs):
-                async with self._lm_studio.stream_request(payload) as response:
-                    raise_for_status = getattr(response, "raise_for_status", None)
-                    if raise_for_status is not None:
-                        raise_for_status()
-                    status = getattr(response, "status_code", 200)
-                    if status not in (200, None):
-                        raise SummaryUnavailableError(f"LM Studio 请求失败 (HTTP {status})")
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data:"):
-                            continue
-                        raw = line.removeprefix("data:").strip()
-                        if raw == "[DONE]":
-                            break
-                        try:
-                            event = json.loads(raw)
-                        except (TypeError, json.JSONDecodeError):
-                            continue
-                        if not isinstance(event, dict):
-                            raise SummaryUnavailableError("LM Studio SSE 事件格式无效")
-                        event_type = event.get("type")
-                        if event_type == "error" or (
-                            isinstance(event_type, str) and event_type.endswith(".error")
-                        ):
-                            err_obj = event.get("error")
-                            err_msg = ""
-                            if isinstance(err_obj, dict):
-                                err_msg = str(err_obj.get("message", "")).strip()
-                            elif isinstance(err_obj, str):
-                                err_msg = err_obj.strip()
-                            if not err_msg:
-                                err_msg = str(event.get("message", "")).strip()
-                            msg = (
-                                f"LM Studio 请求失败: {err_msg}"
-                                if err_msg
-                                else "LM Studio 纪要请求失败"
-                            )
-                            raise SummaryUnavailableError(msg)
-                        if event_type == "chat.end":
-                            result = event.get("result")
-                            if isinstance(result, dict):
-                                self._record_stats(result.get("stats"), stage, started)
-                                if not parts:
-                                    output = result.get("output")
-                                    if isinstance(output, list):
-                                        for item in output:
-                                            if (
-                                                isinstance(item, dict)
-                                                and item.get("type") == "message"
-                                            ):
-                                                content = item.get("content")
-                                                if isinstance(content, str) and content:
-                                                    output_chars += len(content)
-                                                    if output_chars > self.max_output_chars:
-                                                        raise SummaryOutputLimitError(
-                                                            "AI 纪要输出超过安全上限，"
-                                                            "已停止退化生成"
-                                                        )
-                                                    parts.append(content)
-                            break
-                        if event_type != "message.delta":
-                            continue
-                        content = event.get("content")
-                        if not isinstance(content, str):
-                            raise SummaryUnavailableError("LM Studio 纪要 delta 不是文本")
-                        if content:
-                            output_chars += len(content)
-                            if output_chars > self.max_output_chars:
-                                raise SummaryOutputLimitError(
-                                    "AI 纪要输出超过安全上限，已停止退化生成"
-                                )
-                            parts.append(content)
+                completion = await self._lm_studio.complete_chat(
+                    NativeChatRequest.from_payload(payload),
+                    max_output_chars=self.max_output_chars,
+                    require_chat_end=False,
+                )
+                self._record_stats(completion.stats, stage, started)
         except SummaryError:
             raise
+        except LMStudioOutputLimitError as exc:
+            raise SummaryOutputLimitError(
+                "AI 纪要输出超过安全上限，已停止退化生成"
+            ) from exc
+        except LMStudioProtocolError as exc:
+            if exc.code == "invalid_delta":
+                raise SummaryUnavailableError("LM Studio 纪要 delta 不是文本") from exc
+            if exc.code == "invalid_event":
+                raise SummaryUnavailableError("LM Studio SSE 事件格式无效") from exc
+            raise SummaryUnavailableError(f"LM Studio 请求失败: {exc}") from exc
+        except LMStudioResponseError as exc:
+            raise SummaryUnavailableError(f"LM Studio 请求失败: {exc}") from exc
         except TimeoutError as exc:
             raise SummaryTimeoutError("AI 纪要生成超过单次调用时限，已停止") from exc
         except httpx.TimeoutException as exc:
@@ -696,7 +599,7 @@ class MeetingSummaryClient:
         except (httpx.HTTPError, OSError) as exc:
             msg = "AI 纪要服务暂不可用，请检查 LLM (LM Studio) 是否正常运行"
             raise SummaryUnavailableError(msg) from exc
-        text = "".join(parts).strip()
+        text = completion.text.strip()
         if not text:
             raise SummaryUnavailableError("LM Studio 未返回纪要内容")
         return text
@@ -966,6 +869,7 @@ class MeetingSummaryService:
         self._stop_event = asyncio.Event()
         self._worker_task: asyncio.Task[None] | None = None
         self._active = False
+        self.scheduler = getattr(client, "scheduler", None)
 
     async def start(self) -> None:
         if self._worker_task is not None and not self._worker_task.done():
@@ -1001,14 +905,23 @@ class MeetingSummaryService:
                     await asyncio.wait_for(self._stop_event.wait(), timeout=0.5)
 
     async def requeue_for_recording(self) -> None:
-        """暂停 worker 并释放 generating 租约，让实时录制优先。"""
+        """暂停新后台模型调用；已入场调用保持非抢占。"""
 
-        task = self._worker_task
-        self._worker_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        if self.scheduler is not None:
+            self.scheduler.pause_background()
+        if (
+            self._active
+            and self.scheduler is not None
+            and self.scheduler.active_workload == WorkloadKind.SUMMARY
+        ):
+            return
+        if self._active:
+            task = self._worker_task
+            self._worker_task = None
+            if task is not None and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
         for name in ("requeue_generating", "requeue_active_minutes", "requeue_active"):
             method = getattr(self.repository, name, None)
@@ -1021,9 +934,13 @@ class MeetingSummaryService:
 
     async def resume_after_recording(self) -> None:
         """会议结束或中断后恢复纪要 worker。"""
+        if self.scheduler is not None:
+            self.scheduler.resume_background()
         await self.start()
 
     async def run_once(self) -> bool:
+        if self.scheduler is not None and self.scheduler.background_paused:
+            return False
         job = await self.repository.claim_minutes()
         if job is None:
             return False

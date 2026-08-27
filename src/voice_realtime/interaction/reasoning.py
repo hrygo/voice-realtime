@@ -51,6 +51,7 @@ from voice_realtime.interaction.context_memory import (
 from voice_realtime.lm_studio import (
     LM_STUDIO_NATIVE_CHAT_PATH,
     LMStudioClient,
+    NativeChatRequest,
     lm_studio_auth_headers,
     lm_studio_root_url,
 )
@@ -744,74 +745,18 @@ class LmStudioNativeLLMService(OpenAILLMService):
         saw_content = False
         content_parts: list[str] = []
         final_result: NativeChatResult | None = None
-        async with self._lm_studio.stream_request(payload) as resp:
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                can_rebuild = (
-                    allow_chain_retry
-                    and "previous_response_id" in payload
-                    and generation == self._request_generation
-                    and _is_invalid_previous_response_id(exc)
-                )
-                if not can_rebuild:
-                    raise
-                self._previous_response_id = None
-                self._system_prompt = None
-                self._completed_user_turns = 0
-                self._last_chat_stats = None
-                self._last_assistant_text = None
-                retry_payload = dict(payload)
-                retry_payload.pop("previous_response_id", None)
-                current_user = retry_payload.get("input")
-                if not isinstance(current_user, str) or not current_user:
-                    raise ValueError("LM Studio current user input is invalid") from exc
-                seed_response_id = await self._recover_invalid_chain(
-                    messages,
-                    current_user,
-                    system_prompt,
-                    generation,
-                )
-                retry_payload.pop("system_prompt", None)
-                retry_payload["previous_response_id"] = seed_response_id
-                logger.warning(
-                    "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
-                    generation,
-                )
-                async for retry_chunk in self._consume_native_completions(
-                    retry_payload,
-                    generation=generation,
-                    system_prompt=system_prompt,
-                    user_turns=user_turns,
-                    messages=messages,
-                    allow_chain_retry=False,
-                ):
-                    yield retry_chunk
-                return
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                raw_data = line[len("data: ") :].strip()
-                if raw_data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(raw_data)
-                except (json.JSONDecodeError, TypeError):
-                    continue
-                if not isinstance(event, dict):
-                    raise TypeError("LM Studio SSE event must be an object")
-                event_type = event.get("type")
-                if event_type == "error" or (
-                    isinstance(event_type, str) and event_type.endswith(".error")
-                ):
+        try:
+            async for event in self._lm_studio.stream_chat(
+                NativeChatRequest.from_payload(payload)
+            ):
+                if event.type == "error" or event.type.endswith(".error"):
                     raise RuntimeError("LM Studio stream reported an error")
-                if event_type == "chat.end":
-                    result = event.get("result")
-                    if not isinstance(result, dict):
+                if event.type == "chat.end":
+                    if event.result is None:
                         raise TypeError("LM Studio chat.end result must be an object")
                     if final_result is not None:
                         raise RuntimeError("LM Studio stream returned duplicate chat.end")
-                    stream_result = dict(result)
+                    stream_result = dict(event.result)
                     stream_result["output"] = [
                         {"type": "message", "content": "".join(content_parts)}
                     ]
@@ -819,24 +764,66 @@ class LmStudioNativeLLMService(OpenAILLMService):
                         stream_result, require_response_id=True
                     )
                     continue
-                if event_type != "message.delta":
+                if event.type != "message.delta":
                     continue
-                content = event.get("content")
-                if not isinstance(content, str):
+                if event.content is None:
                     raise TypeError("LM Studio delta content must be a string")
-                if not content:
+                if not event.content:
                     continue
                 saw_content = True
-                content_parts.append(content)
+                content_parts.append(event.content)
                 chunk = SimpleNamespace(
                     usage=None,
                     model=None,
                     choices=[
-                        SimpleNamespace(delta=SimpleNamespace(content=content, tool_calls=None))
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=event.content, tool_calls=None)
+                        )
                     ],
                 )
                 # SimpleNamespace 与 ChatCompletionChunk 无类型重叠，先经 Any 中转
                 yield cast(ChatCompletionChunk, cast(Any, chunk))
+        except httpx.HTTPStatusError as exc:
+            can_rebuild = (
+                allow_chain_retry
+                and "previous_response_id" in payload
+                and generation == self._request_generation
+                and _is_invalid_previous_response_id(exc)
+            )
+            if not can_rebuild:
+                raise
+            self._previous_response_id = None
+            self._system_prompt = None
+            self._completed_user_turns = 0
+            self._last_chat_stats = None
+            self._last_assistant_text = None
+            retry_payload = dict(payload)
+            retry_payload.pop("previous_response_id", None)
+            current_user = retry_payload.get("input")
+            if not isinstance(current_user, str) or not current_user:
+                raise ValueError("LM Studio current user input is invalid") from exc
+            seed_response_id = await self._recover_invalid_chain(
+                messages,
+                current_user,
+                system_prompt,
+                generation,
+            )
+            retry_payload.pop("system_prompt", None)
+            retry_payload["previous_response_id"] = seed_response_id
+            logger.warning(
+                "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
+                generation,
+            )
+            async for retry_chunk in self._consume_native_completions(
+                retry_payload,
+                generation=generation,
+                system_prompt=system_prompt,
+                user_turns=user_turns,
+                messages=messages,
+                allow_chain_retry=False,
+            ):
+                yield retry_chunk
+            return
         if not saw_content:
             raise RuntimeError("LM Studio returned no message content")
         if final_result is None:

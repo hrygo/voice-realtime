@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from voice_realtime.config import MeetingSettings
+from voice_realtime.meeting.minutes_rendering import render_minutes_markdown
 
 from .migrations import validate_schema_name
 from .models import (
@@ -1244,40 +1245,8 @@ class PostgresMeetingRepository:
 
 
 def _render_minutes_markdown(result: MinutesResult) -> str:
-    """从已校验结构稳定渲染 Markdown，不记录原始模型 prompt。"""
-    title = str(getattr(result, "title", "") or "").strip()
-    if title:
-        if title.startswith("#"):
-            header = title
-        elif not title.startswith("会议纪要"):
-            header = f"# 会议纪要：{title}"
-        else:
-            header = f"# {title}"
-    else:
-        header = "# 会议纪要"
-    lines = [header, "", "## 概要", "", result.overview]
-    sections: tuple[tuple[str, Sequence[Any]], ...] = (
-        ("主题", result.topics),
-        ("决策", result.decisions),
-        ("行动项", result.action_items),
-        ("风险", result.risks),
-        ("待确认问题", result.open_questions),
-        ("重点", result.highlights),
-    )
-    for title, items in sections:
-        if not items:
-            continue
-        lines.extend(["", f"## {title}", ""])
-        for item in items:
-            if hasattr(item, "title"):
-                lines.append(f"- **{item.title}**：{item.summary}")
-            elif hasattr(item, "task"):
-                owner = f"（负责人：{item.owner}）" if item.owner else ""
-                due = f"（截止：{item.due_date}）" if item.due_date else ""
-                lines.append(f"- {item.task}{owner}{due}")
-            else:
-                lines.append(f"- {item.content}")
-    return "\n".join(lines) + "\n"
+    """Compatibility wrapper around the canonical renderer."""
+    return render_minutes_markdown(result)
 
 
 def _coerce_minutes_result(result: Any) -> tuple[MinutesResult, str]:

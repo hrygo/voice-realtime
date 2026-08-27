@@ -36,13 +36,11 @@ def test_report_is_aggregate_only() -> None:
 
 async def test_runner_consumes_only_message_deltas() -> None:
     class FakeClient:
-        async def stream_chat(self, request):
-            from voice_realtime.lm_studio import NativeChatEvent
+        async def complete_chat(self, request):
+            from voice_realtime.lm_studio import NativeChatCompletion
 
-            yield NativeChatEvent(type="chat.start")
-            yield NativeChatEvent(type="reasoning.delta", content="secret")
-            yield NativeChatEvent(type="message.delta", content="answer")
-            yield NativeChatEvent(type="chat.end", result={"stats": {}})
+            del request
+            return NativeChatCompletion(text="answer", response_id=None, stats={})
 
     dataset = load_dataset(ROOT)
     answer = await evaluate_question(
@@ -53,11 +51,11 @@ async def test_runner_consumes_only_message_deltas() -> None:
 
 async def test_real_evaluation_returns_only_transport_aggregates() -> None:
     class FakeClient:
-        async def stream_chat(self, request):
-            from voice_realtime.lm_studio import NativeChatEvent
+        async def complete_chat(self, request):
+            from voice_realtime.lm_studio import NativeChatCompletion
 
-            yield NativeChatEvent(type="message.delta", content="answer")
-            yield NativeChatEvent(type="chat.end")
+            del request
+            return NativeChatCompletion(text="answer", response_id=None, stats={})
 
     result = await run_evaluation(FakeClient(), load_dataset(ROOT), model="m")
     assert result["completed_count"] == 40

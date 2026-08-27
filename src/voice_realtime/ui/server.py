@@ -19,7 +19,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
+from voice_realtime.inference.scheduler import LocalInferenceScheduler
 from voice_realtime.lm_studio import (
     LMStudioClient,
     lm_studio_auth_headers,
@@ -39,8 +40,12 @@ from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
 from voice_realtime.meeting.inner_os.api import install_inner_os_api
+from voice_realtime.meeting.inner_os.model_client import InnerOSModelClient
+from voice_realtime.meeting.inner_os.private_channel import (
+    InnerOSChannelError,
+    InnerOSConnectionSession,
+)
 from voice_realtime.meeting.inner_os.service import InnerOSQueryService
-from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
 from voice_realtime.meeting.migrations import run_migrations
 from voice_realtime.meeting.models import RuntimeMode
 from voice_realtime.meeting.recovery import RecoveryJournal
@@ -228,12 +233,15 @@ def create_app(
             yield
         finally:
             await runtime.stop()
-            summary_service = getattr(app.state, "meeting_summary_service", None)
-            if summary_service is not None:
-                await summary_service.stop()
             inner_os_service = getattr(app.state, "inner_os_service", None)
             if inner_os_service is not None:
                 await inner_os_service.close()
+            summary_service = getattr(app.state, "meeting_summary_service", None)
+            if summary_service is not None:
+                await summary_service.stop()
+            inference_scheduler = getattr(app.state, "inference_scheduler", None)
+            if inference_scheduler is not None:
+                await inference_scheduler.close()
             repository = getattr(app.state, "meeting_repository", None)
             if repository is not None:
                 await repository.close()
@@ -357,10 +365,13 @@ async def _initialize_meeting_backend(
         journal = RecoveryJournal(cfg.meeting.recovery_dir)
         await journal.replay(repository)
         await repository.recover_stale()
+        inference_scheduler = LocalInferenceScheduler()
+        app.state.inference_scheduler = inference_scheduler
         summary_client = MeetingSummaryClient(
             cfg.meeting,
-            base_url=cfg.interaction.llm_base_url,
-            api_key=cfg.interaction.llm_api_key,
+            base_url=cfg.lm_studio.base_url,
+            api_key=cfg.lm_studio.api_key,
+            scheduler=inference_scheduler,
         )
         broadcaster = _meeting_broadcaster(app)
         summary_service = MeetingSummaryService(
@@ -371,17 +382,26 @@ async def _initialize_meeting_backend(
         )
         if cfg.meeting.inner_os_enabled:
             inner_os_client = LMStudioClient(
-                base_url=cfg.interaction.llm_base_url,
-                api_key=cfg.interaction.llm_api_key,
+                base_url=cfg.lm_studio.base_url,
+                api_key=cfg.lm_studio.api_key,
+            )
+            inner_os_model = InnerOSModelClient(
+                inner_os_client,
+                inference_scheduler,
+                model=cfg.meeting.summary_model,
+                max_output_chars=cfg.meeting.inner_os_max_output_chars,
+                fact_timeout_secs=cfg.meeting.inner_os_fact_timeout_secs,
+                analysis_timeout_secs=cfg.meeting.inner_os_analysis_timeout_secs,
+                acquire_timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
             )
             app.state.inner_os_service = InnerOSQueryService(
                 repository,
-                inner_os_client,
-                LocalLLMWorkloadGate(),
-                model=cfg.meeting.summary_model,
+                inner_os_model,
                 cache_ttl_secs=cfg.meeting.inner_os_cache_ttl_secs,
                 cache_max_entries=cfg.meeting.inner_os_max_cache_entries,
                 cache_max_bytes=cfg.meeting.inner_os_max_cache_bytes,
+                max_context_chars=cfg.meeting.inner_os_max_context_chars,
+                recent_context_chars=cfg.meeting.inner_os_recent_context_chars,
             )
         async def publish_meeting_event(
             event_type: str, meeting_id: str | UUID, payload: Any
@@ -534,119 +554,29 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
         if service is None:
             await websocket.close(code=1011, reason="inner_os_context_unavailable")
             return
+        try:
+            parsed_meeting_id = UUID(meeting_id)
+        except ValueError:
+            await websocket.close(code=1008, reason="inner_os_invalid_request")
+            return
         await websocket.accept()
-        active_query: UUID | None = None
-        active_request_id: str | None = None
-
-        async def emit(event_type: str, query_id: UUID, payload: dict[str, Any]) -> None:
-            nonlocal active_query, active_request_id
-            envelope = {
-                "contract_version": "1",
-                "type": event_type,
-                "event_id": str(uuid4()),
-                "meeting_id": meeting_id,
-                "query_id": str(query_id),
-                "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                "payload": payload,
-            }
-            if active_request_id is not None:
-                envelope["request_id"] = active_request_id
-            await websocket.send_json(
-                envelope
-            )
-            if event_type in {
-                "inner_os_answer_completed",
-                "inner_os_answer_failed",
-                "inner_os_answer_cancelled",
-            }:
-                active_query = None
-                active_request_id = None
+        session = InnerOSConnectionSession(
+            meeting_id=parsed_meeting_id,
+            service=service,
+            send=websocket.send_json,
+            analysis_enabled=cfg.meeting.inner_os_analysis_enabled,
+            cancel_timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
+        )
 
         try:
             while True:
-                raw = json.loads(await websocket.receive_text())
-                if not isinstance(raw, dict):
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                if raw.get("cmd") == "cancel":
-                    try:
-                        query_id = UUID(str(raw.get("query_id")))
-                    except (ValueError, AttributeError):
-                        await websocket.close(code=1008, reason="inner_os_invalid_request")
-                        return
-                    await service.cancel(
-                        query_id,
-                        timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
-                    )
-                    continue
-                if raw.get("cmd") != "query" or active_query is not None:
-                    await websocket.close(code=1008, reason="inner_os_busy")
-                    return
-                if str(raw.get("meeting_id")) != meeting_id:
-                    await websocket.close(code=1008, reason="inner_os_context_unavailable")
-                    return
-                question = str(raw.get("question", "")).strip()
-                intent = str(raw.get("intent", "fact"))
-                if not 1 <= len(question) <= 2000:
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                if intent not in {"fact", "analysis", "draft", "mixed"}:
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                if intent in {"analysis", "mixed"} and not cfg.meeting.inner_os_analysis_enabled:
-                    await websocket.close(code=1008, reason="inner_os_intent_disabled")
-                    return
-                raw_focus = raw.get("focus_segment_ids", ())
-                if not isinstance(raw_focus, (list, tuple)) or len(raw_focus) > 32:
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                try:
-                    focus = tuple(UUID(str(item)) for item in raw_focus)
-                except (ValueError, AttributeError):
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                if len(set(focus)) != len(focus):
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                raw_context = raw.get("ephemeral_context")
-                if raw_context is not None and not isinstance(raw_context, dict):
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                ephemeral_context: dict[str, str] = {}
-                context_limits = {"goal": 1000, "agenda": 1000, "background": 2000}
-                for key, max_length in context_limits.items():
-                    value = raw_context.get(key) if isinstance(raw_context, dict) else None
-                    if value is None:
-                        continue
-                    text = str(value).strip()
-                    if len(text) > max_length:
-                        await websocket.close(code=1008, reason="inner_os_invalid_request")
-                        return
-                    if text:
-                        ephemeral_context[key] = text
-                request_id = str(raw.get("request_id", "")).strip()
-                if not request_id or len(request_id) > 64:
-                    await websocket.close(code=1008, reason="inner_os_invalid_request")
-                    return
-                active_request_id = request_id
-                active_query = await service.start_query(
-                    meeting_id=UUID(meeting_id),
-                    query_id=(
-                        UUID(str(raw["query_id"])) if raw.get("query_id") else None
-                    ),
-                    question=question,
-                    intent=intent,
-                    focus_segment_ids=focus,
-                    ephemeral_context=ephemeral_context or None,
-                    emit=emit,
-                )
+                await session.handle_text(await websocket.receive_text())
+        except InnerOSChannelError as exc:
+            await websocket.close(code=1008, reason=exc.code)
         except WebSocketDisconnect:
-            if active_query is not None:
-                await service.cancel(
-                    active_query,
-                    reason="connection_closed",
-                    timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
-                )
+            pass
+        finally:
+            await session.close()
 
     @app.websocket("/ws/v1/control")
     async def ws_v1_control(websocket: WebSocket) -> None:

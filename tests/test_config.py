@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from voice_realtime.config import (
     BridgeSettings,
     InteractionSettings,
+    LMStudioSettings,
     MeetingSettings,
     Settings,
     SubtitleSettings,
@@ -26,6 +27,11 @@ def test_inner_os_is_disabled_by_default_and_has_bounded_limits() -> None:
     assert settings.meeting.inner_os_cache_ttl_secs == 1800
     assert settings.meeting.inner_os_max_cache_entries == 128
     assert settings.meeting.inner_os_cancel_timeout_secs == 2.0
+    assert settings.meeting.inner_os_fact_timeout_secs == 15.0
+    assert settings.meeting.inner_os_analysis_timeout_secs == 35.0
+    assert settings.meeting.inner_os_max_output_chars == 65_536
+    assert settings.meeting.inner_os_max_context_chars == 48_000
+    assert settings.meeting.inner_os_recent_context_chars == 16_000
 
 
 def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
@@ -38,6 +44,35 @@ def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
 def test_interaction_llm_api_key_strips_surrounding_whitespace() -> None:
     settings = InteractionSettings(_env_file=None, llm_api_key="  test-key  ")
     assert settings.llm_api_key == "test-key"
+
+
+def test_top_level_lm_studio_settings_keep_legacy_interaction_values_compatible() -> None:
+    settings = Settings(
+        _env_file=None,
+        interaction=InteractionSettings(
+            _env_file=None,
+            llm_base_url="http://127.0.0.1:1234/v1",
+            llm_api_key="legacy-key",
+        ),
+    )
+
+    assert settings.lm_studio.base_url == "http://127.0.0.1:1234/v1"
+    assert settings.lm_studio.api_key == "legacy-key"
+
+
+def test_explicit_lm_studio_settings_drive_all_consumers() -> None:
+    settings = Settings(
+        _env_file=None,
+        lm_studio=LMStudioSettings(
+            _env_file=None,
+            base_url="http://localhost:2234/v1",
+            api_key="shared-key",
+        ),
+        interaction=InteractionSettings(_env_file=None),
+    )
+
+    assert settings.interaction.llm_base_url == "http://localhost:2234/v1"
+    assert settings.interaction.llm_api_key == "shared-key"
 
 
 def test_settings_dump_table_redacts_llm_api_key() -> None:

@@ -68,16 +68,10 @@ async def evaluate_question(
         stream=True,
         store=False,
     )
-    parts: list[str] = []
-    saw_end = False
-    async for event in client.stream_chat(request):
-        if event.type == "message.delta" and event.content:
-            parts.append(event.content)
-        elif event.type == "chat.end":
-            saw_end = True
-    if not saw_end or not parts:
+    completion = await client.complete_chat(request)
+    if not completion.text:
         raise ValueError("LM Studio stream did not produce a complete message")
-    return "".join(parts)
+    return completion.text
 
 
 async def run_evaluation(

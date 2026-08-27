@@ -10,6 +10,8 @@ import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from voice_realtime.inference.scheduler import LocalInferenceScheduler
+from voice_realtime.meeting.repository import _coerce_minutes_result
 from voice_realtime.meeting.summary import (
     MeetingSummaryClient,
     MeetingSummaryService,
@@ -99,6 +101,14 @@ def _content(evidence: UUID) -> MinutesContent:
     )
 
 
+def test_repository_fallback_uses_canonical_minutes_markdown_renderer() -> None:
+    content = _content(_document().segments[0].id)
+
+    _, markdown = _coerce_minutes_result(content.model_dump(mode="json"))
+
+    assert markdown == render_minutes_markdown(content)
+
+
 class _Repository:
     def __init__(self, result: object) -> None:
         self.result = result
@@ -153,6 +163,18 @@ class _Client:
     ) -> object:
         self.calls.append(repair)
         return self.result
+
+
+async def test_summary_worker_does_not_claim_job_while_background_is_paused() -> None:
+    repository = _Repository(None)
+    scheduler = LocalInferenceScheduler()
+    scheduler.pause_background()
+    client = _Client(None)
+    client.scheduler = scheduler  # type: ignore[attr-defined]
+    service = MeetingSummaryService(repository, client, settings=SimpleNamespace())
+
+    assert await service.run_once() is False
+    assert repository.claimed == 0
 
 
 class _ClosingClient(_Client):

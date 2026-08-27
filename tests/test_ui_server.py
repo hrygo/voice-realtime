@@ -280,6 +280,7 @@ class TestHealth:
             settings.meeting,
             base_url=settings.interaction.llm_base_url,
             api_key=settings.interaction.llm_api_key,
+            scheduler=app.state.inference_scheduler,
         )
         assert app.state.meeting_repository is repository
 

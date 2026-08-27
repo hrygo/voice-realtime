@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from uuid import UUID
 
+from voice_realtime.meeting.inner_os.contracts import InnerOSAnswer
 from voice_realtime.meeting.inner_os.service import InnerOSQueryService
-from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptDocument
+from voice_realtime.meeting.models import MeetingStatus, NormalizedSegment, TranscriptDocument
 
 MEETING_ID = UUID("00000000-0000-0000-0000-000000000001")
 QUERY_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 class FakeRepository:
+    async def get_meeting(self, meeting_id: UUID) -> object:
+        del meeting_id
+        return SimpleNamespace(status=MeetingStatus.RECORDING)
+
     async def get_transcript(self, meeting_id: UUID) -> TranscriptDocument:
         return TranscriptDocument(
             meeting_id=meeting_id,
@@ -32,24 +36,43 @@ class FakeRepository:
         )
 
 
-class FakeClient:
-    async def stream_chat(self, request) -> AsyncIterator[object]:
-        del request
-        yield type(
-            "Event",
-            (),
+class FakeModel:
+    model = "m"
+    prompt_version = "inner-os-v1"
+
+    async def generate(self, *, snapshot, question, intent, ephemeral_context=None):
+        del question, ephemeral_context
+        evidence = snapshot.evidence[0]
+        return InnerOSAnswer.model_validate(
             {
-                "type": "message.delta",
-                "content": (
-                    '{"intent":"fact","evidence":[],"facts":[],'
-                    '"judgements":[],"draft":null,"limitations":[]}'
-                ),
-            },
-        )()
-        yield type("Event", (), {"type": "chat.end", "content": None})()
+                "intent": intent,
+                "evidence": [
+                    {
+                        "segment_id": evidence.segment_id,
+                        "start_ms": evidence.start_ms,
+                        "end_ms": evidence.end_ms,
+                        "speaker_key": evidence.speaker_key,
+                        "speaker_name": evidence.speaker_name,
+                        "text": evidence.text,
+                        "content_hash": f"sha256:{evidence.content_hash}",
+                    }
+                ],
+                "facts": [],
+                "judgements": [],
+                "draft": None,
+                "limitations": [],
+            }
+        )
+
+    async def close(self) -> None:
+        return None
 
 
 class EmptyRepository:
+    async def get_meeting(self, meeting_id: UUID) -> object:
+        del meeting_id
+        return SimpleNamespace(status=MeetingStatus.RECORDING)
+
     async def get_transcript(self, meeting_id: UUID) -> TranscriptDocument:
         return TranscriptDocument(
             meeting_id=meeting_id,
@@ -59,21 +82,24 @@ class EmptyRepository:
         )
 
 
-class NoCallClient:
+class NoCallModel:
+    model = "m"
+    prompt_version = "inner-os-v1"
+
     def __init__(self) -> None:
         self.called = False
 
-    async def stream_chat(self, request) -> AsyncIterator[object]:
-        del request
+    async def generate(self, **kwargs) -> InnerOSAnswer:
+        del kwargs
         self.called = True
         raise AssertionError("empty evidence must not call the model")
-        yield  # pragma: no cover
+
+    async def close(self) -> None:
+        return None
 
 
 async def test_start_query_preserves_frontend_query_id() -> None:
-    service = InnerOSQueryService(
-        FakeRepository(), FakeClient(), LocalLLMWorkloadGate()
-    )
+    service = InnerOSQueryService(FakeRepository(), FakeModel())
     events: list[tuple[str, UUID]] = []
 
     async def emit(event_type: str, query_id: UUID, payload: dict) -> None:
@@ -95,8 +121,8 @@ async def test_start_query_preserves_frontend_query_id() -> None:
 
 
 async def test_empty_evidence_completes_without_waiting_for_model() -> None:
-    client = NoCallClient()
-    service = InnerOSQueryService(EmptyRepository(), client, LocalLLMWorkloadGate())
+    client = NoCallModel()
+    service = InnerOSQueryService(EmptyRepository(), client)
     events: list[tuple[str, UUID]] = []
     completed = asyncio.Event()
 

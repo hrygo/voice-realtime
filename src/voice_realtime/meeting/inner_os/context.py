@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -38,10 +39,13 @@ def build_context_snapshot(
     *,
     question: str,
     max_chars: int = 48_000,
+    recent_chars: int = 16_000,
     focus_segment_ids: tuple[UUID, ...] = (),
 ) -> InnerOSContextSnapshot:
     if max_chars <= 0:
         raise ValueError("max_chars must be positive")
+    if recent_chars < 0:
+        raise ValueError("recent_chars must not be negative")
     segments = tuple(
         sorted(document.segments, key=lambda item: (item.start_ms, item.end_ms, item.order))
     )
@@ -51,24 +55,38 @@ def build_context_snapshot(
     }
     if any(segment_id not in known for segment_id in focus_segment_ids):
         raise ValueError("focus segment does not belong to current confirmed meeting")
-    question_terms = {term for term in question.strip().lower().split() if term}
-    ranked = sorted(
-        segments,
-        key=lambda item: (
-            item.id not in focus_segment_ids,
-            -sum(term in item.text.lower() for term in question_terms),
-            item.start_ms,
-        ),
-    )
-    selected: list[NormalizedSegment] = []
-    used = 0
-    for segment in ranked:
-        cost = len(segment.text)
-        if selected and used + cost > max_chars:
-            continue
-        selected.append(segment)
-        used += cost
-    selected.sort(key=lambda item: (item.start_ms, item.end_ms, item.order))
+    if sum(len(segment.text) for segment in segments) <= max_chars:
+        selected = list(segments)
+    else:
+        recent_budget = min(recent_chars, max_chars)
+        recent: list[NormalizedSegment] = []
+        recent_used = 0
+        for segment in reversed(segments):
+            cost = len(segment.text)
+            if cost <= recent_budget - recent_used:
+                recent.append(segment)
+                recent_used += cost
+        recent.reverse()
+        recent_ids = {segment.id for segment in recent}
+        question_terms = _relevance_terms(question)
+        ranked = sorted(
+            (segment for segment in segments if segment.id not in recent_ids),
+            key=lambda item: (
+                item.id not in focus_segment_ids,
+                -_relevance_score(item.text, question_terms),
+                item.start_ms,
+                item.order,
+            ),
+        )
+        early: list[NormalizedSegment] = []
+        remaining = max_chars - recent_used
+        for segment in ranked:
+            cost = len(segment.text)
+            if cost <= remaining:
+                early.append(segment)
+                remaining -= cost
+        early.sort(key=lambda item: (item.start_ms, item.end_ms, item.order))
+        selected = early + recent
     evidence = tuple(
         EvidenceSnapshot(
             alias=f"S{index:04d}",
@@ -91,5 +109,21 @@ def build_context_snapshot(
         total_segment_count=len(segments),
         included_segment_count=len(evidence),
         cropped=len(evidence) < len(segments),
-        selection_strategy="question_relevance_then_timeline",
+        selection_strategy="cjk_relevance_then_recent_window",
     )
+
+
+def _relevance_terms(question: str) -> frozenset[str]:
+    normalized = question.strip().lower()
+    terms = set(re.findall(r"[a-z0-9_]{2,}", normalized))
+    for sequence in re.findall(r"[\u3400-\u9fff]+", normalized):
+        if len(sequence) == 1:
+            terms.add(sequence)
+            continue
+        terms.update(sequence[index : index + 2] for index in range(len(sequence) - 1))
+    return frozenset(terms)
+
+
+def _relevance_score(text: str, terms: frozenset[str]) -> int:
+    normalized = text.lower()
+    return sum(1 for term in terms if term in normalized)

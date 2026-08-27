@@ -35,6 +35,38 @@ DEFAULT_ASR_CONTEXT = (
     "专有名词词表：Voice Studio；LM Studio；Qwen3-ASR；WhisperLiveKit；SenseVoice；"
     "Sortformer；Pipecat；PostgreSQL；MLX。"
 )
+
+
+class LMStudioSettings(BaseSettings):
+    """Shared LM Studio endpoint and credential ownership for every workload."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VR_LM_STUDIO_", env_file=".env", extra="ignore", populate_by_name=True
+    )
+
+    base_url: str = Field(
+        default=DEFAULT_LM_STUDIO_URL,
+        validation_alias=AliasChoices(
+            "base_url", "VR_LM_STUDIO_BASE_URL", "VR_INTERACTION_LLM_BASE_URL"
+        ),
+    )
+    api_key: str = Field(
+        default=DEFAULT_LM_STUDIO_API_KEY,
+        min_length=1,
+        validation_alias=AliasChoices(
+            "api_key", "VR_LM_STUDIO_API_KEY", "VR_INTERACTION_LLM_API_KEY"
+        ),
+    )
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str) -> str:
+        return _validate_service_url(value)
+
+    @field_validator("api_key", mode="before")
+    @classmethod
+    def _normalize_api_key(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 # Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
 # 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
@@ -518,6 +550,11 @@ class MeetingSettings(BaseSettings):
         default=4 * 1024 * 1024, ge=64 * 1024, le=64 * 1024 * 1024
     )
     inner_os_cancel_timeout_secs: float = Field(default=2.0, ge=0.1, le=10.0)
+    inner_os_fact_timeout_secs: float = Field(default=15.0, ge=1.0, le=120.0)
+    inner_os_analysis_timeout_secs: float = Field(default=35.0, ge=1.0, le=300.0)
+    inner_os_max_output_chars: int = Field(default=65_536, ge=2_048, le=262_144)
+    inner_os_max_context_chars: int = Field(default=48_000, ge=4_000, le=192_000)
+    inner_os_recent_context_chars: int = Field(default=16_000, ge=1_000, le=96_000)
     summary_timeout_secs: float = Field(
         default=60.0,
         ge=5.0,
@@ -633,20 +670,50 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VR_", env_file=".env", extra="ignore")
 
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)
+    lm_studio: LMStudioSettings = Field(default_factory=LMStudioSettings)
     interaction: InteractionSettings = Field(default_factory=InteractionSettings)
     subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
     meeting: MeetingSettings = Field(default_factory=MeetingSettings)
     ui: UISettings = Field(default_factory=UISettings)
 
+    @model_validator(mode="after")
+    def _synchronize_lm_studio_compatibility(self) -> Settings:
+        explicit_lm_studio = "lm_studio" in self.model_fields_set
+        explicit_interaction = "interaction" in self.model_fields_set
+        if explicit_lm_studio or (
+            not explicit_interaction and self.lm_studio.model_fields_set
+        ):
+            self.interaction = self.interaction.model_copy(
+                update={
+                    "llm_base_url": self.lm_studio.base_url,
+                    "llm_api_key": self.lm_studio.api_key,
+                }
+            )
+        else:
+            self.lm_studio = self.lm_studio.model_copy(
+                update={
+                    "base_url": self.interaction.llm_base_url,
+                    "api_key": self.interaction.llm_api_key,
+                }
+            )
+        return self
+
     def dump_table(self) -> str:
         """以可读表格输出当前生效配置（用于启动横幅与诊断）。"""
         lines = ["voice-realtime 配置"]
-        for section in (self.bridge, self.interaction, self.subtitles, self.meeting, self.ui):
+        for section in (
+            self.bridge,
+            self.lm_studio,
+            self.interaction,
+            self.subtitles,
+            self.meeting,
+            self.ui,
+        ):
             lines.append(f"\n[{type(section).__name__}]")
             for key, value in section.model_dump(by_alias=True).items():
                 safe_value = (
                     "<redacted>"
-                    if key == "database_url" or key.endswith("_api_key")
+                    if key == "database_url" or key.endswith("api_key")
                     else value
                 )
                 lines.append(f"  {key}: {safe_value}")
