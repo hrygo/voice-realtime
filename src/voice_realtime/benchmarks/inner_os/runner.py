@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +86,7 @@ def main() -> int:
     parser.add_argument("--model")
     parser.add_argument("--base-url", default="http://127.0.0.1:1234")
     parser.add_argument("--api-key", default="lm-studio")
+    parser.add_argument("--api-key-stdin", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     dataset = load_dataset(args.dataset)
@@ -92,8 +94,11 @@ def main() -> int:
         model = args.model
         if not model:
             raise SystemExit("--model is required for real P0 execution")
+        api_key = sys.stdin.readline().strip() if args.api_key_stdin else args.api_key
+        if not api_key:
+            raise SystemExit("an API key is required")
         async def run() -> None:
-            client = LMStudioClient(base_url=args.base_url, api_key=args.api_key)
+            client = LMStudioClient(base_url=args.base_url, api_key=api_key)
             try:
                 for question in dataset.questions:
                     meeting = next(
