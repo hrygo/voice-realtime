@@ -46,6 +46,7 @@ class FakeClient:
                 ),
             },
         )()
+        yield type("Event", (), {"type": "chat.end.result", "content": None})()
 
 
 async def test_start_query_preserves_frontend_query_id() -> None:

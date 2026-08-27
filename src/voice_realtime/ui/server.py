@@ -383,6 +383,17 @@ async def _initialize_meeting_backend(
                 cache_max_entries=cfg.meeting.inner_os_max_cache_entries,
                 cache_max_bytes=cfg.meeting.inner_os_max_cache_bytes,
             )
+        async def publish_meeting_event(
+            event_type: str, meeting_id: str | UUID, payload: Any
+        ) -> None:
+            if event_type == "meeting_state_changed":
+                state = payload.get("status") if isinstance(payload, dict) else None
+                if state == "finalizing" and getattr(app.state, "inner_os_service", None):
+                    await app.state.inner_os_service.cancel_meeting(
+                        UUID(str(meeting_id)),
+                        timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
+                    )
+            await broadcaster.publish_event(event_type, meeting_id, payload)
         smoother = DiarizationSmoother(
             enabled=cfg.meeting.diarization_smoothing_enabled,
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,
@@ -412,7 +423,7 @@ async def _initialize_meeting_backend(
             summary_service,
             finalization_timeout_secs=cfg.meeting.finalization_timeout_secs,
             recovery_journal=journal,
-            event_publisher=broadcaster.publish_event,
+            event_publisher=publish_meeting_event,
             diarization_smoother=smoother,
             voiceprint_manager=voiceprint_manager,
         )
@@ -525,19 +536,23 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
             return
         await websocket.accept()
         active_query: UUID | None = None
+        active_request_id: str | None = None
 
         async def emit(event_type: str, query_id: UUID, payload: dict[str, Any]) -> None:
-            nonlocal active_query
+            nonlocal active_query, active_request_id
+            envelope = {
+                "contract_version": "1",
+                "type": event_type,
+                "event_id": str(uuid4()),
+                "meeting_id": meeting_id,
+                "query_id": str(query_id),
+                "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                "payload": payload,
+            }
+            if active_request_id is not None:
+                envelope["request_id"] = active_request_id
             await websocket.send_json(
-                {
-                    "contract_version": "1",
-                    "type": event_type,
-                    "event_id": str(uuid4()),
-                    "meeting_id": meeting_id,
-                    "query_id": str(query_id),
-                    "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
-                    "payload": payload,
-                }
+                envelope
             )
             if event_type in {
                 "inner_os_answer_completed",
@@ -545,13 +560,24 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
                 "inner_os_answer_cancelled",
             }:
                 active_query = None
+                active_request_id = None
 
         try:
             while True:
                 raw = json.loads(await websocket.receive_text())
+                if not isinstance(raw, dict):
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
                 if raw.get("cmd") == "cancel":
-                    query_id = UUID(str(raw.get("query_id")))
-                    await service.cancel(query_id)
+                    try:
+                        query_id = UUID(str(raw.get("query_id")))
+                    except (ValueError, AttributeError):
+                        await websocket.close(code=1008, reason="inner_os_invalid_request")
+                        return
+                    await service.cancel(
+                        query_id,
+                        timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
+                    )
                     continue
                 if raw.get("cmd") != "query" or active_query is not None:
                     await websocket.close(code=1008, reason="inner_os_busy")
@@ -559,29 +585,68 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
                 if str(raw.get("meeting_id")) != meeting_id:
                     await websocket.close(code=1008, reason="inner_os_context_unavailable")
                     return
-                focus = tuple(UUID(str(item)) for item in raw.get("focus_segment_ids", ()))
+                question = str(raw.get("question", "")).strip()
+                intent = str(raw.get("intent", "fact"))
+                if not 1 <= len(question) <= 2000:
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                if intent not in {"fact", "analysis", "draft", "mixed"}:
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                if intent in {"analysis", "mixed"} and not cfg.meeting.inner_os_analysis_enabled:
+                    await websocket.close(code=1008, reason="inner_os_intent_disabled")
+                    return
+                raw_focus = raw.get("focus_segment_ids", ())
+                if not isinstance(raw_focus, (list, tuple)) or len(raw_focus) > 32:
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                try:
+                    focus = tuple(UUID(str(item)) for item in raw_focus)
+                except (ValueError, AttributeError):
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                if len(set(focus)) != len(focus):
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                raw_context = raw.get("ephemeral_context")
+                if raw_context is not None and not isinstance(raw_context, dict):
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                ephemeral_context: dict[str, str] = {}
+                context_limits = {"goal": 1000, "agenda": 1000, "background": 2000}
+                for key, max_length in context_limits.items():
+                    value = raw_context.get(key) if isinstance(raw_context, dict) else None
+                    if value is None:
+                        continue
+                    text = str(value).strip()
+                    if len(text) > max_length:
+                        await websocket.close(code=1008, reason="inner_os_invalid_request")
+                        return
+                    if text:
+                        ephemeral_context[key] = text
+                request_id = str(raw.get("request_id", "")).strip()
+                if not request_id or len(request_id) > 64:
+                    await websocket.close(code=1008, reason="inner_os_invalid_request")
+                    return
+                active_request_id = request_id
                 active_query = await service.start_query(
                     meeting_id=UUID(meeting_id),
                     query_id=(
                         UUID(str(raw["query_id"])) if raw.get("query_id") else None
                     ),
-                    question=str(raw.get("question", "")).strip(),
-                    intent=str(raw.get("intent", "fact")),
+                    question=question,
+                    intent=intent,
                     focus_segment_ids=focus,
-                    ephemeral_context=(
-                        {
-                            str(key): str(value).strip()
-                            for key, value in raw.get("ephemeral_context", {}).items()
-                            if str(value).strip()
-                        }
-                        if isinstance(raw.get("ephemeral_context"), dict)
-                        else None
-                    ),
+                    ephemeral_context=ephemeral_context or None,
                     emit=emit,
                 )
         except WebSocketDisconnect:
             if active_query is not None:
-                await service.cancel(active_query)
+                await service.cancel(
+                    active_query,
+                    reason="connection_closed",
+                    timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
+                )
 
     @app.websocket("/ws/v1/control")
     async def ws_v1_control(websocket: WebSocket) -> None:

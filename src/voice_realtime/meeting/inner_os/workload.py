@@ -25,10 +25,19 @@ class LocalLLMWorkloadGate:
         return True
 
     @asynccontextmanager
-    async def slot(self, owner: str, *, background: bool = False) -> AsyncIterator[None]:
+    async def slot(
+        self,
+        owner: str,
+        *,
+        background: bool = False,
+        acquire_timeout_secs: float | None = None,
+    ) -> AsyncIterator[None]:
         if background and self._recording:
             raise RuntimeError("background model admission paused during recording")
-        await self._slot.acquire()
+        if acquire_timeout_secs is None:
+            await self._slot.acquire()
+        else:
+            await asyncio.wait_for(self._slot.acquire(), timeout=acquire_timeout_secs)
         try:
             yield
         finally:

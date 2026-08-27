@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import binascii
 from typing import Any
 from uuid import UUID
 
@@ -83,7 +84,7 @@ def install_inner_os_api(app: Any) -> APIRouter:
         _, _, repository = repositories(request)
         try:
             items, next_cursor = await repository.list(meeting_id, cursor, limit)
-        except (ValueError, KeyError, TypeError) as exc:
+        except (ValueError, KeyError, TypeError, binascii.Error) as exc:
             raise MeetingAPIError(
                 "inner_os_invalid_cursor", "分页游标无效", status_code=400
             ) from exc
