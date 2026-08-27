@@ -88,8 +88,8 @@ docs/
 │       └── target-domain-preflight-v1/README.md
 │
 └── superpowers/                           # ⚡ 历史执行计划与规格 (Plans & Specs 归档)
-    ├── plans/                             # 历史研发执行计划 (10 份)
-    └── specs/                             # 历史设计规格 (10 份)
+    ├── plans/                             # 研发执行计划 (11 份，含当前草案与历史归档)
+    └── specs/                             # 设计规格 (11 份，含当前评审稿与历史归档)
 ```
 
 ---
@@ -141,6 +141,7 @@ graph TD
 | [Qwen3-ASR 实时语音转文字开发对接手册](manuals/Qwen3-ASR-实时语音转文字开发对接手册.md) | 🟢 `active` | `manual` | `v1.0` | **Qwen3-ASR 开发对接手册**：WebSocket / REST 音频流式与文件转写对接指南 |
 | [会议助手后端运行与前后端联调手册](manuals/会议助手后端运行与前后端联调.md) | 🟢 `active` | `manual` | `v1.0` | 会议助手运行手册、PostgreSQL 数据库准备、接口定义与前后端联调规范 |
 | [Voice Studio UI 设计方案](manuals/Voice-Studio-UI-设计方案.md) | 🟢 `active` | `guide` | `v1.0` | 前端控制台架构设计、单源麦克风控制面、组件状态机与交互契约 |
+| [Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案](manuals/Voice-Studio-会议助手-内心OS-UI-UX-设计方案.md) | 🟢 `active` | `specification` | `v1.0` | **内心 OS 专属设计方案**：私密副驾驶信息架构、事实/判断/草稿三层卡片、证据定位与状态机 |
 
 ### 4. 协作交接、联调记录与排障 (`docs/operations/`)
 
@@ -179,8 +180,8 @@ graph TD
 
 | 目录 | 数量 | 状态 | 说明 |
 |---|---|---|---|
-| [superpowers/plans/](superpowers/plans/) | 10 份执行计划 | 🟣 `implemented` | 历史功能迭代与重构的详细任务清单（含任务 Checkbox 跟踪） |
-| [superpowers/specs/](superpowers/specs/) | 10 份设计规格 | 🟣 `implemented` | 历史功能迭代与技术整改的详细设计规格与验证标准 |
+| [superpowers/plans/](superpowers/plans/) | 11 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单（含任务 Checkbox 跟踪） |
+| [superpowers/specs/](superpowers/specs/) | 11 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准 |
 
 ---
 
