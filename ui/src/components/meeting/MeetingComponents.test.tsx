@@ -307,15 +307,16 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(container.textContent).toContain("已确认 4 个发言片段");
     expect(container.textContent).toContain("时序视图");
     expect(container.textContent).toContain("阅读视图");
-    expect(container.textContent).toContain("结束会议并生成纪要");
+    expect(container.textContent).toContain("结束会议");
     expect(container.textContent).toContain("张三 (架构师)");
     expect(container.textContent).toContain("正在输入的临时转录片段...");
 
-    // Verify de-duplication: no redundant inline sidebar toggle in recording toolbar
+    // Verify de-duplication: no redundant inline sidebar/mic toggle in recording toolbar
     expect(container.querySelector(".btn-sidebar-toggle-inline")).toBeNull();
+    // Mic button removed — handled exclusively by top StatusBar VU widget
+    expect(container.querySelector(".btn-mic-toggle")).toBeNull();
     expect(container.querySelector(".btn-star-action")).not.toBeNull();
     expect(container.querySelector(".btn-inneros-toggle")).not.toBeNull();
-    expect(container.querySelector(".btn-mic-toggle")).not.toBeNull();
     expect(container.querySelector(".btn-end-meeting")).not.toBeNull();
     expect(container.querySelector(".toolbar-kbd")).not.toBeNull();
 

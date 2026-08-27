@@ -329,15 +329,12 @@ export function MeetingDetailView({
                 </button>
               </div>
 
-              <span className={`status-badge-chip ${meeting.status}`}>
-                {meeting.status === "completed"
-                  ? "已完成"
-                  : meeting.status === "recording"
-                    ? "录制中"
-                    : meeting.status === "interrupted"
-                      ? "已中断"
-                      : meeting.status}
-              </span>
+              {/* 仅在 recording 状态显示动态录制徽章，completed / interrupted 是默认语义无需赘述 */}
+              {meeting.status === "recording" && (
+                <span className={`status-badge-chip ${meeting.status}`}>
+                  录制中
+                </span>
+              )}
             </div>
 
             <div className="detail-meta-row">

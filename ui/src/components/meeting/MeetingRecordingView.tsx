@@ -240,8 +240,7 @@ export function MeetingRecordingView({
               : "会议录制中，麦克风正常监听"}
       </div>
 
-      {/* Re-clustered Toolbar: Left / Center / Right */}
-      {/* Re-clustered Toolbar: Left (Status & VU) / Center (Views & Star) / Right (Inner OS & Actions) */}
+      {/* Recording Toolbar: Left (Status & VU) · Center (Views & Star) · Right (InnerOS & End) */}
       <div className="recording-toolbar">
         {/* Cluster 1 (Left): 状态与声学 */}
         <div className="toolbar-cluster cluster-status">
@@ -327,7 +326,7 @@ export function MeetingRecordingView({
           )}
         </div>
 
-        {/* Cluster 3 (Right): 副驾驶与主控 */}
+        {/* Cluster 3 (Right): 副驾驶 & 结束 — 麦克风已由顶部 StatusBar VU 控件统一管控，此处不重复 */}
         <div className="toolbar-cluster cluster-actions">
           <button
             type="button"
@@ -344,16 +343,6 @@ export function MeetingRecordingView({
 
           <button
             type="button"
-            className={`btn-toolbar-action btn-mic-toggle ${micMuted ? "is-muted" : ""}`}
-            onClick={onToggleMic}
-            title={micMuted ? "点击取消静音 (快捷键 M)" : "点击静音麦克风 (快捷键 M)"}
-          >
-            <span>{micMuted ? "🔇 已静音" : "🎤 麦克风"}</span>
-            <kbd className="toolbar-kbd">M</kbd>
-          </button>
-
-          <button
-            type="button"
             className={`btn-end-meeting ${isEnding ? "is-ending" : ""}`}
             onClick={() => void onEndMeeting()}
             disabled={isEnding}
@@ -364,7 +353,7 @@ export function MeetingRecordingView({
             ) : (
               <span>⏹️</span>
             )}
-            <span>{isEnding ? "正在冲刷并封存..." : "结束会议并生成纪要"}</span>
+            <span>{isEnding ? "正在冲刷并封存..." : "结束会议"}</span>
           </button>
         </div>
       </div>

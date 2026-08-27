@@ -172,7 +172,7 @@ class InnerOSQueryService:
                 async for event in self.client.stream_chat(request):
                     if event.type == "message.delta" and event.content:
                         parts.append(event.content)
-                    if event.type == "chat.end.result":
+                    if event.type in {"chat.end", "chat.end.result"}:
                         saw_end = True
                 if not saw_end:
                     raise InnerOSServiceError(
