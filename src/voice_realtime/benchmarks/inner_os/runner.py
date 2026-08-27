@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from voice_realtime.config import InteractionSettings
 from voice_realtime.lm_studio import LMStudioClient, NativeChatRequest
 
 from .dataset import EvaluationDataset, EvaluationQuestion, Evidence, load_dataset
@@ -95,6 +96,10 @@ async def run_evaluation(
             failures[category] = failures.get(category, 0) + 1
         else:
             completed += 1
+        print(
+            f"evaluated {completed + sum(failures.values())}/{len(dataset.questions)}",
+            file=sys.stderr,
+        )
     return {
         "status": "pending_review",
         "question_count": len(dataset.questions),
@@ -110,8 +115,8 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model")
-    parser.add_argument("--base-url", default="http://127.0.0.1:1234")
-    parser.add_argument("--api-key", default="lm-studio")
+    parser.add_argument("--base-url")
+    parser.add_argument("--api-key")
     parser.add_argument("--api-key-stdin", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -120,27 +125,33 @@ def main() -> int:
         model = args.model
         if not model:
             raise SystemExit("--model is required for real P0 execution")
-        api_key = sys.stdin.readline().strip() if args.api_key_stdin else args.api_key
+        settings = InteractionSettings()
+        api_key = (
+            sys.stdin.readline().strip()
+            if args.api_key_stdin
+            else args.api_key or settings.llm_api_key
+        )
         if not api_key:
             raise SystemExit("an API key is required")
         result: dict[str, Any]
 
         async def run() -> None:
             nonlocal result
-            client = LMStudioClient(base_url=args.base_url, api_key=api_key)
+            client = LMStudioClient(
+                base_url=args.base_url or settings.llm_base_url,
+                api_key=api_key,
+            )
             try:
                 result = await run_evaluation(client, dataset, model=model)
             finally:
                 await client.aclose()
         asyncio.run(run())
-        args.output.mkdir(parents=True, exist_ok=True)
-        (args.output / "summary.json").write_text(
-            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        summary = result
+    else:
+        summary = report_for_dataset(dataset)
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "summary.json").write_text(
-        json.dumps(report_for_dataset(dataset), ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return 0
 
