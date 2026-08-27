@@ -2,5 +2,12 @@
 
 from .context import EvidenceSnapshot, InnerOSContextSnapshot, build_context_snapshot
 from .contracts import InnerOSAnswer
+from .workload import LocalLLMWorkloadGate
 
-__all__ = ["EvidenceSnapshot", "InnerOSAnswer", "InnerOSContextSnapshot", "build_context_snapshot"]
+__all__ = [
+    "EvidenceSnapshot",
+    "InnerOSAnswer",
+    "InnerOSContextSnapshot",
+    "LocalLLMWorkloadGate",
+    "build_context_snapshot",
+]
