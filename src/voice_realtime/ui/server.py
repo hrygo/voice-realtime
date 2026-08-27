@@ -38,6 +38,7 @@ from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
+from voice_realtime.meeting.inner_os.api import install_inner_os_api
 from voice_realtime.meeting.inner_os.service import InnerOSQueryService
 from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
 from voice_realtime.meeting.migrations import run_migrations
@@ -235,6 +236,7 @@ def create_app(
                 await repository.close()
 
     app = FastAPI(title="Voice Studio", version="1.3.0", lifespan=lifespan)
+    app.state.settings = cfg
     app.state.accepted_control_tasks = set()
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
@@ -373,6 +375,7 @@ async def _initialize_meeting_backend(
                 LocalLLMWorkloadGate(),
                 model=cfg.meeting.summary_model,
             )
+            install_inner_os_api(app)
         smoother = DiarizationSmoother(
             enabled=cfg.meeting.diarization_smoothing_enabled,
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,

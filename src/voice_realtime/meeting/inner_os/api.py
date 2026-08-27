@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+from typing import Any
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+
+from .repository import InnerOSExchangeRepository
+
+
+def _json(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if isinstance(value, dict):
+        return {key: _json(item) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_json(item) for item in value]
+    return value
+
+
+def _public(exchange: dict[str, Any]) -> dict[str, Any]:
+    return {key: _json(value) for key, value in exchange.items()}
+
+
+def install_inner_os_api(app: Any) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/meetings/{meeting_id}/inner-os")
+
+    def repositories(request: Request) -> tuple[Any, Any, InnerOSExchangeRepository]:
+        cfg = request.app.state.settings
+        if not cfg.meeting.inner_os_enabled:
+            raise HTTPException(status_code=404, detail="inner_os_not_found")
+        service = getattr(request.app.state, "inner_os_service", None)
+        meeting_repo = getattr(request.app.state, "meeting_repository", None)
+        if service is None or meeting_repo is None:
+            raise HTTPException(status_code=503, detail="inner_os_context_unavailable")
+        exchange_repo = getattr(request.app.state, "inner_os_exchange_repository", None)
+        if exchange_repo is None:
+            exchange_repo = InnerOSExchangeRepository(meeting_repo)
+            request.app.state.inner_os_exchange_repository = exchange_repo
+        return service, meeting_repo, exchange_repo
+
+    @router.put("/exchanges/{exchange_id}", status_code=status.HTTP_201_CREATED)
+    async def save_exchange(
+        meeting_id: UUID, exchange_id: UUID, request: Request
+    ) -> dict[str, Any]:
+        service, _, repository = repositories(request)
+        exchange = service.take_completed(exchange_id)
+        if exchange is None or exchange["meeting_id"] != meeting_id:
+            existing = await repository.get(meeting_id, exchange_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail="inner_os_not_found")
+            return _public(existing)
+        return _public(await repository.save(exchange))
+
+    @router.get("/exchanges")
+    async def list_exchanges(
+        meeting_id: UUID,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        _, _, repository = repositories(request)
+        try:
+            items, next_cursor = await repository.list(meeting_id, cursor, limit)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="invalid_cursor") from exc
+        return {"items": [_public(item) for item in items], "next_cursor": next_cursor}
+
+    @router.get("/exchanges/{exchange_id}")
+    async def get_exchange(meeting_id: UUID, exchange_id: UUID, request: Request) -> dict[str, Any]:
+        _, _, repository = repositories(request)
+        exchange = await repository.get(meeting_id, exchange_id)
+        if exchange is None:
+            raise HTTPException(status_code=404, detail="inner_os_not_found")
+        return _public(exchange)
+
+    @router.delete("/exchanges/{exchange_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_exchange(meeting_id: UUID, exchange_id: UUID, request: Request) -> Response:
+        _, _, repository = repositories(request)
+        await repository.delete(meeting_id, exchange_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    app.include_router(router)
+    return router
