@@ -79,6 +79,32 @@ async def evaluate_question(
     return "".join(parts)
 
 
+async def run_evaluation(
+    client: LMStudioClient, dataset: EvaluationDataset, *, model: str
+) -> dict[str, Any]:
+    completed = 0
+    failures: dict[str, int] = {}
+    for question in dataset.questions:
+        meeting = next(
+            item for item in dataset.meetings if item.meeting_id == question.meeting_id
+        )
+        try:
+            await evaluate_question(client, question, list(meeting.segments), model=model)
+        except Exception as exc:
+            category = type(exc).__name__
+            failures[category] = failures.get(category, 0) + 1
+        else:
+            completed += 1
+    return {
+        "status": "pending_review",
+        "question_count": len(dataset.questions),
+        "completed_count": completed,
+        "failed_count": len(dataset.questions) - completed,
+        "failure_categories": failures,
+        "review_required": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the local Inner OS P0 benchmark")
     parser.add_argument("--dataset", type=Path, required=True)
@@ -97,17 +123,20 @@ def main() -> int:
         api_key = sys.stdin.readline().strip() if args.api_key_stdin else args.api_key
         if not api_key:
             raise SystemExit("an API key is required")
+        result: dict[str, Any]
+
         async def run() -> None:
+            nonlocal result
             client = LMStudioClient(base_url=args.base_url, api_key=api_key)
             try:
-                for question in dataset.questions:
-                    meeting = next(
-                        item for item in dataset.meetings if item.meeting_id == question.meeting_id
-                    )
-                    await evaluate_question(client, question, list(meeting.segments), model=model)
+                result = await run_evaluation(client, dataset, model=model)
             finally:
                 await client.aclose()
         asyncio.run(run())
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "summary.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "summary.json").write_text(
         json.dumps(report_for_dataset(dataset), ensure_ascii=False, indent=2) + "\n",

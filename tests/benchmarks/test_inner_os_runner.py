@@ -7,6 +7,7 @@ from voice_realtime.benchmarks.inner_os.runner import (
     evaluate_question,
     load_ratings,
     report_for_dataset,
+    run_evaluation,
 )
 
 ROOT = Path(__file__).parents[1] / "fixtures" / "inner_os"
@@ -48,6 +49,19 @@ async def test_runner_consumes_only_message_deltas() -> None:
         FakeClient(), dataset.questions[0], [dataset.meetings[0].segments[0]]
     )
     assert answer == "answer"
+
+
+async def test_real_evaluation_returns_only_transport_aggregates() -> None:
+    class FakeClient:
+        async def stream_chat(self, request):
+            from voice_realtime.lm_studio import NativeChatEvent
+
+            yield NativeChatEvent(type="message.delta", content="answer")
+            yield NativeChatEvent(type="chat.end")
+
+    result = await run_evaluation(FakeClient(), load_dataset(ROOT), model="m")
+    assert result["completed_count"] == 40
+    assert "answer" not in json.dumps(result)
 
 
 def test_load_ratings_rejects_content_bearing_fields(tmp_path: Path) -> None:
