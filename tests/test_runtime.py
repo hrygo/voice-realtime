@@ -160,6 +160,8 @@ def test_runtime_constructs_one_idle_coordinator_and_broadcaster(
     assert runtime.mode_coordinator.pcm_owner is PCMOwner.NONE
     assert runtime.snapshot().runtime_revision == 0
     assert runtime.runtime_events is not None
+    assert runtime.snapshot().capabilities.inner_os_enabled is False
+    assert runtime.snapshot().capabilities.inner_os_channel == "loopback_only"
     with pytest.raises(AttributeError):
         runtime.mode_coordinator = MagicMock()
 

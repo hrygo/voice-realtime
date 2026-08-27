@@ -25,6 +25,11 @@ EVENT_SCHEMA_FILES = {
 REQUIRED_ASYNCAPI_REFERENCES = tuple(
     f"./schemas/{filename}" for filename in EVENT_SCHEMA_FILES.values()
 )
+INNER_OS_FIXTURE_FILES = {
+    "inner-os-completed.json",
+    "inner-os-insufficient.json",
+    "inner-os-invalid-focus.json",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -48,12 +53,18 @@ def validate_contract(repository_root: Path) -> tuple[int, int]:
         "/api/v1/runtime",
         "/api/v1/meetings",
         "/api/v1/meetings/{meeting_id}/transcript",
+        "/api/v1/meetings/{meeting_id}/inner-os/exchanges",
     }
     if not required_paths.issubset(openapi.get("paths", {})):
         raise ValueError("OpenAPI is missing a canonical meeting path")
 
     asyncapi = (contract_root / "asyncapi.yaml").read_text(encoding="utf-8")
-    for marker in ("address: /ws/v1/control", "address: /ws/v1/meetings", "start_subtitles"):
+    for marker in (
+        "address: /ws/v1/control",
+        "address: /ws/v1/meetings",
+        "address: /ws/v1/meetings/{meeting_id}/inner-os",
+        "start_subtitles",
+    ):
         if marker not in asyncapi:
             raise ValueError(f"AsyncAPI is missing required marker: {marker}")
     for reference in REQUIRED_ASYNCAPI_REFERENCES:
@@ -66,6 +77,13 @@ def validate_contract(repository_root: Path) -> tuple[int, int]:
     Draft202012Validator.check_schema(envelope)
     envelope_validator = Draft202012Validator(envelope, format_checker=format_checker)
 
+    inner_os_envelope_path = schema_root / "inner-os-event.schema.json"
+    inner_os_envelope = _load_json(inner_os_envelope_path)
+    Draft202012Validator.check_schema(inner_os_envelope)
+    inner_os_envelope_validator = Draft202012Validator(
+        inner_os_envelope, format_checker=format_checker
+    )
+
     schemas = sorted(schema_root.glob("*.json"))
     for schema_path in schemas:
         Draft202012Validator.check_schema(_load_json(schema_path))
@@ -75,6 +93,11 @@ def validate_contract(repository_root: Path) -> tuple[int, int]:
         raise ValueError("no meeting contract fixtures found")
     fixture_types: set[str] = set()
     for fixture_path in fixtures:
+        if fixture_path.name in INNER_OS_FIXTURE_FILES:
+            fixture = _load_json(fixture_path)
+            inner_os_envelope_validator.validate(fixture)
+            continue
+
         fixture = _load_json(fixture_path)
         event_type = fixture.get("type")
         if not isinstance(event_type, str) or event_type not in EVENT_SCHEMA_FILES:

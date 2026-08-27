@@ -679,10 +679,15 @@ def test_contract_artifacts_and_fixtures_are_loadable() -> None:
     assert schema_files
     assert fixture_files
     event_schema = json.loads((root / "schemas/event-envelope.schema.json").read_text())
+    inner_os_event_schema = json.loads((root / "schemas/inner-os-event.schema.json").read_text())
     validator = Draft202012Validator(event_schema, format_checker=FormatChecker())
+    inner_os_validator = Draft202012Validator(inner_os_event_schema, format_checker=FormatChecker())
     for fixture in fixture_files:
         value = json.loads(fixture.read_text())
-        validator.validate(value)
+        if fixture.name.startswith("inner-os-"):
+            inner_os_validator.validate(value)
+        else:
+            validator.validate(value)
 
 
 @pytest.mark.asyncio

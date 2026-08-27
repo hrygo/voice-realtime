@@ -132,6 +132,16 @@ ControlCommand = Annotated[
 _COMMAND_ADAPTER: TypeAdapter[ControlCommand] = TypeAdapter(ControlCommand)
 
 
+class RuntimeCapabilities(BaseModel):
+    """只读能力声明，不包含模型、prompt 或缓存内容。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    inner_os_enabled: bool = False
+    inner_os_analysis_enabled: bool = False
+    inner_os_channel: Literal["loopback_only"] = "loopback_only"
+
+
 class RuntimeStateSnapshot(BaseModel):
     """服务端权威运行状态；连接建立和每次命令后完整返回。"""
 
@@ -151,6 +161,7 @@ class RuntimeStateSnapshot(BaseModel):
     meeting_started_at: str | None = None
     storage: StorageHealth = StorageHealth.OK
     runtime_revision: int = Field(default=0, ge=0)
+    capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
 
 
 class ErrorCode(StrEnum):

@@ -20,7 +20,7 @@ from voice_realtime.meeting.runtime_mode import (
     RuntimeModeCoordinator,
 )
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
-from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from voice_realtime.ui.protocol import DuplexMode, RuntimeCapabilities, RuntimeStateSnapshot
 from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
@@ -205,6 +205,11 @@ class UIRuntime:
             meeting_started_at=meeting_started_at,
             storage=coordinator.storage,
             runtime_revision=coordinator.runtime_revision,
+            capabilities=RuntimeCapabilities(
+                inner_os_enabled=self._settings.meeting.inner_os_enabled,
+                inner_os_analysis_enabled=self._settings.meeting.inner_os_analysis_enabled,
+                inner_os_channel="loopback_only",
+            ),
         )
 
     def diagnostics(self) -> dict[str, Any]:

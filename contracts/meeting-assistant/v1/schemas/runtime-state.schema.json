@@ -6,14 +6,23 @@
   "additionalProperties": true,
   "required": ["mode"],
   "properties": {
-    "mode": {"enum": ["assistant", "meeting", "idle"]},
-    "active_meeting_id": {"type": ["string", "null"]},
-    "meeting_state": {"type": ["string", "null"]},
-    "meeting_started_at": {"type": ["string", "null"], "format": "date-time"},
-    "pipeline": {"type": "string"},
-    "subtitle": {"type": "string"},
-    "storage": {"type": "string"},
-    "mic_muted": {"type": "boolean"},
-    "runtime_revision": {"type": "integer", "minimum": 0}
+    "mode": { "enum": ["assistant", "meeting", "idle"] },
+    "active_meeting_id": { "type": ["string", "null"] },
+    "meeting_state": { "type": ["string", "null"] },
+    "meeting_started_at": { "type": ["string", "null"], "format": "date-time" },
+    "pipeline": { "type": "string" },
+    "subtitle": { "type": "string" },
+    "storage": { "type": "string" },
+    "mic_muted": { "type": "boolean" },
+    "runtime_revision": { "type": "integer", "minimum": 0 },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inner_os_enabled": { "type": "boolean" },
+        "inner_os_analysis_enabled": { "type": "boolean" },
+        "inner_os_channel": { "enum": ["loopback_only", "disabled", "any"] }
+      }
+    }
   }
 }

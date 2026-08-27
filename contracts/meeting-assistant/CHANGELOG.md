@@ -1,5 +1,19 @@
 # Meeting Assistant Contract Changelog
 
+## [1.2.0] - 2026-08-27
+
+### Added
+
+- 新增 `/ws/v1/meetings/{meeting_id}/inner-os` 私有 WebSocket 交互通道，支持单连接私密问答与取消操作。
+- 新增 `InnerOSQueryCommand`、`InnerOSCancelCommand`、`InnerOSEventEnvelope`、`InnerOSAnswer`、`InnerOSExchange` 模式定义。
+- 新增 Inner OS 持久化与查询 REST 端点：`PUT/GET/DELETE /api/v1/meetings/{meeting_id}/inner-os/exchanges/{exchange_id}` 及 `GET /api/v1/meetings/{meeting_id}/inner-os/exchanges`。
+- `RuntimeState` 新增只读 `capabilities`（`inner_os_enabled`, `inner_os_analysis_enabled`, `inner_os_channel`）。
+- 新增标准 fixtures: `inner-os-completed.json`, `inner-os-insufficient.json`, `inner-os-invalid-focus.json`。
+
+### Compatibility
+
+- 所有新接口、通道、字段与事件均为 additive；原有 `/ws/v1/meetings` 和既有 REST 接口语义保持不变。
+
 ## [1.1.0] - 2026-08-26
 
 ### Added

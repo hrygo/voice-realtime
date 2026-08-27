@@ -508,6 +508,13 @@ class MeetingSettings(BaseSettings):
     summary_model: str = Field(default="qwen/qwen3.6-35b-a3b", description="会后纪要模型 ID")
     summary_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     summary_reasoning: str = Field(default="off", description="纪要推理开关，首版固定 off")
+    inner_os_enabled: bool = Field(default=False, description="是否启用会议内心 OS")
+    inner_os_analysis_enabled: bool = Field(
+        default=False, description="是否启用 Inner OS analysis/mixed 意图"
+    )
+    inner_os_cache_ttl_secs: int = Field(default=1800, ge=60, le=86_400)
+    inner_os_max_cache_entries: int = Field(default=128, ge=1, le=10_000)
+    inner_os_cancel_timeout_secs: float = Field(default=2.0, ge=0.1, le=10.0)
     summary_timeout_secs: float = Field(
         default=60.0,
         ge=5.0,

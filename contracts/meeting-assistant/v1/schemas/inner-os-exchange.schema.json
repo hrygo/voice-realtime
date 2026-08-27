@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/inner-os-exchange.schema.json",
+  "title": "InnerOSExchange",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "meeting_id",
+    "question",
+    "intent",
+    "answer",
+    "source_transcript_revision",
+    "source_content_revision",
+    "used_ephemeral_context",
+    "model",
+    "reasoning",
+    "created_at"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "meeting_id": { "type": "string", "format": "uuid" },
+    "question": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "intent": { "enum": ["fact", "analysis", "draft", "mixed"] },
+    "answer": { "$ref": "inner-os-answer.schema.json" },
+    "source_transcript_revision": { "type": "integer", "minimum": 0 },
+    "source_content_revision": { "type": "integer", "minimum": 0 },
+    "used_ephemeral_context": { "type": "boolean" },
+    "context_advanced": { "type": "boolean" },
+    "evidence_invalidated": { "type": "boolean" },
+    "model": { "type": "string" },
+    "reasoning": { "enum": ["off", "on"] },
+    "prompt_version": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

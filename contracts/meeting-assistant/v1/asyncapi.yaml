@@ -1,8 +1,8 @@
 asyncapi: 3.0.0
 info:
   title: Voice Studio Meeting Assistant WebSocket API
-  version: 1.1.0
-  description: Versioned control and meeting-event channels for the separated frontend.
+  version: 1.2.0
+  description: Versioned control, meeting-event, and private Inner OS channels for the separated frontend.
 servers:
   local:
     host: 127.0.0.1:8100
@@ -20,6 +20,15 @@ channels:
     messages:
       meetingEvent:
         $ref: '#/components/messages/MeetingEvent'
+  innerOS:
+    address: /ws/v1/meetings/{meeting_id}/inner-os
+    messages:
+      innerOSQueryCommand:
+        $ref: '#/components/messages/InnerOSQueryCommand'
+      innerOSCancelCommand:
+        $ref: '#/components/messages/InnerOSCancelCommand'
+      innerOSEvent:
+        $ref: '#/components/messages/InnerOSEvent'
 operations:
   receiveControl:
     action: receive
@@ -39,6 +48,19 @@ operations:
       $ref: '#/channels/meetings'
     messages:
       - $ref: '#/channels/meetings/messages/meetingEvent'
+  receiveInnerOSCommand:
+    action: receive
+    channel:
+      $ref: '#/channels/innerOS'
+    messages:
+      - $ref: '#/channels/innerOS/messages/innerOSQueryCommand'
+      - $ref: '#/channels/innerOS/messages/innerOSCancelCommand'
+  sendInnerOSEvent:
+    action: send
+    channel:
+      $ref: '#/channels/innerOS'
+    messages:
+      - $ref: '#/channels/innerOS/messages/innerOSEvent'
 components:
   messages:
     ControlCommand:
@@ -76,3 +98,12 @@ components:
           - $ref: './schemas/event-health-changed.schema.json'
           - $ref: './schemas/event-transcription-gap.schema.json'
           - $ref: './schemas/event-resync-required.schema.json'
+    InnerOSQueryCommand:
+      payload:
+        $ref: './schemas/inner-os-query-command.schema.json'
+    InnerOSCancelCommand:
+      payload:
+        $ref: './schemas/inner-os-cancel-command.schema.json'
+    InnerOSEvent:
+      payload:
+        $ref: './schemas/inner-os-event.schema.json'

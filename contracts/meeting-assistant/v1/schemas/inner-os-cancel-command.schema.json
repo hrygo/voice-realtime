@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/inner-os-cancel-command.schema.json",
+  "title": "InnerOSCancelCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "cmd",
+    "query_id"
+  ],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "cmd": { "const": "cancel" },
+    "query_id": { "type": "string", "format": "uuid" }
+  }
+}

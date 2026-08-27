@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/inner-os-answer.schema.json",
+  "title": "InnerOSAnswer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "intent",
+    "evidence",
+    "facts",
+    "judgements",
+    "draft",
+    "limitations"
+  ],
+  "properties": {
+    "intent": { "enum": ["fact", "analysis", "draft", "mixed"] },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "segment_id",
+          "start_ms",
+          "end_ms",
+          "speaker_key",
+          "speaker_name",
+          "text",
+          "content_hash"
+        ],
+        "properties": {
+          "segment_id": { "type": "string", "format": "uuid" },
+          "start_ms": { "type": "integer", "minimum": 0 },
+          "end_ms": { "type": "integer", "minimum": 0 },
+          "speaker_key": { "type": "string" },
+          "speaker_name": { "type": "string" },
+          "text": { "type": "string" },
+          "content_hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" }
+        }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "evidence_segment_ids"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "evidence_segment_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" },
+            "minItems": 1
+          }
+        }
+      }
+    },
+    "judgements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text", "basis_segment_ids", "uncertainty", "uncertainty_reason"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 },
+          "basis_segment_ids": {
+            "type": "array",
+            "items": { "type": "string", "format": "uuid" }
+          },
+          "uncertainty": { "enum": ["low", "medium", "high"] },
+          "uncertainty_reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "draft": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1 }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

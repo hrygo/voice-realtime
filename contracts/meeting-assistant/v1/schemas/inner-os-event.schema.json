@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/inner-os-event.schema.json",
+  "title": "InnerOSEventEnvelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "type",
+    "event_id",
+    "meeting_id",
+    "query_id",
+    "occurred_at",
+    "payload"
+  ],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "type": {
+      "enum": [
+        "inner_os_query_accepted",
+        "inner_os_answer_started",
+        "inner_os_answer_completed",
+        "inner_os_answer_failed",
+        "inner_os_answer_cancelled"
+      ]
+    },
+    "event_id": { "type": "string", "format": "uuid" },
+    "meeting_id": { "type": "string", "format": "uuid" },
+    "query_id": { "type": "string", "format": "uuid" },
+    "request_id": { "type": ["string", "null"] },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "payload": { "type": "object" }
+  }
+}

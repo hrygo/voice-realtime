@@ -19,6 +19,15 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
     assert InteractionSettings().max_session_seconds == 0
 
 
+def test_inner_os_is_disabled_by_default_and_has_bounded_limits() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.meeting.inner_os_enabled is False
+    assert settings.meeting.inner_os_analysis_enabled is False
+    assert settings.meeting.inner_os_cache_ttl_secs == 1800
+    assert settings.meeting.inner_os_max_cache_entries == 128
+    assert settings.meeting.inner_os_cancel_timeout_secs == 2.0
+
+
 def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

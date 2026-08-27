@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-studio://meeting-assistant/v1/inner-os-query-command.schema.json",
+  "title": "InnerOSQueryCommand",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "cmd",
+    "meeting_id",
+    "question",
+    "intent",
+    "context_version"
+  ],
+  "properties": {
+    "contract_version": { "const": "1" },
+    "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "cmd": { "const": "query" },
+    "meeting_id": { "type": "string", "format": "uuid" },
+    "question": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "intent": { "enum": ["fact", "analysis", "draft", "mixed"] },
+    "context_version": { "type": "integer", "minimum": 0 },
+    "ephemeral_context": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "goal": { "type": "string", "maxLength": 1000 },
+        "agenda": { "type": "string", "maxLength": 1000 },
+        "background": { "type": "string", "maxLength": 2000 }
+      }
+    },
+    "focus_segment_ids": {
+      "type": "array",
+      "items": { "type": "string", "format": "uuid" },
+      "maxItems": 32,
+      "uniqueItems": true
+    }
+  }
+}
