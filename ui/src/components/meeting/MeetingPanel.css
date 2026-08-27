@@ -2369,13 +2369,13 @@
 /* Unified sidebar treatment: the meeting history keeps its navigation role,
    but follows the assistant's grouped-card hierarchy and control density. */
 .mode-sidebar.meeting-sidebar {
-  width: 300px;
+  width: 285px;
   min-width: 285px;
   max-width: 320px;
   box-sizing: border-box;
   padding: 12px 10px;
   gap: 10px;
-  overflow: hidden;
+  position: relative;
   background: var(--bg-card-solid);
 }
 
@@ -2385,7 +2385,7 @@
   max-width: 52px !important;
   padding: 12px 6px !important;
   align-items: center !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 
 [data-theme="light"] .mode-sidebar.meeting-sidebar {

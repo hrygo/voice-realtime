@@ -1,7 +1,8 @@
-/* Shared left-sidebar language for the assistant, meeting, and subtitle workspaces. */
+/* Shared left-sidebar language for the assistant, meeting, and subtitle workspaces.
+   2026 Modern Spatial Rail & Collapsible Sidebar Design System (Linear / Notion Grade) */
 
 .mode-sidebar {
-  width: 300px;
+  width: 285px;
   min-width: 285px;
   max-width: 320px;
   height: 100%;
@@ -12,32 +13,164 @@
   gap: 10px;
   padding: 12px 10px;
   overflow: hidden;
+  position: relative;
+  contain: layout;
   background: var(--bg-card-solid);
   border-right: 1px solid var(--border);
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1), max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1), padding 0.25s ease;
+  transition:
+    width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    min-width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    max-width 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    padding 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="light"] .mode-sidebar {
   background: rgba(248, 250, 252, 0.94);
 }
 
-/* Collapsed Sidebar State */
-.mode-sidebar.is-collapsed,
-.mode-sidebar.meeting-sidebar.is-collapsed {
-  width: 52px !important;
-  min-width: 52px !important;
-  max-width: 52px !important;
-  padding: 12px 6px !important;
+/* ==========================================================================
+   Edge Resizer & Toggle Handle (Hover Zone on Border-Right)
+   ========================================================================== */
+
+.sidebar-edge-toggle-handle {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 50;
+  display: flex;
   align-items: center;
-  overflow: hidden;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.mode-sidebar:hover .sidebar-edge-toggle-handle,
+.sidebar-edge-toggle-handle:hover {
+  opacity: 1;
+}
+
+.edge-handle-pill {
+  width: 16px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--bg-card-solid, #1e293b);
+  border: 1px solid var(--border-light, rgba(255, 255, 255, 0.15));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.edge-handle-pill:hover {
+  background: var(--color-accent, #6366f1);
+  color: #ffffff;
+  transform: scale(1.1);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.55);
+}
+
+[data-theme="light"] .edge-handle-pill {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .edge-handle-pill:hover {
+  background: var(--color-accent, #6366f1);
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   Dual-State Cross-Fade Architecture
+   ========================================================================== */
+
+.meeting-sidebar-full-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition:
+    opacity 0.2s 0.05s ease-in,
+    transform 0.22s 0.05s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0.2s;
 }
 
 .meeting-sidebar-collapsed-strip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   height: 100%;
+  width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  position: absolute;
+  top: 12px;
+  left: 0;
+  padding: 0 6px;
+  box-sizing: border-box;
+  transform: scale(0.92);
+  transition:
+    opacity 0.18s ease-out,
+    transform 0.18s ease-out,
+    visibility 0.18s;
+}
+
+/* ==========================================================================
+   Collapsed Sidebar State (52px Spatial Rail)
+   ========================================================================== */
+
+.mode-sidebar.is-collapsed,
+.mode-sidebar.meeting-sidebar.is-collapsed {
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  padding: 12px 6px !important;
+  align-items: center !important;
+  overflow: visible !important;
+}
+
+.mode-sidebar.is-collapsed .meeting-sidebar-full-content {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  position: absolute;
+  transform: translateX(-12px);
+  transition:
+    opacity 0.12s ease-out,
+    transform 0.12s ease-out,
+    visibility 0.12s;
+}
+
+.mode-sidebar.is-collapsed .meeting-sidebar-collapsed-strip {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  position: relative;
+  top: 0;
+  transform: scale(1);
+  transition:
+    opacity 0.22s 0.06s ease-in,
+    transform 0.22s 0.06s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0.22s;
+}
+
+/* Action Button Wrapper for Positioning Floating Tooltips */
+.collapsed-action-btn-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
 }
 
@@ -45,14 +178,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--radius-md);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
   color: var(--text-secondary);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   font-size: 0.95rem;
 }
 
@@ -60,30 +193,321 @@
   background: var(--bg-hover);
   color: var(--text-primary);
   border-color: var(--border-light);
-  transform: translateY(-1px);
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
+.meeting-sidebar-toggle-btn.btn-expand-sidebar {
+  background: rgba(99, 102, 241, 0.12);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: var(--color-accent-light, #818cf8);
+}
+
+.meeting-sidebar-toggle-btn.btn-expand-sidebar:hover {
+  background: rgba(99, 102, 241, 0.22);
+  border-color: var(--color-accent, #6366f1);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.35);
+}
+
+/* ==========================================================================
+   Collapsed Mini Wave Recording Pulse
+   ========================================================================== */
+
 .meeting-sidebar-collapsed-pulse {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px;
-  border-radius: var(--radius-md);
-  background: rgba(244, 63, 94, 0.15);
-  border: 1px solid rgba(244, 63, 94, 0.35);
+  gap: 4px;
+  padding: 6px 4px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(244, 63, 94, 0.1));
+  border: 1px solid rgba(239, 68, 68, 0.38);
   color: #fb7185;
-  font-size: 0.7rem;
-  font-family: monospace;
+  font-size: 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
   cursor: pointer;
-  width: 38px;
+  width: 40px;
+  box-sizing: border-box;
   text-align: center;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.meeting-sidebar-collapsed-pulse:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.28), rgba(244, 63, 94, 0.18));
+  border-color: #ef4444;
+  transform: translateY(-1px) scale(1.04);
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.35);
+}
+
+.collapsed-pulse-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 
 .meeting-sidebar-collapsed-pulse .pinned-live-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+  animation: pulseLiveDot 1.4s infinite ease-in-out;
 }
+
+@keyframes pulseLiveDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.65; }
+}
+
+.collapsed-mini-wave {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 10px;
+}
+
+.mini-wave-bar {
+  width: 2px;
+  border-radius: 1px;
+  background: #fb7185;
+  animation: miniWavePulse 1.2s infinite ease-in-out;
+}
+
+.mini-wave-bar.bar-1 { height: 4px; animation-delay: 0s; }
+.mini-wave-bar.bar-2 { height: 9px; animation-delay: 0.2s; }
+.mini-wave-bar.bar-3 { height: 6px; animation-delay: 0.4s; }
+
+@keyframes miniWavePulse {
+  0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+
+.collapsed-timer {
+  font-size: 0.62rem;
+  letter-spacing: -0.02em;
+  color: #fca5a5;
+}
+
+/* ==========================================================================
+   Collapsed Recent Meetings Rail & Quick Peek
+   ========================================================================== */
+
+.collapsed-recent-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.collapsed-recent-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.collapsed-recent-item:hover {
+  transform: translateY(-1px) scale(1.05);
+  border-color: var(--border-light);
+  background: var(--bg-hover);
+}
+
+.collapsed-recent-item.active {
+  border-color: var(--color-accent);
+  background: rgba(99, 102, 241, 0.16);
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
+}
+
+.collapsed-recent-item.active .collapsed-item-avatar {
+  color: var(--color-accent-light, #818cf8);
+}
+
+.collapsed-item-avatar {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.collapsed-item-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  border: 1px solid var(--bg-card-solid);
+}
+
+.collapsed-item-dot.recording {
+  background: #ef4444;
+  box-shadow: 0 0 6px #ef4444;
+}
+
+.collapsed-item-dot.completed {
+  background: #10b981;
+}
+
+.collapsed-item-dot.finalizing {
+  background: #f59e0b;
+}
+
+/* ==========================================================================
+   Hover Flyout Preview Tooltips (Linear / Raycast Style)
+   ========================================================================== */
+
+.collapsed-item-flyout {
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 10px 25px -5px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 6px 10px;
+  white-space: nowrap;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+    visibility 0.15s;
+}
+
+.collapsed-item-flyout.action-flyout {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: #f8fafc;
+  font-weight: 500;
+}
+
+.collapsed-item-flyout::before {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: transparent rgba(15, 23, 42, 0.94) transparent transparent;
+}
+
+.collapsed-action-btn-wrapper:hover > .collapsed-item-flyout,
+.meeting-sidebar-collapsed-pulse:hover > .collapsed-item-flyout,
+.collapsed-recent-item:hover > .collapsed-item-flyout {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transform: translateY(-50%) translateX(0);
+}
+
+.flyout-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flyout-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.flyout-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #cbd5e1;
+  font-size: 0.65rem;
+  font-family: ui-monospace, monospace;
+}
+
+[data-theme="light"] .collapsed-item-flyout {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .collapsed-item-flyout::before {
+  border-color: transparent rgba(255, 255, 255, 0.96) transparent transparent;
+}
+
+[data-theme="light"] .flyout-title {
+  color: #0f172a;
+}
+
+[data-theme="light"] .flyout-meta {
+  color: #64748b;
+}
+
+[data-theme="light"] .collapsed-item-flyout.action-flyout {
+  color: #0f172a;
+}
+
+[data-theme="light"] .flyout-kbd {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #475569;
+}
+
+/* Collapsed Rail Footer */
+.collapsed-rail-footer {
+  margin-top: auto;
+  padding-bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-rail-kbd {
+  font-size: 0.62rem;
+  font-family: ui-monospace, monospace;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+/* ==========================================================================
+   Full Sidebar Content Sections
+   ========================================================================== */
 
 .mode-sidebar-scroll {
   display: flex;

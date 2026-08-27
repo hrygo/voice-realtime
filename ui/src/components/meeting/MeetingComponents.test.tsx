@@ -148,6 +148,73 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(handleReturnToActive).toHaveBeenCalledTimes(2);
   });
 
+  it("renders 2026 collapsible rail and edge handle, supporting toggle and quick actions", () => {
+    const handleToggle = vi.fn();
+    const handleSelect = vi.fn();
+    const handleReturn = vi.fn();
+    const handleNew = vi.fn();
+
+    act(() => {
+      root.render(
+        <MeetingHistorySidebar
+          historyList={[mockMeetingSummaryCompleted, mockMeetingSummaryRecording]}
+          selectedMeetingId={null}
+          activeMeetingId={mockMeetingSummaryRecording.id}
+          activeMeetingTitle="架构评审会"
+          activeStatus="recording"
+          activeStartedAt="2026-08-21T10:00:00Z"
+          isCollapsed={true}
+          isLoading={false}
+          onToggleCollapse={handleToggle}
+          onSelectMeeting={handleSelect}
+          onReturnToActive={handleReturn}
+          onNewMeeting={handleNew}
+          nextCursor={null}
+          onLoadMore={vi.fn()}
+          onDeleteMeeting={vi.fn().mockResolvedValue(undefined)}
+        />,
+      );
+    });
+
+    // 1. Edge handle presence and toggle
+    const edgeHandle = container.querySelector(".sidebar-edge-toggle-handle") as HTMLElement;
+    expect(edgeHandle).not.toBeNull();
+    act(() => {
+      edgeHandle.click();
+    });
+    expect(handleToggle).toHaveBeenCalledTimes(1);
+
+    // 2. Collapsed expand button
+    const expandBtn = container.querySelector(".btn-expand-sidebar") as HTMLButtonElement;
+    expect(expandBtn).not.toBeNull();
+    act(() => {
+      expandBtn.click();
+    });
+    expect(handleToggle).toHaveBeenCalledTimes(2);
+
+    // 3. Mini wave soundwave pulse for recording
+    const pulseCard = container.querySelector(".meeting-sidebar-collapsed-pulse.is-recording") as HTMLElement;
+    expect(pulseCard).not.toBeNull();
+    expect(container.querySelector(".collapsed-mini-wave")).not.toBeNull();
+    act(() => {
+      pulseCard.click();
+    });
+    expect(handleReturn).toHaveBeenCalledTimes(1);
+
+    // 4. Recent meetings rail & hover flyouts
+    const recentRail = container.querySelector(".collapsed-recent-rail");
+    expect(recentRail).not.toBeNull();
+    const recentItems = container.querySelectorAll(".collapsed-recent-item");
+    expect(recentItems.length).toBeGreaterThan(0);
+    expect(container.querySelector(".collapsed-item-flyout")).not.toBeNull();
+
+    // Click recent item (first item is mockMeetingSummaryCompleted)
+    act(() => {
+      (recentItems[0] as HTMLElement).click();
+    });
+    expect(handleSelect).toHaveBeenCalledWith(mockMeetingSummaryCompleted.id);
+  });
+
   it("delegates history deletion without opening a second confirmation modal", () => {
     const handleDelete = vi.fn().mockResolvedValue(undefined);
 
