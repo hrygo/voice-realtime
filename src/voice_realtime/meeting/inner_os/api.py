@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
+
+from voice_realtime.meeting.api import MeetingAPIError
 
 from .repository import InnerOSExchangeRepository
 
@@ -28,11 +30,17 @@ def install_inner_os_api(app: Any) -> APIRouter:
     def repositories(request: Request) -> tuple[Any, Any, InnerOSExchangeRepository]:
         cfg = request.app.state.settings
         if not cfg.meeting.inner_os_enabled:
-            raise HTTPException(status_code=404, detail="inner_os_not_found")
+            raise MeetingAPIError(
+                "inner_os_not_found", "内心 OS 未启用", status_code=404
+            )
         service = getattr(request.app.state, "inner_os_service", None)
         meeting_repo = getattr(request.app.state, "meeting_repository", None)
         if service is None or meeting_repo is None:
-            raise HTTPException(status_code=503, detail="inner_os_context_unavailable")
+            raise MeetingAPIError(
+                "inner_os_context_unavailable",
+                "内心 OS 上下文暂不可用",
+                status_code=503,
+            )
         exchange_repo = getattr(request.app.state, "inner_os_exchange_repository", None)
         if exchange_repo is None:
             exchange_repo = InnerOSExchangeRepository(meeting_repo)
@@ -41,15 +49,28 @@ def install_inner_os_api(app: Any) -> APIRouter:
 
     @router.put("/exchanges/{exchange_id}", status_code=status.HTTP_201_CREATED)
     async def save_exchange(
-        meeting_id: UUID, exchange_id: UUID, request: Request
+        meeting_id: UUID,
+        exchange_id: UUID,
+        request: Request,
+        response: Response,
     ) -> dict[str, Any]:
         service, _, repository = repositories(request)
+        existing = await repository.get(meeting_id, exchange_id)
+        if existing is not None:
+            response.status_code = status.HTTP_200_OK
+            return _public(existing)
+        exchange = service.peek_completed(exchange_id)
+        if exchange is None or exchange["meeting_id"] != meeting_id:
+            # Do not consume a completed result before the meeting ownership
+            # check; a malformed cross-meeting request must be harmless.
+            raise MeetingAPIError(
+                "inner_os_not_found", "内心 OS 问答不存在", status_code=404
+            )
         exchange = service.take_completed(exchange_id)
         if exchange is None or exchange["meeting_id"] != meeting_id:
-            existing = await repository.get(meeting_id, exchange_id)
-            if existing is None:
-                raise HTTPException(status_code=404, detail="inner_os_not_found")
-            return _public(existing)
+            raise MeetingAPIError(
+                "inner_os_not_found", "内心 OS 问答不存在", status_code=404
+            )
         return _public(await repository.save(exchange))
 
     @router.get("/exchanges")
@@ -62,8 +83,10 @@ def install_inner_os_api(app: Any) -> APIRouter:
         _, _, repository = repositories(request)
         try:
             items, next_cursor = await repository.list(meeting_id, cursor, limit)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="invalid_cursor") from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise MeetingAPIError(
+                "inner_os_invalid_cursor", "分页游标无效", status_code=400
+            ) from exc
         return {"items": [_public(item) for item in items], "next_cursor": next_cursor}
 
     @router.get("/exchanges/{exchange_id}")
@@ -71,7 +94,9 @@ def install_inner_os_api(app: Any) -> APIRouter:
         _, _, repository = repositories(request)
         exchange = await repository.get(meeting_id, exchange_id)
         if exchange is None:
-            raise HTTPException(status_code=404, detail="inner_os_not_found")
+            raise MeetingAPIError(
+                "inner_os_not_found", "内心 OS 问答不存在", status_code=404
+            )
         return _public(exchange)
 
     @router.delete("/exchanges/{exchange_id}", status_code=status.HTTP_204_NO_CONTENT)

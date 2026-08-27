@@ -128,6 +128,8 @@ export interface InnerOSQueryCommand {
   readonly contract_version: "1";
   readonly request_id: string;
   readonly cmd: "query";
+  /** Optional for older clients; when present it is reused as the canonical query/exchange ID. */
+  readonly query_id?: string;
   readonly meeting_id: string;
   readonly question: string;
   readonly intent: InnerOSIntent;

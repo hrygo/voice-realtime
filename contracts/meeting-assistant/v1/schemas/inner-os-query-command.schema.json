@@ -17,6 +17,7 @@
     "contract_version": { "const": "1" },
     "request_id": { "type": "string", "minLength": 1, "maxLength": 64 },
     "cmd": { "const": "query" },
+    "query_id": { "type": "string", "format": "uuid" },
     "meeting_id": { "type": "string", "format": "uuid" },
     "question": { "type": "string", "minLength": 1, "maxLength": 2000 },
     "intent": { "enum": ["fact", "analysis", "draft", "mixed"] },

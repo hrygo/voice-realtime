@@ -514,6 +514,9 @@ class MeetingSettings(BaseSettings):
     )
     inner_os_cache_ttl_secs: int = Field(default=1800, ge=60, le=86_400)
     inner_os_max_cache_entries: int = Field(default=128, ge=1, le=10_000)
+    inner_os_max_cache_bytes: int = Field(
+        default=4 * 1024 * 1024, ge=64 * 1024, le=64 * 1024 * 1024
+    )
     inner_os_cancel_timeout_secs: float = Field(default=2.0, ge=0.1, le=10.0)
     summary_timeout_secs: float = Field(
         default=60.0,

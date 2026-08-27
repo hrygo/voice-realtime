@@ -231,6 +231,9 @@ def create_app(
             summary_service = getattr(app.state, "meeting_summary_service", None)
             if summary_service is not None:
                 await summary_service.stop()
+            inner_os_service = getattr(app.state, "inner_os_service", None)
+            if inner_os_service is not None:
+                await inner_os_service.close()
             repository = getattr(app.state, "meeting_repository", None)
             if repository is not None:
                 await repository.close()
@@ -376,6 +379,9 @@ async def _initialize_meeting_backend(
                 inner_os_client,
                 LocalLLMWorkloadGate(),
                 model=cfg.meeting.summary_model,
+                cache_ttl_secs=cfg.meeting.inner_os_cache_ttl_secs,
+                cache_max_entries=cfg.meeting.inner_os_max_cache_entries,
+                cache_max_bytes=cfg.meeting.inner_os_max_cache_bytes,
             )
         smoother = DiarizationSmoother(
             enabled=cfg.meeting.diarization_smoothing_enabled,
@@ -556,9 +562,21 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
                 focus = tuple(UUID(str(item)) for item in raw.get("focus_segment_ids", ()))
                 active_query = await service.start_query(
                     meeting_id=UUID(meeting_id),
+                    query_id=(
+                        UUID(str(raw["query_id"])) if raw.get("query_id") else None
+                    ),
                     question=str(raw.get("question", "")).strip(),
                     intent=str(raw.get("intent", "fact")),
                     focus_segment_ids=focus,
+                    ephemeral_context=(
+                        {
+                            str(key): str(value).strip()
+                            for key, value in raw.get("ephemeral_context", {}).items()
+                            if str(value).strip()
+                        }
+                        if isinstance(raw.get("ephemeral_context"), dict)
+                        else None
+                    ),
                     emit=emit,
                 )
         except WebSocketDisconnect:

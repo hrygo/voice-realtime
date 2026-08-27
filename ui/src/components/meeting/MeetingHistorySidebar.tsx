@@ -291,7 +291,7 @@ export function MeetingHistorySidebar({
       <div className="meeting-sidebar-full-content" aria-hidden={isCollapsed}>
         <div className="sidebar-header meeting-sidebar-header">
           <h2 className="sidebar-title meeting-sidebar-title">
-            <span className="mode-sidebar-group-icon">
+            <span className="sidebar-header-icon">
               <FolderIcon size={16} />
             </span>
             <span className="meeting-sidebar-title-copy">
@@ -362,16 +362,7 @@ export function MeetingHistorySidebar({
         <div className="mode-sidebar-scroll">
           {/* 置顶正在进行的会议专属动态卡片 */}
           {isMeetingActive && (
-            <section className="mode-sidebar-group meeting-sidebar-group meeting-sidebar-group-status">
-              <div className="mode-sidebar-group-header">
-                <span className="mode-sidebar-group-title">
-                  <span className="mode-sidebar-group-icon">🎙️</span>
-                  当前会议
-                </span>
-                <span className="meeting-sidebar-status-label">
-                  {activeStatus === "recording" ? "录制中" : "封存中"}
-                </span>
-              </div>
+            <div className="pinned-active-container meeting-sidebar-group-status">
               <div
                 className={`pinned-active-meeting ${!selectedMeetingId ? "is-current-view" : "is-background"}`}
                 onClick={onReturnToActive}
@@ -407,17 +398,11 @@ export function MeetingHistorySidebar({
                   </span>
                 </div>
               </div>
-            </section>
+            </div>
           )}
 
-          <section className="mode-sidebar-group meeting-sidebar-group meeting-sidebar-group-controls">
-            <div className="mode-sidebar-group-header">
-              <span className="mode-sidebar-group-title">
-                <span className="mode-sidebar-group-icon">⌕</span>
-                查找会议
-              </span>
-            </div>
-
+          {/* 搜索与状态筛选控制栏 */}
+          <div className="history-search-and-filter meeting-sidebar-group-controls">
             <div className="history-search-wrap">
               <span className="history-search-icon">
                 <SearchIcon size={13} />
@@ -467,15 +452,15 @@ export function MeetingHistorySidebar({
                 已完成
               </button>
             </div>
-          </section>
+          </div>
 
-          <section className="mode-sidebar-group meeting-sidebar-group meeting-sidebar-group-history">
-            <div className="mode-sidebar-group-header">
-              <span className="mode-sidebar-group-title">
-                <span className="mode-sidebar-group-icon">☷</span>
-                历史列表
+          {/* 历史会议列表 */}
+          <div className="history-list-section meeting-sidebar-group-history">
+            <div className="history-list-section-header">
+              <span className="history-list-section-title">
+                会议记录
               </span>
-              <span className="mode-sidebar-group-meta">{filteredList.length}</span>
+              <span className="history-list-section-count">{filteredList.length}</span>
             </div>
 
             <div className="history-list">
@@ -548,7 +533,7 @@ export function MeetingHistorySidebar({
                 </button>
               )}
             </div>
-          </section>
+          </div>
         </div>
       </div>
     </aside>

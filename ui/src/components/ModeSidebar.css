@@ -606,8 +606,27 @@
   letter-spacing: 0.04em;
 }
 
+.sidebar-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent-light, #818cf8);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+}
+
 .mode-sidebar-group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 0.85rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0;
   opacity: 0.85;
 }
 

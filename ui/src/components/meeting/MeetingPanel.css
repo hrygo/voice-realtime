@@ -2464,77 +2464,168 @@
   white-space: nowrap;
 }
 
-.meeting-sidebar-group-status .pinned-active-meeting {
-  margin: 0;
+.pinned-active-container {
+  padding: 2px 2px 6px 2px;
 }
 
-.meeting-sidebar .mode-sidebar-group-history {
-  flex: 1 1 auto;
-  min-height: 180px;
-  overflow: hidden;
-}
-
-.meeting-sidebar .history-list {
-  min-height: 0;
-  padding: 0;
-  overflow-y: auto;
+.history-search-and-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 2px 8px 2px;
+  border-bottom: 1px solid var(--border-dim);
 }
 
 .meeting-sidebar .history-search-wrap {
-  min-height: 32px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 30px;
   padding: 0;
   border-bottom: 0;
 }
 
 .meeting-sidebar .history-search-icon {
-  left: 10px;
+  position: absolute;
+  left: 9px;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.history-search-input {
+  width: 100%;
+  padding: 5px 22px 5px 27px;
+  font-size: 0.74rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  outline: none;
+  transition: all 0.15s ease;
+  box-sizing: border-box;
+}
+
+.history-search-input:focus {
+  border-color: var(--color-accent);
+  background: var(--bg-secondary);
+  box-shadow: 0 0 0 2px var(--color-accent-glow);
 }
 
 .meeting-sidebar .history-search-clear {
-  right: 8px;
+  position: absolute;
+  right: 7px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.meeting-sidebar .history-search-clear:hover {
+  color: var(--text-primary);
 }
 
 .meeting-filter-group {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
+  background: var(--bg-tertiary);
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-dim);
 }
 
 .meeting-filter-button {
-  min-height: 28px;
-  padding: 4px 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
+  min-height: 24px;
+  padding: 2px 2px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 0.68rem;
   font-weight: 500;
+  text-align: center;
   transition: all 0.15s ease;
 }
 
-.meeting-filter-button:hover {
-  border-color: var(--color-accent);
+.meeting-filter-button:hover:not(.active) {
   color: var(--text-primary);
+  background: var(--bg-hover);
 }
 
 .meeting-filter-button.active {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--color-accent) 16%, var(--bg-secondary));
-  color: var(--color-accent-light);
+  background: var(--bg-card-solid);
+  color: var(--text-primary);
   font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .meeting-filter-button.active {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .meeting-filter-button.active.recording {
-  border-color: color-mix(in srgb, var(--color-red) 45%, transparent);
-  background: color-mix(in srgb, var(--color-red) 12%, var(--bg-secondary));
-  color: var(--color-red);
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
 }
 
 .meeting-filter-button.active.completed {
-  border-color: color-mix(in srgb, var(--color-green) 45%, transparent);
-  background: color-mix(in srgb, var(--color-green) 12%, var(--bg-secondary));
-  color: var(--color-green);
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+}
+
+/* History List Section */
+.history-list-section {
+  flex: 1 1 auto;
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  padding-top: 4px;
+}
+
+.history-list-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px;
+}
+
+.history-list-section-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.history-list-section-count {
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-dim);
+}
+
+.meeting-sidebar .history-list {
+  min-height: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .meeting-sidebar .history-delete-btn {
@@ -3241,14 +3332,25 @@
   border-right-color: color-mix(in srgb, var(--meeting-accent) 16%, var(--border));
 }
 
-.meeting-workspace .mode-sidebar-group-icon {
-  background: color-mix(in srgb, var(--meeting-accent) 13%, var(--bg-secondary));
+.meeting-workspace .sidebar-header-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--meeting-accent-light);
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 0 !important;
 }
 
-.meeting-workspace .mode-sidebar-group:hover,
-.meeting-workspace .meeting-sidebar .btn-refresh-history:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--meeting-accent) 38%, var(--border));
+.meeting-workspace .mode-sidebar-group-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
+  color: var(--text-muted);
 }
 
 .meeting-workspace .btn-primary,

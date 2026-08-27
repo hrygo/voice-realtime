@@ -162,6 +162,7 @@ export function useInnerOSSocket({ meetingId, enabled = true }: UseInnerOSSocket
         contract_version: "1",
         request_id: requestId,
         cmd: "query",
+        query_id: queryId,
         meeting_id: meetingId,
         question: question.trim(),
         intent,
