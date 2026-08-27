@@ -1,0 +1,11 @@
+{
+  "status": "pending_review",
+  "model": "qwen/qwen3.6-35b-a3b",
+  "question_count": 40,
+  "completed_count": 40,
+  "failed_count": 0,
+  "failure_categories": {},
+  "metrics": null,
+  "verdict": null,
+  "review_required": true
+}
