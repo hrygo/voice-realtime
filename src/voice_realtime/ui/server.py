@@ -19,7 +19,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -29,11 +29,17 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
-from voice_realtime.lm_studio import lm_studio_auth_headers, lm_studio_openai_models_url
+from voice_realtime.lm_studio import (
+    LMStudioClient,
+    lm_studio_auth_headers,
+    lm_studio_openai_models_url,
+)
 from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
+from voice_realtime.meeting.inner_os.service import InnerOSQueryService
+from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
 from voice_realtime.meeting.migrations import run_migrations
 from voice_realtime.meeting.models import RuntimeMode
 from voice_realtime.meeting.recovery import RecoveryJournal
@@ -356,6 +362,17 @@ async def _initialize_meeting_backend(
             cfg.meeting,
             event_publisher=broadcaster.publish_event,
         )
+        if cfg.meeting.inner_os_enabled:
+            inner_os_client = LMStudioClient(
+                base_url=cfg.interaction.llm_base_url,
+                api_key=cfg.interaction.llm_api_key,
+            )
+            app.state.inner_os_service = InnerOSQueryService(
+                repository,
+                inner_os_client,
+                LocalLLMWorkloadGate(),
+                model=cfg.meeting.summary_model,
+            )
         smoother = DiarizationSmoother(
             enabled=cfg.meeting.diarization_smoothing_enabled,
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,
@@ -482,6 +499,67 @@ def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
             sender.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await sender
+
+    @app.websocket("/ws/v1/meetings/{meeting_id}/inner-os")
+    async def ws_inner_os(websocket: WebSocket, meeting_id: str) -> None:
+        if (
+            not cfg.meeting.inner_os_enabled
+            or not _websocket_host_is_loopback(websocket)
+            or not await _allow_websocket(websocket, cfg)
+        ):
+            await websocket.close(code=1008, reason="inner_os_private_channel_required")
+            return
+        service = getattr(websocket.app.state, "inner_os_service", None)
+        if service is None:
+            await websocket.close(code=1011, reason="inner_os_context_unavailable")
+            return
+        await websocket.accept()
+        active_query: UUID | None = None
+
+        async def emit(event_type: str, query_id: UUID, payload: dict[str, Any]) -> None:
+            nonlocal active_query
+            await websocket.send_json(
+                {
+                    "contract_version": "1",
+                    "type": event_type,
+                    "event_id": str(uuid4()),
+                    "meeting_id": meeting_id,
+                    "query_id": str(query_id),
+                    "occurred_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+                    "payload": payload,
+                }
+            )
+            if event_type in {
+                "inner_os_answer_completed",
+                "inner_os_answer_failed",
+                "inner_os_answer_cancelled",
+            }:
+                active_query = None
+
+        try:
+            while True:
+                raw = json.loads(await websocket.receive_text())
+                if raw.get("cmd") == "cancel":
+                    query_id = UUID(str(raw.get("query_id")))
+                    await service.cancel(query_id)
+                    continue
+                if raw.get("cmd") != "query" or active_query is not None:
+                    await websocket.close(code=1008, reason="inner_os_busy")
+                    return
+                if str(raw.get("meeting_id")) != meeting_id:
+                    await websocket.close(code=1008, reason="inner_os_context_unavailable")
+                    return
+                focus = tuple(UUID(str(item)) for item in raw.get("focus_segment_ids", ()))
+                active_query = await service.start_query(
+                    meeting_id=UUID(meeting_id),
+                    question=str(raw.get("question", "")).strip(),
+                    intent=str(raw.get("intent", "fact")),
+                    focus_segment_ids=focus,
+                    emit=emit,
+                )
+        except WebSocketDisconnect:
+            if active_query is not None:
+                await service.cancel(active_query)
 
     @app.websocket("/ws/v1/control")
     async def ws_v1_control(websocket: WebSocket) -> None:
