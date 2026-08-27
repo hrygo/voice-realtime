@@ -28,6 +28,7 @@ class InnerOSQueryService:
         self.gate = gate
         self.model = model
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
+        self._completed: dict[UUID, dict[str, Any]] = {}
 
     async def start_query(
         self,
@@ -119,6 +120,19 @@ class InnerOSQueryService:
                     for item in snapshot.evidence
                 ]
                 answer = InnerOSAnswer.model_validate(raw)
+                self._completed[query_id] = {
+                    "id": query_id,
+                    "meeting_id": meeting_id,
+                    "question": question,
+                    "intent": answer.intent,
+                    "answer": answer,
+                    "source_transcript_revision": snapshot.transcript_revision,
+                    "source_content_revision": snapshot.content_revision,
+                    "used_ephemeral_context": False,
+                    "model": self.model,
+                    "reasoning": "off",
+                    "prompt_version": "inner-os-v1",
+                }
                 await emit("inner_os_answer_completed", query_id, answer.model_dump(mode="json"))
         except asyncio.CancelledError:
             await emit("inner_os_answer_cancelled", query_id, {"reason": "user_cancelled"})
@@ -126,3 +140,7 @@ class InnerOSQueryService:
             await emit("inner_os_answer_failed", query_id, {
                 "error": {"code": "inner_os_invalid_answer", "message": type(exc).__name__}
             })
+
+    def take_completed(self, exchange_id: UUID) -> dict[str, Any] | None:
+        """移交一次已完成结果给显式保存 API；未保存结果只存在进程内。"""
+        return self._completed.pop(exchange_id, None)
