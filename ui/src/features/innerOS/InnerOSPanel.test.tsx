@@ -79,4 +79,33 @@ describe("InnerOSPanel", () => {
     expect(container.textContent).toContain("关键议题 (Agenda)");
     expect(container.textContent).toContain("私密背景/底线 (Background)");
   });
+
+  it("renders unified edge toggle handle and closes on click", () => {
+    act(() => {
+      root.render(<InnerOSPanel />);
+    });
+
+    const edgeHandle = container.querySelector(".inner-os-edge-toggle-handle") as HTMLElement;
+    expect(edgeHandle).not.toBeNull();
+
+    act(() => {
+      edgeHandle.click();
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(false);
+  });
+
+  it("closes panel on Escape key", () => {
+    act(() => {
+      root.render(<InnerOSPanel />);
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(true);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(false);
+  });
 });

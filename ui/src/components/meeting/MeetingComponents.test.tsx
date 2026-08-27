@@ -16,6 +16,7 @@ import {
   mockMinutesCompleted,
   mockSegments,
 } from "../../test/fixtures/meetingFixtures";
+import { useInnerOSStore } from "../../features/innerOS";
 
 // Extend global for React 19 testing flag
 declare global {
@@ -325,6 +326,62 @@ describe("Meeting React Components DOM Rendering", () => {
       readingBtn.click();
     });
     expect(container.querySelector(".reading-block-card")).not.toBeNull();
+  });
+
+  it("toggles Inner OS on Cmd+K even when focus is inside an input or textarea", () => {
+    useInnerOSStore.setState({ isPanelOpen: false });
+
+    act(() => {
+      root.render(
+        <MeetingRecordingView
+          startedAt="2026-08-21T10:00:00Z"
+          segments={mockSegments}
+          partialText=""
+          partialSpeaker="说话人 1"
+          gaps={[]}
+          micMuted={false}
+          onToggleMic={vi.fn()}
+          onEndMeeting={vi.fn()}
+          onRenameSpeaker={vi.fn()}
+          isEnding={false}
+        />,
+      );
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(false);
+
+    // Create and focus an input element to verify that Cmd+K is not swallowed
+    const input = document.createElement("input");
+    container.appendChild(input);
+    input.focus();
+
+    // Trigger Cmd+K while focused in the input
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "k",
+          code: "KeyK",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(true);
+
+    // Trigger Cmd+K again to toggle off
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "K",
+          code: "KeyK",
+          metaKey: true,
+          bubbles: true,
+        }),
+      );
+    });
+
+    expect(useInnerOSStore.getState().isPanelOpen).toBe(false);
   });
 
 

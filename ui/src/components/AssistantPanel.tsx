@@ -472,10 +472,14 @@ export default function AssistantPanel({
   /** 快捷键监听 */
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+      const isK = e.key.toLowerCase() === "k" || e.code === "KeyK";
+      const isC = e.key.toLowerCase() === "c" || e.code === "KeyC";
+
+      if (isCmdOrCtrl && !e.altKey && !e.shiftKey && isK) {
         e.preventDefault();
         setPersonaOpen((prev) => !prev);
-      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
+      } else if (isCmdOrCtrl && e.shiftKey && isC) {
         e.preventDefault();
         sendCommand("clear_context");
       }

@@ -51,14 +51,12 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
     });
   }, []);
 
-  // Global ⌘+B shortcut for sidebar collapse
+  // Global ⌘+B shortcut for sidebar collapse (works everywhere)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+      const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+      const isB = e.key.toLowerCase() === "b" || e.code === "KeyB";
+      if (isCmdOrCtrl && !e.altKey && !e.shiftKey && isB) {
         e.preventDefault();
         toggleSidebarCollapse();
       }

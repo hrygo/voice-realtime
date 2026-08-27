@@ -136,26 +136,34 @@ export function MeetingRecordingView({
     }
   }, [selectedSegmentId, segments, starredIds, toggleStarSegment]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (Meta+K for InnerOS works everywhere, S/M only when not in input)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+      const isK = e.key.toLowerCase() === "k" || e.code === "KeyK";
 
-      if (e.key === "s" || e.key === "S") {
-        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      // 1. Meta shortcut ⌘+K: Always toggles Inner OS, even if focus is inside an input/textarea!
+      if (isCmdOrCtrl && !e.altKey && !e.shiftKey && isK) {
+        e.preventDefault();
+        toggleInnerOS();
+        return;
+      }
+
+      // 2. Single-character shortcuts (S, M) are only active when not typing in inputs
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)) {
+        return;
+      }
+
+      if (!isCmdOrCtrl && !e.altKey && !e.shiftKey) {
+        if (e.key === "s" || e.key === "S" || e.code === "KeyS") {
           e.preventDefault();
           handleStarSelectedOrLatest();
-        }
-      } else if (e.key === "m" || e.key === "M") {
-        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        } else if (e.key === "m" || e.key === "M" || e.code === "KeyM") {
           e.preventDefault();
           onToggleMic();
           showToast(micMuted ? "麦克风已解除静音 🎙️" : "麦克风已静音 🔇");
         }
-      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        toggleInnerOS();
       }
     };
     window.addEventListener("keydown", handleKeyDown);

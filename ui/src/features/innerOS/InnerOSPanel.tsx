@@ -5,7 +5,7 @@ import { useInnerOSSocket } from "./useInnerOSSocket";
 import { InnerOSEphemeralContextDrawer } from "./InnerOSEphemeralContext";
 import { InnerOSQuickPills } from "./InnerOSQuickPills";
 import { InnerOSAnswerCard } from "./InnerOSAnswerCard";
-import { PanelRightCloseIcon } from "../../components/Icons";
+import { PanelRightCloseIcon, ChevronRightIcon } from "../../components/Icons";
 import type {
   InnerOSEphemeralContext,
   InnerOSIntent,
@@ -124,25 +124,32 @@ export const InnerOSPanel: React.FC<Props> = ({ onSelectEvidence }) => {
     }
   };
 
-  // Keyboard shortcut listener for panel: ⌘+K to focus input, Esc to cancel
+  // Keyboard shortcut listener: Esc to cancel query or close panel
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        if (!isPanelOpen) {
-          useInnerOSStore.getState().openPanel();
-        }
-        inputRef.current?.focus();
-      } else if (e.key === "Escape") {
+      if (e.key === "Escape") {
         if (queryStatus === "generating" || queryStatus === "accepted") {
           e.preventDefault();
           sendCancel();
+        } else if (isPanelOpen) {
+          e.preventDefault();
+          useInnerOSStore.getState().closePanel();
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isPanelOpen, queryStatus, sendCancel]);
+
+  // Auto-focus input when panel opens
+  useEffect(() => {
+    if (isPanelOpen) {
+      const timer = setTimeout(() => {
+        inputRef.current?.focus();
+      }, 60);
+      return () => clearTimeout(timer);
+    }
+  }, [isPanelOpen]);
 
   if (!isPanelOpen) {
     return null;
@@ -152,6 +159,19 @@ export const InnerOSPanel: React.FC<Props> = ({ onSelectEvidence }) => {
 
   return (
     <aside className="inner-os-panel" data-testid="inner-os-panel">
+      {/* 边缘快速折叠把手 (与左侧边栏 100% 保持一致的统一设计语言规范) */}
+      <div
+        className="inner-os-edge-toggle-handle"
+        onClick={togglePanel}
+        title="收起内心 OS (⌘+K)"
+        role="button"
+        tabIndex={-1}
+      >
+        <div className="edge-handle-pill" aria-hidden="true">
+          <ChevronRightIcon size={10} />
+        </div>
+      </div>
+
       {/* Top Header */}
       <div className="inner-os-header">
         <div className="inner-os-title-wrap">
