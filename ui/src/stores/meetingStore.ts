@@ -271,8 +271,18 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
       return a.order - b.order;
     });
 
+    // 保留用户已重命名的说话人名称，防止后端默认名覆盖
+    const speakersMap = get().speakers;
+    const finalSegments =
+      Object.keys(speakersMap).length > 0
+        ? combined.map((seg) => {
+            const speaker = speakersMap[seg.speaker_key];
+            return speaker?.display_name ? { ...seg, speaker_name: speaker.display_name } : seg;
+          })
+        : combined;
+
     set({
-      segments: combined,
+      segments: finalSegments,
       transcriptRevision,
       contentRevision,
       partialText: null, // 清空过时的 partial

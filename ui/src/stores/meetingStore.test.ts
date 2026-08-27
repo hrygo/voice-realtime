@@ -135,6 +135,60 @@ describe("meetingStore", () => {
       // 纪要由于 contentRevision(6) > source_content_revision(5) 标记为 stale
       expect(state.minutes?.is_stale).toBe(true);
     });
+
+    it("reconcileTranscript preserves renamed speaker_name instead of reverting to default", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-1",
+        segments: [
+          {
+            id: "seg-1",
+            order: 0,
+            speaker_key: "epoch:1:speaker:1",
+            speaker_name: "说话人 1",
+            start_ms: 0,
+            end_ms: 2000,
+            text: "第一段发言",
+            source_epoch: 1,
+          },
+        ] as TranscriptSegment[],
+        transcriptRevision: 1,
+        contentRevision: 1,
+      });
+
+      // 用户重命名说话人 1 为 "张总"
+      useMeetingStore.getState().setSpeaker("epoch:1:speaker:1", "张总", 2);
+      expect(useMeetingStore.getState().segments[0]?.speaker_name).toBe("张总");
+
+      // 后端推送新的 transcript_reconciled，segments 带默认名 "说话人 1"
+      const newSegments: TranscriptSegment[] = [
+        {
+          id: "seg-1",
+          order: 0,
+          speaker_key: "epoch:1:speaker:1",
+          speaker_name: "说话人 1", // 后端默认名
+          start_ms: 0,
+          end_ms: 2000,
+          text: "第一段发言",
+          source_epoch: 1,
+        },
+        {
+          id: "seg-2",
+          order: 1,
+          speaker_key: "epoch:1:speaker:1",
+          speaker_name: "说话人 1", // 后端默认名
+          start_ms: 3000,
+          end_ms: 5000,
+          text: "第二段发言",
+          source_epoch: 1,
+        },
+      ];
+      useMeetingStore.getState().reconcileTranscript(0, newSegments, 3, 3, "m-1");
+
+      const state = useMeetingStore.getState();
+      // 修复前：两段都会显示 "说话人 1"；修复后：应保留 "张总"
+      expect(state.segments[0]?.speaker_name).toBe("张总");
+      expect(state.segments[1]?.speaker_name).toBe("张总");
+    });
   });
 
   describe("Gaps and Health Handling (§11.2, §14.2)", () => {

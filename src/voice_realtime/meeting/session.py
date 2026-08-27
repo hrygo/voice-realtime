@@ -86,6 +86,7 @@ class MeetingSession:
         self._listener: WindowListener | None = None
         self._last_window_signature: tuple[Any, ...] | None = None
         self._storage_degraded = False
+        self._speaker_names: dict[str, str] = {}
 
     @property
     def active_meeting_id(self) -> UUID | None:
@@ -138,6 +139,7 @@ class MeetingSession:
             self._record = record
             self._last_window_signature = None
             self._storage_degraded = False
+            self._speaker_names = {}
             listener = self._on_window
             self._listener = listener
             try:
@@ -359,6 +361,7 @@ class MeetingSession:
         self._active_meeting_id = None
         self._preparation = None
         self._committed_preparation = None
+        self._speaker_names = {}
         await self._resume_summary_worker()
 
     @staticmethod
@@ -487,6 +490,25 @@ class MeetingSession:
             )
         return count
 
+    async def _load_speaker_names(self, meeting_id: UUID) -> dict[str, str]:
+        """从 Repository 读取自定义说话人名称映射并更新本地缓存。"""
+        try:
+            get_speakers = getattr(self.repository, "get_speakers", None)
+            if get_speakers is None:
+                return self._speaker_names
+            speakers = await get_speakers(meeting_id)
+            names: dict[str, str] = {}
+            for spk in speakers:
+                key = str(getattr(spk, "speaker_key", ""))
+                display = str(getattr(spk, "display_name", ""))
+                default = str(getattr(spk, "default_label", ""))
+                if key and display and display != default:
+                    names[key] = display
+            self._speaker_names = names
+            return names
+        except Exception:
+            return self._speaker_names
+
     async def _on_window(self, window: TranscriptWindow) -> None:
         meeting_id = self._active_meeting_id
         if meeting_id is None:
@@ -500,7 +522,9 @@ class MeetingSession:
                 {
                     "text": window.partial,
                     "speaker_key": window.partial_speaker_key,
-                    "speaker_name": self._partial_speaker_name(window),
+                    "speaker_name": self._partial_speaker_name(
+                        window, self._speaker_names
+                    ),
                 },
             )
         if not window.segments:
@@ -511,6 +535,7 @@ class MeetingSession:
         result = await self._persist_window(meeting_id, window)
         if result is None:
             return
+        speaker_names = await self._load_speaker_names(meeting_id)
         await self._emit(
             "transcript_reconciled",
             meeting_id,
@@ -518,7 +543,10 @@ class MeetingSession:
                 "transcript_revision": int(getattr(result, "transcript_revision", 0)),
                 "content_revision": int(getattr(result, "content_revision", 0)),
                 "replace_from_ms": int(getattr(result, "replace_from_ms", 0)),
-                "segments": [self._segment_payload(segment) for segment in window.segments],
+                "segments": [
+                    self._segment_payload(segment, speaker_names)
+                    for segment in window.segments
+                ],
             },
         )
 
@@ -603,10 +631,15 @@ class MeetingSession:
         }
 
     @staticmethod
-    def _segment_payload(segment: Any) -> dict[str, object | None]:
+    def _segment_payload(
+        segment: Any, speaker_names: dict[str, str] | None = None
+    ) -> dict[str, object | None]:
         speaker_key = str(segment.speaker_key)
         payload = segment.model_dump(mode="json")
-        payload["speaker_name"] = MeetingSession._speaker_name_from_key(speaker_key)
+        if speaker_names and speaker_key in speaker_names:
+            payload["speaker_name"] = speaker_names[speaker_key]
+        else:
+            payload["speaker_name"] = MeetingSession._speaker_name_from_key(speaker_key)
         return cast(dict[str, object | None], payload)
 
     @staticmethod
@@ -615,12 +648,19 @@ class MeetingSession:
         return f"说话人 {raw}" if raw.isdigit() else speaker_key
 
     @classmethod
-    def _partial_speaker_name(cls, window: TranscriptWindow) -> str | None:
+    def _partial_speaker_name(
+        cls,
+        window: TranscriptWindow,
+        speaker_names: dict[str, str] | None = None,
+    ) -> str | None:
         if window.partial_speaker_key is None:
             return window.partial_speaker_name
         if window.partial_speaker_name:
             return window.partial_speaker_name
-        raw = window.partial_speaker_key.rsplit(":", 1)[-1].removeprefix("s")
+        speaker_key = window.partial_speaker_key
+        if speaker_names and speaker_key in speaker_names:
+            return speaker_names[speaker_key]
+        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
         return f"说话人 {raw}" if raw.isdigit() else None
 
     def _require_current_preparation(self, preparation: MeetingPreparation) -> None:

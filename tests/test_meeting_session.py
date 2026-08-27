@@ -374,6 +374,113 @@ async def test_session_publishes_partial_and_durable_transcript_events(
     assert reconciled["segments"][0]["text"] == "已确认"
 
 
+async def test_reconciled_event_uses_renamed_speaker_display_name(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    """回归测试：重命名说话人后，后续 transcript_reconciled 事件中的 speaker_name
+    应使用自定义名称而非默认的 '说话人 X'。"""
+    events: list[tuple[str, UUID, object]] = []
+
+    async def publish(event_type: str, meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, meeting_id, payload))
+
+    # 为 FakeRepository 添加 get_speakers 方法，模拟已重命名的说话人
+    renamed_speakers: list[SimpleNamespace] = []
+
+    async def get_speakers(meeting_id: UUID) -> tuple[SimpleNamespace, ...]:
+        return tuple(renamed_speakers)
+
+    repository.get_speakers = get_speakers  # type: ignore[attr-defined]
+
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    await _start_session(session)
+
+    # 第一次窗口：尚未重命名，应使用默认名
+    seg1 = NormalizedSegment(
+        order=0,
+        source_epoch=1,
+        speaker_key="epoch:1:speaker:1",
+        start_ms=0,
+        end_ms=1000,
+        text="第一段",
+    )
+    await session._on_window(
+        TranscriptWindow(source_epoch=1, segments=(seg1,))
+    )
+    reconciled = [e[2] for e in events if e[0] == "transcript_reconciled"][-1]
+    assert reconciled["segments"][0]["speaker_name"] == "说话人 1"
+
+    # 模拟用户重命名说话人（通过 API→repository.rename_speaker 路径）
+    renamed_speakers.append(
+        SimpleNamespace(
+            speaker_key="epoch:1:speaker:1",
+            display_name="张总",
+            default_label="说话人 1",
+        )
+    )
+
+    # 第二次窗口：重命名后，应使用自定义名称
+    seg2 = NormalizedSegment(
+        order=1,
+        source_epoch=1,
+        speaker_key="epoch:1:speaker:1",
+        start_ms=2000,
+        end_ms=3000,
+        text="第二段",
+    )
+    events.clear()
+    await session._on_window(
+        TranscriptWindow(source_epoch=1, segments=(seg2,))
+    )
+    reconciled = [e[2] for e in events if e[0] == "transcript_reconciled"][-1]
+    assert reconciled["segments"][0]["speaker_name"] == "张总"
+
+
+async def test_partial_event_uses_renamed_speaker_from_cache(
+    repository: FakeRepository, gateway: FakeGateway
+) -> None:
+    """回归测试：重命名说话人后，partial 事件应使用缓存的自定义名称。"""
+    events: list[tuple[str, UUID, object]] = []
+
+    async def publish(event_type: str, meeting_id: UUID, payload: object) -> None:
+        events.append((event_type, meeting_id, payload))
+
+    async def get_speakers(meeting_id: UUID) -> tuple[SimpleNamespace, ...]:
+        return (
+            SimpleNamespace(
+                speaker_key="epoch:1:speaker:1",
+                display_name="张总",
+                default_label="说话人 1",
+            ),
+        )
+
+    repository.get_speakers = get_speakers  # type: ignore[attr-defined]
+
+    session = MeetingSession(repository, gateway, event_publisher=publish)
+    await _start_session(session)
+
+    # 先触发一次有 segments 的窗口以加载 speaker_names 缓存
+    seg = NormalizedSegment(
+        order=0, source_epoch=1, speaker_key="epoch:1:speaker:1",
+        start_ms=0, end_ms=1000, text="加载缓存",
+    )
+    await session._on_window(
+        TranscriptWindow(source_epoch=1, segments=(seg,))
+    )
+
+    # 再触发纯 partial 窗口（无 speaker_name），应使用缓存的 "张总"
+    events.clear()
+    await session._on_window(
+        TranscriptWindow(
+            source_epoch=2,
+            partial="正在说话",
+            partial_speaker_key="epoch:1:speaker:1",
+        )
+    )
+    partial = next(e[2] for e in events if e[0] == "transcript_partial")
+    assert partial["speaker_name"] == "张总"
+
+
 async def test_partial_event_preserves_known_speaker_identity(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
