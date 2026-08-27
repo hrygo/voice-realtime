@@ -2,6 +2,7 @@ from voice_realtime.benchmarks.inner_os.metrics import (
     EvaluationSummary,
     HumanRating,
     summarize_ratings,
+    verdict,
 )
 
 
@@ -50,3 +51,18 @@ def test_usefulness_must_be_one_to_five() -> None:
         pass
     else:
         raise AssertionError("out-of-range usefulness was accepted")
+
+
+def test_verdict_requires_all_go_thresholds() -> None:
+    summary = EvaluationSummary(
+        evidence_validity=1.0,
+        evidence_coverage=0.95,
+        safe_insufficiency=1.0,
+        draft_usable=0.7,
+        effective_answer=0.8,
+        average_usefulness=4.2,
+    )
+    assert verdict(summary, privacy_incidents=0, cross_meeting_incidents=0) == "Go"
+    summary = summary.model_copy(update={"draft_usable": 0.69})
+    assert verdict(summary, privacy_incidents=0, cross_meeting_incidents=0) == "Revise"
+    assert verdict(summary, privacy_incidents=1, cross_meeting_incidents=0) == "Stop"

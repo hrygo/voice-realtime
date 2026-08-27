@@ -24,6 +24,22 @@ class EvaluationSummary(BaseModel):
     average_usefulness: float = Field(ge=1, le=5)
 
 
+def verdict(
+    summary: EvaluationSummary, *, privacy_incidents: int, cross_meeting_incidents: int
+) -> str:
+    if privacy_incidents or cross_meeting_incidents:
+        return "Stop"
+    if (
+        summary.evidence_validity >= 1.0
+        and summary.evidence_coverage >= 0.9
+        and summary.safe_insufficiency >= 1.0
+        and summary.draft_usable >= 0.7
+        and summary.average_usefulness >= 4.0
+    ):
+        return "Go"
+    return "Revise"
+
+
 def summarize_ratings(
     ratings: list[HumanRating], *, insufficient_count: int, draft_count: int
 ) -> EvaluationSummary:

@@ -5,6 +5,7 @@ from voice_realtime.benchmarks.inner_os.dataset import load_dataset
 from voice_realtime.benchmarks.inner_os.runner import (
     build_payload,
     evaluate_question,
+    load_ratings,
     report_for_dataset,
 )
 
@@ -47,3 +48,14 @@ async def test_runner_consumes_only_message_deltas() -> None:
         FakeClient(), dataset.questions[0], [dataset.meetings[0].segments[0]]
     )
     assert answer == "answer"
+
+
+def test_load_ratings_rejects_content_bearing_fields(tmp_path: Path) -> None:
+    path = tmp_path / "ratings.json"
+    path.write_text(json.dumps([{"question_id": "q1", "answer": "secret"}]), encoding="utf-8")
+    try:
+        load_ratings(path)
+    except ValueError as exc:
+        assert "unknown" in str(exc)
+    else:
+        raise AssertionError("content-bearing rating field was accepted")

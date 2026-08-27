@@ -9,6 +9,7 @@ from typing import Any
 from voice_realtime.lm_studio import LMStudioClient, NativeChatRequest
 
 from .dataset import EvaluationDataset, EvaluationQuestion, Evidence, load_dataset
+from .metrics import HumanRating
 
 
 def build_payload(
@@ -36,6 +37,17 @@ def report_for_dataset(dataset: EvaluationDataset) -> dict[str, Any]:
         "metrics": None,
         "failure_categories": {},
     }
+
+
+def load_ratings(path: Path) -> list[HumanRating]:
+    """Load only the content-free offline reviewer schema."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("ratings file must contain a list")
+    try:
+        return [HumanRating.model_validate(item) for item in raw]
+    except Exception as exc:
+        raise ValueError("ratings file contains unknown or invalid fields") from exc
 
 
 async def evaluate_question(
