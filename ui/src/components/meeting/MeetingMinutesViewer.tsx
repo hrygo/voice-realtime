@@ -16,6 +16,7 @@ interface MeetingMinutesViewerProps {
   onRegenerate: () => Promise<void>;
   onSelectEvidence: (segmentId: string) => void;
   isRegenerating: boolean;
+  hideTitle?: boolean;
 }
 
 export function MeetingMinutesViewer({
@@ -26,6 +27,7 @@ export function MeetingMinutesViewer({
   onRegenerate,
   onSelectEvidence,
   isRegenerating,
+  hideTitle = false,
 }: MeetingMinutesViewerProps) {
   const [viewMode, setViewMode] = useState<"structured" | "markdown">("structured");
 
@@ -90,8 +92,12 @@ export function MeetingMinutesViewer({
     <div className="minutes-pane">
       <div className="pane-header">
         <div className="pane-title-group">
-          <span className="pane-icon">✨</span>
-          <span className="pane-title">AI 结构化纪要</span>
+          {!hideTitle && (
+            <>
+              <span className="pane-icon">✨</span>
+              <span className="pane-title">AI 结构化纪要</span>
+            </>
+          )}
           {minutesList.length > 1 && (
             <select
               className="version-select"

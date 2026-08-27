@@ -842,12 +842,20 @@
    ========================================================================== */
 
 .inner-os-unsaved-tray {
-  margin: 12px 0;
-  padding: 12px 14px;
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  max-width: 480px;
+  width: calc(100% - 40px);
+  z-index: 90;
+  margin: 0;
+  padding: 14px 16px;
   border-radius: var(--radius-lg);
-  background: var(--bg-card);
+  background: var(--bg-card-solid);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--inneros-border);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -969,8 +977,11 @@
 .inner-os-history-tab {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
   gap: 14px;
-  padding: 14px;
+  padding: 16px;
 }
 
 .inner-os-history-meta-bar {

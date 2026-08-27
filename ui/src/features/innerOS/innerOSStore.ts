@@ -61,7 +61,7 @@ export interface InnerOSState {
 }
 
 export const useInnerOSStore = create<InnerOSState>((set, get) => ({
-  isPanelOpen: true,
+  isPanelOpen: false,
   activeMeetingId: null,
   activeQueryId: null,
   activeQuestion: null,
@@ -176,9 +176,9 @@ export const useInnerOSStore = create<InnerOSState>((set, get) => ({
     set({ isLoadingHistory: true });
     try {
       const res = await innerOSApi.listExchanges(meetingId);
-      set({ historyList: res.items, isLoadingHistory: false });
+      set({ historyList: res?.items || [], isLoadingHistory: false });
     } catch {
-      set({ isLoadingHistory: false });
+      set({ historyList: [], isLoadingHistory: false });
     }
   },
 

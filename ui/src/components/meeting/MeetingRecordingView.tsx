@@ -157,11 +157,14 @@ export function MeetingRecordingView({
           onToggleMic();
           showToast(micMuted ? "麦克风已解除静音 🎙️" : "麦克风已静音 🔇");
         }
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        toggleInnerOS();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleStarSelectedOrLatest, onToggleMic, micMuted]);
+  }, [handleStarSelectedOrLatest, onToggleMic, micMuted, toggleInnerOS]);
 
   // Auto-scroll when new segments arrive
   useEffect(() => {

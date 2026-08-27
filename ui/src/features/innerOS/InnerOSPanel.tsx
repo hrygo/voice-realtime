@@ -158,7 +158,11 @@ export const InnerOSPanel: React.FC<Props> = ({ onSelectEvidence }) => {
           <div className="inner-os-title-text">
             <h3>内心 OS · 私密副驾驶</h3>
             <span className="inner-os-subtitle">
-              {isConnected ? "🟢 专用通道已就绪 · 仅你可见" : "🟡 正在建立私密连接..."}
+              {status !== "recording"
+                ? "⏸️ 会议待命中 · 仅你可见"
+                : isConnected
+                  ? "🟢 专用通道已就绪 · 仅你可见"
+                  : "🟡 正在建立私密连接..."}
             </span>
           </div>
         </div>
@@ -293,7 +297,11 @@ export const InnerOSPanel: React.FC<Props> = ({ onSelectEvidence }) => {
             ref={inputRef}
             rows={2}
             className="inner-os-textarea"
-            placeholder="向内心 OS 提问... (例如：刚才张总提到的性能指标是什么？)"
+            placeholder={
+              status !== "recording"
+                ? "请先开始会议录制以启用内心 OS..."
+                : "向内心 OS 提问... (例如：刚才张总提到的性能指标是什么？)"
+            }
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={(e) => {

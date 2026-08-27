@@ -176,15 +176,6 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         void store.fetchHistory();
       }
       showToast("已成功开启会议模式", "success");
-      // Auto-collapse sidebar during recording to provide full focus
-      setIsSidebarCollapsed(true);
-      try {
-        if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem("voice-studio:meeting-sidebar-collapsed", "true");
-        }
-      } catch {
-        // Ignore
-      }
       store.returnToActiveMeeting();
     } catch (err) {
       showToast(err instanceof Error ? err.message : "开始会议失败", "error");

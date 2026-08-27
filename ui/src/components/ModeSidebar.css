@@ -22,12 +22,14 @@
 }
 
 /* Collapsed Sidebar State */
-.mode-sidebar.is-collapsed {
-  width: 52px;
-  min-width: 52px;
-  max-width: 52px;
-  padding: 12px 6px;
+.mode-sidebar.is-collapsed,
+.mode-sidebar.meeting-sidebar.is-collapsed {
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  padding: 12px 6px !important;
   align-items: center;
+  overflow: hidden;
 }
 
 .meeting-sidebar-collapsed-strip {

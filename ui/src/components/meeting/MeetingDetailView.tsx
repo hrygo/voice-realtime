@@ -7,7 +7,6 @@ import type {
 } from "../../contracts/meetingContract";
 import { MeetingTranscriptViewer } from "./MeetingTranscriptViewer";
 import { MeetingMinutesViewer } from "./MeetingMinutesViewer";
-import { MarkdownRenderer } from "./MarkdownRenderer";
 import { InnerOSHistoryTab } from "../../features/innerOS";
 import { exportMeetingData } from "../../utils/exportUtils";
 import { copyTextToClipboard } from "../../utils/clipboard";
@@ -51,12 +50,11 @@ export function MeetingDetailView({
   onToggleStarSegment,
 }: MeetingDetailViewProps) {
   const [title, setTitle] = useState(meeting.title);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [isGeneratingTitle, setIsGeneratingTitle] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [activeRightTab, setActiveRightTab] = useState<"minutes" | "inner_os" | "markdown">("minutes");
+  const [activeRightTab, setActiveRightTab] = useState<"minutes" | "inner_os">("minutes");
 
   const handleGenerateTitle = async () => {
     if (isGeneratingTitle) return;
@@ -77,13 +75,11 @@ export function MeetingDetailView({
 
   const handleSaveTitle = async () => {
     if (!title.trim() || title === meeting.title) {
-      setIsEditingTitle(false);
       setTitle(meeting.title);
       return;
     }
     try {
       await onUpdateTitle(title.trim());
-      setIsEditingTitle(false);
       showToast("会议标题已更新", "success");
     } catch {
       showToast("更新标题失败", "error");
@@ -278,105 +274,98 @@ export function MeetingDetailView({
 
   return (
     <div className="detail-view">
-      {/* 顶部导航与状态条 */}
+      {/* 顶部导航与全景信息栏 (使用统一的 detail-top-nav-bar 设计体系) */}
       <div className="detail-top-nav-bar">
-        {isMeetingActive && onReturnToActive && (
-          <button
-            type="button"
-            className="detail-back-btn is-live-return"
-            onClick={onReturnToActive}
-            title="返回当前正在录制的会议工作台 (快捷键 Esc)"
-          >
-            <span className="live-pulse-dot" />
-            <span>返回正在进行的会议（{activeMeetingTitle || "当前会议"}）</span>
-            <kbd className="nav-kbd">Esc</kbd>
-          </button>
-        )}
-      </div>
-
-      {/* 顶部主信息栏 */}
-      <header className="detail-header">
-        <div className="detail-header-main">
-          {isEditingTitle ? (
-            <div className="title-edit-wrap">
-              <input
-                type="text"
-                className="title-edit-input"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                onBlur={() => void handleSaveTitle()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleSaveTitle();
-                  if (e.key === "Escape") {
-                    setTitle(meeting.title);
-                    setIsEditingTitle(false);
-                  }
-                }}
-                autoFocus
-                maxLength={200}
-              />
+        <div className="nav-left-section">
+          {isMeetingActive && onReturnToActive && (
+            <>
               <button
                 type="button"
-                className="btn-primary-sm"
-                onClick={() => void handleSaveTitle()}
+                className="detail-nav-back-btn detail-back-btn is-live-return"
+                onClick={onReturnToActive}
+                title="返回当前正在录制的会议工作台 (快捷键 Esc)"
               >
-                保存
+                <span className="live-rec-dot" />
+                <span className="back-btn-text">返回正在进行的会议（{activeMeetingTitle || "当前会议"}）</span>
+                <kbd className="nav-kbd-badge">Esc</kbd>
               </button>
-            </div>
-          ) : (
-            <div className="title-display-wrap">
-              <h1 className="detail-title">{meeting.title}</h1>
-              <button
-                type="button"
-                className="btn-edit-title"
-                onClick={() => setIsEditingTitle(true)}
-                title="修改标题"
-              >
-                ✎
-              </button>
-              <button
-                type="button"
-                className="btn-generate-title ai-title-gen-btn"
-                onClick={() => void handleGenerateTitle()}
-                disabled={isGeneratingTitle}
-                title="根据完整会议转录由 AI 提炼最佳标题"
-              >
-                {isGeneratingTitle ? (
-                  <span className="btn-spinner-sm" />
-                ) : (
-                  <span>✨ AI 提炼标题</span>
-                )}
-              </button>
-            </div>
+              <div className="nav-section-divider" />
+            </>
           )}
 
-          <div className="detail-meta-row">
-            <span className="detail-meta-item">
-              📅 {new Date(meeting.started_at || meeting.created_at).toLocaleString()}
-            </span>
-            <span className="detail-meta-item">
-              🎙️ {segments.length} 段发言
-            </span>
-            {starredIds && starredIds.size > 0 && (
-              <span className="detail-meta-item" style={{ color: "var(--color-yellow)" }}>
-                ⭐ {starredIds.size} 个重点发言
+          <div className="detail-title-block">
+            <div className="detail-title-row">
+              <div className="detail-title-input-wrapper">
+                <input
+                  type="text"
+                  className="detail-title-input"
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  onBlur={() => void handleSaveTitle()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      (e.target as HTMLInputElement).blur();
+                    } else if (e.key === "Escape") {
+                      setTitle(meeting.title);
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  maxLength={200}
+                  placeholder="未命名会议..."
+                />
+                <button
+                  type="button"
+                  className={`ai-title-gen-btn ${isGeneratingTitle ? "loading" : ""}`}
+                  onClick={() => void handleGenerateTitle()}
+                  disabled={isGeneratingTitle}
+                  title="根据完整会议转录由 AI 提炼最佳标题"
+                >
+                  <span className="ai-btn-icon">✨</span>
+                  <span className="ai-btn-text">
+                    {isGeneratingTitle ? "提炼中..." : "AI 提炼标题"}
+                  </span>
+                </button>
+              </div>
+
+              <span className={`status-badge-chip ${meeting.status}`}>
+                {meeting.status === "completed"
+                  ? "已完成"
+                  : meeting.status === "recording"
+                    ? "录制中"
+                    : meeting.status === "interrupted"
+                      ? "已中断"
+                      : meeting.status}
               </span>
-            )}
-            <span className={`status-badge ${meeting.status}`}>
-              {meeting.status === "completed" ? "已完成" : meeting.status}
-            </span>
+            </div>
+
+            <div className="detail-meta-row">
+              <span className="detail-meta-pill">
+                <span className="meta-icon">📅</span>
+                {new Date(meeting.started_at || meeting.created_at).toLocaleString()}
+              </span>
+              <span className="detail-meta-pill">
+                <span className="meta-icon">🎙️</span>
+                {segments.length} 段发言
+              </span>
+              {starredIds && starredIds.size > 0 && (
+                <span className="detail-meta-pill" style={{ color: "var(--color-yellow)" }}>
+                  <span className="meta-icon">⭐</span>
+                  {starredIds.size} 个重点发言
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="detail-header-actions">
-          <div className="export-menu-container">
+        <div className="nav-right-section">
+          <div className="export-dropdown-wrapper">
             <button
               type="button"
-              className={`detail-action-btn export-trigger-btn ${isExportMenuOpen ? "active" : ""}`}
+              className={`detail-action-btn export-btn ${isExportMenuOpen ? "active" : ""}`}
               onClick={() => setIsExportMenuOpen((prev) => !prev)}
             >
               <span>📥 导出与分享</span>
-              <span className="dropdown-arrow">{isExportMenuOpen ? "▲" : "▼"}</span>
+              <span className="export-chevron">{isExportMenuOpen ? "▲" : "▼"}</span>
             </button>
 
             {isExportMenuOpen && (
@@ -454,7 +443,7 @@ export function MeetingDetailView({
             <span>🗑️</span>
           </button>
         </div>
-      </header>
+      </div>
 
       {/* 双栏工作区 */}
       <div
@@ -480,7 +469,7 @@ export function MeetingDetailView({
           <div className="splitter-handle-bar" />
         </div>
 
-        {/* 右侧多维面板 (Segmented Tabs: 纪要 / 内心 OS / Markdown) */}
+        {/* 右侧多维面板 (Segmented Tabs: 纪要 / 内心 OS) */}
         <div className="detail-right-pane-wrapper">
           <div className="detail-segmented-tabs" role="tablist">
             <button
@@ -490,7 +479,7 @@ export function MeetingDetailView({
               className={`detail-tab-btn ${activeRightTab === "minutes" ? "active" : ""}`}
               onClick={() => setActiveRightTab("minutes")}
             >
-              ✨ AI 结构化纪要
+              ✨ AI 会议纪要
             </button>
             <button
               type="button"
@@ -499,21 +488,12 @@ export function MeetingDetailView({
               className={`detail-tab-btn tab-inneros ${activeRightTab === "inner_os" ? "active" : ""}`}
               onClick={() => setActiveRightTab("inner_os")}
             >
-              🔒 内心 OS 档案
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeRightTab === "markdown"}
-              className={`detail-tab-btn ${activeRightTab === "markdown" ? "active" : ""}`}
-              onClick={() => setActiveRightTab("markdown")}
-            >
-              📝 纯 Markdown
+              🔒 内心 OS 问答档案
             </button>
           </div>
 
           <div className="detail-tab-content">
-            {activeRightTab === "minutes" && (
+            {activeRightTab === "minutes" ? (
               <MeetingMinutesViewer
                 minutes={minutes}
                 minutesList={minutesList}
@@ -522,18 +502,13 @@ export function MeetingDetailView({
                 onRegenerate={handleRegenerate}
                 onSelectEvidence={handleEvidenceClick}
                 isRegenerating={isRegenerating}
+                hideTitle={true}
               />
-            )}
-            {activeRightTab === "inner_os" && (
+            ) : (
               <InnerOSHistoryTab
                 meetingId={meeting.id}
                 onSelectEvidence={handleEvidenceClick}
               />
-            )}
-            {activeRightTab === "markdown" && (
-              <div className="raw-markdown-view">
-                <MarkdownRenderer content={minutes?.content_markdown || "暂无纪要 Markdown 内容"} />
-              </div>
             )}
           </div>
         </div>
