@@ -274,7 +274,7 @@ export function MeetingDetailView({
   }, [isDraggingSplitter, splitPercent]);
 
   return (
-    <div className="detail-view">
+    <div className="meeting-detail-view">
       {/* 顶部导航与全景信息栏 (使用统一的 detail-top-nav-bar 设计体系) */}
       <div className="detail-top-nav-bar">
         <div className="nav-left-section">

@@ -377,9 +377,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 104px;
-  min-width: 104px;
-  max-width: 104px;
+  width: 132px;
+  min-width: 132px;
+  max-width: 132px;
   height: 24px;
   padding: 0 8px;
   border-radius: var(--radius-pill);
@@ -453,6 +453,13 @@
   color: var(--meeting-accent-light);
   border: 1px solid color-mix(in srgb, var(--meeting-accent) 40%, transparent);
   box-shadow: 0 0 10px var(--meeting-accent-glow);
+}
+
+.status-mode-pill.mode-subtitles {
+  background: color-mix(in srgb, var(--color-cyan) 14%, var(--bg-card));
+  color: var(--color-cyan);
+  border: 1px solid color-mix(in srgb, var(--color-cyan) 40%, transparent);
+  box-shadow: 0 0 10px var(--color-cyan-glow);
 }
 
 [data-theme="light"] .status-bar {

@@ -606,6 +606,8 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(splitGrid.style.getPropertyValue("--meeting-split-percent")).toBe("48%");
     expect(splitGrid.style.gridTemplateColumns).toBe("");
 
+    expect(container.querySelector(".meeting-detail-view")).not.toBeNull();
+
     const backBtn = container.querySelector(".detail-back-btn.is-live-return") as HTMLButtonElement;
     expect(backBtn).not.toBeNull();
 

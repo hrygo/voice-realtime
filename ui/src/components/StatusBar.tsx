@@ -5,7 +5,8 @@ import { useMeetingStore } from "../stores/meetingStore";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
-import type { RuntimeMode } from "../contracts/meetingContract";
+import type { MeetingStatus, RuntimeMode } from "../contracts/meetingContract";
+import type { AssistantPhase } from "../stores/assistantStore";
 import { apiUrl } from "../config/runtimeConfig";
 import "./StatusBar.css";
 
@@ -143,6 +144,184 @@ export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now
 }
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
+
+export interface StatusModePresentation {
+  readonly className: string;
+  readonly icon: string;
+  readonly label: string;
+  readonly title: string;
+}
+
+interface StatusModePresentationInput {
+  readonly activeTab: WorkspaceTab | null;
+  readonly meetingStatus: MeetingStatus | "idle";
+  readonly subtitleStatus: string;
+  readonly phase: AssistantPhase;
+}
+
+function getAssistantStatusPresentation(phase: AssistantPhase): StatusModePresentation {
+  switch (phase) {
+    case "speaking":
+      return {
+        className: "mode-speaking",
+        icon: "🗣️",
+        label: "语音助手播报中",
+        title: "当前工作区：语音助手；正在进行语音播报。",
+      };
+    case "listening":
+      return {
+        className: "mode-listening",
+        icon: "👂",
+        label: "语音助手聆听中",
+        title: "当前工作区：语音助手；正在接收麦克风语音。",
+      };
+    case "thinking":
+      return {
+        className: "mode-thinking",
+        icon: "🧠",
+        label: "语音助手思考中",
+        title: "当前工作区：语音助手；LM Studio 正在生成回复。",
+      };
+    case "degraded":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "语音助手服务受限",
+        title: "当前工作区：语音助手；交互服务处于降级或受限状态。",
+      };
+    case "stopped":
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "语音助手已停止",
+        title: "当前工作区：语音助手；语音交互会话已停止。",
+      };
+    case "idle":
+      return {
+        className: "mode-idle",
+        icon: "💤",
+        label: "语音助手待命",
+        title: "当前工作区：语音助手；当前没有进行中的语音交互。",
+      };
+  }
+}
+
+function getMeetingStatusPresentation(status: MeetingStatus | "idle"): StatusModePresentation {
+  switch (status) {
+    case "recording":
+      return {
+        className: "mode-meeting",
+        icon: "recording-dot",
+        label: "会议录制中",
+        title: "当前工作区：会议助手；正在录制并实时转录会议。",
+      };
+    case "finalizing":
+      return {
+        className: "mode-meeting",
+        icon: "⏳",
+        label: "会议封存中",
+        title: "当前工作区：会议助手；正在冲刷最后的转录并封存会议记录。",
+      };
+    case "completed":
+      return {
+        className: "mode-meeting",
+        icon: "✅",
+        label: "会议已完成",
+        title: "当前工作区：会议助手；会议录制已完成，正在查看已保存记录。",
+      };
+    case "interrupted":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "会议已中断",
+        title: "当前工作区：会议助手；本次会议录制已中断。",
+      };
+    case "storage_error":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "会议存储异常",
+        title: "当前工作区：会议助手；会议记录保存遇到异常。",
+      };
+    case "idle":
+      return {
+        className: "mode-meeting",
+        icon: "🗂️",
+        label: "会议助手待命",
+        title: "当前工作区：会议助手；尚未开始会议录制。",
+      };
+  }
+}
+
+function getSubtitleStatusPresentation(subtitleStatus: string): StatusModePresentation {
+  switch (subtitleStatus) {
+    case "connected":
+      return {
+        className: "mode-subtitles",
+        icon: "📝",
+        label: "实时字幕运行中",
+        title: "当前工作区：实时字幕；字幕代理已连接，正在接收音频并输出转录。",
+      };
+    case "connecting":
+    case "backoff":
+      return {
+        className: "mode-subtitles",
+        icon: "🔄",
+        label: "实时字幕连接中",
+        title: "当前工作区：实时字幕；正在连接字幕代理。",
+      };
+    case "paused":
+      return {
+        className: "mode-stopped",
+        icon: "⏸️",
+        label: "实时字幕已暂停",
+        title: "当前工作区：实时字幕；字幕代理已暂停接收音频。",
+      };
+    case "error":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "实时字幕服务异常",
+        title: "当前工作区：实时字幕；字幕代理服务异常，请检查服务状态。",
+      };
+    case "idle":
+    case "stopped":
+    case "unknown":
+    default:
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "实时字幕已停止",
+        title: "当前工作区：实时字幕；字幕代理当前未运行。",
+      };
+  }
+}
+
+export function getStatusModePresentation({
+  activeTab,
+  meetingStatus,
+  subtitleStatus,
+  phase,
+}: StatusModePresentationInput): StatusModePresentation {
+  if (meetingStatus === "recording" || meetingStatus === "finalizing") {
+    return getMeetingStatusPresentation(meetingStatus);
+  }
+  if (activeTab === "meeting") {
+    return getMeetingStatusPresentation(meetingStatus);
+  }
+  if (activeTab === "subtitles") {
+    return getSubtitleStatusPresentation(subtitleStatus);
+  }
+  if (activeTab === "assistant") {
+    return getAssistantStatusPresentation(phase);
+  }
+  return {
+    className: "mode-idle",
+    icon: "💤",
+    label: "系统待命",
+    title: "当前工作区尚未就绪，系统处于待命状态。",
+  };
+}
 
 interface StatusBarProps {
   commandSocket: CommandSocketApi;
@@ -329,6 +508,12 @@ export default function StatusBar({
 
   const meetingStatus = useMeetingStore((s) => s.status);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
+  const modeStatus = getStatusModePresentation({
+    activeTab,
+    meetingStatus,
+    subtitleStatus,
+    phase,
+  });
 
   // Compute aggregate system health
   const storageStatus: ServiceStatus =
@@ -530,52 +715,17 @@ export default function StatusBar({
       )}
 
       <div className="status-right">
-        {/* 全局互斥模式指示器 (防抖固定尺寸胶囊) */}
-        {(() => {
-          let className = "mode-idle";
-          let icon: React.ReactNode = "💤";
-          let label = "系统待命";
-          let title = "当前系统处于待命就绪状态";
-
-          if (isMeetingRecording) {
-            className = "mode-meeting";
-            icon = <span className="mode-pill-dot recording" aria-hidden="true" />;
-            label = "会议录制中";
-            title = "当前活跃模式：会议助手录制中（语音交互已自动挂起）";
-          } else if (phase === "speaking") {
-            className = "mode-speaking";
-            icon = "🗣️";
-            label = "助手播报中";
-            title = "当前活跃模式：语音助手播报中";
-          } else if (phase === "listening") {
-            className = "mode-listening";
-            icon = "👂";
-            label = "助手聆听中";
-            title = "当前活跃模式：语音助手聆听中（可直接对麦克风说话）";
-          } else if (phase === "thinking") {
-            className = "mode-thinking";
-            icon = "🧠";
-            label = "助手思考中";
-            title = "当前活跃模式：助手思考中（LM Studio 推理中）";
-          } else if (phase === "degraded") {
-            className = "mode-degraded";
-            icon = "⚠️";
-            label = "系统受限";
-            title = "当前语音服务处于降级或受限状态";
-          } else if (phase === "stopped") {
-            className = "mode-stopped";
-            icon = "⏹️";
-            label = "助手已停止";
-            title = "当前语音交互会话已停止";
-          }
-
-          return (
-            <span className={`status-mode-pill ${className}`} title={title}>
-              <span className="mode-pill-indicator">{icon}</span>
-              <span className="mode-pill-label">{label}</span>
-            </span>
-          );
-        })()}
+        {/* 当前工作区状态指示器 (防抖固定尺寸胶囊) */}
+        <span className={`status-mode-pill ${modeStatus.className}`} title={modeStatus.title}>
+          <span className="mode-pill-indicator">
+            {modeStatus.icon === "recording-dot" ? (
+              <span className="mode-pill-dot recording" aria-hidden="true" />
+            ) : (
+              modeStatus.icon
+            )}
+          </span>
+          <span className="mode-pill-label">{modeStatus.label}</span>
+        </span>
 
         {/* 系统健康中心 Popover 触发器 (右侧自然流) */}
         <div className="status-health-container" ref={popoverRef}>

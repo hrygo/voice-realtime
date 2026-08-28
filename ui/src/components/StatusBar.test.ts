@@ -6,7 +6,7 @@ import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeStateSnapshot } from "../protocol";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useMeetingStore } from "../stores/meetingStore";
-import StatusBar, { sessionElapsedSeconds } from "./StatusBar";
+import StatusBar, { getStatusModePresentation, sessionElapsedSeconds } from "./StatusBar";
 
 
 declare global {
@@ -41,6 +41,84 @@ describe("sessionElapsedSeconds", () => {
   it("resets when the session is stopped or the timestamp is invalid", () => {
     expect(sessionElapsedSeconds(null)).toBe(0);
     expect(sessionElapsedSeconds("invalid")).toBe(0);
+  });
+});
+
+describe("getStatusModePresentation", () => {
+  it("keeps voice assistant phase labels explicit", () => {
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-listening",
+      label: "语音助手聆听中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-stopped",
+      label: "语音助手已停止",
+    });
+  });
+
+  it("uses meeting status instead of a stale assistant phase", () => {
+    expect(getStatusModePresentation({
+      activeTab: "meeting",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议助手待命",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "meeting",
+      meetingStatus: "recording",
+      subtitleStatus: "connected",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议录制中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "finalizing",
+      subtitleStatus: "connected",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议封存中",
+    });
+  });
+
+  it("uses subtitle status instead of a stale assistant phase", () => {
+    expect(getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-subtitles",
+      label: "实时字幕运行中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-stopped",
+      label: "实时字幕已停止",
+    });
   });
 });
 
