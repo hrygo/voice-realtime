@@ -3,6 +3,7 @@ import AssistantPanel from "./components/AssistantPanel";
 import StatusBar from "./components/StatusBar";
 import SubtitleStream from "./components/SubtitleStream";
 import MeetingPanel from "./components/meeting/MeetingPanel";
+import { InnerOSPanel } from "./features/innerOS/InnerOSPanel";
 import ShortcutsModal from "./components/ShortcutsModal";
 import { showToast, ToastContainer } from "./components/Toast";
 import { useCommandSocket } from "./hooks/useCommandSocket";
@@ -10,6 +11,7 @@ import { useMeetingSocket } from "./hooks/useMeetingSocket";
 import type { RuntimeMode } from "./contracts/meetingContract";
 import type { RuntimeStateSnapshot } from "./protocol";
 import { useMeetingStore } from "./stores/meetingStore";
+import { useUISettingsStore } from "./stores/uiSettingsStore";
 import "./App.css";
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
@@ -153,7 +155,7 @@ export default function App() {
   const activeMeeting = useMeetingStore((s) => s.activeMeeting);
   const segments = useMeetingStore((s) => s.segments);
   const partialText = useMeetingStore((s) => s.partialText);
-  const meetingMicMuted = useMeetingStore((s) => s.health.mic_muted);
+  const micMuted = useUISettingsStore((s) => s.micMuted);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
 
   const clearPendingSwitch = useCallback(() => {
@@ -348,6 +350,19 @@ export default function App() {
 
   const latestSnippet = partialText || (segments.length > 0 ? segments[segments.length - 1].text : "");
 
+  const isStandaloneInnerOS =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("view") === "inner-os";
+
+  if (isStandaloneInnerOS) {
+    return (
+      <div className="app-container is-standalone-inner-os" data-workspace="meeting">
+        <InnerOSPanel isStandalone />
+        <ToastContainer />
+      </div>
+    );
+  }
+
   return (
     <div className="app-container" data-workspace={activeTab || "assistant"}>
       <StatusBar
@@ -395,11 +410,11 @@ export default function App() {
           elapsed={recordingElapsed}
           segmentsCount={segments.length}
           latestText={latestSnippet}
-          micMuted={meetingMicMuted}
+          micMuted={micMuted}
           onToggleMic={() => {
             void commandSocket.sendCommand({
               cmd: "set_mic_muted",
-              muted: !meetingMicMuted,
+              muted: !micMuted,
             });
           }}
           onReturn={() => handleTabChange("meeting")}

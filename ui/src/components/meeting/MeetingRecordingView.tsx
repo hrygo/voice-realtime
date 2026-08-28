@@ -7,6 +7,18 @@ import { MeetingWaveform } from "./MeetingWaveform";
 import { deriveReadingBlocks } from "./transcriptViewModel";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { InnerOSPanel, useInnerOSStore } from "../../features/innerOS";
+import {
+  BookOpenIcon,
+  ClockIcon,
+  CopyIcon,
+  EditIcon,
+  FileTextIcon,
+  MaskIcon,
+  SparklesIcon,
+  SpeakerIcon,
+  StopCircleIcon,
+  UserIcon,
+} from "../Icons";
 
 export const SPEAKER_COLORS = [
   "#6366f1", // indigo
@@ -240,7 +252,7 @@ export function MeetingRecordingView({
               : "会议录制中，麦克风正常监听"}
       </div>
 
-      {/* Recording Toolbar: Left (Status & VU) · Center (Views & Star) · Right (InnerOS & End) */}
+      {/* Recording Toolbar: compact status metrics · views · actions */}
       <div className="recording-toolbar">
         {/* Cluster 1 (Left): 状态与声学 */}
         <div className="toolbar-cluster cluster-status">
@@ -271,10 +283,23 @@ export function MeetingRecordingView({
             />
           </div>
 
-          <span className="recording-status-text">
-            已确认 {segments.length} 个发言片段 · {uniqueSpeakersCount} 位说话人 · {isCalibrating ? "正在校准" : "正在识别"}
-            {starredIds.size > 0 && ` · ⭐ ${starredIds.size} 重点`}
-          </span>
+          <div className="recording-metric" title="已确认的发言片段">
+            <FileTextIcon size={14} aria-hidden="true" />
+            <strong>{segments.length}</strong>
+            <span className="recording-metric-label">片段</span>
+          </div>
+          <div className="recording-metric" title="已识别的说话人数">
+            <SpeakerIcon size={14} aria-hidden="true" />
+            <strong>{uniqueSpeakersCount}</strong>
+            <span className="recording-metric-label">说话人</span>
+          </div>
+          {isCalibrating && <span className="recording-compact-state is-calibrating">校准中</span>}
+          {starredIds.size > 0 && (
+            <div className="recording-metric recording-metric-starred" title="重点发言数量">
+              <SparklesIcon size={14} aria-hidden="true" />
+              <strong>{starredIds.size}</strong>
+            </div>
+          )}
         </div>
 
         {/* Cluster 2 (Center): 视图模式与重点 */}
@@ -287,7 +312,8 @@ export function MeetingRecordingView({
               aria-pressed={viewMode === "timeline"}
               title="时序视图：按原始 ASR 确认片段逐条展示"
             >
-              ⏱️ 时序视图
+              <ClockIcon size={13} />
+              <span>时序视图</span>
             </button>
             <button
               type="button"
@@ -296,7 +322,8 @@ export function MeetingRecordingView({
               aria-pressed={viewMode === "reading"}
               title="阅读视图：聚合连续发言提升连贯性"
             >
-              📖 阅读视图
+              <BookOpenIcon size={13} />
+              <span>阅读视图</span>
             </button>
           </div>
 
@@ -309,7 +336,7 @@ export function MeetingRecordingView({
             aria-pressed={Boolean(selectedSegmentId && starredIds.has(selectedSegmentId))}
             title="标记重点发言 (快捷键 S)"
           >
-            <span className="btn-star-icon">⭐</span>
+            <SparklesIcon size={13} />
             <span>{selectedSegmentId ? "标选中段" : "标重点"}</span>
             <kbd className="toolbar-kbd">S</kbd>
           </button>
@@ -321,26 +348,14 @@ export function MeetingRecordingView({
               onClick={() => setFilterStarredOnly((prev) => !prev)}
               title={filterStarredOnly ? "查看全部转录片段" : "仅查看重点片段"}
             >
-              <span>{filterStarredOnly ? "📋 全部" : `⭐ 重点 (${starredIds.size})`}</span>
+              <SparklesIcon size={12} />
+              <span>{filterStarredOnly ? "全部" : `重点 (${starredIds.size})`}</span>
             </button>
           )}
         </div>
 
-        {/* Cluster 3 (Right): 副驾驶 & 结束 — 麦克风已由顶部 StatusBar VU 控件统一管控，此处不重复 */}
+        {/* Cluster 3 (Right): 结束 & 副驾驶 — 麦克风已由顶部 StatusBar VU 控件统一管控，此处不重复 */}
         <div className="toolbar-cluster cluster-actions">
-          <button
-            type="button"
-            className={`btn-inneros-toggle ${isInnerOSOpen ? "is-active" : ""} ${isGenerating ? "is-generating" : ""}`}
-            onClick={toggleInnerOS}
-            title="展开/收起内心 OS 私密副驾驶 (⌘+K)"
-            aria-pressed={isInnerOSOpen}
-          >
-            <span className="btn-inneros-icon">🔒</span>
-            <span>内心 OS</span>
-            <kbd className="toolbar-kbd inneros-kbd">⌘K</kbd>
-            {isGenerating && <span className="btn-inneros-pulse" />}
-          </button>
-
           <button
             type="button"
             className={`btn-end-meeting ${isEnding ? "is-ending" : ""}`}
@@ -348,12 +363,20 @@ export function MeetingRecordingView({
             disabled={isEnding}
             title="结束当前会议并冲刷转录生成 AI 纪要"
           >
-            {isEnding ? (
-              <span className="btn-spinner-sm" />
-            ) : (
-              <span>⏹️</span>
-            )}
+            {isEnding ? <span className="btn-spinner-sm" /> : <StopCircleIcon size={14} />}
             <span>{isEnding ? "正在冲刷并封存..." : "结束会议"}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`btn-inneros-toggle ${isInnerOSOpen ? "is-active" : ""} ${isGenerating ? "is-generating" : ""}`}
+            onClick={toggleInnerOS}
+            title="展开/收起内心 OS 私密副驾驶 (⌘+K)"
+            aria-pressed={isInnerOSOpen}
+          >
+            <MaskIcon size={14} />
+            <span>内心 OS</span>
+            {isGenerating && <span className="btn-inneros-pulse" />}
           </button>
         </div>
       </div>
@@ -379,9 +402,9 @@ export function MeetingRecordingView({
             {displayedSegments.length === 0 && !partialText && (
               <div className="history-empty">
                 {filterStarredOnly ? (
-                  <span>⭐ 暂无标记为重点的发言片段，点击片段右侧星号可随时标记</span>
+                  <span><SparklesIcon size={14} /> 暂无标记为重点的发言片段，点击片段右侧星号可随时标记</span>
                 ) : (
-                  <span>🎙️ 正在倾听发言... 请保持讲话，实时转录将在此展示</span>
+                  <span><ClockIcon size={14} /> 正在倾听发言... 请保持讲话，实时转录将在此展示</span>
                 )}
               </div>
             )}
@@ -412,15 +435,15 @@ export function MeetingRecordingView({
                         }}
                       >
                         <span className="speaker-avatar-circle" style={{ backgroundColor: speakerColor }}>
-                          👤
+                          <UserIcon size={11} />
                         </span>
                         <span className="speaker-name-text">{seg.speaker_name}</span>
-                        <span className="speaker-edit-badge" title="可重命名">✎</span>
+                        <span className="speaker-edit-badge" title="可重命名"><EditIcon size={10} /></span>
                       </button>
                       <div className="segment-actions-group" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         {isStarred && (
                           <span className="segment-starred-badge" title="重点发言片段">
-                            ⭐ 重点
+                            <SparklesIcon size={11} /> 重点
                           </span>
                         )}
                         <span className="segment-time">
@@ -436,7 +459,7 @@ export function MeetingRecordingView({
                             toggleStarSegment(seg.id);
                           }}
                         >
-                          <span>{isStarred ? "⭐" : "✩"}</span>
+                          <SparklesIcon size={12} />
                           <span className="star-btn-text">{isStarred ? "已标记" : "标为重点"}</span>
                         </button>
                         <button
@@ -448,7 +471,7 @@ export function MeetingRecordingView({
                             void handleCopyText(seg.text);
                           }}
                         >
-                          📋
+                          <CopyIcon size={12} />
                         </button>
                       </div>
                     </div>
@@ -479,15 +502,15 @@ export function MeetingRecordingView({
                         }}
                       >
                         <span className="speaker-avatar-circle" style={{ backgroundColor: speakerColor }}>
-                          👤
+                          <UserIcon size={11} />
                         </span>
                         <span className="speaker-name-text">{block.speaker_name}</span>
-                        <span className="speaker-edit-badge" title="可重命名">✎</span>
+                        <span className="speaker-edit-badge" title="可重命名"><EditIcon size={10} /></span>
                       </button>
                       <div className="segment-actions-group" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         {block.isStarred && (
                           <span className="segment-starred-badge" title="包含重点发言片段">
-                            ⭐ 重点
+                            <SparklesIcon size={11} /> 重点
                           </span>
                         )}
                         <span className="segment-time">
@@ -502,7 +525,7 @@ export function MeetingRecordingView({
                             void handleCopyText(block.text);
                           }}
                         >
-                          📋
+                          <CopyIcon size={12} />
                         </button>
                       </div>
                     </div>
@@ -540,7 +563,7 @@ export function MeetingRecordingView({
                                   onClick={() => toggleStarSegment(sub.id)}
                                   title={isSubStarred ? "取消重点标记" : "标记为重点"}
                                 >
-                                  {isSubStarred ? "⭐" : "✩"}
+                                  <SparklesIcon size={12} />
                                 </button>
                               </div>
                             );
@@ -557,7 +580,7 @@ export function MeetingRecordingView({
                 <div className="segment-top">
                   <span className="speaker-tag-btn" style={{ cursor: "default" }}>
                     <span className="speaker-avatar-circle" style={{ backgroundColor: "var(--color-yellow)" }}>
-                      ⏳
+                      <ClockIcon size={11} />
                     </span>
                     <span className="speaker-name-text">
                       {partialSpeaker || "正在识别说话人..."}
@@ -569,6 +592,31 @@ export function MeetingRecordingView({
               </div>
             )}
           </div>
+
+          {/* Floating Copilot trigger when Inner OS panel is stowed */}
+          {!isInnerOSOpen && (
+            <button
+              type="button"
+              className="inner-os-floating-trigger"
+              onClick={toggleInnerOS}
+              title="唤起内心 OS 私密副驾驶 (⌘K)"
+              aria-label="唤起内心 OS 私密副驾驶"
+              data-testid="inner-os-floating-trigger"
+            >
+              <span className="inner-os-floating-icon" aria-hidden="true">
+                <SparklesIcon size={14} />
+              </span>
+              <span>内心 OS</span>
+              {isGenerating ? (
+                <span className="inner-os-floating-badge is-generating">
+                  <span className="inner-os-pulsing-dot" /> 研判中
+                </span>
+              ) : starredIds.size > 0 ? (
+                <span className="inner-os-floating-badge">重点 {starredIds.size}</span>
+              ) : null}
+              <kbd className="inner-os-floating-kbd">⌘K</kbd>
+            </button>
+          )}
         </div>
 
         {/* Right side Inner OS Panel */}

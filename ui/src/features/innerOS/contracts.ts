@@ -70,6 +70,30 @@ export interface InnerOSExchange {
   readonly created_at: string;
 }
 
+export type QuickPromptCategory = "fact" | "analysis" | "draft" | "custom";
+
+export interface QuickPromptItem {
+  readonly id: string;
+  readonly category: QuickPromptCategory;
+  readonly label: string;
+  readonly intent: InnerOSIntent;
+  readonly question: string;
+  readonly isCustom?: boolean;
+}
+
+export type DraftTone = "professional" | "concise" | "constructive" | "inquisitive";
+
+export interface InnerOSSessionItem {
+  readonly queryId: string;
+  readonly meetingId: string;
+  readonly question: string;
+  readonly intent: InnerOSIntent;
+  readonly answer: InnerOSAnswer;
+  readonly createdAt: string;
+  saved: boolean;
+  isExpanded?: boolean;
+}
+
 export interface InnerOSExchangeListResponse {
   readonly items: readonly InnerOSExchange[];
   readonly next_cursor: string | null;

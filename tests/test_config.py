@@ -20,8 +20,11 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
     assert InteractionSettings().max_session_seconds == 0
 
 
-def test_inner_os_is_disabled_by_default_and_has_bounded_limits() -> None:
-    settings = Settings(_env_file=None)
+def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
+    settings = Settings(_env_file=None, meeting=MeetingSettings(_env_file=None))
     assert settings.meeting.inner_os_enabled is False
     assert settings.meeting.inner_os_analysis_enabled is False
     assert settings.meeting.inner_os_cache_ttl_secs == 1800

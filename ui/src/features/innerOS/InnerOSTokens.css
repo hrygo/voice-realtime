@@ -1,0 +1,64 @@
+/* Inner OS semantic tokens. Values inherit from and extend Voice Studio palette. */
+
+.inner-os-panel,
+.inner-os-unsaved-tray,
+.inner-os-history-tab {
+  --inneros-accent: var(--color-purple);
+  --inneros-accent-hover: var(--color-accent);
+  --inneros-accent-light: var(--color-accent-light);
+  --inneros-accent-glow: var(--color-purple-glow);
+  --inneros-accent-subtle: color-mix(in srgb, var(--color-purple) 14%, transparent);
+  --inneros-accent-subtle-hover: color-mix(in srgb, var(--color-purple) 22%, transparent);
+  --inneros-accent-gradient: linear-gradient(135deg, var(--color-purple) 0%, var(--color-accent) 100%);
+  --inneros-accent-gradient-hover: linear-gradient(135deg, var(--color-accent) 0%, var(--color-purple) 100%);
+
+  --inneros-surface: var(--bg-card-solid);
+  --inneros-surface-subtle: var(--bg-card);
+  --inneros-surface-elevated: var(--bg-elevated);
+  --inneros-surface-glass: var(--bg-card);
+  --inneros-border: var(--border-glow);
+  --inneros-border-light: var(--border-light);
+  --inneros-border-glow: var(--color-purple-glow);
+
+  --inneros-fact-accent: var(--color-green);
+  --inneros-fact-light: var(--color-green);
+  --inneros-fact-bg: color-mix(in srgb, var(--color-green) 10%, transparent);
+  --inneros-fact-border: color-mix(in srgb, var(--color-green) 26%, var(--border));
+
+  --inneros-judgement-low: var(--color-cyan);
+  --inneros-judgement-low-bg: color-mix(in srgb, var(--color-cyan) 10%, transparent);
+  --inneros-judgement-medium: var(--color-yellow);
+  --inneros-judgement-medium-bg: color-mix(in srgb, var(--color-yellow) 10%, transparent);
+  --inneros-judgement-high: var(--color-red);
+  --inneros-judgement-high-bg: color-mix(in srgb, var(--color-red) 10%, transparent);
+
+  --inneros-draft-bg: color-mix(in srgb, var(--color-purple) 14%, var(--bg-secondary));
+  --inneros-draft-border: color-mix(in srgb, var(--color-purple) 32%, var(--border));
+  --inneros-draft-glow: var(--color-purple-glow);
+
+  --inneros-success: var(--color-green);
+  --inneros-success-subtle: color-mix(in srgb, var(--inneros-success) 12%, transparent);
+  --inneros-success-border: color-mix(in srgb, var(--inneros-success) 28%, var(--border));
+  --inneros-warning: var(--color-yellow);
+  --inneros-warning-subtle: color-mix(in srgb, var(--inneros-warning) 12%, transparent);
+  --inneros-warning-border: color-mix(in srgb, var(--inneros-warning) 28%, var(--border));
+  --inneros-danger: var(--color-red);
+  --inneros-danger-subtle: color-mix(in srgb, var(--inneros-danger) 12%, transparent);
+  --inneros-danger-border: color-mix(in srgb, var(--inneros-danger) 28%, var(--border));
+  --inneros-on-accent: var(--bg-base);
+
+  --inneros-shadow-card: var(--shadow-card);
+  --inneros-shadow-float: var(--shadow-float);
+  --inneros-space-1: 4px;
+  --inneros-space-2: 8px;
+  --inneros-space-3: 12px;
+  --inneros-space-4: 16px;
+  --inneros-radius-control: var(--radius-sm);
+  --inneros-radius-card: var(--radius-md);
+  --inneros-radius-panel: var(--radius-lg);
+  --inneros-size-xs: 0.6875rem;
+  --inneros-size-sm: 0.75rem;
+  --inneros-size-md: 0.875rem;
+  --inneros-size-lg: 1rem;
+  --inneros-size-xl: 1.125rem;
+}

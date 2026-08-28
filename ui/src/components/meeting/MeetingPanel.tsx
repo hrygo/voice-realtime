@@ -10,6 +10,7 @@ import { MeetingFinalizingView } from "./MeetingFinalizingView";
 import { MeetingDetailView } from "./MeetingDetailView";
 import { MeetingSpeakerModal } from "./MeetingSpeakerModal";
 import { MeetingDeleteModal } from "./MeetingDeleteModal";
+import { MeetingEndConfirmModal } from "./MeetingEndConfirmModal";
 import { showToast } from "../Toast";
 import type { MeetingDetail } from "../../contracts/meetingContract";
 import "./MeetingPanel.css";
@@ -20,8 +21,10 @@ interface MeetingPanelProps {
 
 export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   const store = useMeetingStore();
+  const micMuted = useUISettingsStore((s) => s.micMuted);
   const [isStarting, setIsStarting] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
 
   const isMeetingActive = store.status === "recording" || store.status === "finalizing";
 
@@ -110,6 +113,9 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
         return;
       }
+      if (endConfirmOpen) {
+        return;
+      }
       if (e.key === "Escape") {
         e.preventDefault();
         if (isMeetingActive) {
@@ -121,7 +127,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isMeetingActive, store.returnToActiveMeeting, handleNewMeeting]);
+  }, [endConfirmOpen, isMeetingActive, store.returnToActiveMeeting, handleNewMeeting]);
 
   // Load history on mount
   useEffect(() => {
@@ -183,11 +189,23 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   };
 
   const handleEndMeeting = async () => {
+    if (isEnding || store.status === "finalizing") {
+      return;
+    }
+    if (!commandSocket.ready) {
+      showToast("控制端连接中，请稍候再试", "warning");
+      return;
+    }
+
+    setEndConfirmOpen(true);
+  };
+
+  const handleConfirmEndMeeting = async (): Promise<boolean> => {
     const meetingId =
       store.activeMeetingId || useUISettingsStore.getState().activeMeetingId;
     if (!commandSocket.ready) {
       showToast("控制端连接中，请稍候再试", "warning");
-      return;
+      return false;
     }
 
     setIsEnding(true);
@@ -206,8 +224,10 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
       }
       void store.fetchHistory();
       showToast("会议已结束，正在冲刷转录并排队生成 AI 纪要", "info");
+      return true;
     } catch (err) {
       showToast(err instanceof Error ? err.message : "结束会议失败", "error");
+      return false;
     } finally {
       setIsEnding(false);
     }
@@ -276,7 +296,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         activeStatus={store.status}
         activeStartedAt={store.sessionStartedAt}
         activeSegmentsCount={store.segments.length}
-        micMuted={store.health.mic_muted}
+        micMuted={micMuted}
         nextCursor={store.nextCursor}
         isLoading={store.isLoadingHistory}
         isCollapsed={isSidebarCollapsed}
@@ -313,27 +333,34 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             <div className="live-banner-actions">
               <button
                 type="button"
-                className={`btn-live-banner-mic ${store.health.mic_muted ? "muted" : ""}`}
+                className={`btn-live-banner-mic ${micMuted ? "muted" : ""}`}
                 onClick={() => {
                   void commandSocket.sendCommand({
                     cmd: "set_mic_muted",
-                    muted: !store.health.mic_muted,
+                    muted: !micMuted,
                   });
                 }}
-                title={store.health.mic_muted ? "点击解除麦克风静音" : "点击将麦克风静音"}
+                title={micMuted ? "点击解除麦克风静音" : "点击将麦克风静音"}
               >
-                {store.health.mic_muted ? "🔇 解除静音" : "🎤 静音"}
+                {micMuted ? "🔇 解除静音" : "🎤 静音"}
               </button>
-              <button
-                type="button"
-                className="btn-live-banner-end"
-                onClick={handleEndMeeting}
-                disabled={isEnding}
-                title="结束当前正在录制的会议"
-              >
-                <span>⏹️</span>
-                <span>{isEnding ? "封存中..." : "结束会议"}</span>
-              </button>
+              {store.status === "recording" ? (
+                <button
+                  type="button"
+                  className="btn-live-banner-end"
+                  onClick={() => void handleEndMeeting()}
+                  disabled={isEnding}
+                  title="结束当前正在录制的会议"
+                >
+                  <span>⏹️</span>
+                  <span>{isEnding ? "封存中..." : "结束会议"}</span>
+                </button>
+              ) : (
+                <span className="live-banner-finalizing-state" role="status">
+                  <span className="live-banner-pulse-dot" aria-hidden="true" />
+                  正在封存...
+                </span>
+              )}
               <button
                 type="button"
                 className="btn-live-banner-return"
@@ -413,11 +440,11 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
             partialText={store.partialText}
             partialSpeaker={store.partialSpeaker}
             gaps={store.gaps}
-            micMuted={store.health.mic_muted}
+            micMuted={micMuted}
             onToggleMic={() => {
               void commandSocket.sendCommand({
                 cmd: "set_mic_muted",
-                muted: !store.health.mic_muted,
+                muted: !micMuted,
               });
             }}
             onEndMeeting={handleEndMeeting}
@@ -482,6 +509,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
           /* 5. 准备/闲置视图 */
           <MeetingIdleView
             health={store.health}
+            micMuted={micMuted}
             onStartMeeting={handleStartMeeting}
             isStarting={isStarting}
           />
@@ -501,6 +529,16 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
           onSave={handleSaveSpeakerName}
         />
       )}
+
+      <MeetingEndConfirmModal
+        isOpen={endConfirmOpen}
+        meetingTitle={store.activeMeeting?.title || "当前会议"}
+        elapsedLabel={formatElapsed(liveElapsed)}
+        segmentCount={store.segments.length}
+        isConfirming={isEnding}
+        onClose={() => setEndConfirmOpen(false)}
+        onConfirm={handleConfirmEndMeeting}
+      />
 
       {/* 会议删除弹窗 */}
       {deleteModalOpen && deleteTargetId && (

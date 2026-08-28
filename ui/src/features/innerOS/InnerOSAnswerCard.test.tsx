@@ -97,4 +97,29 @@ describe("InnerOSAnswerCard", () => {
     });
     expect(onSave).toHaveBeenCalledTimes(1);
   });
+
+  it("triggers onDelete when delete button is clicked", () => {
+    const onSave = vi.fn();
+    const onDelete = vi.fn();
+    act(() => {
+      root.render(
+        <InnerOSAnswerCard
+          queryId="q-1"
+          question="性能如何？"
+          intent="mixed"
+          answer={mockAnswer}
+          saved={false}
+          onSave={onSave}
+          onDelete={onDelete}
+        />,
+      );
+    });
+
+    const deleteBtn = container.querySelector(".inner-os-delete-btn") as HTMLButtonElement;
+    expect(deleteBtn).not.toBeNull();
+    act(() => {
+      deleteBtn.click();
+    });
+    expect(onDelete).toHaveBeenCalledTimes(1);
+  });
 });

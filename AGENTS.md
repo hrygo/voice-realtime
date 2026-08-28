@@ -1,6 +1,6 @@
 # voice-realtime
 
-> 全本地实时语音交互（Voice Assistant）+ 会议助手（Meeting Assistant，含说话人分离、PostgreSQL 持久化、异步 AI 纪要、崩溃恢复 journal）+ 实时语音字幕系统（Live Subtitles）（Apple Silicon / MLX / 中文优先 / 离线）。  
+> 全本地实时语音交互（Voice Assistant）+ 会议助手（Meeting Assistant，含说话人分离、PostgreSQL 持久化、异步 AI 纪要、崩溃恢复 journal）+ 实时语音字幕系统（Live Subtitles）+ 会中内心 OS 伴侣（Inner OS 私密局势研判与发言对策）（Apple Silicon / MLX / 中文优先 / 离线）。  
 > **Python 3.12 严格锁定**（`misaki[zh]` 要求 `<3.13`）；使用 `uv` + `PEP 621` + `hatchling`。
 
 ---
@@ -28,6 +28,8 @@
             ├─► AudioInjector / Pipecat ──► LM Studio (/api/v1/chat) ──► TTS 桥 ──► 扬声器 [单人交互模式]
             ├─► SubtitleProxy ──PCM WS──► vr-subtitles / WhisperLiveKit (Sortformer 分离) [实时字幕]
             └─► MeetingSession (窗口对账 / EOF 冲刷 / Journal) ──► PostgreSQL ──► MeetingSummary [会议助手模式]
+                    │
+                    └──► Inner OS (会前底牌 / 局势研判 / 事实核查 / 回应草稿 / 会后即焚) ──► LM Studio [会中伴侣]
 ```
 
 ### 核心设计原则
@@ -51,7 +53,8 @@
 | `voice_realtime.audio` | 单源麦克风采集、有界 sink 扇出、真实静音（零音频吞吐）、Pipecat 音频注入器 | `hub.py`<br>`audio_injector.py` |
 | `voice_realtime.tts_bridge` | mlx-audio Qwen3-TTS → OpenAI 兼容 `POST /v1/audio/speech`，请求级音色、单并发门有界串行生成 | `server.py`<br>`engine.py`<br>`schema.py` |
 | `voice_realtime.config` | 集中配置层（pydantic-settings，含 Bridge / Interaction / Subtitles / Meeting / UI / ASR） | `config.py` |
-| `ui/` (前端) | React 19 + TypeScript + Vite 7 + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、声学波形、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
+| `ui/` (前端控制台) | React 19 + TypeScript + Vite 7 + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、声学波形、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
+| `ui/src/features/innerOS` | 会中内心 OS 伴侣前端：会前底牌抽屉、Prompt 快捷矩阵、流式多意图研判卡片、会后即焚瞬态管理与历史归档 | `InnerOSPanel.tsx`<br>`InnerOSEphemeralContext.tsx`<br>`InnerOSAnswerCard.tsx`<br>`InnerOSArchive.tsx`<br>`innerOSStore.ts` |
 
 > 📌 **注**：`tools/` 下的 `WhisperLiveKit` 与 `mlx-audio` 为 vendor 子仓库（仅启动/桥接），非自研代码。
 
@@ -106,7 +109,16 @@
 - **L2 `BotTextRecorder` + `SelfEchoFilter`（共享 `EchoTextBuffer`）**：用户转写文本与近端（`echo_text_window_secs` 默认 `10s`）机器人播报文本相似度 $\ge$ `echo_text_similarity`（默认 `0.7`）或为其子串时 ➔ 吞帧不送入 LLM 上下文，确保机器人永不响应自己的话，阻断内容层死循环。
 - **端点参数联动**：`silence_secs`（`0.45`）必须略小于 STT `ttfs_p99_latency`（`0.5`），保留转写等待窗口。
 
-### 8. Lint & 类型检查规范
+### 8. 内心 OS 伴侣与会后即焚原则
+- **隐私与生命周期隔离**：会前底牌与会中即时问答默认仅驻留在浏览器端内存与会话生命周期内，标注"会后即焚"，会议结束自动销毁；只有用户主动点击"保存"才持久化至会话存储。
+- **布局防挤压与黄金分割规范**：内心 OS 侧边面板宽度设为黄金分割小端比例（`width: clamp(520px, 38.2vw, 860px)`）；支持面板外任意点击（click outside）自动收起；主滚动视口与子抽屉严格设置 `flex-shrink: 0` 与定制细滚动条（`scrollbar-width: thin`），防止卡片增多时组件被挤压坍缩。
+
+### 9. 全局无障碍对比度硬性约束（WCAG 2.1 AA/AAA）
+- **全局适用范围**：覆盖全站所有模块（语音助手、会议助手、实时字幕、内心 OS、侧边栏、状态栏、模态弹窗及深浅双色主题）。
+- **对比度指标底线**：普通正文文本对比度严格满足 $\ge 4.5:1$（AA级）或 $\ge 7.0:1$（AAA级）；大字标题与关键 UI 交互组件（按钮底色与文字、激活胶囊、边框、状态小圆点）对比度严格满足 $\ge 3.0:1$。
+- **色彩设计禁忌**：严禁在浅色背景下直接渲染浅紫/淡黄色文本（如 `#c4b5fd`），严禁在浅紫（如 `#c084fc`）或浅红（如 `#f87171`）按钮底色上使用纯白文字（`#ffffff`），深色模式与浅色模式必须双向复核对比度。
+
+### 10. Lint & 类型检查规范
 - `ruff` 刻意忽略 `RUF001/002/003`（中文全角标点是项目既定风格）；
 - `tests/*` 采用 per-file-ignore `S101/ANN001/ANN201`；
 - `mypy` strict 校验**仅针对 `src/`**（配置中 `exclude = ["tests/"]`）。
@@ -116,16 +128,16 @@
 ## 🛡️ 质量门禁（提交前必须全绿）
 
 ```bash
-# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 1161 passed, 10 skipped，覆盖率 ~82%）
+# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 1327 passed，覆盖率 ~83%）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
-# 2. Python 类型检查（strict，87 source files 全绿）
+# 2. Python 类型检查（strict，108 source files 全绿）
 uv run mypy src/
 
 # 3. Python 代码风格与 Lint 检查
 uv run ruff check src/ tests/
 
-# 4. 前端测试（144 passed / 17 test files 全绿）
+# 4. 前端测试（215 passed / 34 test files 全绿）
 cd ui && npm test -- --run
 
 # 5. 前端类型检查与生产构建
@@ -176,7 +188,7 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 | 依赖组件 | 规格与配置要求 |
 |---|---|
 | **硬件平台** | Apple Silicon M-series (M1~M5 / macOS 14+ / 16GB~128GB 等) |
-| **LM Studio** (`localhost:1234`) | - **统一模型（交互 / 纪要 / 标题）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b/14b`） |
+| **LM Studio** (`localhost:1234`) | - **统一模型（交互 / 纪要 / 标题 / 内心 OS）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b/14b`） |
 | **PostgreSQL** | DSN: `postgresql:///knowledge`，Schema: `voice_realtime` |
 | **TTS 桥服务** (Port: `8765`) | `mlx-audio` Qwen3-TTS (24 kHz WAV/PCM)，`VoiceDesign` 音色 profile |
 | **SenseVoice 缓存快照** | `~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…` |

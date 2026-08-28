@@ -158,7 +158,13 @@
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
-  position: relative;
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: 100%;
+  margin: 0;
+  padding: 12px 0 0;
+  box-sizing: border-box;
   top: 0;
   transform: none !important;
   overflow: visible !important;
@@ -519,20 +525,21 @@
 /* Collapsed Rail Footer */
 .collapsed-rail-footer {
   margin-top: auto;
-  padding-bottom: 4px;
+  padding: 12px 0 16px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .sidebar-rail-kbd {
-  font-size: 0.62rem;
+  font-size: 0.65rem;
   font-family: ui-monospace, monospace;
   color: var(--text-muted);
-  padding: 2px 4px;
+  padding: 3px 6px;
   border-radius: 4px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 /* ==========================================================================

@@ -261,6 +261,7 @@ describe("Meeting React Components DOM Rendering", () => {
             mic_muted: false,
             recovery_journal_active: false,
           }}
+          micMuted={false}
           onStartMeeting={handleStart}
           isStarting={false}
         />,
@@ -304,7 +305,9 @@ describe("Meeting React Components DOM Rendering", () => {
       );
     });
 
-    expect(container.textContent).toContain("已确认 4 个发言片段");
+    expect(container.textContent).toContain("4片段");
+    expect(container.textContent).toContain("3说话人");
+    expect(container.querySelector(".recording-compact-state")).toBeNull();
     expect(container.textContent).toContain("时序视图");
     expect(container.textContent).toContain("阅读视图");
     expect(container.textContent).toContain("结束会议");

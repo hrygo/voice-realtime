@@ -4,12 +4,14 @@ import { MeetingWaveform } from "./MeetingWaveform";
 
 interface MeetingIdleViewProps {
   health: MeetingHealthState;
+  micMuted: boolean;
   onStartMeeting: (title: string, maxSpeakers?: number) => Promise<void>;
   isStarting: boolean;
 }
 
 export function MeetingIdleView({
   health,
+  micMuted,
   onStartMeeting,
   isStarting,
 }: MeetingIdleViewProps) {
@@ -46,7 +48,7 @@ export function MeetingIdleView({
         <MeetingWaveform
           isRecording={false}
           hasPartial={false}
-          isMuted={health.mic_muted}
+          isMuted={micMuted}
         />
       </div>
 
@@ -123,8 +125,8 @@ export function MeetingIdleView({
 
           <div className="check-item">
             <span>🎤 麦克风音频采集</span>
-            <span className={`check-status-tag ${health.mic_muted ? "warn" : "ok"}`}>
-              {health.mic_muted ? "● 麦克风已静音" : "● 16kHz 采集就绪"}
+            <span className={`check-status-tag ${micMuted ? "warn" : "ok"}`}>
+              {micMuted ? "● 麦克风已静音" : "● 16kHz 采集就绪"}
             </span>
           </div>
         </div>

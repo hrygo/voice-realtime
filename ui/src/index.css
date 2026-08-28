@@ -16,6 +16,7 @@
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
   --text-muted: #94a3b8;
+  --text-on-accent: #ffffff;
 
   --border: rgba(255, 255, 255, 0.08);
   --border-light: rgba(255, 255, 255, 0.15);
@@ -361,4 +362,3 @@ kbd {
     box-shadow: 0 0 4px var(--color-accent-glow);
   }
 }
-

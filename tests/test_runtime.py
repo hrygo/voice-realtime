@@ -74,11 +74,13 @@ class _FakeSubtitleProxy:
 
 
 @pytest.fixture()
-def settings() -> Settings:
+def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
     return Settings(
         bridge={"host": "127.0.0.1", "port": 9999},
         subtitles={"host": "127.0.0.1", "port": 9998},
         interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        meeting={"inner_os_enabled": False},
     )
 
 
