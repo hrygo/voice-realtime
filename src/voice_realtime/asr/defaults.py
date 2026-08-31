@@ -22,6 +22,11 @@ from voice_realtime.asr.adapters.sensevoice_native import (
     SenseVoiceNativeInference,
     SenseVoiceNativeRawEventSink,
 )
+from voice_realtime.asr.adapters.speechrail_realtime import (
+    ConnectionFactory,
+    SpeechRailRealtimeClient,
+    SpeechRailStreamingTranscriber,
+)
 from voice_realtime.asr.adapters.wlk import (
     WLKRawEventSink,
     WLKStreamFactory,
@@ -34,6 +39,7 @@ from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
+    SpeechRailRealtimeProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
 
@@ -55,6 +61,7 @@ def build_wlk_registry(
                 FunASRNanoPyTorchProfile,
                 Qwen3NativeProfile,
                 SenseVoiceNativeProfile,
+                SpeechRailRealtimeProfile,
             ),
         ):
             raise TypeError("non-WLK profile cannot be constructed by the WLK registry")
@@ -109,6 +116,30 @@ def build_funasr_nano_ws_registry(
         )
 
     registry.register_streaming("funasr-nano-ws", create)
+    return registry
+
+
+def build_speechrail_realtime_registry(
+    *,
+    connection_factory: ConnectionFactory | None = None,
+) -> ASRBackendRegistry:
+    """注册显式 opt-in 的 SpeechRail Realtime v2 ASR profile。"""
+    registry = ASRBackendRegistry()
+
+    def create(profile: ASRProfile, context: ASRSessionContext) -> StreamingTranscriber:
+        if not isinstance(profile, SpeechRailRealtimeProfile):
+            raise TypeError("non-SpeechRail profile cannot use the SpeechRail registry")
+        return SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=profile.url,
+                connection_factory=connection_factory,
+            ),
+            language=profile.language,
+            context=context,
+            finish_timeout_secs=profile.final_timeout_secs,
+        )
+
+    registry.register_streaming("speechrail-realtime-v2", create)
     return registry
 
 

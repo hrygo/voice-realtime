@@ -6,8 +6,10 @@ import asyncio
 import base64
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import NAMESPACE_URL, uuid5
+
+import websockets
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
@@ -26,12 +28,19 @@ class SpeechRailConnection(Protocol):
 ConnectionFactory = Callable[[str], Awaitable[SpeechRailConnection]]
 
 
+def _connect(url: str) -> Awaitable[SpeechRailConnection]:
+    """创建默认的 SpeechRail Realtime v2 WebSocket 连接。"""
+    return cast(Awaitable[SpeechRailConnection], websockets.connect(url))
+
+
 class SpeechRailRealtimeClient:
     """One non-resumable SpeechRail v2 transcription connection."""
 
-    def __init__(self, *, url: str, connection_factory: ConnectionFactory) -> None:
+    def __init__(
+        self, *, url: str, connection_factory: ConnectionFactory | None = None
+    ) -> None:
         self._url = url
-        self._connection_factory = connection_factory
+        self._connection_factory = connection_factory or _connect
         self._connection: SpeechRailConnection | None = None
         self._sequence = 0
         self._session_id: str | None = None

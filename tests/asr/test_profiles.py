@@ -11,6 +11,7 @@ from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
+    SpeechRailRealtimeProfile,
     WLKAutoProfile,
     WLKQwen3Profile,
     WLKSenseVoiceProfile,
@@ -53,6 +54,23 @@ def test_profile_records_whether_speaker_labels_are_enabled() -> None:
     settings = SubtitleSettings(diarization=False)
 
     assert not settings.asr_profile.speaker_labels
+
+
+def test_speechrail_realtime_is_an_explicit_subtitle_backend() -> None:
+    settings = SubtitleSettings(
+        backend="speechrail-realtime-v2",
+        language="Chinese",
+        speechrail_url="ws://127.0.0.1:8201/v2/realtime",
+        speechrail_finish_timeout_secs=12.0,
+    )
+
+    profile = settings.asr_profile
+
+    assert isinstance(profile, SpeechRailRealtimeProfile)
+    assert profile.kind == "speechrail-realtime-v2"
+    assert profile.url == "ws://127.0.0.1:8201/v2/realtime"
+    assert profile.final_timeout_secs == 12.0
+    assert "model_dir" not in profile.model_dump()
 
 
 def test_funasr_nano_ws_profile_is_discriminated_and_freezes_runtime_controls() -> None:

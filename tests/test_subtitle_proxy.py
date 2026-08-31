@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from voice_realtime.asr.adapters.speechrail_realtime import SpeechRailStreamingTranscriber
 from voice_realtime.asr.adapters.wlk import TranscriptNormalizer
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext
 from voice_realtime.config import SubtitleSettings
@@ -221,6 +222,22 @@ def settings(tmp_path: Path) -> SubtitleSettings:
         model_dir=model_dir,
         output_dir=tmp_path / "subtitles",
     )
+
+
+def test_explicit_speechrail_backend_uses_the_v2_registry(tmp_path: Path) -> None:
+    settings = SubtitleSettings(
+        **CONF,
+        backend="speechrail-realtime-v2",
+        output_dir=tmp_path / "subtitles",
+    )
+    proxy = SubtitleProxy(settings)
+
+    backend = proxy._create_transcriber(
+        ASRSessionContext(source_epoch=1, offset_ms=0, purpose="subtitles")
+    )
+
+    assert isinstance(backend, SpeechRailStreamingTranscriber)
+    assert backend.uri == "ws://127.0.0.1:8201/v2/realtime"
 
 
 class TestClientManagement:

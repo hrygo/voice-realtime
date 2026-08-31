@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_realtime.asr.profiles import (
     ASRProfile,
+    SpeechRailRealtimeProfile,
     WLKAutoProfile,
     WLKQwen3Profile,
     WLKSenseVoiceProfile,
@@ -440,7 +441,10 @@ class SubtitleSettings(BaseSettings):
     repo_path: Path = Field(
         default=Path("tools/WhisperLiveKit"), description="WhisperLiveKit 克隆路径"
     )
-    backend: str = Field(default="qwen3-streaming", description="ASR 后端 (qwen3-streaming/funasr)")
+    backend: str = Field(
+        default="qwen3-streaming",
+        description="ASR 后端 (qwen3-streaming/funasr/speechrail-realtime-v2)",
+    )
     language: str = Field(default="Chinese", description="字幕语言")
     host: str = Field(default="127.0.0.1", description="字幕服务监听地址")
     port: int = Field(default=8001, description="字幕服务端口")
@@ -483,11 +487,17 @@ class SubtitleSettings(BaseSettings):
     qwen3_streaming_stable_iterations: int = Field(default=2, ge=1, le=10)
     qwen3_streaming_max_new_tokens: int = Field(default=256, ge=32, le=2048)
     qwen3_streaming_device: Literal["auto", "mps", "cpu"] = "mps"
+    speechrail_url: str = Field(
+        default="ws://127.0.0.1:8201/v2/realtime",
+        description="显式选择 SpeechRail v2 时使用的本地 WebSocket 地址",
+    )
+    speechrail_connect_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    speechrail_finish_timeout_secs: float = Field(default=10.0, gt=0.0, le=120.0)
 
     @field_validator("backend")
     @classmethod
     def _validate_backend(cls, v: str) -> str:
-        allowed = {"qwen3-streaming", "funasr", "auto"}
+        allowed = {"qwen3-streaming", "funasr", "auto", "speechrail-realtime-v2"}
         if v not in allowed:
             raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
         return v
@@ -504,11 +514,23 @@ class SubtitleSettings(BaseSettings):
     def _strip_context(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("speechrail_url")
+    @classmethod
+    def _validate_speechrail_url(cls, value: str) -> str:
+        return SpeechRailRealtimeProfile(url=value, language="zh").url
+
     _validate_host = field_validator("host")(_validate_listen_host)
 
     @property
     def asr_profile(self) -> ASRProfile:
         """把旧字幕配置投影为内部无歧义的 ASR profile。"""
+        if self.backend == "speechrail-realtime-v2":
+            return SpeechRailRealtimeProfile(
+                url=self.speechrail_url,
+                language=self.language,
+                connect_timeout_secs=self.speechrail_connect_timeout_secs,
+                final_timeout_secs=self.speechrail_finish_timeout_secs,
+            )
         if self.backend == "funasr":
             return WLKSenseVoiceProfile(
                 model_dir=self.model_dir,
