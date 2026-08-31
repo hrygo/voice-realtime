@@ -63,6 +63,7 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
 
         await adapter.connect()
         await adapter.send_audio(b"\x00\x00")
+        await client.commit()
         events = adapter.events()
         assert (await anext(events)).kind == "ready"
         snapshot = await anext(events)
@@ -71,6 +72,7 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
         assert snapshot.window is not None
         assert snapshot.window.partial == "你好"
         assert connection.sent[1]["audio"] == base64.b64encode(b"\x00\x00").decode()
+        assert connection.sent[2]["type"] == "input_audio_buffer.commit"
 
     asyncio.run(scenario())
 

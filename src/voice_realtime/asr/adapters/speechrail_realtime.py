@@ -69,6 +69,12 @@ class SpeechRailRealtimeClient:
             }
         )
 
+    async def commit(self) -> None:
+        await self._send({"type": "input_audio_buffer.commit"})
+
+    async def cancel(self) -> None:
+        await self._send({"type": "session.cancel"})
+
     async def receive(self) -> dict[str, object]:
         if self._connection is None:
             raise RuntimeError("SPEECHRAIL_NOT_CONNECTED")
@@ -141,7 +147,7 @@ class SpeechRailStreamingTranscriber:
                 yield ASREvent(kind="snapshot", window=self._last_window)
 
     async def finish(self) -> TranscriptWindow:
-        await self._client._send({"type": "input_audio_buffer.commit"})
+        await self._client.commit()
         return self._last_window
 
     async def close(self) -> None:
