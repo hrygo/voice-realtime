@@ -33,6 +33,7 @@ from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
+    SpeechRailRealtimeProfile,
 )
 from voice_realtime.benchmarks.asr.manifest import BenchmarkSample
 from voice_realtime.benchmarks.asr.replay import ReplayMode
@@ -219,6 +220,11 @@ def build_backend_runtime(
     qwen_worker: Qwen3NativeWorker | None = None,
 ) -> BenchmarkBackendRuntime:
     """按判别 profile 构造惰性 run 级资源，不在此处加载模型。"""
+    if isinstance(profile, SpeechRailRealtimeProfile):
+        raise ValueError(
+            "speechrail-realtime-v2 is not benchmarkable: "
+            "the benchmark manifest requires a frozen local model snapshot"
+        )
     service_url: str | None = None
     if isinstance(profile, FunASRNanoPyTorchProfile):
         funasr_engine = funasr_engine or FunASRNanoPyTorchEngine(

@@ -16,6 +16,7 @@ from voice_realtime.asr.profiles import (
     FunASRNanoPyTorchProfile,
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
+    SpeechRailRealtimeProfile,
 )
 from voice_realtime.benchmarks.asr.backend_factory import (
     build_backend_runtime,
@@ -226,3 +227,17 @@ def test_sensevoice_runtime_reuses_injected_engine(tmp_path: Path) -> None:
     assert backend.backend_id == "sensevoice-native"
     assert backend.uri == "offline://sensevoice-native"
     assert calls == []
+
+
+def test_benchmark_runtime_rejects_speechrail_realtime_profile(tmp_path: Path) -> None:
+    profile = SpeechRailRealtimeProfile(
+        url="ws://127.0.0.1:8201/v2/realtime",
+        language="zh",
+    )
+
+    with pytest.raises(ValueError, match="not benchmarkable"):
+        build_backend_runtime(
+            profile,
+            repo_root=tmp_path / "repo",
+            model_dir=tmp_path / "model",
+        )

@@ -28,6 +28,7 @@ from voice_realtime.asr.profiles import (
     ASRProfile,
     FunASRNanoPyTorchProfile,
     FunASRNanoWSProfile,
+    SpeechRailRealtimeProfile,
 )
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.benchmarks.asr.analysis_plan import (
@@ -601,6 +602,11 @@ def _run_command_locked(args: argparse.Namespace) -> int:
             raise ValueError("run manifest does not match formal analysis plan identity")
     if profile.kind != manifest.backend_id:
         raise ValueError("ASR profile backend_id does not match run manifest")
+    if isinstance(profile, SpeechRailRealtimeProfile):
+        raise ValueError(
+            "speechrail-realtime-v2 is not benchmarkable: "
+            "the benchmark manifest requires a frozen local model snapshot"
+        )
     model_dir = _require_external_model_dir(profile.model_dir, repo_root)
     verify_file_hashes(model_dir, manifest.model_files_sha256)
     mode = ReplayMode(str(args.mode))
