@@ -81,6 +81,8 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
                 event = await client.receive()
                 event_type = event.get("type")
                 text = event.get("text")
+                if event_type == "input_audio_buffer.ack":
+                    continue
                 if event_type == "transcription.delta" and isinstance(text, str):
                     await self.push_frame(
                         InterimTranscriptionFrame(text, "user", _timestamp()),

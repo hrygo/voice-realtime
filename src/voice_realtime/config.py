@@ -68,6 +68,8 @@ class LMStudioSettings(BaseSettings):
     @classmethod
     def _normalize_api_key(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
+
+
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 # Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
 # 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
@@ -394,9 +396,7 @@ class InteractionSettings(BaseSettings):
             capacity_ratio=self.context_capacity_ratio,
         )
 
-    _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(
-        _validate_service_url
-    )
+    _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(_validate_service_url)
 
 
 class UISettings(BaseSettings):
@@ -468,16 +468,16 @@ class SubtitleSettings(BaseSettings):
     diarization: bool = Field(default=True, description="是否启用匿名说话人分离")
     diarization_backend: str = Field(default="sortformer", description="说话人分离后端")
     diarization_model_path: Path = Field(
-        default_factory=lambda: huggingface_snapshot_path(
-            "nvidia/diar_streaming_sortformer_4spk-v2",
-            revision="5240a64075176943f677d30fa2171c780229f341",
-        )
-        / "diar_streaming_sortformer_4spk-v2.nemo",
+        default_factory=lambda: (
+            huggingface_snapshot_path(
+                "nvidia/diar_streaming_sortformer_4spk-v2",
+                revision="5240a64075176943f677d30fa2171c780229f341",
+            )
+            / "diar_streaming_sortformer_4spk-v2.nemo"
+        ),
         description="本地 Sortformer 模型路径",
     )
-    diarization_max_speakers: int = Field(
-        default=4, ge=1, le=4, description="最多匿名说话人数"
-    )
+    diarization_max_speakers: int = Field(default=4, ge=1, le=4, description="最多匿名说话人数")
     punctuation_split: bool = Field(
         default=True,
         description="使用转录标点改善说话人边界",
@@ -738,9 +738,7 @@ class Settings(BaseSettings):
     def _synchronize_lm_studio_compatibility(self) -> Settings:
         explicit_lm_studio = "lm_studio" in self.model_fields_set
         explicit_interaction = "interaction" in self.model_fields_set
-        if explicit_lm_studio or (
-            not explicit_interaction and self.lm_studio.model_fields_set
-        ):
+        if explicit_lm_studio or (not explicit_interaction and self.lm_studio.model_fields_set):
             self.interaction = self.interaction.model_copy(
                 update={
                     "llm_base_url": self.lm_studio.base_url,
@@ -771,9 +769,7 @@ class Settings(BaseSettings):
             lines.append(f"\n[{type(section).__name__}]")
             for key, value in section.model_dump(by_alias=True).items():
                 safe_value = (
-                    "<redacted>"
-                    if key == "database_url" or key.endswith("api_key")
-                    else value
+                    "<redacted>" if key == "database_url" or key.endswith("api_key") else value
                 )
                 lines.append(f"  {key}: {safe_value}")
         return "\n".join(lines)

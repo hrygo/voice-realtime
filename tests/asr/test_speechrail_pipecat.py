@@ -23,6 +23,7 @@ class FakeSpeechRailClient:
         self.closed = False
         self._events = iter(
             (
+                {"type": "input_audio_buffer.ack"},
                 {"type": "transcription.delta", "text": "你好"},
                 {
                     "type": "transcription.completed",
@@ -73,8 +74,7 @@ def test_pipecat_processor_commits_one_v2_session_per_vad_turn() -> None:
         assert client.appended == [b"\x00\x00"]
         assert client.commits == 1
         assert any(
-            isinstance(frame, TranscriptionFrame) and frame.text == "你好世界"
-            for frame in emitted
+            isinstance(frame, TranscriptionFrame) and frame.text == "你好世界" for frame in emitted
         )
 
     asyncio.run(scenario())
