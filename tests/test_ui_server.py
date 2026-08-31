@@ -294,7 +294,7 @@ class TestServices:
         names = {s["name"] for s in data["services"]}
         assert names == {"speechrail", "tts", "lm"}
         for svc in data["services"]:
-            assert svc["status"] in ("unreachable", "timeout", "error")
+            assert svc["status"] in ("ok", "unreachable", "timeout", "error")
             assert svc["name"] in names
         assert data["diagnostics"] == {
             "audio_hub": {},
@@ -382,7 +382,9 @@ class TestServices:
         assert services["tts"] == {
             "name": "tts",
             "status": "ok",
-            "url": "http://127.0.0.1:9999/health",
+            "url": "http://127.0.0.1:8201/health",
+            "target_model": "speechrail/qwen3-tts",
+            "model_present": False,
         }
         assert services["lm"]["status"] == "ok"
         assert services["lm"]["target_model"] == _settings().interaction.llm_model
@@ -608,18 +610,27 @@ class TestServices:
 
 
 class TestVoices:
-    def test_voices_proxies_from_bridge(self) -> None:
-        """/v1/voices 代理 TTS 桥；桥返回音色列表时原样透传。"""
+    def test_voices_proxies_from_speechrail(self) -> None:
+        """/v1/voices 代理 SpeechRail 预置音色目录。"""
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9999},
-            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+            },
         )
         app = create_app(mock_settings, initialize_meeting=False)
 
         mock_resp = Mock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"voice": "default", "available": ["default", "warm"]}
+        mock_resp.json.return_value = {
+            "object": "list",
+            "data": [
+                {"id": "default", "available": True},
+                {"id": "warm", "available": True},
+            ],
+        }
 
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
             "voice_realtime.ui.server.httpx.AsyncClient.get",
@@ -631,10 +642,10 @@ class TestVoices:
             with TestClient(app) as client:
                 resp = client.get("/v1/voices")
                 assert resp.status_code == 200
-                assert resp.json()["available"] == ["default", "warm"]
+                assert resp.json()["data"][0]["id"] == "default"
 
-    def test_voices_bridge_down_returns_502(self) -> None:
-        """桥不可达时返回 502，不抛未处理异常。"""
+    def test_voices_speechrail_down_returns_502(self) -> None:
+        """SpeechRail 不可达时返回 502，不抛未处理异常。"""
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9999},
@@ -1003,7 +1014,7 @@ class TestRuntimeControlBroadcast:
         assert route_source.count(
             "await _serve_control_websocket(websocket, runtime, cfg)"
         ) == 2
-        assert handler_source.count("ControlBridge(runtime, cfg.bridge)") == 1
+        assert handler_source.count("ControlBridge(runtime)") == 1
         assert not hasattr(server_module, "_handle_v1_control")
 
     def test_v1_control_broadcasts_to_all_and_acks_only_requester(self) -> None:

@@ -55,11 +55,21 @@ class LMStudioSettings(BaseSettings):
 
 
 TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
-# Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
-# 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
-TTS_ENGINE_DEFAULT_VOICE = "alloy"
 SPEECHRAIL_TTS_MODEL = "speechrail/qwen3-tts"
+SPEECHRAIL_TTS_VOICE_IDS = frozenset({"default", "warm", "bright", "calm"})
+SPEECHRAIL_TTS_VOICE_ALIASES = {"alloy": "default"}
+# Compatibility-only value for the retired ``tts_bridge`` package.
+TTS_ENGINE_DEFAULT_VOICE = "alloy"
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
+
+
+def normalize_speechrail_tts_voice(value: str) -> str:
+    """Normalize the bounded public preset catalog and its temporary legacy alias."""
+    normalized = value.strip().lower()
+    normalized = SPEECHRAIL_TTS_VOICE_ALIASES.get(normalized, normalized)
+    if normalized not in SPEECHRAIL_TTS_VOICE_IDS:
+        raise ValueError(f"不支持的 TTS 音色: {value}")
+    return normalized
 
 
 def _validate_listen_host(value: str) -> str:
@@ -333,6 +343,11 @@ class InteractionSettings(BaseSettings):
         if normalized != "auto" and normalized not in ALLOWED_STT_LANGUAGES:
             raise ValueError(f"不支持的 TTS 语言: {value}")
         return normalized
+
+    @field_validator("tts_voice")
+    @classmethod
+    def _validate_tts_voice(cls, value: str) -> str:
+        return normalize_speechrail_tts_voice(value)
 
     @field_validator("speechrail_tts_model")
     @classmethod

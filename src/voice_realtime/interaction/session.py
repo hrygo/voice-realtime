@@ -13,11 +13,13 @@ from enum import StrEnum
 from pipecat.frames.frames import (
     LLMMessagesUpdateFrame,
     TranscriptionFrame,
+    TTSUpdateSettingsFrame,
     UserStoppedSpeakingFrame,
 )
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.services.settings import TTSSettings
 from pipecat.workers.runner import WorkerRunner
 
 from voice_realtime.asr.contracts import ConversationSTTFactory
@@ -153,6 +155,15 @@ class InteractionSession:
     def set_duplex_mode(self, mode: DuplexMode | str) -> None:
         self._duplex_mode = DuplexMode(mode)
         self._apply_duplex_mode()
+
+    async def set_voice(self, voice: str) -> None:
+        """Update the public preset and propagate it to a running TTS service."""
+        self._settings.tts_voice = voice
+        if self._worker is None or not self.active:
+            return
+        await self._worker.queue_frame(
+            TTSUpdateSettingsFrame(delta=TTSSettings(voice=voice))
+        )
 
     async def clear_context(self) -> None:
         async with self._lock:

@@ -1,6 +1,6 @@
 """Voice Studio Web 控制台（`vr-ui` CLI 入口）。
 
-FastAPI 服务：React 静态托管 + 服务健康聚合（SpeechRail / TTS 桥 / LM Studio）
+FastAPI 服务：React 静态托管 + 服务健康聚合（SpeechRail / LM Studio）
 + WebSocket 事件网关（/ws/subtitles 字幕流、/ws/assistant 助手状态流）。
 组件生命周期由 `UIRuntime` 经 FastAPI lifespan 管理。
 """
@@ -84,6 +84,16 @@ _ASR_WORKLOAD_KEYS = (
 def _probe_url(host: str, port: int, path: str = "/health") -> str:
     target_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     return f"http://{target_host}:{port}{path}"
+
+
+def _speechrail_health_url(rest_url: str) -> str:
+    parsed = urlsplit(rest_url)
+    scheme = "https" if parsed.scheme == "https" else "http"
+    return f"{scheme}://{parsed.netloc}/health"
+
+
+def _speechrail_rest_path(rest_url: str, path: str) -> str:
+    return f"{rest_url.rstrip('/')}/{path.lstrip('/')}"
 
 
 def _network_scope(host: str) -> NetworkScope:
@@ -266,11 +276,15 @@ def create_app(
         """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
         timeout = min(cfg.ui.api_timeout, 1.0)
         speechrail = cfg.subtitles
-        bridge = cfg.bridge
         lm = cfg.interaction
         paths = [
             ("speechrail", speechrail.speechrail_health_url, None, None),
-            ("tts", _probe_url(bridge.host, bridge.port), None, None),
+            (
+                "tts",
+                _speechrail_health_url(lm.speechrail_tts_rest_url),
+                lm.speechrail_tts_model,
+                None,
+            ),
             (
                 "lm",
                 lm_studio_openai_models_url(lm.llm_base_url),
@@ -309,21 +323,21 @@ def create_app(
 
     @app.get("/v1/voices")
     async def voices() -> dict[str, Any]:
-        """代理 TTS 桥音色列表（GET /v1/voices），供前端音色下拉。"""
-        url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/voices")
+        """代理 SpeechRail 音色列表，供前端音色下拉。"""
+        url = _speechrail_rest_path(cfg.interaction.speechrail_tts_rest_url, "/voices")
         try:
             async with local_async_client(timeout=cfg.ui.api_timeout) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 return dict(resp.json())
         except httpx.HTTPError as exc:
-            logger.warning("Voice Studio: 桥 /v1/voices 请求失败: %s", exc)
-            raise HTTPException(status_code=502, detail="TTS 桥音色列表不可用") from exc
+            logger.warning("Voice Studio: SpeechRail /v1/voices 请求失败: %s", exc)
+            raise HTTPException(status_code=502, detail="SpeechRail 音色列表不可用") from exc
 
     @app.post("/v1/audio/speech")
     async def proxy_speech(request: Request) -> Response:
-        """代理 TTS 桥音频合成（POST /v1/audio/speech），供前端音色试听。"""
-        url = _probe_url(cfg.bridge.host, cfg.bridge.port, "/v1/audio/speech")
+        """代理 SpeechRail 音频合成，供前端音色试听。"""
+        url = _speechrail_rest_path(cfg.interaction.speechrail_tts_rest_url, "/audio/speech")
         try:
             body = await request.body()
             headers = {"Content-Type": "application/json"}
@@ -336,8 +350,8 @@ def create_app(
                     media_type=resp.headers.get("content-type", "audio/wav"),
                 )
         except httpx.HTTPError as exc:
-            logger.warning("Voice Studio: 桥 /v1/audio/speech 试听请求失败: %s", exc)
-            raise HTTPException(status_code=502, detail="TTS 桥语音合成不可用") from exc
+            logger.warning("Voice Studio: SpeechRail /v1/audio/speech 试听请求失败: %s", exc)
+            raise HTTPException(status_code=502, detail="SpeechRail 语音合成不可用") from exc
 
     _mount_websocket_routes(app, cfg)
     _mount_static(app, cfg.ui.static_dir)
@@ -573,7 +587,7 @@ async def _serve_control_websocket(
 ) -> None:
     """用单 writer 合并命令响应与 latest-only 运行时广播。"""
 
-    bridge = ControlBridge(runtime, cfg.bridge)
+    bridge = ControlBridge(runtime)
     runtime_client = runtime.runtime_events.add_client()
     responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=_CONTROL_RESPONSE_QUEUE_SIZE)
     sender: asyncio.Task[None] | None = None

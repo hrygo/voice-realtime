@@ -9,8 +9,6 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from voice_realtime.config import BridgeSettings
-from voice_realtime.network import local_async_client
 from voice_realtime.ui.protocol import (
     ClearContextCommand,
     ClearSubtitlesCommand,
@@ -73,7 +71,7 @@ class ControlRuntime(Protocol):
     async def stop_active_mode(self) -> None: ...
     async def send_text(self, text: str) -> None: ...
     def set_persona(self, persona: str) -> None: ...
-    def set_voice(self, voice: str) -> None: ...
+    async def set_voice(self, voice: str) -> None: ...
     def set_duplex_mode(self, mode: DuplexMode) -> None: ...
     def snapshot(self) -> RuntimeStateSnapshot: ...
 
@@ -81,9 +79,8 @@ class ControlRuntime(Protocol):
 class ControlBridge:
     """解析并执行一条命令，始终返回完整的服务端权威状态。"""
 
-    def __init__(self, runtime: ControlRuntime, bridge: BridgeSettings) -> None:
+    def __init__(self, runtime: ControlRuntime) -> None:
         self._runtime = runtime
-        self._bridge = bridge
         self._response_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._response_cache_size = 128
         self._lock = asyncio.Lock()
@@ -161,8 +158,7 @@ class ControlBridge:
             self._runtime.set_persona(command.prompt)
             await self._runtime.clear_context()
         elif isinstance(command, SetVoiceCommand):
-            await self._set_voice(command.voice)
-            self._runtime.set_voice(command.voice)
+            await self._runtime.set_voice(command.voice)
         elif isinstance(command, (SetDuplexModeCommand, SetBargeInModeCommand)):
             self._runtime.set_duplex_mode(command.mode)
         elif isinstance(command, SetMicMutedCommand):
@@ -182,13 +178,6 @@ class ControlBridge:
             await self._runtime.stop_active_mode()
         elif isinstance(command, SendTextCommand):
             await self._runtime.send_text(command.text)
-
-    async def _set_voice(self, voice: str) -> None:
-        host = "127.0.0.1" if self._bridge.host in {"0.0.0.0", "::"} else self._bridge.host
-        url = f"http://{host}:{self._bridge.port}/v1/voice"
-        async with local_async_client(timeout=5.0) as client:
-            response = await client.post(url, json={"voice": voice})
-            response.raise_for_status()
 
     def _response(
         self,

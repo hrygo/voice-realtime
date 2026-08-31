@@ -10,7 +10,7 @@ from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.frame import AudioSourceKind
 from voice_realtime.audio.hub import AudioHub
 from voice_realtime.audio.levels import AudioLevelMeter
-from voice_realtime.config import Settings
+from voice_realtime.config import Settings, normalize_speechrail_tts_voice
 from voice_realtime.interaction.nltk_data import ensure_punkt_tab
 from voice_realtime.interaction.ownership import InteractionOwnership
 from voice_realtime.interaction.pipeline import build_pipeline
@@ -147,8 +147,9 @@ class UIRuntime:
     def set_duplex_mode(self, mode: DuplexMode | str) -> None:
         self.session.set_duplex_mode(mode)
 
-    def set_voice(self, voice: str) -> None:
-        self._settings.bridge.voice = voice
+    async def set_voice(self, voice: str) -> None:
+        normalized = normalize_speechrail_tts_voice(voice)
+        await self.session.set_voice(normalized)
 
     async def set_mic_muted(self, muted: bool) -> None:
         self.hub.set_muted(muted)
@@ -197,7 +198,7 @@ class UIRuntime:
             subtitle=str(subtitle_state),
             mic_muted=self.hub.muted,
             persona=self.session.persona,
-            voice=self._settings.bridge.voice,
+            voice=self._settings.interaction.tts_voice,
             duplex_mode=self.session.duplex_mode,
             session_started_at=self.session.started_at,
             mode=coordinator.mode,
