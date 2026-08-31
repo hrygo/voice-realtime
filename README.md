@@ -72,6 +72,32 @@
 
 > 💡 **提示**：`vr-interact` 为 CLI Headless 交互入口，通过文件锁与 `vr-ui` 互斥，适用于无界面的终端交互场景。
 
+### 物理输出采集 Helper（P1 开发组件）
+
+仓库已提供 macOS 14.2+ 的设备绑定 Core Audio Tap Helper，用于后续把本机所选物理输出设备
+（内建扬声器、耳机、USB/HDMI 等）的播放音频作为会议助手远端声源。当前 P1 仅交付原生采集、
+私有 UDS 和 Python 来源适配能力，尚未接入 Voice Studio 页面、会议转录或字幕链路；产品运行态仍为
+麦克风-only，不会自动触发系统录音授权。
+
+```bash
+# 构建 release 配置的 .app；默认 ad-hoc + Hardened Runtime，仅供本机开发
+scripts/build-audio-capture-helper.sh
+
+# 静态签名/Bundle/架构检查，不采集音频
+scripts/test-audio-capture-helper.sh --static
+
+# 额外枚举物理输出设备，不创建 Tap、不触发授权
+scripts/test-audio-capture-helper.sh --list-devices
+```
+
+首次显式执行真实 capture 时，macOS 会请求“系统音频录制”权限。默认 ad-hoc 签名的 `.app` 不是
+发布制品；发布构建需显式设置 `VR_AUDIO_CAPTURE_SIGNING_IDENTITY`，并通过
+`VR_AUDIO_CAPTURE_CODESIGN_TIMESTAMP=auto`（或 HTTPS 时间戳服务地址）启用时间戳，之后另行完成
+Developer ID 发布校验与公证。
+
+当前 P1 本机验收环境仅安装 Apple Command Line Tools，尚未执行 Developer ID 签名与公证；脚本提供
+发布签名参数不代表发布链路已经验收完成。
+
 ---
 
 ## 💻 硬件与软件要求
@@ -80,7 +106,7 @@
 |---|---|
 | **硬件平台** | Apple Silicon Mac（M1 / M2 / M3 / M4 / M5 系列芯片） |
 | **统一内存 (RAM)** | 具体取决于你选择的模型；交互助手和会议纪要可以共用同一个模型，不必同时运行两套大模型。推荐 **32GB 及以上**；16GB/24GB 设备也可以选择更小或量化模型使用 |
-| **操作系统** | macOS 14.0+ (Sonoma / Sequoia) |
+| **操作系统** | 主应用 macOS 14.0+；物理输出采集 Helper 要求 macOS 14.2+ |
 | **Python 版本** | **Python 3.12 严格锁定** (`>=3.12,<3.13`，由于 `misaki[zh]` 兼容性要求) |
 | **包管理工具** | [`uv`](https://docs.astral.sh/uv/)（强力推荐） |
 | **数据库** | PostgreSQL 14+（用于会议助手数据持久化） |

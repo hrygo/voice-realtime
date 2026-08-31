@@ -187,6 +187,11 @@ graph TD
 | [superpowers/plans/](superpowers/plans/) | 14 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单；P0 见[音频源基础设施实施计划](superpowers/plans/2026-08-31-audio-source-foundation.md)，当前进入[P1 物理输出 Helper 实施计划](superpowers/plans/2026-08-31-physical-output-helper.md) |
 | [superpowers/specs/](superpowers/specs/) | 12 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准；新增[本地物理输出设备音频采集设计](superpowers/specs/2026-08-31-physical-output-audio-capture-design.md) |
 
+物理输出采集当前处于 P1 原生 Helper 阶段：IPC v1 契约位于
+[`contracts/audio-capture/v1/`](../contracts/audio-capture/v1/)，`.app` 构建与无权限静态/枚举检查入口为
+`scripts/build-audio-capture-helper.sh` 和 `scripts/test-audio-capture-helper.sh`。该阶段不增加页面来源选择，
+也不改变会议、字幕和 PostgreSQL 数据边界；产品仍使用麦克风作为唯一业务输入。
+
 ---
 
 ## 📋 文档撰写与元数据最佳实践规范
