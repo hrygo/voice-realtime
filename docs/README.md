@@ -90,7 +90,7 @@ docs/
 │       └── target-domain-preflight-v1/README.md
 │
 └── superpowers/                           # ⚡ 历史执行计划与规格 (Plans & Specs 归档)
-    ├── plans/                             # 研发执行计划 (11 份，含当前草案与历史归档)
+    ├── plans/                             # 研发执行计划 (13 份，含当前草案与历史归档)
     └── specs/                             # 设计规格 (12 份，含当前评审稿与历史归档)
 ```
 
@@ -184,7 +184,7 @@ graph TD
 
 | 目录 | 数量 | 状态 | 说明 |
 |---|---|---|---|
-| [superpowers/plans/](superpowers/plans/) | 11 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单（含任务 Checkbox 跟踪） |
+| [superpowers/plans/](superpowers/plans/) | 13 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单；当前新增[音频源基础设施实施计划](superpowers/plans/2026-08-31-audio-source-foundation.md) |
 | [superpowers/specs/](superpowers/specs/) | 12 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准；新增[本地物理输出设备音频采集设计](superpowers/specs/2026-08-31-physical-output-audio-capture-design.md) |
 
 ---
