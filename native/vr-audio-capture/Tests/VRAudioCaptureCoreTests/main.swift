@@ -5,6 +5,8 @@ let tests = wireProtocolTests()
     + ringBufferTests()
     + deviceReferenceTests()
     + deviceCatalogTests()
+    + audioNormalizerTests()
+    + frameAccumulatorTests()
 var failures = 0
 
 for test in tests {
