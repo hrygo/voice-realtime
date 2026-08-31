@@ -168,6 +168,31 @@ def test_client_rejects_events_from_another_session() -> None:
     asyncio.run(scenario())
 
 
+def test_finish_times_out_when_no_event_reader_receives_a_final_result() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        client = SpeechRailRealtimeClient(
+            url=connection.uri,
+            connection_factory=lambda _: _immediate(connection),
+        )
+        adapter = SpeechRailStreamingTranscriber(
+            client=client,
+            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            language="Chinese",
+            finish_timeout_secs=0.01,
+        )
+        await adapter.connect()
+
+        try:
+            await adapter.finish()
+        except TimeoutError as error:
+            assert str(error) == "SPEECHRAIL_FINAL_TIMEOUT: final result was not received"
+        else:
+            raise AssertionError("finish unexpectedly completed without a final event")
+
+    asyncio.run(scenario())
+
+
 async def _next_final(events: AsyncIterator[ASREvent]) -> ASREvent:
     async for event in events:
         if event.kind == "final":

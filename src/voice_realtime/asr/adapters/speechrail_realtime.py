@@ -147,11 +147,19 @@ class SpeechRailStreamingTranscriber:
     )
 
     def __init__(
-        self, *, client: SpeechRailRealtimeClient, context: ASRSessionContext, language: str
+        self,
+        *,
+        client: SpeechRailRealtimeClient,
+        context: ASRSessionContext,
+        language: str,
+        finish_timeout_secs: float = 10.0,
     ) -> None:
+        if finish_timeout_secs <= 0:
+            raise ValueError("finish_timeout_secs must be positive")
         self._client = client
         self._context = context
         self._language = language
+        self._finish_timeout_secs = finish_timeout_secs
         self._ready = False
         self._last_window = TranscriptWindow(source_epoch=context.source_epoch)
         self._final_ready = asyncio.Event()
@@ -222,7 +230,10 @@ class SpeechRailStreamingTranscriber:
             if not self._commit_sent:
                 await self._client.commit()
                 self._commit_sent = True
-        await self._final_ready.wait()
+        try:
+            await asyncio.wait_for(self._final_ready.wait(), timeout=self._finish_timeout_secs)
+        except TimeoutError:
+            raise TimeoutError("SPEECHRAIL_FINAL_TIMEOUT: final result was not received") from None
         if self._terminal_error is not None:
             code, message = self._terminal_error
             raise RuntimeError(f"{code}: {message}")
