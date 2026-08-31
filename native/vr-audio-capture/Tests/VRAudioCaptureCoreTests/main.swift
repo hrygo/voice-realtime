@@ -7,6 +7,7 @@ let tests = wireProtocolTests()
     + deviceCatalogTests()
     + audioNormalizerTests()
     + frameAccumulatorTests()
+    + coreAudioHALTests()
 var failures = 0
 
 for test in tests {
