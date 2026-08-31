@@ -51,6 +51,14 @@ class FakeConnection:
                     {"id": "seg-1", "start_ms": 0, "end_ms": 100, "text": "你好世界"}
                 ],
             },
+            {
+                "type": "transcription.diarization.completed",
+                "event_id": "evt-4",
+                "session_id": "sess-1",
+                "request_id": "req-1",
+                "sequence": 4,
+                "mapping": {},
+            },
         ]
 
     async def send(self, payload: str) -> None:
@@ -95,8 +103,49 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
         assert final.kind == "final"
         assert final.window is not None
         assert final.window.segments[0].start_ms == 1_000
+        assert final.window.segments[0].speaker_key == "epoch:2:speaker:0"
         assert connection.sent[1]["audio"] == base64.b64encode(b"\x00\x00").decode()
         assert connection.sent[2]["type"] == "input_audio_buffer.commit"
+
+    asyncio.run(scenario())
+
+
+def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_label() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages[2]["segments"] = [
+            {
+                "id": "seg-1",
+                "start_ms": 0,
+                "end_ms": 100,
+                "text": "你好世界",
+                "speaker": "spk_02",
+                "speakers": [{"id": "spk_02", "confidence": 0.93}],
+            }
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=1_000, purpose="meeting"),
+            language="Chinese",
+        )
+
+        await adapter.connect()
+        await adapter.send_audio(b"\x00\x00")
+        await adapter._client.commit()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+        await anext(events)
+        final = await anext(events)
+
+        assert connection.sent[0]["session"]["diarization"] == {
+            "enabled": True,
+            "finalize": True,
+        }
+        assert final.window is not None
+        assert final.window.segments[0].speaker_key == "epoch:2:speaker:spk_02"
 
     asyncio.run(scenario())
 
@@ -104,6 +153,15 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
 def test_finish_waits_for_the_confirmed_transcript_window() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
+        connection._messages[2]["segments"] = [
+            {
+                "id": "seg-1",
+                "start_ms": 0,
+                "end_ms": 100,
+                "text": "你好世界",
+                "speaker": "spk_01",
+            }
+        ]
         client = SpeechRailRealtimeClient(
             url=connection.uri,
             connection_factory=lambda _: _immediate(connection),

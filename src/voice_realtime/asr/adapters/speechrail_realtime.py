@@ -50,7 +50,7 @@ class SpeechRailRealtimeClient:
     def uri(self) -> str:
         return self._connection.uri if self._connection is not None else self._url
 
-    async def connect(self, *, language: str) -> None:
+    async def connect(self, *, language: str, diarization: bool = False) -> None:
         if self._connection is not None:
             raise RuntimeError("SPEECHRAIL_ALREADY_CONNECTED")
         self._sequence = 0
@@ -58,22 +58,20 @@ class SpeechRailRealtimeClient:
         self._request_id = None
         self._connection = await self._connection_factory(self._url)
         try:
-            await self._send(
-                {
-                    "type": "session.update",
-                    "session": {
-                        "type": "transcription",
-                        "language": language,
-                        "audio_format": {
-                            "type": "audio/pcm",
-                            "rate": 16000,
-                            "channels": 1,
-                            "sample_width": 2,
-                        },
-                        "endpointing": {"mode": "manual"},
-                    },
-                }
-            )
+            session: dict[str, object] = {
+                "type": "transcription",
+                "language": language,
+                "audio_format": {
+                    "type": "audio/pcm",
+                    "rate": 16000,
+                    "channels": 1,
+                    "sample_width": 2,
+                },
+                "endpointing": {"mode": "manual"},
+            }
+            if diarization:
+                session["diarization"] = {"enabled": True, "finalize": True}
+            await self._send({"type": "session.update", "session": session})
             await self.receive()
         except BaseException:
             await self.close()
@@ -150,8 +148,8 @@ class SpeechRailStreamingTranscriber:
         supports_segment_timestamps=True,
         supports_word_timestamps=False,
         supports_hotwords=False,
-        supports_speaker_labels=False,
-        supports_native_diarization=False,
+        supports_speaker_labels=True,
+        supports_native_diarization=True,
         supports_eof_flush=True,
     )
 
@@ -176,13 +174,16 @@ class SpeechRailStreamingTranscriber:
         self._commit_sent = False
         self._events_active = False
         self._terminal_error: tuple[str, str] | None = None
+        self._diarization_requested = context.purpose == "meeting"
 
     @property
     def uri(self) -> str:
         return self._client.uri
 
     async def connect(self) -> None:
-        await self._client.connect(language=self._language)
+        await self._client.connect(
+            language=self._language, diarization=self._diarization_requested
+        )
         self._ready = True
 
     async def send_audio(self, chunk: bytes) -> None:
@@ -212,7 +213,11 @@ class SpeechRailStreamingTranscriber:
                     yield ASREvent(kind="snapshot", window=self._last_window)
                 elif event.get("type") == "transcription.completed":
                     try:
-                        segments = _segments(event.get("segments"), self._context)
+                        segments = _segments(
+                            event.get("segments"),
+                            self._context,
+                            require_speaker=self._diarization_requested,
+                        )
                     except RuntimeError:
                         yield self._set_terminal_error(
                             "SPEECHRAIL_PROTOCOL_ERROR",
@@ -222,8 +227,36 @@ class SpeechRailStreamingTranscriber:
                     self._last_window = TranscriptWindow(
                         source_epoch=self._context.source_epoch, segments=segments
                     )
+                    if not self._diarization_requested:
+                        self._final_ready.set()
+                        yield ASREvent(kind="final", window=self._last_window)
+                        return
+                elif event.get("type") == "transcription.diarization.completed":
+                    if not self._diarization_requested:
+                        yield self._set_terminal_error(
+                            "SPEECHRAIL_PROTOCOL_ERROR",
+                            "SpeechRail returned diarization for a non-diarized session",
+                        )
+                        return
+                    try:
+                        mapping = _speaker_remap(event.get("mapping"), self._context)
+                    except RuntimeError:
+                        yield self._set_terminal_error(
+                            "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
+                            "SpeechRail returned an invalid diarization mapping",
+                        )
+                        return
+                    self._last_window = self._last_window.model_copy(
+                        update={"speaker_remap": mapping}
+                    )
                     self._final_ready.set()
                     yield ASREvent(kind="final", window=self._last_window)
+                    return
+                elif event.get("type") == "session.completed" and self._diarization_requested:
+                    yield self._set_terminal_error(
+                        "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
+                        "SpeechRail ended a diarized session without a final mapping",
+                    )
                     return
                 elif event.get("type") == "error":
                     yield self._set_terminal_error(
@@ -260,7 +293,9 @@ class SpeechRailStreamingTranscriber:
         return ASREvent(kind="error", error_code=code, error_message=message)
 
 
-def _segments(value: object, context: ASRSessionContext) -> tuple[NormalizedSegment, ...]:
+def _segments(
+    value: object, context: ASRSessionContext, *, require_speaker: bool
+) -> tuple[NormalizedSegment, ...]:
     if not isinstance(value, list):
         raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
     result: list[NormalizedSegment] = []
@@ -279,6 +314,17 @@ def _segments(value: object, context: ASRSessionContext) -> tuple[NormalizedSegm
             or end_ms < start_ms
         ):
             raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+        speaker = raw.get("speaker")
+        if speaker is None and not require_speaker:
+            speaker_key = "0"
+        elif (
+            not isinstance(speaker, str)
+            or not speaker.startswith("spk_")
+            or len(speaker) > 64
+        ):
+            raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
+        else:
+            speaker_key = speaker
         absolute_start = start_ms + context.offset_ms
         absolute_end = end_ms + context.offset_ms
         result.append(
@@ -286,10 +332,28 @@ def _segments(value: object, context: ASRSessionContext) -> tuple[NormalizedSegm
                 id=uuid5(NAMESPACE_URL, f"speechrail:{context.source_epoch}:{index}:{text}"),
                 order=index,
                 source_epoch=context.source_epoch,
-                speaker_key=f"epoch:{context.source_epoch}:speaker:0",
+                speaker_key=f"epoch:{context.source_epoch}:speaker:{speaker_key}",
                 start_ms=absolute_start,
                 end_ms=absolute_end,
                 text=text,
             )
         )
+    return tuple(result)
+
+
+def _speaker_remap(value: object, context: ASRSessionContext) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, dict):
+        raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
+    result: list[tuple[str, str]] = []
+    for source, target in value.items():
+        if (
+            not isinstance(source, str)
+            or not isinstance(target, str)
+            or not source.startswith("spk_")
+            or not target.startswith("spk_")
+            or source == target
+        ):
+            raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
+        prefix = f"epoch:{context.source_epoch}:speaker:"
+        result.append((f"{prefix}{source}", f"{prefix}{target}"))
     return tuple(result)
