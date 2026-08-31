@@ -6,9 +6,10 @@ import base64
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol
+from uuid import NAMESPACE_URL, uuid5
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
-from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
 
 
 class SpeechRailConnection(Protocol):
@@ -145,6 +146,13 @@ class SpeechRailStreamingTranscriber:
                     source_epoch=self._context.source_epoch, partial=text
                 )
                 yield ASREvent(kind="snapshot", window=self._last_window)
+            elif event.get("type") == "transcription.completed":
+                segments = _segments(event.get("segments"), self._context)
+                self._last_window = TranscriptWindow(
+                    source_epoch=self._context.source_epoch, segments=segments
+                )
+                yield ASREvent(kind="final", window=self._last_window)
+                return
 
     async def finish(self) -> TranscriptWindow:
         await self._client.commit()
@@ -152,3 +160,38 @@ class SpeechRailStreamingTranscriber:
 
     async def close(self) -> None:
         await self._client.close()
+
+
+def _segments(value: object, context: ASRSessionContext) -> tuple[NormalizedSegment, ...]:
+    if not isinstance(value, list):
+        raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+    result: list[NormalizedSegment] = []
+    for index, raw in enumerate(value):
+        if not isinstance(raw, dict):
+            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+        text = raw.get("text")
+        start_ms = raw.get("start_ms")
+        end_ms = raw.get("end_ms")
+        if (
+            not isinstance(text, str)
+            or not text.strip()
+            or not isinstance(start_ms, int)
+            or not isinstance(end_ms, int)
+            or start_ms < 0
+            or end_ms < start_ms
+        ):
+            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+        absolute_start = start_ms + context.offset_ms
+        absolute_end = end_ms + context.offset_ms
+        result.append(
+            NormalizedSegment(
+                id=uuid5(NAMESPACE_URL, f"speechrail:{context.source_epoch}:{index}:{text}"),
+                order=index,
+                source_epoch=context.source_epoch,
+                speaker_key=f"epoch:{context.source_epoch}:speaker:0",
+                start_ms=absolute_start,
+                end_ms=absolute_end,
+                text=text,
+            )
+        )
+    return tuple(result)

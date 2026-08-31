@@ -36,6 +36,19 @@ class FakeConnection:
                 "audio_start_ms": 0,
                 "audio_end_ms": 100,
             },
+            {
+                "type": "transcription.completed",
+                "event_id": "evt-3",
+                "session_id": "sess-1",
+                "request_id": "req-1",
+                "sequence": 3,
+                "item_id": "item-1",
+                "text": "你好世界",
+                "language": "Chinese",
+                "segments": [
+                    {"id": "seg-1", "start_ms": 0, "end_ms": 100, "text": "你好世界"}
+                ],
+            },
         ]
 
     async def send(self, payload: str) -> None:
@@ -67,10 +80,14 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
         events = adapter.events()
         assert (await anext(events)).kind == "ready"
         snapshot = await anext(events)
+        final = await anext(events)
 
         assert snapshot.kind == "snapshot"
         assert snapshot.window is not None
         assert snapshot.window.partial == "你好"
+        assert final.kind == "final"
+        assert final.window is not None
+        assert final.window.segments[0].start_ms == 1_000
         assert connection.sent[1]["audio"] == base64.b64encode(b"\x00\x00").decode()
         assert connection.sent[2]["type"] == "input_audio_buffer.commit"
 
