@@ -14,6 +14,7 @@ from voice_realtime.audio.hub import (
     SAMPLE_WIDTH,
     AudioHub,
 )
+from voice_realtime.audio.levels import AudioLevelMeter, AudioLevels, pcm16_level
 from voice_realtime.audio.profile import (
     CaptureMode,
     CaptureProfile,
@@ -40,6 +41,8 @@ __all__ = [
     "AudioFrameFlag",
     "AudioHub",
     "AudioInjector",
+    "AudioLevelMeter",
+    "AudioLevels",
     "AudioSource",
     "AudioSourceHealth",
     "AudioSourceKind",
@@ -52,4 +55,5 @@ __all__ = [
     "MicrophoneSource",
     "RouterHealth",
     "UnsupportedCaptureProfileError",
+    "pcm16_level",
 ]

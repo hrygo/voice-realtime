@@ -142,6 +142,17 @@ class RuntimeCapabilities(BaseModel):
     inner_os_channel: Literal["loopback_only"] = "loopback_only"
 
 
+class AudioLevelsSnapshot(BaseModel):
+    """服务端实际采集链路的归一化能量，不包含音频内容。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    microphone: float = Field(default=0.0, ge=0.0, le=1.0)
+    physical_output: float = Field(default=0.0, ge=0.0, le=1.0)
+    mixed: float = Field(default=0.0, ge=0.0, le=1.0)
+    updated_at_ns: int = Field(default=0, ge=0)
+
+
 class RuntimeStateSnapshot(BaseModel):
     """服务端权威运行状态；连接建立和每次命令后完整返回。"""
 
@@ -162,6 +173,7 @@ class RuntimeStateSnapshot(BaseModel):
     storage: StorageHealth = StorageHealth.OK
     runtime_revision: int = Field(default=0, ge=0)
     capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
+    audio_levels: AudioLevelsSnapshot = Field(default_factory=AudioLevelsSnapshot)
 
 
 class ErrorCode(StrEnum):
