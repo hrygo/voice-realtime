@@ -417,7 +417,7 @@ class AudioCaptureSettings(BaseSettings):
     helper_executable: Path | None = None
     runtime_dir: Path = Path("runtime/audio-capture")
     startup_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
-    command_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    command_timeout_secs: float = Field(default=30.0, gt=0.0, le=30.0)
     queue_size: int = Field(default=8, ge=1, le=128)
     restart_attempts: int = Field(default=3, ge=0, le=10)
     restart_backoff_secs: float = Field(default=0.25, ge=0.001, le=10.0)

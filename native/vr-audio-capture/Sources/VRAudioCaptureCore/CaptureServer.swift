@@ -122,7 +122,7 @@ public final class CaptureServer: @unchecked Sendable {
         catalog: DeviceCatalog,
         engine: any CaptureEngine,
         writeQueueCapacity: Int,
-        readinessTimeout: TimeInterval = 4
+        readinessTimeout: TimeInterval = 20
     ) throws {
         guard CaptureTokenSecurity.isValid(captureToken) else {
             throw UnixPeerError(.invalidCaptureToken, "采集令牌无效")

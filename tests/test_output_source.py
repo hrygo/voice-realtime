@@ -449,6 +449,7 @@ def test_audio_capture_settings_are_disabled_and_bounded_by_default() -> None:
 
     assert settings.enabled is False
     assert settings.helper_executable is None
+    assert settings.command_timeout_secs == 30.0
     assert settings.queue_size == 8
     assert settings.restart_attempts == 3
     assert settings.runtime_dir == Path("runtime/audio-capture")

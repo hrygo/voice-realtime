@@ -12,6 +12,20 @@
 
 **Local toolchain fact (2026-08-31):** 本机仅安装 Apple Command Line Tools，无完整 Xcode；可执行 `swift build`、手工组装 `.app` 与 `codesign`，但当前 CLT 不包含 `Testing`/`XCTest` 运行库，`swift test` 无法形成有效门禁。因此本包使用零外部依赖的 `swift run vr-audio-capture-selftest` 执行同等断言；标准 XCTest、Developer ID 签名、公证、Xcode 工程归档及完整设备权限矩阵必须作为独立人工门禁，不能由本计划伪造完成。
 
+## Implementation Status (2026-08-31)
+
+**Status:** `P1 code complete`；`P1 device gate pending`；产品仍保持 mic-only。
+
+- Python：1408 项全量测试通过，覆盖率 82.69%；mypy 115 个 source files、ruff 全绿。
+- 前端：35 个 test files / 222 项测试通过，生产构建通过；本阶段没有页面或交互变化。
+- Swift：普通、TSan、ASan 各 52 项自测通过，warnings-as-errors 与 Release 构建通过。
+- Bundle：ad-hoc + Hardened Runtime 静态门禁通过；安全枚举到 1 个输出设备、1 个默认设备。
+- 隐私：未发现真实 token、设备 UID 日志、网络监听或受版本控制的 PCM/WAV/Socket 制品。
+- 未验证：真实 capture/TCC、内建/有线/蓝牙/USB/HDMI、默认输出切换、2 小时长稳、Developer ID、公证、Xcode Archive/XCTest。
+
+实现提交：`3bb6d94`、`0d8c25b`、`1bc9047`、`5d2a510`、`7c3ee54`、`fada9de`、
+`ba6dfae`、`7e3d433`、`af7af44`、`8c66c6f`、`f48ec36`、`f3a1f7a`。
+
 ## Stable IPC v1 Contract
 
 所有多字节整数使用 big-endian。公共前缀固定 16 字节：
@@ -54,7 +68,7 @@ JSON 帧的 `header_length=16`，UTF-8 body 最大 65,536 bytes。PCM 帧的 `he
 - Create: `src/voice_realtime/audio/ipc.py`
 - Create: `tests/test_audio_capture_ipc.py`
 
-- [ ] **Step 1: 先写 Python 失败测试**
+- [x] **Step 1: 先写 Python 失败测试**
 
 覆盖：JSON/PCM golden fixture、分段读取、错误 magic/major/type、超长 JSON、payload 长度不一致、非标准 PCM、未知 minor 扩展头跳过、错误结构脱敏。
 
@@ -70,17 +84,17 @@ def test_decoder_rejects_invalid_boundary(field: str) -> None:
     ...
 ```
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py -q --no-cov`
 
 Expected: FAIL，提示 `voice_realtime.audio.ipc` 不存在。
 
-- [ ] **Step 3: 实现不可变 wire 类型和增量 parser**
+- [x] **Step 3: 实现不可变 wire 类型和增量 parser**
 
 `ipc.py` 只负责 bytes ↔ typed message；不打开 socket、不启动进程。对每个外部字段在边界一次性严格校验，内部代码不重复防御。
 
-- [ ] **Step 4: 运行测试、mypy、ruff 并提交**
+- [x] **Step 4: 运行测试、mypy、ruff 并提交**
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py -q --no-cov`
 
@@ -101,25 +115,25 @@ Commit: `feat(audio): 固化物理输出采集 IPC v1 契约`
 - Create: `tests/test_output_source.py`
 - Modify: `tests/test_config.py`
 
-- [ ] **Step 1: 写 fake UDS server 行为测试**
+- [x] **Step 1: 写 fake UDS server 行为测试**
 
 覆盖：socket 所有者/权限、hello token、request_id 关联、prepare/commit、PCM 转换、drop-oldest、错误码映射、断线进入 `failed`、stop/abort 幂等、子进程启动超时与有界退避。测试只启动临时 UDS，不启动 Core Audio。
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 Run: `uv run pytest tests/test_output_source.py tests/test_config.py -q --no-cov`
 
 Expected: FAIL，提示输出来源和配置尚不存在。
 
-- [ ] **Step 3: 增加 `AudioCaptureSettings`**
+- [x] **Step 3: 增加 `AudioCaptureSettings`**
 
 默认 `enabled=false`。字段包含 helper executable、本机 runtime dir、启动/命令超时、有界队列、最大重启次数与退避；配置 dump 不输出 token 或原始 UID。
 
-- [ ] **Step 4: 实现 client/supervisor/source**
+- [x] **Step 4: 实现 client/supervisor/source**
 
 `AudioCaptureClient` 独占 reader task；控制响应进入按 `request_id` 建立的 future，PCM 进入有界队列。`HelperSupervisor` 只执行固定 executable，不接受协议传入命令或路径。`PhysicalOutputSource` 实现既有 `AudioSource`，source ID 使用 Helper 返回的会话 UUID。
 
-- [ ] **Step 5: 运行聚焦门禁并提交**
+- [x] **Step 5: 运行聚焦门禁并提交**
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py tests/test_output_source.py tests/test_config.py -q --no-cov`
 
@@ -144,21 +158,21 @@ Commit: `feat(audio): 增加物理输出 Helper 客户端与来源适配器`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/RingBufferTests.swift`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: 写 Swift golden fixture 与 ring 失败测试**
+- [x] **Step 1: 写 Swift golden fixture 与 ring 失败测试**
 
 Swift 必须读取与 Python 相同的 hex fixture；ring 测试覆盖固定容量、drop-oldest、sequence gap、clear 不残留内容和超限拒绝。
 
-- [ ] **Step 2: 运行红灯**
+- [x] **Step 2: 运行红灯**
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Expected: FAIL，目标/类型尚不存在。
 
-- [ ] **Step 3: 实现 codec 与 C11 atomic SPSC Ring**
+- [x] **Step 3: 实现 codec 与 C11 atomic SPSC Ring**
 
 Ring 初始化时一次性分配固定 slot；push/pop 只执行原子索引、边界检查和 `memcpy`。Swift wrapper 不在 callback 路径创建 `Data`。
 
-- [ ] **Step 4: 运行 sanitizer 可用范围内的测试并提交**
+- [x] **Step 4: 运行 sanitizer 可用范围内的测试并提交**
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
@@ -177,15 +191,15 @@ Commit: `feat(native): 建立采集协议与无锁音频环形缓冲`
 - Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/DeviceReferenceStore.swift`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/DeviceCatalogTests.swift`
 
-- [ ] **Step 1: 写纯模型与 HAL adapter 测试**
+- [x] **Step 1: 写纯模型与 HAL adapter 测试**
 
 覆盖：只列 alive 且有输出 channel 的设备、默认标记、名称清洗、transport 分类、install key 派生稳定 opaque `device_ref`、未知 ref 拒绝、默认设备为空时稳定错误。
 
-- [ ] **Step 2: 实现可注入 HAL property reader**
+- [x] **Step 2: 实现可注入 HAL property reader**
 
 生产 adapter 使用 `AudioObjectGetPropertyData*`；测试 adapter 不访问真实设备。install key 固定写入 Helper 的 Application Support 子目录并强制 `0600`，不得由 IPC 指定路径。禁止把 UID 放进 `description`、`CustomStringConvertible` 或错误文本。
 
-- [ ] **Step 3: 运行 Swift 测试与真实只读枚举冒烟**
+- [x] **Step 3: 运行 Swift 测试与真实只读枚举冒烟**
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
@@ -209,19 +223,19 @@ Commit: `feat(native): 增加输出设备枚举与私密引用`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/FrameAccumulatorTests.swift`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/TapLifecycleTests.swift`
 
-- [ ] **Step 1: 写 converter、32 ms 累积和逆序清理测试**
+- [x] **Step 1: 写 converter、32 ms 累积和逆序清理测试**
 
 使用合成 Float32 mono/stereo 数据验证 48/44.1 kHz → 16 kHz mono int16、限幅、512-sample 分帧、host time 递增、generation/discontinuity、prepare 失败时 Tap/Aggregate/I/O 逆序回滚。
 
-- [ ] **Step 2: 实现 `TapCaptureEngine`**
+- [x] **Step 2: 实现 `TapCaptureEngine`**
 
 使用 `CATapDescription(excludingProcesses:deviceUID:stream:)`，设置 unmuted/private/mixdown；通过 `AudioHardwareCreateProcessTap` 和私有 Aggregate Device 创建输入。I/O callback 只读取 timestamp 并推入 C ring，工作队列执行 `AVAudioConverter`、分帧和输出闭包。
 
-- [ ] **Step 3: 增加 PID 排除和稳定错误映射**
+- [x] **Step 3: 增加 PID 排除和稳定错误映射**
 
 通过 `kAudioHardwarePropertyTranslatePIDToProcessObject` 转换显式排除 PID；不存在 PID 忽略，device scope、权限、HAL、format 与 callback timeout 映射为固定 code，不暴露 `OSStatus` 之外的内部信息。
 
-- [ ] **Step 4: 编译与测试并提交**
+- [x] **Step 4: 编译与测试并提交**
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
@@ -241,19 +255,19 @@ Commit: `feat(native): 实现设备绑定 Core Audio Tap 采集引擎`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/CaptureControllerTests.swift`
 - Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/CaptureServerTests.swift`
 
-- [ ] **Step 1: 写权限、token、状态机和背压失败测试**
+- [x] **Step 1: 写权限、token、状态机和背压失败测试**
 
 覆盖：非同 UID、错误 token、第二客户端、commit-before-ready、capture ID 不匹配、重复 stop、JSON 上限、慢客户端 drop-oldest、断线立即停止 Tap、错误响应脱敏。
 
-- [ ] **Step 2: 实现单客户端 UDS server**
+- [x] **Step 2: 实现单客户端 UDS server**
 
 只绑定 Python 提供的私有目录内 socket；拒绝 symlink/非 owner 目录，bind 后 chmod `0600`。写队列固定上限并由专用 writer 发送，Core Audio 工作队列不阻塞 Socket。
 
-- [ ] **Step 3: 实现 prepare/commit/abort/stop**
+- [x] **Step 3: 实现 prepare/commit/abort/stop**
 
 prepare 创建并启动 Tap 但丢弃业务 PCM，首个有效 callback 后才返回 ready；commit 原子开启发送；abort/stop 清零 ring、停止 I/O 并逆序释放；连接关闭走 stop。
 
-- [ ] **Step 4: Swift 全测、Python fake-server 互操作测试并提交**
+- [x] **Step 4: Swift 全测、Python fake-server 互操作测试并提交**
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
@@ -273,15 +287,15 @@ Commit: `feat(native): 完成采集 Helper 两阶段 UDS 服务`
 - Modify: `README.md`
 - Modify: `docs/README.md`
 
-- [ ] **Step 1: 写静态 bundle 契约测试脚本**
+- [x] **Step 1: 写静态 bundle 契约测试脚本**
 
 验证 Bundle ID、`LSUIElement`、macOS 14.2、`NSAudioCaptureUsageDescription`、Hardened Runtime、Mach-O 架构、无网络 entitlement、socket/PCM 无 bundle 资源。
 
-- [ ] **Step 2: 实现可移植构建脚本**
+- [x] **Step 2: 实现可移植构建脚本**
 
 脚本调用 `swift build -c release`，组装 `build/vr-audio-capture/vr-audio-capture.app`。开发默认 ad-hoc 签名并明确标记“不可发布”；提供 `VR_AUDIO_CAPTURE_SIGNING_IDENTITY` 和发布 timestamp 参数，但不在仓库记录证书名。
 
-- [ ] **Step 3: 构建、签名校验与无权限枚举冒烟**
+- [x] **Step 3: 构建、签名校验与无权限枚举冒烟**
 
 Run: `scripts/build-audio-capture-helper.sh`
 
@@ -289,7 +303,7 @@ Run: `codesign --verify --deep --strict --verbose=2 build/vr-audio-capture/vr-au
 
 Run: `scripts/test-audio-capture-helper.sh --list-devices`
 
-- [ ] **Step 4: 更新运行文档并提交**
+- [x] **Step 4: 更新运行文档并提交**
 
 文档明确：首次真实 capture 会触发系统“系统音频录制”授权；无完整 Xcode 时未执行 Developer ID/公证；禁止把 ad-hoc 构建描述为发布制品。
 
@@ -301,10 +315,16 @@ Commit: `build(native): 增加采集 Helper 应用打包与签名校验`
 
 **Files:**
 - Create: `tests/test_audio_capture_bundle.py`
+- Create: `scripts/smoke_audio_capture_helper.py`
 - Create: `docs/manuals/物理输出音频采集验收手册.md`
+- Modify: `src/voice_realtime/config.py`
+- Modify: `tests/test_output_source.py`
+- Modify: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CaptureServer.swift`
+- Modify: `README.md`
+- Modify: `docs/README.md`
 - Modify: `docs/superpowers/plans/2026-08-31-physical-output-helper.md`
 
-- [ ] **Step 1: 运行完整自动化门禁**
+- [x] **Step 1: 运行完整自动化门禁**
 
 Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
@@ -320,19 +340,19 @@ Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `scripts/build-audio-capture-helper.sh && scripts/test-audio-capture-helper.sh --static`
 
-- [ ] **Step 2: 验证隐私与构建产物边界**
+- [x] **Step 2: 验证隐私与构建产物边界**
 
 确认 source/test/docs 中没有真实设备 UID、token、签名身份、PCM 文件或网络监听；运行目录清理后不留 Tap、Aggregate Device、socket 或音频制品。
 
-- [ ] **Step 3: 提供显式人工 capture 冒烟**
+- [x] **Step 3: 提供显式人工 capture 冒烟**
 
 手册提供用户主动执行的内建输出设备 30 秒测试：授权、播放合成测试音、观察非零 level/sequence、停止、确认无 PCM 文件。该步骤不得在自动测试中自行触发 TCC 弹窗。
 
-- [ ] **Step 4: 记录本机实际门禁状态**
+- [x] **Step 4: 记录本机实际门禁状态**
 
 自动化通过可标记 `P1 code complete`；只有内建、有线、蓝牙、USB、HDMI 与默认设备切换/2h 长稳全部通过，才标记规格中的 P1 device gate complete。当前缺少的设备或完整 Xcode/公证必须列为未验证，不得弱化为成功。
 
-- [ ] **Step 5: 自审、coverage check 与提交**
+- [x] **Step 5: 自审、coverage check 与提交**
 
 检查 Swift/Python 生命周期、parser、安全、实时性和影响面；对所有改动路径执行索引覆盖核验。更新本计划 checkbox 和状态。
 

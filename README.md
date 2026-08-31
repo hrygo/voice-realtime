@@ -346,6 +346,7 @@ uv run vr-interact
 - 📖 [会议助手后端运行与前后端联调手册](docs/manuals/会议助手后端运行与前后端联调.md)
 - 📖 [Voice Studio UI 设计方案](docs/manuals/Voice-Studio-UI-设计方案.md)
 - 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/manuals/Qwen3-ASR-实时语音转文字开发对接手册.md)
+- 📖 [物理输出音频采集验收手册](docs/manuals/物理输出音频采集验收手册.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
 - 📝 [架构决策记录 (ADR-001 ~ ADR-008)](docs/decisions)
 

@@ -60,7 +60,8 @@ docs/
 ├── manuals/                               # 📖 开发对接与运行手册
 │   ├── Qwen3-ASR-实时语音转文字开发对接手册.md # WebSocket/REST 流式与文件转写对接接口手册
 │   ├── 会议助手后端运行与前后端联调.md     # PostgreSQL环境准备、后端启动与前后端联调规范
-│   └── Voice-Studio-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
+│   ├── Voice-Studio-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
+│   └── 物理输出音频采集验收手册.md         # Helper 自动化门禁、人工 capture 与设备矩阵验收
 │
 ├── operations/                            # 📋 协作交接、联调记录与排障分析
 │   ├── 会议助手前后端分离式开发准备方案.md # 契约优先前后端分离路线与开发准备方案
@@ -144,6 +145,7 @@ graph TD
 | [会议助手后端运行与前后端联调手册](manuals/会议助手后端运行与前后端联调.md) | 🟢 `active` | `manual` | `v1.0` | 会议助手运行手册、PostgreSQL 数据库准备、接口定义与前后端联调规范 |
 | [Voice Studio UI 设计方案](manuals/Voice-Studio-UI-设计方案.md) | 🟢 `active` | `guide` | `v1.0` | 前端控制台架构设计、单源麦克风控制面、组件状态机与交互契约 |
 | [Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案](manuals/Voice-Studio-会议助手-内心OS-UI-UX-设计方案.md) | 🟢 `active` | `specification` | `v1.0` | **内心 OS 专属设计方案**：私密副驾驶信息架构、事实/判断/草稿三层卡片、证据定位与状态机 |
+| [物理输出音频采集验收手册](manuals/物理输出音频采集验收手册.md) | 🟠 `under_review` | `manual` | `v1.0` | 物理输出 Helper 自动化门禁、显式 30 秒 capture、隐私边界与全设备矩阵 |
 
 ### 4. 协作交接、联调记录与排障 (`docs/operations/`)
 
