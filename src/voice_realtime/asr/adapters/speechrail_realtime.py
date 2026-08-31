@@ -4,33 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Protocol, cast
+from collections.abc import AsyncIterator
 from uuid import NAMESPACE_URL, uuid5
-
-import websockets
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
-
-
-class SpeechRailConnection(Protocol):
-    uri: str
-
-    async def send(self, payload: str) -> None: ...
-
-    async def recv(self) -> str: ...
-
-    async def close(self) -> None: ...
-
-
-ConnectionFactory = Callable[[str], Awaitable[SpeechRailConnection]]
-
-
-def _connect(url: str) -> Awaitable[SpeechRailConnection]:
-    """创建默认的 SpeechRail Realtime v2 WebSocket 连接。"""
-    return cast(Awaitable[SpeechRailConnection], websockets.connect(url))
+from voice_realtime.speechrail.transport import (
+    ConnectionFactory,
+    SpeechRailV2Transport,
+)
 
 
 class SpeechRailRealtimeClient:
@@ -39,16 +21,11 @@ class SpeechRailRealtimeClient:
     def __init__(
         self, *, url: str, connection_factory: ConnectionFactory | None = None
     ) -> None:
-        self._url = url
-        self._connection_factory = connection_factory or _connect
-        self._connection: SpeechRailConnection | None = None
-        self._sequence = 0
-        self._session_id: str | None = None
-        self._request_id: str | None = None
+        self._transport = SpeechRailV2Transport(url=url, connection_factory=connection_factory)
 
     @property
     def uri(self) -> str:
-        return self._connection.uri if self._connection is not None else self._url
+        return self._transport.uri
 
     async def connect(
         self,
@@ -58,12 +35,7 @@ class SpeechRailRealtimeClient:
         speaker_count_hint: int | None = None,
         diarization_group_id: str | None = None,
     ) -> None:
-        if self._connection is not None:
-            raise RuntimeError("SPEECHRAIL_ALREADY_CONNECTED")
-        self._sequence = 0
-        self._session_id = None
-        self._request_id = None
-        self._connection = await self._connection_factory(self._url)
+        await self._transport.connect()
         try:
             session: dict[str, object] = {
                 "type": "transcription",
@@ -83,8 +55,10 @@ class SpeechRailRealtimeClient:
                 if diarization_group_id is not None:
                     diarization_config["group_id"] = diarization_group_id
                 session["diarization"] = diarization_config
-            await self._send({"type": "session.update", "session": session})
-            await self.receive()
+            await self._transport.send_event({"type": "session.update", "session": session})
+            created = await self.receive()
+            if created.get("type") != "session.created":
+                raise RuntimeError("SPEECHRAIL_SESSION_CREATE_FAILED")
         except BaseException:
             await self.close()
             raise
@@ -92,7 +66,7 @@ class SpeechRailRealtimeClient:
     async def append_pcm(self, chunk: bytes) -> None:
         if not chunk or len(chunk) % 2:
             raise ValueError("PCM must be non-empty int16")
-        await self._send(
+        await self._transport.send_event(
             {
                 "type": "input_audio_buffer.append",
                 "audio": base64.b64encode(chunk).decode("ascii"),
@@ -100,56 +74,16 @@ class SpeechRailRealtimeClient:
         )
 
     async def commit(self) -> None:
-        await self._send({"type": "input_audio_buffer.commit"})
+        await self._transport.send_event({"type": "input_audio_buffer.commit"})
 
     async def cancel(self) -> None:
-        await self._send({"type": "session.cancel"})
+        await self._transport.send_event({"type": "session.cancel"})
 
     async def receive(self) -> dict[str, object]:
-        if self._connection is None:
-            raise RuntimeError("SPEECHRAIL_NOT_CONNECTED")
-        payload = json.loads(await self._connection.recv())
-        if not isinstance(payload, dict):
-            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
-        sequence = payload.get("sequence")
-        if not isinstance(sequence, int) or sequence <= self._sequence:
-            raise RuntimeError("SPEECHRAIL_SEQUENCE_ERROR")
-        event_type = payload.get("type")
-        session_id = payload.get("session_id")
-        request_id = payload.get("request_id")
-        if (
-            not isinstance(event_type, str)
-            or not isinstance(session_id, str)
-            or not session_id
-            or not isinstance(request_id, str)
-            or not request_id
-        ):
-            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
-        if self._session_id is None:
-            if event_type != "session.created":
-                raise RuntimeError("SPEECHRAIL_SESSION_CREATE_FAILED")
-            self._session_id = session_id
-            self._request_id = request_id
-        elif session_id != self._session_id:
-            raise RuntimeError("SPEECHRAIL_SESSION_MISMATCH")
-        elif request_id != self._request_id:
-            raise RuntimeError("SPEECHRAIL_REQUEST_MISMATCH")
-        self._sequence = sequence
-        return {str(key): value for key, value in payload.items()}
+        return await self._transport.receive()
 
     async def close(self) -> None:
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            finally:
-                self._connection = None
-                self._session_id = None
-                self._request_id = None
-
-    async def _send(self, payload: dict[str, object]) -> None:
-        if self._connection is None:
-            raise RuntimeError("SPEECHRAIL_NOT_CONNECTED")
-        await self._connection.send(json.dumps(payload, separators=(",", ":")))
+        await self._transport.close()
 
 
 class SpeechRailStreamingTranscriber:
