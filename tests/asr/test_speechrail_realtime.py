@@ -127,6 +127,47 @@ def test_finish_waits_for_the_confirmed_transcript_window() -> None:
     asyncio.run(scenario())
 
 
+def test_client_reconnects_with_a_new_session_sequence() -> None:
+    async def scenario() -> None:
+        first = FakeConnection()
+        second = FakeConnection()
+        connections = iter((first, second))
+        client = SpeechRailRealtimeClient(
+            url=first.uri,
+            connection_factory=lambda _: _immediate(next(connections)),
+        )
+
+        await client.connect(language="Chinese")
+        await client.close()
+        await client.connect(language="Chinese")
+
+        assert client.uri == second.uri
+
+    asyncio.run(scenario())
+
+
+def test_client_rejects_events_from_another_session() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages[1]["session_id"] = "sess-other"
+        client = SpeechRailRealtimeClient(
+            url=connection.uri,
+            connection_factory=lambda _: _immediate(connection),
+        )
+
+        await client.connect(language="Chinese")
+        await client.commit()
+
+        try:
+            await client.receive()
+        except RuntimeError as error:
+            assert str(error) == "SPEECHRAIL_SESSION_MISMATCH"
+        else:
+            raise AssertionError("mismatched session event was accepted")
+
+    asyncio.run(scenario())
+
+
 async def _next_final(events: AsyncIterator[ASREvent]) -> ASREvent:
     async for event in events:
         if event.kind == "final":

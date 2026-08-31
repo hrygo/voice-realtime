@@ -34,32 +34,41 @@ class SpeechRailRealtimeClient:
         self._connection_factory = connection_factory
         self._connection: SpeechRailConnection | None = None
         self._sequence = 0
+        self._session_id: str | None = None
+        self._request_id: str | None = None
 
     @property
     def uri(self) -> str:
         return self._connection.uri if self._connection is not None else self._url
 
     async def connect(self, *, language: str) -> None:
+        if self._connection is not None:
+            raise RuntimeError("SPEECHRAIL_ALREADY_CONNECTED")
+        self._sequence = 0
+        self._session_id = None
+        self._request_id = None
         self._connection = await self._connection_factory(self._url)
-        await self._send(
-            {
-                "type": "session.update",
-                "session": {
-                    "type": "transcription",
-                    "language": language,
-                    "audio_format": {
-                        "type": "audio/pcm",
-                        "rate": 16000,
-                        "channels": 1,
-                        "sample_width": 2,
+        try:
+            await self._send(
+                {
+                    "type": "session.update",
+                    "session": {
+                        "type": "transcription",
+                        "language": language,
+                        "audio_format": {
+                            "type": "audio/pcm",
+                            "rate": 16000,
+                            "channels": 1,
+                            "sample_width": 2,
+                        },
+                        "endpointing": {"mode": "manual"},
                     },
-                    "endpointing": {"mode": "manual"},
-                },
-            }
-        )
-        created = await self.receive()
-        if created.get("type") != "session.created":
-            raise RuntimeError("SPEECHRAIL_SESSION_CREATE_FAILED")
+                }
+            )
+            await self.receive()
+        except BaseException:
+            await self.close()
+            raise
 
     async def append_pcm(self, chunk: bytes) -> None:
         if not chunk or len(chunk) % 2:
@@ -86,13 +95,37 @@ class SpeechRailRealtimeClient:
         sequence = payload.get("sequence")
         if not isinstance(sequence, int) or sequence <= self._sequence:
             raise RuntimeError("SPEECHRAIL_SEQUENCE_ERROR")
+        event_type = payload.get("type")
+        session_id = payload.get("session_id")
+        request_id = payload.get("request_id")
+        if (
+            not isinstance(event_type, str)
+            or not isinstance(session_id, str)
+            or not session_id
+            or not isinstance(request_id, str)
+            or not request_id
+        ):
+            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+        if self._session_id is None:
+            if event_type != "session.created":
+                raise RuntimeError("SPEECHRAIL_SESSION_CREATE_FAILED")
+            self._session_id = session_id
+            self._request_id = request_id
+        elif session_id != self._session_id:
+            raise RuntimeError("SPEECHRAIL_SESSION_MISMATCH")
+        elif request_id != self._request_id:
+            raise RuntimeError("SPEECHRAIL_REQUEST_MISMATCH")
         self._sequence = sequence
         return {str(key): value for key, value in payload.items()}
 
     async def close(self) -> None:
         if self._connection is not None:
-            await self._connection.close()
-            self._connection = None
+            try:
+                await self._connection.close()
+            finally:
+                self._connection = None
+                self._session_id = None
+                self._request_id = None
 
     async def _send(self, payload: dict[str, object]) -> None:
         if self._connection is None:
