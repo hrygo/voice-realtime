@@ -12,6 +12,9 @@ dist/
 .coverage
 htmlcov/
 
+# SwiftPM
+.build/
+
 # 环境配置与密钥
 .env
 .env.*

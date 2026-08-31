@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-31-physical-output-audio-capture-design.md`
 
-**Local toolchain fact (2026-08-31):** 本机仅安装 Apple Command Line Tools，无完整 Xcode；可执行 `swift build/test`、手工组装 `.app` 与 `codesign`，但 Developer ID 签名、公证、Xcode 工程归档及完整设备权限矩阵必须作为独立人工门禁，不能由本计划伪造完成。
+**Local toolchain fact (2026-08-31):** 本机仅安装 Apple Command Line Tools，无完整 Xcode；可执行 `swift build`、手工组装 `.app` 与 `codesign`，但当前 CLT 不包含 `Testing`/`XCTest` 运行库，`swift test` 无法形成有效门禁。因此本包使用零外部依赖的 `swift run vr-audio-capture-selftest` 执行同等断言；标准 XCTest、Developer ID 签名、公证、Xcode 工程归档及完整设备权限矩阵必须作为独立人工门禁，不能由本计划伪造完成。
 
 ## Stable IPC v1 Contract
 
@@ -150,7 +150,7 @@ Swift 必须读取与 Python 相同的 hex fixture；ring 测试覆盖固定容�
 
 - [ ] **Step 2: 运行红灯**
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Expected: FAIL，目标/类型尚不存在。
 
@@ -160,7 +160,7 @@ Ring 初始化时一次性分配固定 slot；push/pop 只执行原子索引、�
 
 - [ ] **Step 4: 运行 sanitizer 可用范围内的测试并提交**
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `cd native/vr-audio-capture && swift build -c release`
 
@@ -187,7 +187,7 @@ Commit: `feat(native): 建立采集协议与无锁音频环形缓冲`
 
 - [ ] **Step 3: 运行 Swift 测试与真实只读枚举冒烟**
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `cd native/vr-audio-capture && swift run vr-audio-capture-helper --list-devices-json`
 
@@ -223,7 +223,7 @@ Commit: `feat(native): 增加输出设备枚举与私密引用`
 
 - [ ] **Step 4: 编译与测试并提交**
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `cd native/vr-audio-capture && swift build -c release`
 
@@ -255,7 +255,7 @@ prepare 创建并启动 Tap 但丢弃业务 PCM，首个有效 callback 后才�
 
 - [ ] **Step 4: Swift 全测、Python fake-server 互操作测试并提交**
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py tests/test_output_source.py -q --no-cov`
 
@@ -316,7 +316,7 @@ Run: `cd ui && npm test -- --run`
 
 Run: `cd ui && npm run build`
 
-Run: `cd native/vr-audio-capture && swift test`
+Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
 
 Run: `scripts/build-audio-capture-helper.sh && scripts/test-audio-capture-helper.sh --static`
 
