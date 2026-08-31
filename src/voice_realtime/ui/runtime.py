@@ -8,7 +8,9 @@ from typing import Any
 
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.asr.registry import ASRBackendRegistry
+from voice_realtime.audio.frame import AudioSourceKind
 from voice_realtime.audio.hub import AudioHub
+from voice_realtime.audio.levels import AudioLevelMeter
 from voice_realtime.config import Settings
 from voice_realtime.interaction.nltk_data import ensure_punkt_tab
 from voice_realtime.interaction.ownership import InteractionOwnership
@@ -20,7 +22,12 @@ from voice_realtime.meeting.runtime_mode import (
     RuntimeModeCoordinator,
 )
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
-from voice_realtime.ui.protocol import DuplexMode, RuntimeCapabilities, RuntimeStateSnapshot
+from voice_realtime.ui.protocol import (
+    AudioLevelsSnapshot,
+    DuplexMode,
+    RuntimeCapabilities,
+    RuntimeStateSnapshot,
+)
 from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy
 
@@ -48,6 +55,7 @@ class UIRuntime:
         self.audio_queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
         self._interaction_dropped_chunks = 0
         self._pcm_owner = PCMOwner.NONE
+        self._audio_levels = AudioLevelMeter()
         self.hub = AudioHub(
             device_index=settings.interaction.input_device,
             device_name=settings.interaction.input_device_name,
@@ -151,6 +159,8 @@ class UIRuntime:
         self.hub.set_muted(muted)
         if muted:
             self._drain_audio_queue()
+            self._audio_levels.clear(AudioSourceKind.MICROPHONE)
+            self._publish_runtime_state()
 
     async def clear_context(self) -> None:
         await self.session.clear_context()
@@ -186,6 +196,7 @@ class UIRuntime:
         meeting_started_at = (
             meeting_record.started_at.isoformat() if meeting_record is not None else None
         )
+        audio_levels = self._audio_levels.snapshot()
         return RuntimeStateSnapshot(
             pipeline=self.session.state.value,
             subtitle=str(subtitle_state),
@@ -210,10 +221,17 @@ class UIRuntime:
                 inner_os_analysis_enabled=self._settings.meeting.inner_os_analysis_enabled,
                 inner_os_channel="loopback_only",
             ),
+            audio_levels=AudioLevelsSnapshot(
+                microphone=audio_levels.microphone,
+                physical_output=audio_levels.physical_output,
+                mixed=audio_levels.mixed,
+                updated_at_ns=audio_levels.updated_at_ns,
+            ),
         )
 
     def diagnostics(self) -> dict[str, Any]:
         """返回不含内部队列和音频内容的运行时诊断快照。"""
+        audio_levels = self._audio_levels.snapshot()
         return {
             "audio_hub": self.hub.sink_diagnostics(),
             "interaction": {
@@ -222,6 +240,12 @@ class UIRuntime:
             },
             "subtitles": self.subtitle_proxy.diagnostics(self._coordinator.pcm_owner),
             "tts": self.observer.tts_source_diagnostics,
+            "audio_levels": {
+                "microphone": audio_levels.microphone,
+                "physical_output": audio_levels.physical_output,
+                "mixed": audio_levels.mixed,
+                "updated_at_ns": audio_levels.updated_at_ns,
+            },
             "last_transition": self._coordinator.last_transition,
         }
 
@@ -277,7 +301,12 @@ class UIRuntime:
             return
         self.hub.add_sink("pipecat", self._enqueue_audio)
         self.hub.add_sink("subtitle", self._push_subtitle_audio)
+        self.hub.add_sink("levels", self._observe_mic_audio)
         self._sinks_wired = True
+
+    async def _observe_mic_audio(self, data: bytes) -> None:
+        if self._audio_levels.update(AudioSourceKind.MICROPHONE, data):
+            self._publish_runtime_state()
 
     async def _push_subtitle_audio(self, data: bytes) -> None:
         if self.hub.muted:

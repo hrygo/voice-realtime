@@ -73,6 +73,7 @@ from voice_realtime.asr.adapters.pipecat_sensevoice import (
     resolve_stt_model,
     to_pipecat_language,
 )
+from voice_realtime.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTFactory
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.audio.devices import resolve_input_device_index
@@ -675,9 +676,13 @@ def build_pipeline(
             )
         )
 
-    resolved_stt_factory = stt_factory or PipecatSenseVoiceFactory(
-        model=settings.stt_model,
-        allow_model_downloads=settings.allow_model_downloads,
+    resolved_stt_factory = stt_factory or (
+        SpeechRailConversationSTTFactory(url=settings.speechrail_realtime_url)
+        if settings.stt_backend == "speechrail-realtime-v2"
+        else PipecatSenseVoiceFactory(
+            model=settings.stt_model,
+            allow_model_downloads=settings.allow_model_downloads,
+        )
     )
     stt = cast(
         FrameProcessor,

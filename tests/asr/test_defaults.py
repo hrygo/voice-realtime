@@ -6,16 +6,19 @@ from typing import Any
 
 from voice_realtime.asr.adapters.funasr_nano_ws import FunASRNanoWSAdapter
 from voice_realtime.asr.adapters.qwen3_native import Qwen3WorkerIdentity
+from voice_realtime.asr.adapters.speechrail_realtime import SpeechRailStreamingTranscriber
 from voice_realtime.asr.contracts import ASRSessionContext
 from voice_realtime.asr.defaults import (
     build_funasr_nano_ws_registry,
     build_qwen3_native_registry,
     build_sensevoice_native_registry,
+    build_speechrail_realtime_registry,
 )
 from voice_realtime.asr.profiles import (
     FunASRNanoWSProfile,
     Qwen3NativeProfile,
     SenseVoiceNativeProfile,
+    SpeechRailRealtimeProfile,
 )
 
 
@@ -60,6 +63,24 @@ def test_sensevoice_native_registry_accepts_alias_language() -> None:
 
     assert backend.backend_id == "sensevoice-native"
     assert backend.uri == "offline://sensevoice-native"
+
+
+def test_speechrail_registry_freezes_realtime_profile_controls() -> None:
+    profile = SpeechRailRealtimeProfile(
+        url="ws://127.0.0.1:8201/v2/realtime",
+        language="Chinese",
+        final_timeout_secs=12.0,
+    )
+    registry = build_speechrail_realtime_registry()
+
+    backend = registry.create_streaming(
+        profile,
+        ASRSessionContext(source_epoch=1, offset_ms=0, purpose="meeting"),
+    )
+
+    assert isinstance(backend, SpeechRailStreamingTranscriber)
+    assert backend.backend_id == "speechrail-realtime-v2"
+    assert backend.uri == "ws://127.0.0.1:8201/v2/realtime"
 
 
 async def test_qwen3_registry_does_not_close_run_scoped_worker_per_sample() -> None:

@@ -60,7 +60,8 @@ docs/
 ├── manuals/                               # 📖 开发对接与运行手册
 │   ├── Qwen3-ASR-实时语音转文字开发对接手册.md # WebSocket/REST 流式与文件转写对接接口手册
 │   ├── 会议助手后端运行与前后端联调.md     # PostgreSQL环境准备、后端启动与前后端联调规范
-│   └── Voice-Studio-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
+│   ├── Voice-Studio-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
+│   └── 物理输出音频采集验收手册.md         # Helper 自动化门禁、人工 capture 与设备矩阵验收
 │
 ├── operations/                            # 📋 协作交接、联调记录与排障分析
 │   ├── 会议助手前后端分离式开发准备方案.md # 契约优先前后端分离路线与开发准备方案
@@ -90,7 +91,7 @@ docs/
 │       └── target-domain-preflight-v1/README.md
 │
 └── superpowers/                           # ⚡ 历史执行计划与规格 (Plans & Specs 归档)
-    ├── plans/                             # 研发执行计划 (13 份，含当前草案与历史归档)
+    ├── plans/                             # 研发执行计划 (14 份，含当前草案与历史归档)
     └── specs/                             # 设计规格 (12 份，含当前评审稿与历史归档)
 ```
 
@@ -144,6 +145,7 @@ graph TD
 | [会议助手后端运行与前后端联调手册](manuals/会议助手后端运行与前后端联调.md) | 🟢 `active` | `manual` | `v1.0` | 会议助手运行手册、PostgreSQL 数据库准备、接口定义与前后端联调规范 |
 | [Voice Studio UI 设计方案](manuals/Voice-Studio-UI-设计方案.md) | 🟢 `active` | `guide` | `v1.0` | 前端控制台架构设计、单源麦克风控制面、组件状态机与交互契约 |
 | [Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案](manuals/Voice-Studio-会议助手-内心OS-UI-UX-设计方案.md) | 🟢 `active` | `specification` | `v1.0` | **内心 OS 专属设计方案**：私密副驾驶信息架构、事实/判断/草稿三层卡片、证据定位与状态机 |
+| [物理输出音频采集验收手册](manuals/物理输出音频采集验收手册.md) | 🟠 `under_review` | `manual` | `v1.0` | 物理输出 Helper 自动化门禁、显式 30 秒 capture、隐私边界与全设备矩阵 |
 
 ### 4. 协作交接、联调记录与排障 (`docs/operations/`)
 
@@ -184,8 +186,13 @@ graph TD
 
 | 目录 | 数量 | 状态 | 说明 |
 |---|---|---|---|
-| [superpowers/plans/](superpowers/plans/) | 13 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单；当前新增[音频源基础设施实施计划](superpowers/plans/2026-08-31-audio-source-foundation.md) |
+| [superpowers/plans/](superpowers/plans/) | 14 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单；P0 见[音频源基础设施实施计划](superpowers/plans/2026-08-31-audio-source-foundation.md)，当前进入[P1 物理输出 Helper 实施计划](superpowers/plans/2026-08-31-physical-output-helper.md) |
 | [superpowers/specs/](superpowers/specs/) | 12 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准；新增[本地物理输出设备音频采集设计](superpowers/specs/2026-08-31-physical-output-audio-capture-design.md) |
+
+物理输出采集当前处于 P1 原生 Helper 阶段：IPC v1 契约位于
+[`contracts/audio-capture/v1/`](../contracts/audio-capture/v1/)，`.app` 构建与无权限静态/枚举检查入口为
+`scripts/build-audio-capture-helper.sh` 和 `scripts/test-audio-capture-helper.sh`。该阶段不增加页面来源选择，
+也不改变会议、字幕和 PostgreSQL 数据边界；产品仍使用麦克风作为唯一业务输入。
 
 ---
 

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voice-realtime.local/contracts/audio-capture/v1/control-message.schema.json",
+  "title": "Audio Capture IPC v1 control message",
+  "oneOf": [
+    { "$ref": "#/$defs/hello" },
+    { "$ref": "#/$defs/helloAck" },
+    { "$ref": "#/$defs/listDevices" },
+    { "$ref": "#/$defs/devices" },
+    { "$ref": "#/$defs/prepareCapture" },
+    { "$ref": "#/$defs/captureCommand" },
+    { "$ref": "#/$defs/ack" },
+    { "$ref": "#/$defs/ready" },
+    { "$ref": "#/$defs/event" },
+    { "$ref": "#/$defs/health" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "requestId": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "uuid": { "type": "string", "format": "uuid" },
+    "hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "protocol_major", "protocol_minor", "capture_token", "client_pid"],
+      "properties": {
+        "type": { "const": "hello" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "protocol_major": { "const": 1 },
+        "protocol_minor": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "capture_token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "client_pid": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "helloAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "helper_version", "protocol_major", "protocol_minor", "capabilities"],
+      "properties": {
+        "type": { "const": "hello_ack" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "helper_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "protocol_major": { "const": 1 },
+        "protocol_minor": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      }
+    },
+    "listDevices": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id"],
+      "properties": {
+        "type": { "const": "list_devices" },
+        "request_id": { "$ref": "#/$defs/requestId" }
+      }
+    },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device_ref", "label", "transport", "is_default"],
+      "properties": {
+        "device_ref": { "type": "string", "pattern": "^vrdev1_[A-Za-z0-9_-]{43}$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "transport": { "enum": ["built_in", "bluetooth", "usb", "hdmi", "display", "airplay", "virtual", "other"] },
+        "is_default": { "type": "boolean" }
+      }
+    },
+    "devices": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "devices"],
+      "properties": {
+        "type": { "const": "devices" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "devices": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/device" } }
+      }
+    },
+    "prepareCapture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "capture_id", "follow_default_output", "exclude_pids"],
+      "properties": {
+        "type": { "const": "prepare_capture" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "capture_id": { "$ref": "#/$defs/uuid" },
+        "follow_default_output": { "type": "boolean" },
+        "device_ref": { "type": ["string", "null"], "pattern": "^vrdev1_[A-Za-z0-9_-]{43}$" },
+        "exclude_pids": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "follow_default_output": { "const": false } }, "required": ["follow_default_output"] },
+          "then": { "required": ["device_ref"] }
+        }
+      ]
+    },
+    "captureCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "capture_id"],
+      "properties": {
+        "type": { "enum": ["commit_capture", "abort_capture", "stop_capture"] },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "capture_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "command", "capture_id"],
+      "properties": {
+        "type": { "const": "ack" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "command": { "enum": ["commit_capture", "abort_capture", "stop_capture"] },
+        "capture_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "ready": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "capture_id", "source_id", "device_generation", "device"],
+      "properties": {
+        "type": { "const": "ready" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "capture_id": { "$ref": "#/$defs/uuid" },
+        "source_id": { "$ref": "#/$defs/uuid" },
+        "device_generation": { "type": "integer", "minimum": 0 },
+        "device": { "$ref": "#/$defs/device" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "event", "capture_id", "device_generation", "details"],
+      "properties": {
+        "type": { "const": "event" },
+        "event": { "enum": ["device_ready", "device_changed", "discontinuity", "sequence_gap", "recovering", "degraded", "stopped"] },
+        "capture_id": { "$ref": "#/$defs/uuid" },
+        "device_generation": { "type": "integer", "minimum": 0 },
+        "details": { "type": "object", "maxProperties": 32 }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state", "queued_frames", "dropped_frames", "last_sequence"],
+      "properties": {
+        "type": { "const": "health" },
+        "state": { "enum": ["stopped", "preparing", "ready", "active", "degraded", "recovering", "failed"] },
+        "queued_frames": { "type": "integer", "minimum": 0 },
+        "dropped_frames": { "type": "integer", "minimum": 0 },
+        "last_sequence": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "code", "message", "retryable"],
+      "properties": {
+        "type": { "const": "error" },
+        "request_id": { "oneOf": [{ "$ref": "#/$defs/requestId" }, { "type": "null" }] },
+        "code": {
+          "enum": [
+            "invalid_message", "unsupported_protocol", "authentication_failed",
+            "permission_denied", "unsupported_os", "unsupported_device_scope",
+            "device_unavailable", "invalid_state", "capture_conflict",
+            "callback_timeout", "conversion_failed", "io_failed", "internal_error"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "retryable": { "type": "boolean" }
+      }
+    }
+  }
+}

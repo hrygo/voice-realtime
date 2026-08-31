@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
+from voice_realtime.audio.levels import AudioLevelMeter
 from voice_realtime.config import Settings
 from voice_realtime.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
 from voice_realtime.meeting.runtime_mode import (
@@ -170,7 +171,7 @@ def test_runtime_constructs_one_idle_coordinator_and_broadcaster(
 
 class TestStart:
     async def test_start_assembles_all_components(self, settings: Settings) -> None:
-        """start 应依次：启动字幕代理 → 接两个 sink → 开麦 → 装配并运行管道。"""
+        """start 应依次：启动字幕代理 → 接三个 sink → 开麦 → 装配并运行管道。"""
         with ExitStack() as stack:
             _proxy_cls, hub_cls, build, worker_cls, runner_cls = _patched(stack)
             runtime = UIRuntime(settings)
@@ -187,6 +188,7 @@ class TestStart:
         proxy.prepare_browser_capture.assert_not_awaited()
         hub.add_sink.assert_any_call("pipecat", runtime._enqueue_audio)
         hub.add_sink.assert_any_call("subtitle", runtime._push_subtitle_audio)
+        hub.add_sink.assert_any_call("levels", runtime._observe_mic_audio)
         hub.start.assert_awaited_once()
         build.assert_called_once()
         _, kwargs = worker_cls.call_args
@@ -197,7 +199,6 @@ class TestStart:
         assert transition is not None
         assert transition["target"] == "assistant"
         assert transition["result"] == "success"
-
     async def test_push_subtitle_audio_keeps_mic_and_echo_gates(
         self, settings: Settings
     ) -> None:
@@ -270,6 +271,61 @@ class TestStart:
 
         hub.stop.assert_awaited_once()
         proxy.stop.assert_awaited_once()
+
+
+class TestAudioLevels:
+    async def test_pcm_level_sink_updates_snapshot_and_publishes(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime._audio_levels = AudioLevelMeter(publish_interval_ns=0)
+            client = runtime.runtime_events.add_client()
+            client.latest_nowait()
+
+            await runtime._observe_mic_audio(b"\xff\x7f" * 512)
+            state = client.latest_nowait()
+
+        assert state.audio_levels.microphone > 0.0
+        assert state.audio_levels.mixed == state.audio_levels.microphone
+        assert state.audio_levels.physical_output == 0.0
+        assert runtime.diagnostics()["audio_levels"]["microphone"] > 0.0
+
+    async def test_mute_clears_level_and_publishes(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime.hub.set_muted.side_effect = lambda muted: setattr(
+                runtime.hub, "muted", muted
+            )
+            runtime._audio_levels = AudioLevelMeter(publish_interval_ns=0)
+            await runtime._observe_mic_audio(b"\xff\x7f" * 512)
+            client = runtime.runtime_events.add_client()
+            client.latest_nowait()
+
+            await runtime.set_mic_muted(True)
+            state = client.latest_nowait()
+
+        runtime.hub.set_muted.assert_called_once_with(True)
+        assert state.audio_levels.microphone == 0.0
+        assert state.audio_levels.mixed == 0.0
+        assert state.mic_muted is True
+
+    def test_snapshot_defaults_to_zero_levels(self, settings: Settings) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            state = runtime.snapshot()
+
+        assert state.audio_levels.microphone == 0.0
+        assert state.audio_levels.physical_output == 0.0
+        assert state.audio_levels.mixed == 0.0
 
 
 class TestSubtitleProxyFailure:

@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from voice_realtime.asr.profiles import (
     ASRProfile,
+    SpeechRailRealtimeProfile,
     WLKAutoProfile,
     WLKQwen3Profile,
     WLKSenseVoiceProfile,
@@ -219,6 +220,8 @@ class InteractionSettings(BaseSettings):
         description="已加载模型上下文容量的紧急保护比例",
     )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
+    stt_backend: Literal["sensevoice", "speechrail-realtime-v2"] = "sensevoice"
+    speechrail_realtime_url: str = Field(default="ws://127.0.0.1:8201/v2/realtime")
     stt_model: str = Field(
         default="",
         description=(
@@ -340,6 +343,11 @@ class InteractionSettings(BaseSettings):
             raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
         return v
 
+    @field_validator("speechrail_realtime_url")
+    @classmethod
+    def _validate_speechrail_realtime_url(cls, value: str) -> str:
+        return SpeechRailRealtimeProfile(url=value, language="zh").url
+
     @field_validator("input_device_name", mode="before")
     @classmethod
     def _normalize_input_device_name(cls, v: object) -> object:
@@ -404,6 +412,34 @@ class UISettings(BaseSettings):
     _validate_host = field_validator("host")(_validate_listen_host)
 
 
+class AudioCaptureSettings(BaseSettings):
+    """原生物理输出采集 Helper 的本机进程与 IPC 限额。"""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VR_AUDIO_CAPTURE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = False
+    helper_executable: Path | None = None
+    runtime_dir: Path = Path("runtime/audio-capture")
+    startup_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    command_timeout_secs: float = Field(default=30.0, gt=0.0, le=30.0)
+    queue_size: int = Field(default=8, ge=1, le=128)
+    restart_attempts: int = Field(default=3, ge=0, le=10)
+    restart_backoff_secs: float = Field(default=0.25, ge=0.001, le=10.0)
+    max_restart_backoff_secs: float = Field(default=2.0, ge=0.001, le=30.0)
+
+    @model_validator(mode="after")
+    def _validate_restart_backoff(self) -> AudioCaptureSettings:
+        if self.max_restart_backoff_secs < self.restart_backoff_secs:
+            raise ValueError(
+                "max_restart_backoff_secs must be greater than or equal to restart_backoff_secs"
+            )
+        return self
+
+
 class SubtitleSettings(BaseSettings):
     """WhisperLiveKit 字幕服务配置。"""
 
@@ -412,7 +448,10 @@ class SubtitleSettings(BaseSettings):
     repo_path: Path = Field(
         default=Path("tools/WhisperLiveKit"), description="WhisperLiveKit 克隆路径"
     )
-    backend: str = Field(default="qwen3-streaming", description="ASR 后端 (qwen3-streaming/funasr)")
+    backend: str = Field(
+        default="qwen3-streaming",
+        description="ASR 后端 (qwen3-streaming/funasr/speechrail-realtime-v2)",
+    )
     language: str = Field(default="Chinese", description="字幕语言")
     host: str = Field(default="127.0.0.1", description="字幕服务监听地址")
     port: int = Field(default=8001, description="字幕服务端口")
@@ -455,11 +494,17 @@ class SubtitleSettings(BaseSettings):
     qwen3_streaming_stable_iterations: int = Field(default=2, ge=1, le=10)
     qwen3_streaming_max_new_tokens: int = Field(default=256, ge=32, le=2048)
     qwen3_streaming_device: Literal["auto", "mps", "cpu"] = "mps"
+    speechrail_url: str = Field(
+        default="ws://127.0.0.1:8201/v2/realtime",
+        description="显式选择 SpeechRail v2 时使用的本地 WebSocket 地址",
+    )
+    speechrail_connect_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    speechrail_finish_timeout_secs: float = Field(default=10.0, gt=0.0, le=120.0)
 
     @field_validator("backend")
     @classmethod
     def _validate_backend(cls, v: str) -> str:
-        allowed = {"qwen3-streaming", "funasr", "auto"}
+        allowed = {"qwen3-streaming", "funasr", "auto", "speechrail-realtime-v2"}
         if v not in allowed:
             raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
         return v
@@ -476,11 +521,23 @@ class SubtitleSettings(BaseSettings):
     def _strip_context(cls, value: str) -> str:
         return value.strip()
 
+    @field_validator("speechrail_url")
+    @classmethod
+    def _validate_speechrail_url(cls, value: str) -> str:
+        return SpeechRailRealtimeProfile(url=value, language="zh").url
+
     _validate_host = field_validator("host")(_validate_listen_host)
 
     @property
     def asr_profile(self) -> ASRProfile:
         """把旧字幕配置投影为内部无歧义的 ASR profile。"""
+        if self.backend == "speechrail-realtime-v2":
+            return SpeechRailRealtimeProfile(
+                url=self.speechrail_url,
+                language=self.language,
+                connect_timeout_secs=self.speechrail_connect_timeout_secs,
+                final_timeout_secs=self.speechrail_finish_timeout_secs,
+            )
         if self.backend == "funasr":
             return WLKSenseVoiceProfile(
                 model_dir=self.model_dir,
@@ -672,6 +729,7 @@ class Settings(BaseSettings):
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)
     lm_studio: LMStudioSettings = Field(default_factory=LMStudioSettings)
     interaction: InteractionSettings = Field(default_factory=InteractionSettings)
+    audio_capture: AudioCaptureSettings = Field(default_factory=AudioCaptureSettings)
     subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
     meeting: MeetingSettings = Field(default_factory=MeetingSettings)
     ui: UISettings = Field(default_factory=UISettings)
@@ -705,6 +763,7 @@ class Settings(BaseSettings):
             self.bridge,
             self.lm_studio,
             self.interaction,
+            self.audio_capture,
             self.subtitles,
             self.meeting,
             self.ui,

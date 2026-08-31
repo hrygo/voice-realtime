@@ -10,6 +10,7 @@ import {
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
+import { audioEnergyService } from "../services/audioEnergyService";
 import { apiUrl } from "../config/runtimeConfig";
 import { runtimeConfig } from "../config/runtimeConfig";
 import { ReconnectingSocket, type ConnectionState } from "./useEventSocket";
@@ -301,6 +302,7 @@ export function useCommandSocket(url = runtimeConfig.controlWsUrl): CommandSocke
   if (channelRef.current === null) {
     channelRef.current = new CommandChannel({
       applyState: (snapshot) => {
+        audioEnergyService.updateFromRuntimeState(snapshot);
         setSnapshot(snapshot);
         setHighestRuntimeRevision(snapshot.runtime_revision);
         useUISettingsStore.getState().applyRuntimeState(snapshot);

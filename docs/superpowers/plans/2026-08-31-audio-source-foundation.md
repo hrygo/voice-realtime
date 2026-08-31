@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-31-physical-output-audio-capture-design.md`
 
+**Status:** P0 已完成并通过全量质量门禁；物理输出 Helper、output-only 与 dual meeting 仍属于 P1–P3。
+
 ## Global Constraints
 
 - Python 严格保持 `>=3.12,<3.13`，不新增 Python 或 npm 依赖。
@@ -69,7 +71,7 @@
 - Produces: `CaptureMode`, `CaptureSourceSpec`, `CaptureProfile`。
 - `AudioFrame.pcm` 始终是归一化 PCM；`CaptureProfile.legacy_audio_source` 返回 `microphone | physical_output | mixed`。
 
-- [ ] **Step 1: 写帧格式和 profile 的失败测试**
+- [x] **Step 1: 写帧格式和 profile 的失败测试**
 
 ```python
 from uuid import UUID
@@ -149,13 +151,13 @@ def test_capture_profile_rejects_invalid_dual_layout() -> None:
         )
 ```
 
-- [ ] **Step 2: 运行测试，确认导入失败**
+- [x] **Step 2: 运行测试，确认导入失败**
 
 Run: `uv run pytest tests/test_audio_frame.py -q --no-cov`
 
 Expected: FAIL，提示 `voice_realtime.audio.frame` 尚不存在。
 
-- [ ] **Step 3: 实现不可变帧、枚举与严格 profile**
+- [x] **Step 3: 实现不可变帧、枚举与严格 profile**
 
 ```python
 # frame.py 的公共形态
@@ -227,13 +229,13 @@ class CaptureProfile(BaseModel):
 
 实现 `model_validator(mode="after")`：single 恰好一个来源；dual 恰好一个 near-end microphone 和一个 far-end physical-output；重复 kind/role 拒绝。实现 EOF payload 例外及所有非负字段校验。
 
-- [ ] **Step 4: 运行聚焦测试并修正类型导出**
+- [x] **Step 4: 运行聚焦测试并修正类型导出**
 
 Run: `uv run pytest tests/test_audio_frame.py -q --no-cov`
 
 Expected: PASS，5 tests passed。
 
-- [ ] **Step 5: 运行静态检查并提交**
+- [x] **Step 5: 运行静态检查并提交**
 
 Run: `uv run mypy src/voice_realtime/audio/frame.py src/voice_realtime/audio/profile.py`
 
@@ -262,7 +264,7 @@ git commit -m "feat(audio): 建立统一音频帧与采集配置"
 - Produces: `AudioSourceState`, `AudioSourceHealth`, runtime-checkable `AudioSource`, `MicrophoneSource`。
 - `MicrophoneSource` 适配现有已启动或待启动的 `AudioHub`，不夺取 Hub 的启动/停止所有权。
 
-- [ ] **Step 1: 写来源状态机失败测试**
+- [x] **Step 1: 写来源状态机失败测试**
 
 ```python
 import asyncio
@@ -322,13 +324,13 @@ async def test_microphone_source_rejects_commit_before_prepare() -> None:
         await source.commit()
 ```
 
-- [ ] **Step 2: 运行测试，确认来源模块缺失**
+- [x] **Step 2: 运行测试，确认来源模块缺失**
 
 Run: `uv run pytest tests/test_audio_source.py -q --no-cov`
 
 Expected: FAIL，提示 `voice_realtime.audio.source` 尚不存在。
 
-- [ ] **Step 3: 实现 Protocol、健康快照与麦克风适配器**
+- [x] **Step 3: 实现 Protocol、健康快照与麦克风适配器**
 
 ```python
 class AudioSourceState(StrEnum):
@@ -393,13 +395,13 @@ def running(self) -> bool:
     return self._running
 ```
 
-- [ ] **Step 4: 运行来源与 Hub 聚焦测试**
+- [x] **Step 4: 运行来源与 Hub 聚焦测试**
 
 Run: `uv run pytest tests/test_audio_source.py tests/test_audio_hub.py -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 运行静态检查并提交**
+- [x] **Step 5: 运行静态检查并提交**
 
 Run: `uv run mypy src/voice_realtime/audio/source.py src/voice_realtime/audio/hub.py`
 
@@ -426,7 +428,7 @@ git commit -m "feat(audio): 增加麦克风音频源生命周期"
 - Produces: `AudioSourceRouter`, `RouterHealth`, `UnsupportedCaptureProfileError`。
 - P0 明确支持 single profile；dual 返回稳定错误，不启动任一来源。
 
-- [ ] **Step 1: 写 Router 两阶段和背压失败测试**
+- [x] **Step 1: 写 Router 两阶段和背压失败测试**
 
 ```python
 import asyncio
@@ -535,13 +537,13 @@ async def test_router_drops_oldest_without_growing_queue() -> None:
 
 上述 `wait_until()` 使用一秒硬超时，确保失败时不会形成时间型死等。
 
-- [ ] **Step 2: 运行测试，确认 Router 模块缺失**
+- [x] **Step 2: 运行测试，确认 Router 模块缺失**
 
 Run: `uv run pytest tests/test_audio_router.py -q --no-cov`
 
 Expected: FAIL，提示 `voice_realtime.audio.router` 尚不存在。
 
-- [ ] **Step 3: 实现 prepare/commit/abort/stop 与 pump**
+- [x] **Step 3: 实现 prepare/commit/abort/stop 与 pump**
 
 ```python
 class UnsupportedCaptureProfileError(RuntimeError):
@@ -632,13 +634,13 @@ class AudioSourceRouter:
 - `abort()`/`stop()` 取消 pump、清空路由队列、释放来源并幂等回到 stopped。
 - dual 在任何来源 prepare 之前抛 `UnsupportedCaptureProfileError("dual capture requires DualSourceMixer")`。
 
-- [ ] **Step 4: 运行 Router 聚焦测试与前两任务回归**
+- [x] **Step 4: 运行 Router 聚焦测试与前两任务回归**
 
 Run: `uv run pytest tests/test_audio_frame.py tests/test_audio_source.py tests/test_audio_router.py -q --no-cov`
 
 Expected: PASS。
 
-- [ ] **Step 5: 运行静态检查并提交**
+- [x] **Step 5: 运行静态检查并提交**
 
 Run: `uv run mypy src/voice_realtime/audio/`
 
@@ -669,7 +671,7 @@ git commit -m "feat(audio): 建立两阶段有界来源路由"
 - Extends: `RuntimeStateSnapshot.audio_levels: AudioLevelsSnapshot`，默认全零。
 - `UIRuntime` 注册 `levels` sink，并以最多 20 Hz 发布 latest-only 快照。
 
-- [ ] **Step 1: 写 PCM 能量失败测试**
+- [x] **Step 1: 写 PCM 能量失败测试**
 
 ```python
 from voice_realtime.audio.frame import AudioSourceKind
@@ -703,13 +705,13 @@ def test_meter_mute_clears_microphone_and_mixed() -> None:
     assert meter.snapshot().mixed == 0.0
 ```
 
-- [ ] **Step 2: 运行能量测试，确认模块缺失**
+- [x] **Step 2: 运行能量测试，确认模块缺失**
 
 Run: `uv run pytest tests/test_audio_levels.py -q --no-cov`
 
 Expected: FAIL，提示 `voice_realtime.audio.levels` 尚不存在。
 
-- [ ] **Step 3: 实现纯函数和节流 meter**
+- [x] **Step 3: 实现纯函数和节流 meter**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -735,7 +737,7 @@ def pcm16_level(pcm: bytes) -> float:
 
 `AudioLevelMeter.update()` 按来源更新 level；当前单来源麦克风同时作为 mixed。第一次更新立即允许发布，之后使用 monotonic ns 控制 50 ms 间隔。`clear()` 立即允许发布。
 
-- [ ] **Step 4: 写 runtime snapshot 与广播失败测试**
+- [x] **Step 4: 写 runtime snapshot 与广播失败测试**
 
 在 `tests/test_runtime.py` 增加：
 
@@ -755,13 +757,13 @@ async def test_pcm_level_sink_updates_snapshot_and_publishes(settings: Settings)
 
 在启动装配测试中增加 `hub.add_sink.assert_any_call("levels", runtime._observe_mic_audio)`；在静音测试中验证 `audio_levels.microphone == 0.0`。在 `tests/test_control.py` 验证默认快照的三个 level 均为零。
 
-- [ ] **Step 5: 运行 runtime 测试，确认字段和 sink 尚不存在**
+- [x] **Step 5: 运行 runtime 测试，确认字段和 sink 尚不存在**
 
 Run: `uv run pytest tests/test_runtime.py tests/test_control.py -q --no-cov`
 
 Expected: FAIL，分别指出 `audio_levels` 或 `_observe_mic_audio` 不存在。
 
-- [ ] **Step 6: 接入 Pydantic 快照、Hub level sink 和 latest-only 发布**
+- [x] **Step 6: 接入 Pydantic 快照、Hub level sink 和 latest-only 发布**
 
 ```python
 class AudioLevelsSnapshot(BaseModel):
@@ -778,7 +780,7 @@ class RuntimeStateSnapshot(BaseModel):
 
 `UIRuntime.__init__()` 创建 meter；`_wire_sinks()` 增加 `levels`；`_observe_mic_audio()` 更新并在节流到期时调用 `_publish_runtime_state()`；`snapshot()` 复制 meter 当前值；`set_mic_muted(True)` 清零并发布；`diagnostics()` 只输出数值快照，不输出 PCM。
 
-- [ ] **Step 7: 运行后端聚焦测试和静态检查**
+- [x] **Step 7: 运行后端聚焦测试和静态检查**
 
 Run: `uv run pytest tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py -q --no-cov`
 
@@ -788,7 +790,7 @@ Run: `uv run ruff check src/voice_realtime/audio/levels.py src/voice_realtime/ui
 
 Expected: 全部 exit 0。
 
-- [ ] **Step 8: 提交服务端能量链路**
+- [x] **Step 8: 提交服务端能量链路**
 
 ```bash
 git add src/voice_realtime/audio/__init__.py src/voice_realtime/audio/levels.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/runtime.py tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py
@@ -812,7 +814,7 @@ git commit -m "feat(ui): 广播服务端真实音频能量"
 - Produces: `AudioEnergyService.updateFromRuntimeState(state)`；既有 `subscribe()`、`setMuted()`、`getEnergy()` 保持兼容。
 - `getUserMedia`、`AudioContext`、`MediaStream` 和 requestAnimationFrame 分析循环全部从服务中删除。
 
-- [ ] **Step 1: 写零浏览器采集与服务端更新失败测试**
+- [x] **Step 1: 写零浏览器采集与服务端更新失败测试**
 
 ```typescript
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -862,13 +864,13 @@ describe("AudioEnergyService", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试，确认当前服务会尝试浏览器采音且没有更新 API**
+- [x] **Step 2: 运行测试，确认当前服务会尝试浏览器采音且没有更新 API**
 
 Run: `cd ui && npm test -- --run src/services/audioEnergyService.test.ts`
 
 Expected: FAIL，指出 `AudioEnergyService` 未导出或 `updateFromRuntimeState` 不存在。
 
-- [ ] **Step 3: 将能量服务改为同步内存发布器**
+- [x] **Step 3: 将能量服务改为同步内存发布器**
 
 ```typescript
 type EnergySubscriber = (energy: number) => void;
@@ -905,7 +907,7 @@ export class AudioEnergyService {
 }
 ```
 
-- [ ] **Step 4: 扩展前端协议校验并接入 command state**
+- [x] **Step 4: 扩展前端协议校验并接入 command state**
 
 在 `RuntimeStateSnapshot` 增加可选 `audio_levels`，并实现 `isAudioLevels()`，要求三个 level 是 `[0,1]` 有限数且 `updated_at_ns` 是非负整数。`isRuntimeState()` 在字段存在时调用该校验。
 
@@ -917,7 +919,7 @@ audioEnergyService.updateFromRuntimeState(snapshot);
 
 在 `useCommandSocket.test.ts` 增加相同 runtime revision、相同 owner、仅 `audio_levels` 变化时 `applyState` 获得新值的测试。
 
-- [ ] **Step 5: 修正波形语义并运行前端聚焦测试**
+- [x] **Step 5: 修正波形语义并运行前端聚焦测试**
 
 将 `UnifiedAcousticWaveform` 中“浏览器麦克风”“10ms 零延迟”等注释改为“服务端实际送入推理链的能量”，不修改绘制算法和公共 props。
 
@@ -925,7 +927,7 @@ Run: `cd ui && npm test -- --run src/services/audioEnergyService.test.ts src/hoo
 
 Expected: PASS。
 
-- [ ] **Step 6: 运行前端构建并提交**
+- [x] **Step 6: 运行前端构建并提交**
 
 Run: `cd ui && npm run build`
 
@@ -950,7 +952,7 @@ git commit -m "refactor(ui): 移除浏览器麦克风能量采集"
 - Verifies: P0 新公共类型、现有 mic-only 行为、控制协议兼容和前端零浏览器采集。
 - Does not expose: physical-output 启动命令、设备选择、dual Mixer 或数据库 v2 字段。
 
-- [ ] **Step 1: 运行后端完整质量门禁**
+- [x] **Step 1: 运行后端完整质量门禁**
 
 Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
@@ -964,7 +966,7 @@ Run: `uv run ruff check src/ tests/`
 
 Expected: exit 0。
 
-- [ ] **Step 2: 运行前端完整质量门禁**
+- [x] **Step 2: 运行前端完整质量门禁**
 
 Run: `cd ui && npm test -- --run`
 
@@ -974,7 +976,7 @@ Run: `cd ui && npm run build`
 
 Expected: exit 0。
 
-- [ ] **Step 3: 验证浏览器采集调用已归零**
+- [x] **Step 3: 验证浏览器采集调用已归零**
 
 Run: `rg -n "getUserMedia|createMediaStreamSource" ui/src`
 
@@ -984,15 +986,15 @@ Run: `rg -n "getUserMedia|createMediaStreamSource" ui/src --glob '!**/*.test.ts'
 
 Expected: 无输出。
 
-- [ ] **Step 4: 对照规格完成 P0 范围复核**
+- [x] **Step 4: 对照规格完成 P0 范围复核**
 
 逐项确认：统一帧含 capture/source/generation/sequence/host time；profile 保持 v1 mic 默认；队列有界且 drop-oldest；dual 被显式拒绝；runtime snapshot 能量来自后端 PCM；浏览器零采音；PCM 无持久化路径。
 
-- [ ] **Step 5: 更新计划状态和文档索引**
+- [x] **Step 5: 更新计划状态和文档索引**
 
 将已执行 checkbox 更新为 `[x]`，将 `docs/README.md` 中 plans 数量校准为 13，并保持本计划为当前实施计划。不得将物理输出设计规格从 `under_review` 改为 `implemented`，因为 P1–P3 尚未完成。
 
-- [ ] **Step 6: 检查 staged diff、敏感信息与提交**
+- [x] **Step 6: 检查 staged diff、敏感信息与提交**
 
 Run: `git diff --check`
 

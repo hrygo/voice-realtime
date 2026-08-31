@@ -95,6 +95,11 @@ class AudioHub:
         """麦克风是否处于真实静音状态。"""
         return self._muted
 
+    @property
+    def running(self) -> bool:
+        """采集线程是否已进入运行态。"""
+        return self._running
+
     def sink_diagnostics(self) -> dict[str, SinkDiagnostics]:
         """返回不含队列和音频内容的 sink 诊断快照。"""
         return {

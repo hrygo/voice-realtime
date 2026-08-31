@@ -2,6 +2,13 @@ import type { MeetingStatus, PCMOwner, RuntimeMode } from "./contracts/meetingCo
 
 export type DuplexMode = "speaker_focus" | "headphone_duplex";
 
+export interface AudioLevelsSnapshot {
+  readonly microphone: number;
+  readonly physical_output: number;
+  readonly mixed: number;
+  readonly updated_at_ns: number;
+}
+
 export interface RuntimeStateSnapshot {
   readonly mode: RuntimeMode;
   readonly pcm_owner: PCMOwner;
@@ -13,6 +20,7 @@ export interface RuntimeStateSnapshot {
   readonly storage?: string;
   readonly mic_muted: boolean;
   readonly runtime_revision: number;
+  readonly audio_levels?: AudioLevelsSnapshot;
   readonly persona?: string | null;
   readonly voice?: string;
   readonly duplex_mode?: DuplexMode;
@@ -66,6 +74,7 @@ export function isRuntimeState(value: unknown): value is RuntimeStateSnapshot {
     && typeof value.pipeline === "string"
     && typeof value.subtitle === "string"
     && typeof value.mic_muted === "boolean"
+    && (value.audio_levels === undefined || isAudioLevels(value.audio_levels))
     && (value.active_meeting_id === undefined || typeof value.active_meeting_id === "string" || value.active_meeting_id === null)
     && (value.meeting_state === undefined || isMeetingStatus(value.meeting_state) || value.meeting_state === null)
     && (value.meeting_started_at === undefined || typeof value.meeting_started_at === "string" || value.meeting_started_at === null)
@@ -75,6 +84,23 @@ export function isRuntimeState(value: unknown): value is RuntimeStateSnapshot {
     && (value.duplex_mode === undefined || value.duplex_mode === "speaker_focus" || value.duplex_mode === "headphone_duplex")
     && (value.session_started_at === undefined || typeof value.session_started_at === "string" || value.session_started_at === null)
     && (value.capabilities === undefined || isRuntimeCapabilities(value.capabilities));
+}
+
+function isAudioLevels(value: unknown): value is AudioLevelsSnapshot {
+  return isRecord(value)
+    && isNormalizedLevel(value.microphone)
+    && isNormalizedLevel(value.physical_output)
+    && isNormalizedLevel(value.mixed)
+    && typeof value.updated_at_ns === "number"
+    && Number.isInteger(value.updated_at_ns)
+    && value.updated_at_ns >= 0;
+}
+
+function isNormalizedLevel(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isFinite(value)
+    && value >= 0
+    && value <= 1;
 }
 
 function isRuntimeCapabilities(value: unknown): value is RuntimeStateSnapshot["capabilities"] {

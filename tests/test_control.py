@@ -281,6 +281,9 @@ class TestProtocol:
         )
 
         assert snapshot.model_dump(mode="json")["pcm_owner"] == "none"
+        assert snapshot.audio_levels.microphone == 0.0
+        assert snapshot.audio_levels.physical_output == 0.0
+        assert snapshot.audio_levels.mixed == 0.0
         assert RuntimeStateEvent(state=snapshot).event == "runtime_state"
         assert RuntimeStateEvent(event="state", state=snapshot).event == "state"
 

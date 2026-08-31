@@ -14,11 +14,12 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from voice_realtime.asr.adapters.speechrail_realtime import ConnectionFactory
 from voice_realtime.asr.adapters.wlk import WLKStreamFactory
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
-from voice_realtime.asr.defaults import build_wlk_registry
+from voice_realtime.asr.defaults import build_speechrail_realtime_registry, build_wlk_registry
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
-from voice_realtime.asr.profiles import ASRProfile
+from voice_realtime.asr.profiles import ASRProfile, SpeechRailRealtimeProfile
 from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
@@ -112,19 +113,35 @@ class SubtitleProxy:
         registry: ASRBackendRegistry | None = None,
         transcriber_factory: TranscriberFactory | None = None,
         stream_factory: WLKStreamFactory | None = None,
+        speechrail_connection_factory: ConnectionFactory | None = None,
         backoff_delays: Sequence[float] = _DEFAULT_BACKOFF,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not backoff_delays or any(delay <= 0 for delay in backoff_delays):
             raise ValueError("backoff_delays 必须包含正数")
-        if transcriber_factory is not None and (registry is not None or stream_factory is not None):
-            raise ValueError("transcriber_factory 不能与 registry/stream_factory 同时提供")
+        if transcriber_factory is not None and (
+            registry is not None
+            or stream_factory is not None
+            or speechrail_connection_factory is not None
+        ):
+            raise ValueError("transcriber_factory 不能与 registry 或连接工厂同时提供")
         self._settings = settings
         self._profile = settings.asr_profile
-        self._registry = registry or build_wlk_registry(
-            self._service_url,
-            stream_factory=stream_factory,
-        )
+        if registry is not None:
+            self._registry = registry
+        elif isinstance(self._profile, SpeechRailRealtimeProfile):
+            if stream_factory is not None:
+                raise ValueError("SpeechRail profile 不能使用 WLK stream_factory")
+            self._registry = build_speechrail_realtime_registry(
+                connection_factory=speechrail_connection_factory,
+            )
+        else:
+            if speechrail_connection_factory is not None:
+                raise ValueError("WLK profile 不能使用 SpeechRail connection_factory")
+            self._registry = build_wlk_registry(
+                self._service_url,
+                stream_factory=stream_factory,
+            )
         self._transcriber_factory = transcriber_factory
         self._backoff_delays = tuple(backoff_delays)
         self._clock = clock
