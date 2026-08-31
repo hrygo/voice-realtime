@@ -152,6 +152,7 @@ class SubtitleProxy:
         self._capture_prepared: CapturePreparation | None = None
         self._capture_epoch = 0
         self._capture_offset_ms = 0
+        self._capture_speaker_count_hint: int | None = None
         self._capture_audio_ms = 0
         self._capture_input_ms = 0
         self._capture_accept_audio = False
@@ -449,6 +450,7 @@ class SubtitleProxy:
         owner: str,
         *,
         timeout_secs: float,
+        speaker_count_hint: int | None = None,
     ) -> CapturePreparation:
         """建立会议流并等待 ready，但不接收 PCM。"""
         owner = owner.strip()
@@ -456,6 +458,8 @@ class SubtitleProxy:
             raise ValueError("capture owner 不能为空")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
+        if speaker_count_hint is not None and not 1 <= speaker_count_hint <= 8:
+            raise ValueError("speaker_count_hint 必须在 1 到 8 之间")
         if self._capture_owner is not None:
             raise RuntimeError("已有会议采集租约")
         if not self._running:
@@ -471,6 +475,7 @@ class SubtitleProxy:
         self._capture_prepared = preparation
         self._capture_epoch += 1
         self._capture_offset_ms = 0
+        self._capture_speaker_count_hint = speaker_count_hint
         self._capture_audio_ms = 0
         self._capture_input_ms = 0
         self._capture_owner = owner
@@ -488,6 +493,7 @@ class SubtitleProxy:
                     source_epoch=self._capture_epoch,
                     offset_ms=self._capture_offset_ms,
                     purpose="meeting",
+                    speaker_count_hint=self._capture_speaker_count_hint,
                 ),
             )
             self._capture_stream = stream
@@ -763,6 +769,7 @@ class SubtitleProxy:
                         source_epoch=self._capture_epoch,
                         offset_ms=self._capture_offset_ms,
                         purpose="meeting",
+                        speaker_count_hint=self._capture_speaker_count_hint,
                     )
                 )
                 await stream.connect()

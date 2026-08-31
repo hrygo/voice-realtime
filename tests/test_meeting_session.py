@@ -161,13 +161,13 @@ async def test_prepare_creates_record_and_listeners_without_activating_or_publis
     assert len(gateway.listeners) == 1
     assert len(gateway.gap_listeners) == 1
     gateway.prepare_capture.assert_awaited_once_with(
-        f"meeting:{preparation.record.id}", timeout_secs=5.0
+        f"meeting:{preparation.record.id}", timeout_secs=5.0, speaker_count_hint=None
     )
     gateway.commit_capture.assert_not_called()
     publish.assert_not_awaited()
 
 
-async def test_prepare_keeps_max_speakers_out_of_asr_gateway(
+async def test_prepare_passes_max_speakers_as_a_speechrail_hint(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway, event_publisher=AsyncMock())
@@ -176,6 +176,7 @@ async def test_prepare_keeps_max_speakers_out_of_asr_gateway(
     gateway.prepare_capture.assert_awaited_once_with(
         f"meeting:{preparation.record.id}",
         timeout_secs=5.0,
+        speaker_count_hint=2,
     )
 
 

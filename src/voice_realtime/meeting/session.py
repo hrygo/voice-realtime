@@ -146,6 +146,7 @@ class MeetingSession:
                 capture = await self.gateway.prepare_capture(
                     f"meeting:{record.id}",
                     timeout_secs=5.0,
+                    speaker_count_hint=max_speakers,
                 )
             except BaseException as exc:
                 logger.warning(
