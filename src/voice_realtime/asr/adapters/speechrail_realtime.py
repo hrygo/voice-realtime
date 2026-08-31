@@ -301,7 +301,7 @@ class SpeechRailStreamingTranscriber:
 
 
 def _segments(
-    value: object, context: ASRSessionContext, *, require_speaker: bool
+    value: object, context: ASRSessionContext, *, require_speaker: bool = False
 ) -> tuple[NormalizedSegment, ...]:
     if not isinstance(value, list):
         raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
