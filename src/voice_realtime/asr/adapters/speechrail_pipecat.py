@@ -92,6 +92,12 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
                         FrameDirection.DOWNSTREAM,
                     )
                     return
+                elif event_type == "error":
+                    raise RuntimeError("SPEECHRAIL_REQUEST_FAILED")
+                elif event_type == "session.completed":
+                    raise RuntimeError("SPEECHRAIL_FINAL_MISSING")
+                else:
+                    raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
         finally:
             await client.close()
             self._client = None

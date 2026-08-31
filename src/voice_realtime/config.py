@@ -343,6 +343,11 @@ class InteractionSettings(BaseSettings):
             raise ValueError(f"交互音频管线仅支持 16000Hz: {v}")
         return v
 
+    @field_validator("speechrail_realtime_url")
+    @classmethod
+    def _validate_speechrail_realtime_url(cls, value: str) -> str:
+        return SpeechRailRealtimeProfile(url=value, language="zh").url
+
     @field_validator("input_device_name", mode="before")
     @classmethod
     def _normalize_input_device_name(cls, v: object) -> object:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from pipecat.frames.frames import (
     InputAudioRawFrame,
     StartFrame,
@@ -75,5 +76,27 @@ def test_pipecat_processor_commits_one_v2_session_per_vad_turn() -> None:
             isinstance(frame, TranscriptionFrame) and frame.text == "你好世界"
             for frame in emitted
         )
+
+    asyncio.run(scenario())
+
+
+def test_pipecat_processor_fails_and_closes_the_turn_on_speechrail_error() -> None:
+    class ErrorClient(FakeSpeechRailClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._events = iter(({"type": "error", "error": {"code": "wlk_error"}},))
+
+    async def scenario() -> None:
+        client = ErrorClient()
+        processor = SpeechRailConversationSTTProcessor(
+            language="zh",
+            client_factory=lambda: client,
+        )
+
+        await processor._open_turn()
+        with pytest.raises(RuntimeError, match="SPEECHRAIL_REQUEST_FAILED"):
+            await processor._commit_turn()
+
+        assert client.closed is True
 
     asyncio.run(scenario())

@@ -262,6 +262,19 @@ def test_interaction_rejects_invalid_service_urls(field: str, value: str) -> Non
         InteractionSettings(**{field: value})
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8201/v2/realtime",
+        "ws://token@127.0.0.1:8201/v2/realtime",
+        "ws://127.0.0.1:8201/asr",
+    ],
+)
+def test_interaction_rejects_non_v2_or_credentialed_speechrail_url(url: str) -> None:
+    with pytest.raises(ValidationError):
+        InteractionSettings(speechrail_realtime_url=url)
+
+
 def test_interaction_smart_turn_and_tts_fast_clause_defaults() -> None:
     settings = InteractionSettings()
     assert settings.smart_turn_enabled is True
