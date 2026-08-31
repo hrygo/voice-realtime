@@ -28,7 +28,7 @@ def legacy_ready_payload() -> dict[str, Any]:
 
 
 def legacy_subtitle_payload(window: TranscriptWindow) -> dict[str, Any]:
-    """生成前端当前消费的 WLK 风格 full snapshot。"""
+    """生成前端当前消费的完整字幕快照。"""
     return {
         "type": "full_update",
         "buffer_transcription": window.partial,

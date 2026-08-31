@@ -4,7 +4,7 @@ const STAGES = [
   {
     id: 1,
     title: "冲刷尾部语音与说话人对齐",
-    desc: "向 WhisperLiveKit 发送 EOF 帧，处理最后音频并完成 Sortformer 对齐",
+    desc: "提交 SpeechRail 最后音频并等待最终转写",
     icon: "🎙️",
   },
   {

@@ -7,7 +7,6 @@ import logging
 from typing import Any
 
 from voice_realtime.asr.contracts import ConversationSTTFactory
-from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.audio.frame import AudioSourceKind
 from voice_realtime.audio.hub import AudioHub
 from voice_realtime.audio.levels import AudioLevelMeter
@@ -44,7 +43,6 @@ class UIRuntime:
         settings: Settings,
         *,
         meeting_session: Any | None = None,
-        asr_registry: ASRBackendRegistry | None = None,
         conversation_stt_factory: ConversationSTTFactory | None = None,
     ) -> None:
         self._settings = settings
@@ -60,10 +58,7 @@ class UIRuntime:
             device_index=settings.interaction.input_device,
             device_name=settings.interaction.input_device_name,
         )
-        subtitle_proxy_kwargs: dict[str, Any] = {}
-        if asr_registry is not None:
-            subtitle_proxy_kwargs["registry"] = asr_registry
-        self.subtitle_proxy = SubtitleProxy(settings.subtitles, **subtitle_proxy_kwargs)
+        self.subtitle_proxy = SubtitleProxy(settings.subtitles)
         self.session = InteractionSession(
             settings.interaction,
             audio_queue=self.audio_queue,
@@ -294,7 +289,10 @@ class UIRuntime:
         try:
             await self.subtitle_proxy.start()
         except Exception:
-            logger.warning("UIRuntime: SubtitleProxy 启动失败（wlk 未运行？）", exc_info=True)
+            logger.warning(
+                "UIRuntime: SubtitleProxy 启动失败（SpeechRail 未就绪？）",
+                exc_info=True,
+            )
 
     def _wire_sinks(self) -> None:
         if self._sinks_wired:

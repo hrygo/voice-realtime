@@ -84,7 +84,7 @@ def test_pipecat_processor_fails_and_closes_the_turn_on_speechrail_error() -> No
     class ErrorClient(FakeSpeechRailClient):
         def __init__(self) -> None:
             super().__init__()
-            self._events = iter(({"type": "error", "error": {"code": "wlk_error"}},))
+            self._events = iter(({"type": "error", "error": {"code": "speechrail_error"}},))
 
     async def scenario() -> None:
         client = ErrorClient()

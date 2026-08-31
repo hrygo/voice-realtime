@@ -311,7 +311,7 @@ def create_contract_mock_app(fixture_dir: Path | None = None) -> FastAPI:
         return {
             "network_scope": "local",
             "services": [
-                {"name": "wlk", "status": "ok", "url": "http://127.0.0.1:8001"},
+                {"name": "speechrail", "status": "ok", "url": "http://127.0.0.1:8201"},
                 {"name": "tts", "status": "ok", "url": "http://127.0.0.1:8765"},
                 {"name": "lm", "status": "ok", "url": "http://127.0.0.1:1234"},
             ],

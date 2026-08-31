@@ -1,7 +1,7 @@
-"""Pipecat 交互管道装配：FunASR STT → LM Studio → TTS 桥 → 播放。
+"""Pipecat 交互管道装配：SpeechRail STT → LM Studio → TTS 桥 → 播放。
 
 处理器链对齐 pipecat 1.7 官方组装（examples/getting-started/06a）：
-  transport.input → EchoSuppressionProcessor → FunASRSTTService → SelfEchoFilter
+  transport.input → EchoSuppressionProcessor → SpeechRail STT → SelfEchoFilter
   → LLMUserAggregator → LmStudioNativeLLMService → BotTextRecorder → OpenAITTSService
   → TTSStateObserver → transport.output → LLMAssistantAggregator
 
@@ -59,20 +59,11 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-from voice_realtime.asr.adapters.pipecat_sensevoice import (
-    DEFAULT_SENSEVOICE_REPO as _DEFAULT_SENSEVOICE_REPO,
-)
-from voice_realtime.asr.adapters.pipecat_sensevoice import (
-    PipecatSenseVoiceFactory,
-    resolve_stt_model,
-    to_pipecat_language,
-)
 from voice_realtime.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTFactory
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
@@ -89,22 +80,7 @@ from voice_realtime.interaction.reasoning import (
 )
 from voice_realtime.interaction.tts import LocalBridgeTTSService
 
-DEFAULT_SENSEVOICE_REPO = _DEFAULT_SENSEVOICE_REPO
 logger = logging.getLogger(__name__)
-
-
-def _to_pipecat_language(lang_code: str) -> Language:
-    return to_pipecat_language(lang_code)
-
-
-def _resolve_stt_model(model: str, *, allow_downloads: bool = False) -> str:
-    """把 STT 模型配置解析为 funasr 可用的本地路径。
-
-    funasr 的 hub 参数由 pipecat FunASRSTTService 硬编码为 modelscope
-    （本环境 SSRF 拦截），因此任何 repo ID 都先经 snapshot_download 落到本地。
-    已是本地路径（目录/文件存在）则原样透传。
-    """
-    return resolve_stt_model(model, allow_downloads=allow_downloads)
 
 
 def build_system_prompt(persona: str | None = None) -> str:
@@ -676,13 +652,8 @@ def build_pipeline(
             )
         )
 
-    resolved_stt_factory = stt_factory or (
-        SpeechRailConversationSTTFactory(url=settings.speechrail_realtime_url)
-        if settings.stt_backend == "speechrail-realtime-v2"
-        else PipecatSenseVoiceFactory(
-            model=settings.stt_model,
-            allow_model_downloads=settings.allow_model_downloads,
-        )
+    resolved_stt_factory = stt_factory or SpeechRailConversationSTTFactory(
+        url=settings.speechrail_realtime_url
     )
     stt = cast(
         FrameProcessor,

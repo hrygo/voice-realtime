@@ -196,7 +196,7 @@ export class CommandChannel {
     }
 
     const requestId = makeRequestId();
-    // 会议冲刷/结束涉及 WhisperLiveKit 声纹对账与数据库事务，给予充足的 30s 超时时间
+    // 会议冲刷/结束涉及 SpeechRail 最终转写与数据库事务，给予充足的 30s 超时时间
     const isMeetingOrModeCmd =
       command.cmd === "end_meeting" ||
       command.cmd === "stop_active_mode" ||

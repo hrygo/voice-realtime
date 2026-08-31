@@ -35,9 +35,7 @@ class _FakeRuntime:
 
     def __init__(self, *, mode: RuntimeMode = RuntimeMode.ASSISTANT) -> None:
         self.observer = StatusBridgeObserver()
-        self.subtitle_proxy = SubtitleProxy(
-            SubtitleSettings(host="127.0.0.1", port=9998)
-        )
+        self.subtitle_proxy = SubtitleProxy(SubtitleSettings())
         self.start = AsyncMock()
         self.stop = AsyncMock()
         self.clear_context = AsyncMock()
@@ -186,7 +184,7 @@ def app() -> TestClient:
     """构造一个注入 mock 服务的测试客户端。"""
     mock_settings = Settings(
         bridge={"host": "127.0.0.1", "port": 9999},  # unreachable
-        subtitles={"host": "127.0.0.1", "port": 9998},  # unreachable
+        subtitles={"speechrail_url": "ws://127.0.0.1:9998/v2/realtime"},  # unreachable
         interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},  # unreachable
         ui={"static_dir": Path("/nonexistent/dist")},  # 无 dist 时走 placeholder
     )
@@ -294,7 +292,7 @@ class TestServices:
         assert data["network_scope"] == "local"
         assert "services" in data
         names = {s["name"] for s in data["services"]}
-        assert names == {"wlk", "tts", "lm"}
+        assert names == {"speechrail", "tts", "lm"}
         for svc in data["services"]:
             assert svc["status"] in ("unreachable", "timeout", "error")
             assert svc["name"] in names
@@ -371,11 +369,11 @@ class TestServices:
         assert response.status_code == 200
         payload = response.json()
         services = {item["name"]: item for item in payload["services"]}
-        assert set(services) == {"wlk", "tts", "lm"}
-        assert services["wlk"] == {
-            "name": "wlk",
+        assert set(services) == {"speechrail", "tts", "lm"}
+        assert services["speechrail"] == {
+            "name": "speechrail",
             "status": "ok",
-            "url": "http://127.0.0.1:9998/health",
+            "url": "http://127.0.0.1:8201/health",
             "workload": "paused",
             "ws_state": "paused",
             "reconnect_count": 0,
@@ -463,12 +461,12 @@ class TestServices:
         ):
             response = client.get("/api/services")
 
-        wlk = next(
-            item for item in response.json()["services"] if item["name"] == "wlk"
+        speechrail = next(
+            item for item in response.json()["services"] if item["name"] == "speechrail"
         )
-        assert wlk["status"] == "ok"
-        assert wlk["workload"] == "degraded"
-        assert wlk["ws_state"] == "backoff"
+        assert speechrail["status"] == "ok"
+        assert speechrail["workload"] == "degraded"
+        assert speechrail["ws_state"] == "backoff"
 
     def test_services_ready_workload_ignores_long_event_silence(self) -> None:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
@@ -489,13 +487,13 @@ class TestServices:
         ):
             response = client.get("/api/services")
 
-        wlk = next(
-            item for item in response.json()["services"] if item["name"] == "wlk"
+        speechrail = next(
+            item for item in response.json()["services"] if item["name"] == "speechrail"
         )
-        assert wlk["status"] == "ok"
-        assert wlk["workload"] == "ready"
-        assert wlk["ws_state"] == "connected"
-        assert wlk["last_event_age_ms"] >= 120_000
+        assert speechrail["status"] == "ok"
+        assert speechrail["workload"] == "ready"
+        assert speechrail["ws_state"] == "connected"
+        assert speechrail["last_event_age_ms"] >= 120_000
 
     def test_services_runtime_diagnostics_failure_is_redacted(
         self,
@@ -523,12 +521,14 @@ class TestServices:
 
         payload = response.json()
         assert {item["name"] for item in payload["services"]} == {
-            "wlk",
+            "speechrail",
             "tts",
             "lm",
         }
-        wlk = next(item for item in payload["services"] if item["name"] == "wlk")
-        assert set(wlk) == {"name", "status", "url"}
+        speechrail = next(
+            item for item in payload["services"] if item["name"] == "speechrail"
+        )
+        assert set(speechrail) == {"name", "status", "url"}
         assert payload["diagnostics"] == {
             "audio_hub": {},
             "interaction": {},

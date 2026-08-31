@@ -45,7 +45,7 @@ def test_mock_exposes_status_bar_service_contract() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["network_scope"] == "local"
-    assert {service["name"] for service in body["services"]} == {"wlk", "tts", "lm"}
+    assert {service["name"] for service in body["services"]} == {"speechrail", "tts", "lm"}
     assert all(service["status"] == "ok" for service in body["services"])
 
 

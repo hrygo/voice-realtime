@@ -2,7 +2,7 @@
 
 单源采集（16k/16bit/mono），通过 asyncio.Queue 扇出到多个 sink。
 - Pipecat 管道：通过 AudioInjector 节点消费
-- wlk 字幕：通过 SubtitleProxy 消费
+- SpeechRail 字幕：通过 SubtitleProxy 消费
 - 未来扩展：录音 wav、音量计、唤醒检测
 
 macOS 支持同一输入设备多路打开（CoreAudio 共享），AudioHub 与 Pipecat

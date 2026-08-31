@@ -168,14 +168,15 @@ async def test_prepare_creates_record_and_listeners_without_activating_or_publis
     publish.assert_not_awaited()
 
 
-async def test_prepare_passes_max_speakers_to_gateway(
+async def test_prepare_keeps_max_speakers_out_of_asr_gateway(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway, event_publisher=AsyncMock())
     preparation = await session.prepare_start("1v1", max_speakers=2)
 
     gateway.prepare_capture.assert_awaited_once_with(
-        f"meeting:{preparation.record.id}", timeout_secs=5.0, max_speakers=2
+        f"meeting:{preparation.record.id}",
+        timeout_secs=5.0,
     )
 
 

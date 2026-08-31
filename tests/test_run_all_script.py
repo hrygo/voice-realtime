@@ -28,7 +28,8 @@ if [[ "${2:-}" == "vr-ui" ]]; then
     printf '%s\\n' \
         "VR_UI_HOST=${VR_UI_HOST:-}" \
         "VR_BRIDGE_HOST=${VR_BRIDGE_HOST:-}" \
-        "VR_SUBTITLE_HOST=${VR_SUBTITLE_HOST:-}" \
+        "VR_SUBTITLE_SPEECHRAIL_URL=${VR_SUBTITLE_SPEECHRAIL_URL:-}" \
+        "VR_INTERACTION_SPEECHRAIL_REALTIME_URL=${VR_INTERACTION_SPEECHRAIL_REALTIME_URL:-}" \
         "VR_INTERACTION_TTS_BRIDGE_URL=${VR_INTERACTION_TTS_BRIDGE_URL:-}" \
         > "${VR_TEST_CAPTURE_PATH}"
 else
@@ -56,7 +57,8 @@ fi
         "HOST",
         "VR_UI_HOST",
         "VR_BRIDGE_HOST",
-        "VR_SUBTITLE_HOST",
+        "VR_SUBTITLE_SPEECHRAIL_URL",
+        "VR_INTERACTION_SPEECHRAIL_REALTIME_URL",
         "VR_INTERACTION_TTS_BRIDGE_URL",
     ):
         env.pop(name, None)
@@ -104,7 +106,10 @@ def test_run_all_derives_reachable_internal_tts_url_for_bind_mode(
 
     assert captured["VR_UI_HOST"] == expected_bind_host
     assert captured["VR_BRIDGE_HOST"] == expected_bind_host
-    assert captured["VR_SUBTITLE_HOST"] == expected_bind_host
+    assert captured["VR_SUBTITLE_SPEECHRAIL_URL"] == "ws://127.0.0.1:8201/v2/realtime"
+    assert captured["VR_INTERACTION_SPEECHRAIL_REALTIME_URL"] == (
+        "ws://127.0.0.1:8201/v2/realtime"
+    )
     assert captured["VR_INTERACTION_TTS_BRIDGE_URL"] == expected_tts_url
 
 
@@ -130,12 +135,12 @@ def test_run_all_lan_mode_advertises_localhost_and_lan_urls(tmp_path: Path) -> N
 def test_run_all_shutdown_terminates_service_descendants(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    descendant_pid_path = tmp_path / "subtitle-descendant.pid"
+    descendant_pid_path = tmp_path / "bridge-descendant.pid"
     uv_stub = bin_dir / "uv"
     uv_stub.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == "vr-subtitles" ]]; then
+if [[ "${2:-}" == "vr-bridge" ]]; then
     sleep 30 &
     descendant_pid=$!
     printf '%s\n' "$descendant_pid" > "${VR_TEST_DESCENDANT_PID_PATH}"

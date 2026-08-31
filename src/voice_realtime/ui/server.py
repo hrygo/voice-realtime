@@ -1,6 +1,6 @@
 """Voice Studio Web 控制台（`vr-ui` CLI 入口）。
 
-FastAPI 服务：React 静态托管 + 服务健康聚合（TTS 桥 / wlk / LM Studio）
+FastAPI 服务：React 静态托管 + 服务健康聚合（SpeechRail / TTS 桥 / LM Studio）
 + WebSocket 事件网关（/ws/subtitles 字幕流、/ws/assistant 助手状态流）。
 组件生命周期由 `UIRuntime` 经 FastAPI lifespan 管理。
 """
@@ -79,7 +79,7 @@ _RUNTIME_DIAGNOSTIC_KEYS = (
     "tts",
     "last_transition",
 )
-_WLK_WORKLOAD_KEYS = (
+_ASR_WORKLOAD_KEYS = (
     "workload",
     "ws_state",
     "reconnect_count",
@@ -191,7 +191,7 @@ def _runtime_diagnostics(runtime: Any) -> dict[str, Any]:
         return fallback
 
 
-def _wlk_workload_diagnostics(runtime: Any) -> dict[str, Any]:
+def _asr_workload_diagnostics(runtime: Any) -> dict[str, Any]:
     if runtime is None:
         return {}
     try:
@@ -204,10 +204,10 @@ def _wlk_workload_diagnostics(runtime: Any) -> dict[str, Any]:
         raw = _json_safe_mapping(diagnostics(state.pcm_owner))
         if raw is None:
             return {}
-        return {key: raw[key] for key in _WLK_WORKLOAD_KEYS if key in raw}
+        return {key: raw[key] for key in _ASR_WORKLOAD_KEYS if key in raw}
     except Exception as exc:
         logger.warning(
-            "Voice Studio: WLK workload diagnostics unavailable: %s",
+            "Voice Studio: SpeechRail workload diagnostics unavailable: %s",
             type(exc).__name__,
         )
         return {}
@@ -271,11 +271,11 @@ def create_app(
     async def services() -> dict[str, Any]:
         """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
         timeout = min(cfg.ui.api_timeout, 1.0)
-        wlk = cfg.subtitles
+        speechrail = cfg.subtitles
         bridge = cfg.bridge
         lm = cfg.interaction
         paths = [
-            ("wlk", _probe_url(wlk.host, wlk.port), None, None),
+            ("speechrail", speechrail.speechrail_health_url, None, None),
             ("tts", _probe_url(bridge.host, bridge.port), None, None),
             (
                 "lm",
@@ -292,14 +292,14 @@ def create_app(
             results = await asyncio.gather(*tasks)
         service_results = list(results)
         runtime = _get_runtime(app)
-        workload_diagnostics = _wlk_workload_diagnostics(runtime)
+        workload_diagnostics = _asr_workload_diagnostics(runtime)
         if workload_diagnostics:
-            wlk_service = next(
-                (item for item in service_results if item["name"] == "wlk"),
+            speechrail_service = next(
+                (item for item in service_results if item["name"] == "speechrail"),
                 None,
             )
-            if wlk_service is not None:
-                wlk_service.update(workload_diagnostics)
+            if speechrail_service is not None:
+                speechrail_service.update(workload_diagnostics)
         return {
             "network_scope": _network_scope(cfg.ui.host),
             "services": service_results,

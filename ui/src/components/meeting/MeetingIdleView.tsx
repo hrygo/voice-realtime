@@ -108,7 +108,7 @@ export function MeetingIdleView({
           </div>
 
           <div className="check-item">
-            <span>🎙️ WhisperLiveKit 实时转录服务</span>
+            <span>🎙️ SpeechRail 实时转录服务</span>
             <span
               className={`check-status-tag ${
                 health.transcription === "ok" ? "ok" : "error"

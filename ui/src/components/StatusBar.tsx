@@ -44,13 +44,13 @@ interface HealthItem {
 
 const REQUIRED_HEALTH_ITEMS = {
   assistant: ["ws", "pipeline", "tts", "lm"],
-  subtitles: ["ws", "subtitle", "wlk"],
-  meeting: ["ws", "subtitle", "wlk", "storage", "lm"],
+  subtitles: ["ws", "subtitle", "speechrail"],
+  meeting: ["ws", "subtitle", "speechrail", "storage", "lm"],
   idle: ["ws"],
 } as const satisfies Record<RuntimeMode, readonly string[]>;
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
-  wlk: "WhisperLiveKit (:8001)",
+  speechrail: "SpeechRail ASR (:8201)",
   tts: "Qwen3-TTS 桥 (:8765)",
   lm: "LM Studio (:1234)",
 };
@@ -64,7 +64,7 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
 };
 
 const SERVICE_DIAGNOSTIC_COMMANDS: Record<string, string> = {
-  wlk: "uv run vr-subtitles",
+  speechrail: "curl --fail http://127.0.0.1:8201/health",
   tts: "scripts/run-bridge.sh",
   storage: "psql knowledge -f scripts/bootstrap-meeting-db.sql",
 };
@@ -366,7 +366,7 @@ export default function StatusBar({
   onTabChange,
 }: StatusBarProps) {
   const [services, setServices] = useState<ServiceInfo[]>([
-    { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
+    { name: "speechrail", status: "checking", url: "http://127.0.0.1:8201/health" },
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);

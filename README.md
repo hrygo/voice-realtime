@@ -8,20 +8,20 @@
 ## 🌟 核心特性
 
 - 🤖 **全双工实时语音助手 (Voice Assistant)**
-  - **超低交互延迟**：基于 SenseVoice STT + 本地大语言模型 (LM Studio / Qwen3.6) + MLX Qwen3-TTS，端到端首字响应时间（TTFT）低至 240~260ms。
+  - **实时语音输入**：基于 SpeechRail Realtime v2 + 本地大语言模型 (LM Studio / Qwen3.6) + MLX Qwen3-TTS。
   - **双重声学防回声**：L1 声学 RMS 自适应打断抑制 + L2 文本相似度过滤，彻底杜绝单机外放播报时的“自我回声死循环”。
   - **双工模式切换**：支持“🔊 外放保护”（播报期间暂停收音，防误触）与“🎧 耳机双工”（佩戴耳机时随时自然插话打断）。
   - **个性化人设与音色**：内置通用助手、程序员、英语教练等丰富人设模板，支持请求级动态切换音色。
   - **长会话上下文智能滚动压缩**：基于 LM Studio 原生 Token 计数平滑压缩上下文，支持无感长聊。
 
 - 🎙️ **智能会议助手 (Meeting Assistant)**
-  - **实时说话人分离识别 (Diarization)**：接入 Sortformer，实时区分不同发言人并支持会议中/会后自定义命名。
+  - **实时转录与持久化**：SpeechRail 输出的已确认片段进入会议记录；说话人标注能力取决于 SpeechRail 当前 profile。
   - **可靠数据持久化**：采用 PostgreSQL ACID 存储全量确认转录记录与发言人映射，拒绝在内存中积压数据；内置 `0700/0600` 崩溃恢复 Journal。
   - **异步 AI 会议纪要**：会议结束自动冲刷（EOF Flush），调用后台模型异步生成包含「议题大纲、核心讨论、关键决策、待办事项 (Action Items)」的高质量结构化纪要。
   - **灵活导出与管理**：一键导出 Markdown 纪要与带说话人标签的 SRT 字幕文件，支持历史会议回溯与检索。
 
 - 📝 **实时语音字幕 (Live Subtitles)**
-  - **窗口式流式识别**：基于 WhisperLiveKit / Qwen3-ASR 1.7B，字字跟读，实时低延迟上屏。
+  - **窗口式流式识别**：通过 SpeechRail Realtime v2 提交与获取最终转录，支持实时低延迟上屏。
   - **独立运行与无缝联动**：切换到字幕页面时自动挂起语音助手，保证纯净转录；支持实时同步会议转录流。
 
 - 🔒 **100% 本地与隐私安全**
@@ -47,8 +47,8 @@
 ┌───────────────────────────────┐   ┌────────────────────────┴──────────────┐
 │  Pipecat 管道 (AudioInjector) │   │ SubtitleProxy / WebSocket             │
 ├───────────────────────────────┤   ├───────────────────────────────────────┤
-│ • L1 声学回声抑制 (RMS)       │   │ • WhisperLiveKit (Qwen3-ASR 1.7B)     │
-│ • SenseVoice STT (实时识别)   │   │ • Sortformer 实时说话人分离           │
+│ • L1 声学回声抑制 (RMS)       │   │ • SpeechRail Realtime v2               │
+│ • SpeechRail Realtime STT     │   │ • SpeechRail Realtime ASR              │
 │ • L2 文本相似度自激过滤       │   │ • 窗口对账与快照管理                  │
 │ • LM Studio 原生 /api/v1/chat │   └───────────────────┬───────────────────┘
 │ • MLX Qwen3-TTS 桥 (:8765)    │                       │
@@ -67,7 +67,7 @@
 
 1. **`vr-ui` (端口 `8100`)**：系统默认主进程，集成 Voice Studio Web 控制台、AudioHub 麦克风采集、运行时模式协调（`RuntimeModeCoordinator`）与交互/会议控制网关。
 2. **`vr-bridge` (端口 `8765`)**：基于 `mlx-audio` 的 Qwen3-TTS 语音合成服务，提供 OpenAI 兼容的 `POST /v1/audio/speech` 流式接口。
-3. **`vr-subtitles` (端口 `8001`)**：基于 WhisperLiveKit / Qwen3-ASR 1.7B 的流式语音识别服务，内置 Sortformer 说话人分离。
+3. **SpeechRail (端口 `8201`)**：独立 ASR 服务，提供 REST 与 Realtime v2；`voice-realtime` 不管理其进程或模型。
 4. **LM Studio (端口 `1234`)**：本地大模型服务，加载 Qwen3.6 / Qwen3.8 等模型，通过原生 `/api/v1/chat` 提供超低延迟推理与高质量会议纪要生成。
 
 > 💡 **提示**：`vr-interact` 为 CLI Headless 交互入口，通过文件锁与 `vr-ui` 互斥，适用于无界面的终端交互场景。
@@ -137,15 +137,14 @@ cd ui && npm install && npm run build && cd ..
 Git 工作树只保存代码、配置和运行产物：
 
 ```bash
-# 下载 SenseVoice、Qwen3-TTS、Qwen3-ASR 模型
+# 下载 Qwen3-TTS 与会议声纹模型；ASR 模型由 SpeechRail 管理
 bash scripts/download-models.sh
 
 # 下载 NLTK punkt_tab 分词数据 (TTS 断句必需)
 bash scripts/install-nltk-data.sh
 ```
 
-> ⚠️ **Sortformer 模型**：默认从 Hugging Face Hub 外部缓存的固定 revision 路径加载；缺失时
-> fail-fast，不会隐式联网。可用 `VR_SUBTITLE_DIARIZATION_MODEL_PATH` 指定其他项目外绝对路径。
+> ⚠️ **SpeechRail 前置条件**：先启动本机 SpeechRail，并确认 `http://127.0.0.1:8201/health` 可用。
 
 ### 步骤 3：初始化 PostgreSQL 数据库 (会议助手必需)
 
@@ -183,16 +182,13 @@ VR_BIND_HOST=0.0.0.0 scripts/run-all.sh
 统一脚本会根据 TTS 桥的实际监听地址自动设置交互管道使用的
 `VR_INTERACTION_TTS_BRIDGE_URL`；如显式设置该变量，则保留显式配置。
 
-也可以依次在不同终端窗口中独立启动 3 个服务单元：
+也可以依次在不同终端窗口中独立启动 2 个应用服务单元（SpeechRail 由其自身服务管理）：
 
 ```bash
 # 终端 1: 启动 TTS 语音合成桥 (8765)
 uv run vr-bridge
 
-# 终端 2: 启动实时字幕/语音识别服务 (8001)
-uv run vr-subtitles
-
-# 终端 3: 启动 Web 控制台与主运行协调服务 (8100)
+# 终端 2: 启动 Web 控制台与主运行协调服务 (8100)
 export VR_MEETING_DATABASE_URL='postgresql://voice_realtime_app@/knowledge'
 export VR_MEETING_SCHEMA='voice_realtime'
 uv run vr-ui
@@ -251,8 +247,8 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_UI_PORT` | `8100` | Voice Studio Web 服务端口 |
 | `VR_BRIDGE_HOST` | `127.0.0.1` | Qwen3-TTS 桥服务绑定地址（优先于全局变量） |
 | `VR_BRIDGE_PORT` | `8765` | Qwen3-TTS 桥服务端口 |
-| `VR_SUBTITLE_HOST` | `127.0.0.1` | WhisperLiveKit 字幕服务绑定地址（优先于全局变量） |
-| `VR_SUBTITLE_PORT` | `8001` | WhisperLiveKit 字幕服务端口 |
+| `VR_SUBTITLE_SPEECHRAIL_URL` | `ws://127.0.0.1:8201/v2/realtime` | 字幕与会议使用的 SpeechRail Realtime v2 地址 |
+| `VR_INTERACTION_SPEECHRAIL_REALTIME_URL` | `ws://127.0.0.1:8201/v2/realtime` | 语音助手使用的 SpeechRail Realtime v2 地址 |
 | `VR_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
 | `VR_INTERACTION_LLM_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
 | `VR_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
@@ -261,8 +257,6 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_MEETING_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
-| `VR_SUBTITLE_MODEL_DIR` | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master` | Qwen3-ASR 项目外模型目录 |
-| `VR_SUBTITLE_DIARIZATION_MODEL_PATH` | Hugging Face cache 中固定 revision 的 `diar_streaming_sortformer_4spk-v2.nemo` | Sortformer 项目外模型路径 |
 | `VR_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` / `headphone_duplex`) |
 
 ---

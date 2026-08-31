@@ -270,7 +270,7 @@ describe("Meeting React Components DOM Rendering", () => {
 
     expect(container.textContent).toContain("Voice Studio 会议助手");
     expect(container.textContent).toContain("PostgreSQL 知识库存储");
-    expect(container.textContent).toContain("WhisperLiveKit 实时转录服务");
+    expect(container.textContent).toContain("SpeechRail 实时转录服务");
     expect(container.textContent).toContain("开始会议");
 
     const submitBtn = container.querySelector("button[type='submit']") as HTMLButtonElement;

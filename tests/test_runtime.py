@@ -132,14 +132,13 @@ def _mock_async_components(_proxy, hub, runner) -> None:
     runner.end = AsyncMock(side_effect=end)
 
 
-def test_runtime_passes_asr_registry_to_subtitle_proxy(settings: Settings) -> None:
-    registry = MagicMock(name="asr_registry")
+def test_runtime_constructs_speechrail_subtitle_proxy(settings: Settings) -> None:
     with ExitStack() as stack:
         proxy_cls, *_ = _patched(stack)
 
-        UIRuntime(settings, asr_registry=registry)
+        UIRuntime(settings)
 
-    proxy_cls.assert_called_once_with(settings.subtitles, registry=registry)
+    proxy_cls.assert_called_once_with(settings.subtitles)
 
 
 def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) -> None:
@@ -330,7 +329,7 @@ class TestAudioLevels:
 
 class TestSubtitleProxyFailure:
     async def test_proxy_failure_nonfatal(self, settings: Settings) -> None:
-        """wlk 不在线时 SubtitleProxy.start 抛错不阻断其余启动。"""
+        """SpeechRail 不在线时 SubtitleProxy.start 抛错不阻断其余启动。"""
         with ExitStack() as stack:
             _proxy_cls, hub_cls, _build, _worker_cls, runner_cls = _patched(stack)
             runtime = UIRuntime(settings)
@@ -338,7 +337,7 @@ class TestSubtitleProxyFailure:
             hub = hub_cls.return_value
             runner = runner_cls.return_value
             _mock_async_components(proxy, hub, runner)
-            proxy.start = AsyncMock(side_effect=ConnectionRefusedError("wlk down"))
+            proxy.start = AsyncMock(side_effect=ConnectionRefusedError("speechrail down"))
 
             await runtime.start()  # 不应抛
             assert runtime._started
@@ -560,9 +559,9 @@ class TestRuntimeStateBroadcasts:
             await asyncio.sleep(0)
             client = runtime.runtime_events.add_client()
             before = client.latest_nowait()
-            proxy.prepare_browser_capture.side_effect = OSError("wlk unavailable")
+            proxy.prepare_browser_capture.side_effect = OSError("speechrail unavailable")
 
-            with pytest.raises(OSError, match="wlk unavailable"):
+            with pytest.raises(OSError, match="speechrail unavailable"):
                 await runtime.start_subtitles()
 
             assert runtime.snapshot().runtime_revision == before.runtime_revision

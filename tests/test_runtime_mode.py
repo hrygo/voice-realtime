@@ -447,9 +447,9 @@ async def test_meeting_rejects_all_repeated_start_commands() -> None:
 
 async def test_target_prepare_failure_keeps_assistant_chain_and_revision() -> None:
     harness = make_harness()
-    harness.subtitles.fail_prepare = RuntimeError("WLK secret response body")
+    harness.subtitles.fail_prepare = RuntimeError("SpeechRail secret response body")
 
-    with pytest.raises(RuntimeError, match="WLK"):
+    with pytest.raises(RuntimeError, match="SpeechRail"):
         await harness.coordinator.start_subtitles()
 
     assert harness.interaction.active is True

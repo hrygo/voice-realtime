@@ -28,7 +28,6 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
 from voice_realtime.interaction.pipeline import (
-    DEFAULT_SENSEVOICE_REPO,
     BotTextRecorder,
     EchoState,
     EchoSuppressionProcessor,
@@ -36,43 +35,8 @@ from voice_realtime.interaction.pipeline import (
     HangoverUserMuteStrategy,
     SelfEchoFilter,
     TTSStateObserver,
-    _resolve_stt_model,
-    _to_pipecat_language,
     build_pipeline,
 )
-
-
-class TestResolveSttModel:
-    def test_local_path_passthrough(self, tmp_path) -> None:
-        model_dir = tmp_path / "sensevoice"
-        model_dir.mkdir()
-        with patch("voice_realtime.model_cache.snapshot_download") as mock_dl:
-            assert _resolve_stt_model(str(model_dir)) == str(model_dir)
-        mock_dl.assert_not_called()
-
-    def test_empty_uses_default_repo(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot",
-        ) as mock_dl:
-            assert _resolve_stt_model("") == "/mnt/snapshot"
-        mock_dl.assert_called_once_with(DEFAULT_SENSEVOICE_REPO, local_files_only=True)
-
-    def test_custom_repo_resolved(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot2",
-        ) as mock_dl:
-            assert _resolve_stt_model("some/other-stt") == "/mnt/snapshot2"
-        mock_dl.assert_called_once_with("some/other-stt", local_files_only=True)
-
-    def test_explicit_download_mode_allows_network_fallback(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot",
-        ) as mock_dl:
-            assert _resolve_stt_model("repo/model", allow_downloads=True) == "/mnt/snapshot"
-        mock_dl.assert_called_once_with("repo/model", local_files_only=False)
 
 
 @pytest.fixture
@@ -97,11 +61,11 @@ def mock_transport() -> MagicMock:
 
 @pytest.fixture
 def mock_services() -> list[MagicMock]:
-    """Mock 重型服务类：FunASRSTTService 构造会立即下载模型（网络阻塞）。"""
+    """Mock STT、LLM 和 TTS 的外部边界。"""
     mocks = [MagicMock(), MagicMock(), MagicMock()]
+    mocks[0].return_value.create_processor.return_value = MagicMock(name="speechrail_stt")
     with (
-        patch("voice_realtime.model_cache.snapshot_download", return_value="/mnt/stt"),
-        patch("voice_realtime.asr.adapters.pipecat_sensevoice.FunASRSTTService", mocks[0]),
+        patch("voice_realtime.interaction.pipeline.SpeechRailConversationSTTFactory", mocks[0]),
         patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
         patch("voice_realtime.interaction.pipeline.LocalBridgeTTSService", mocks[2]),
     ):
@@ -234,12 +198,12 @@ class TestBuildPipeline:
             "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
         ):
             bp(settings, transport=mock_transport)
-        stt_mock = mock_services[0]
-        stt_mock.assert_called_once()
-        assert stt_mock.call_args.kwargs["device"] == "cpu"
-        stt_settings = stt_mock.call_args.kwargs["settings"]
-        assert stt_settings.language == "zh"
-        assert stt_settings.use_itn is True
+        factory = mock_services[0]
+        factory.assert_called_once_with(url=settings.speechrail_realtime_url)
+        factory.return_value.create_processor.assert_called_once_with(
+            sample_rate=16000,
+            language="zh",
+        )
 
     def test_stt_language_uses_configured_language(
         self,
@@ -251,8 +215,10 @@ class TestBuildPipeline:
             "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
-        stt_settings = mock_services[0].call_args.kwargs["settings"]
-        assert stt_settings.language == "en"
+        mock_services[0].return_value.create_processor.assert_called_once_with(
+            sample_rate=16000,
+            language="en",
+        )
 
     def test_stt_language_normalizes_case(self) -> None:
         assert InteractionSettings(stt_language="YUE").stt_language == "yue"
@@ -260,19 +226,6 @@ class TestBuildPipeline:
     def test_stt_language_rejects_unknown_code(self) -> None:
         with pytest.raises(ValueError, match="en"):
             InteractionSettings(stt_language="fr")
-
-    def test_stt_ttfs_p99_latency(
-        self,
-        settings: InteractionSettings,
-        mock_transport: MagicMock,
-        mock_services: list[MagicMock],
-    ) -> None:
-        with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
-        ):
-            build_pipeline(settings, transport=mock_transport)
-        # ttfs_p99 实测 STT 交付 ~0.5s，且需 > silence_secs 以保留转写等待窗口
-        assert mock_services[0].call_args.kwargs["ttfs_p99_latency"] == 0.5
 
     def test_echo_suppression_processor_installed(
         self,
@@ -335,10 +288,6 @@ class TestBuildPipeline:
         assert isinstance(echo_filter, SelfEchoFilter)
         assert isinstance(recorder, BotTextRecorder)
         assert echo_filter._buffer is recorder._buffer  # type: ignore[attr-defined]
-
-    @pytest.mark.parametrize("lang_code", ["zh", "en", "yue", "ja", "ko"])
-    def test_language_mapping_accepts_supported_codes(self, lang_code: str) -> None:
-        assert _to_pipecat_language(lang_code).value == lang_code
 
     def test_vad_silence_matches_settings(
         self,

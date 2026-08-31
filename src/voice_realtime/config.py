@@ -8,34 +8,19 @@ from __future__ import annotations
 from functools import lru_cache
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from voice_realtime.asr.profiles import (
-    ASRProfile,
-    SpeechRailRealtimeProfile,
-    WLKAutoProfile,
-    WLKQwen3Profile,
-    WLKSenseVoiceProfile,
-)
+from voice_realtime.asr.profiles import SpeechRailRealtimeProfile
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
 from voice_realtime.lm_studio import DEFAULT_LM_STUDIO_API_KEY
-from voice_realtime.model_cache import (
-    huggingface_snapshot_path,
-    modelscope_snapshot_path,
-)
+from voice_realtime.model_cache import huggingface_snapshot_path
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
-DEFAULT_ASR_CONTEXT = (
-    "你是中文语音识别器。请逐字准确转写，保留英文、数字、连字符和大小写。"
-    "专有名词词表：Voice Studio；LM Studio；Qwen3-ASR；WhisperLiveKit；SenseVoice；"
-    "Sortformer；Pipecat；PostgreSQL；MLX。"
-)
 
 
 class LMStudioSettings(BaseSettings):
@@ -152,7 +137,7 @@ class BridgeSettings(BaseSettings):
 
 
 class InteractionSettings(BaseSettings):
-    """Pipecat 交互管道配置（FunASR STT → LM Studio → TTS 桥）。"""
+    """Pipecat 交互管道配置（SpeechRail STT → LM Studio → TTS 桥）。"""
 
     model_config = SettingsConfigDict(env_prefix="VR_INTERACTION_", env_file=".env", extra="ignore")
 
@@ -222,19 +207,7 @@ class InteractionSettings(BaseSettings):
         description="已加载模型上下文容量的紧急保护比例",
     )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
-    stt_backend: Literal["sensevoice", "speechrail-realtime-v2"] = "sensevoice"
     speechrail_realtime_url: str = Field(default="ws://127.0.0.1:8201/v2/realtime")
-    stt_model: str = Field(
-        default="",
-        description=(
-            "FunASR STT 模型：HF repo ID 或本地路径；空则自动解析 "
-            "FunAudioLLM/SenseVoiceSmall 缓存快照"
-        ),
-    )
-    allow_model_downloads: bool = Field(
-        default=False,
-        description="是否允许交互 STT 在缓存缺失时联网下载；默认严格离线",
-    )
     tts_bridge_url: str = Field(
         default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
     )
@@ -441,137 +414,38 @@ class AudioCaptureSettings(BaseSettings):
 
 
 class SubtitleSettings(BaseSettings):
-    """WhisperLiveKit 字幕服务配置。"""
+    """SpeechRail Realtime v2 字幕与会议转录配置。"""
 
     model_config = SettingsConfigDict(env_prefix="VR_SUBTITLE_", env_file=".env", extra="ignore")
 
-    repo_path: Path = Field(
-        default=Path("tools/WhisperLiveKit"), description="WhisperLiveKit 克隆路径"
-    )
-    backend: str = Field(
-        default="qwen3-streaming",
-        description="ASR 后端 (qwen3-streaming/funasr/speechrail-realtime-v2)",
-    )
-    language: str = Field(default="Chinese", description="字幕语言")
-    host: str = Field(default="127.0.0.1", description="字幕服务监听地址")
-    port: int = Field(default=8001, description="字幕服务端口")
-    model_size: str = Field(default="Qwen3-ASR-1.7B", description="ASR 模型规模")
-    model_dir: Path = Field(
-        default_factory=lambda: modelscope_snapshot_path("Qwen/Qwen3-ASR-1.7B"),
-        description="ASR 本地模型目录（离线环境必填，避免启动时拉取模型）",
-    )
+    language: str = Field(default="Chinese", description="字幕与会议转写语言")
     output_dir: Path = Field(default=Path("runtime/subtitles"), description="SRT 输出目录")
-    allow_model_downloads: bool = Field(
-        default=False,
-        description="是否允许 WhisperLiveKit 启动时联网下载模型；默认严格离线",
-    )
-    diarization: bool = Field(default=True, description="是否启用匿名说话人分离")
-    diarization_backend: str = Field(default="sortformer", description="说话人分离后端")
-    diarization_model_path: Path = Field(
-        default_factory=lambda: (
-            huggingface_snapshot_path(
-                "nvidia/diar_streaming_sortformer_4spk-v2",
-                revision="5240a64075176943f677d30fa2171c780229f341",
-            )
-            / "diar_streaming_sortformer_4spk-v2.nemo"
-        ),
-        description="本地 Sortformer 模型路径",
-    )
-    diarization_max_speakers: int = Field(default=4, ge=1, le=4, description="最多匿名说话人数")
-    punctuation_split: bool = Field(
-        default=True,
-        description="使用转录标点改善说话人边界",
-    )
-    context: str = Field(
-        default=DEFAULT_ASR_CONTEXT,
-        max_length=2000,
-        description="Qwen3-ASR 领域词、人名和缩写上下文",
-    )
-    qwen3_streaming_chunk_sec: float = Field(default=2.0, ge=0.5, le=10.0)
-    qwen3_streaming_left_context_sec: float = Field(default=12.0, ge=2.0, le=60.0)
-    qwen3_streaming_right_context_ms: int = Field(default=640, ge=0, le=5000)
-    qwen3_streaming_hold_back_words: int = Field(default=6, ge=0, le=50)
-    qwen3_streaming_stable_iterations: int = Field(default=2, ge=1, le=10)
-    qwen3_streaming_max_new_tokens: int = Field(default=256, ge=32, le=2048)
-    qwen3_streaming_device: Literal["auto", "mps", "cpu"] = "mps"
     speechrail_url: str = Field(
         default="ws://127.0.0.1:8201/v2/realtime",
-        description="显式选择 SpeechRail v2 时使用的本地 WebSocket 地址",
+        description="SpeechRail Realtime v2 WebSocket 地址",
     )
     speechrail_connect_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
     speechrail_finish_timeout_secs: float = Field(default=10.0, gt=0.0, le=120.0)
-
-    @field_validator("backend")
-    @classmethod
-    def _validate_backend(cls, v: str) -> str:
-        allowed = {"qwen3-streaming", "funasr", "auto", "speechrail-realtime-v2"}
-        if v not in allowed:
-            raise ValueError(f"不支持的 ASR 后端: {v} (可选 {sorted(allowed)})")
-        return v
-
-    @field_validator("diarization_backend")
-    @classmethod
-    def _validate_diarization_backend(cls, v: str) -> str:
-        if v != "sortformer":
-            raise ValueError("首版仅支持 sortformer diarization 后端")
-        return v
-
-    @field_validator("context")
-    @classmethod
-    def _strip_context(cls, value: str) -> str:
-        return value.strip()
 
     @field_validator("speechrail_url")
     @classmethod
     def _validate_speechrail_url(cls, value: str) -> str:
         return SpeechRailRealtimeProfile(url=value, language="zh").url
 
-    _validate_host = field_validator("host")(_validate_listen_host)
+    @property
+    def asr_profile(self) -> SpeechRailRealtimeProfile:
+        return SpeechRailRealtimeProfile(
+            url=self.speechrail_url,
+            language=self.language,
+            connect_timeout_secs=self.speechrail_connect_timeout_secs,
+            final_timeout_secs=self.speechrail_finish_timeout_secs,
+        )
 
     @property
-    def asr_profile(self) -> ASRProfile:
-        """把旧字幕配置投影为内部无歧义的 ASR profile。"""
-        if self.backend == "speechrail-realtime-v2":
-            return SpeechRailRealtimeProfile(
-                url=self.speechrail_url,
-                language=self.language,
-                connect_timeout_secs=self.speechrail_connect_timeout_secs,
-                final_timeout_secs=self.speechrail_finish_timeout_secs,
-            )
-        if self.backend == "funasr":
-            return WLKSenseVoiceProfile(
-                model_dir=self.model_dir,
-                language=self.language,
-                host=self.host,
-                port=self.port,
-                speaker_labels=self.diarization,
-                diarization_max_speakers=self.diarization_max_speakers,
-            )
-        if self.backend == "auto":
-            return WLKAutoProfile(
-                model_dir=self.model_dir,
-                language=self.language,
-                host=self.host,
-                port=self.port,
-                speaker_labels=self.diarization,
-                diarization_max_speakers=self.diarization_max_speakers,
-            )
-        return WLKQwen3Profile(
-            model_dir=self.model_dir,
-            language=self.language,
-            host=self.host,
-            port=self.port,
-            speaker_labels=self.diarization,
-            diarization_max_speakers=self.diarization_max_speakers,
-            device=self.qwen3_streaming_device,
-            chunk_sec=self.qwen3_streaming_chunk_sec,
-            left_context_sec=self.qwen3_streaming_left_context_sec,
-            right_context_ms=self.qwen3_streaming_right_context_ms,
-            hold_back_words=self.qwen3_streaming_hold_back_words,
-            stable_iterations=self.qwen3_streaming_stable_iterations,
-            max_new_tokens=self.qwen3_streaming_max_new_tokens,
-            context=self.context,
-        )
+    def speechrail_health_url(self) -> str:
+        parsed = urlsplit(self.speechrail_url)
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        return f"{scheme}://{parsed.netloc}/health"
 
 
 class MeetingSettings(BaseSettings):

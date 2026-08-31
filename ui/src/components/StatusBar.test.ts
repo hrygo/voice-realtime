@@ -288,12 +288,12 @@ describe("StatusBar service diagnostics", () => {
       .find((row) => row.textContent?.includes(name));
   }
 
-  it("keeps WLK diagnostics in a compact tooltip without changing the process light", async () => {
+  it("keeps SpeechRail diagnostics in a compact tooltip without changing the process light", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: "degraded",
         ws_state: "reconnecting",
         reconnect_count: 3,
@@ -303,7 +303,7 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const row = findServiceRow("WhisperLiveKit");
+    const row = findServiceRow("SpeechRail ASR");
     expect(row?.textContent).toContain("运行正常");
     expect(row?.textContent).not.toContain("语音工作负载：degraded");
     expect(row?.textContent).not.toContain("WebSocket 状态：reconnecting");
@@ -317,15 +317,15 @@ describe("StatusBar service diagnostics", () => {
   it("shows a long last-event age as an unclassified raw value", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: "degraded",
         last_event_age_ms: 987654,
       },
     ], "subtitles");
 
-    const row = findServiceRow("WhisperLiveKit");
+    const row = findServiceRow("SpeechRail ASR");
     expect(row?.getAttribute("title")).toContain("距最近事件：987654 ms");
     expect(row?.textContent).not.toContain("关闭游戏");
     expect(row?.textContent).not.toContain("CPU");
@@ -334,7 +334,7 @@ describe("StatusBar service diagnostics", () => {
 
   it("uses network-aware footer copy when services are LAN-accessible", async () => {
     await renderServices([
-      { name: "wlk", status: "ok", url: "http://192.168.1.20:8001" },
+      { name: "speechrail", status: "ok", url: "http://192.168.1.20:8201/health" },
     ], "subtitles", "network");
 
     const footer = container.querySelector<HTMLElement>(".health-footer-tip");
@@ -345,12 +345,12 @@ describe("StatusBar service diagnostics", () => {
 
   it("keeps rendering the legacy three-service response", async () => {
     await renderServices([
-      { name: "wlk", status: "ok", url: "http://127.0.0.1:8001" },
+      { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
       { name: "tts", status: "timeout", url: "http://127.0.0.1:8765" },
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
-    expect(findServiceRow("WhisperLiveKit")?.textContent).toContain("当前模式非必需");
+    expect(findServiceRow("SpeechRail ASR")?.textContent).toContain("当前模式非必需");
     expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("Qwen3-TTS 桥")?.getAttribute("title")).toContain("连接超时");
@@ -361,14 +361,14 @@ describe("StatusBar service diagnostics", () => {
   it("renders null and unknown workload states defensively", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: null,
         ws_state: null,
       },
       {
-        name: "wlk-future",
+        name: "speechrail-future",
         status: "ok",
         url: "http://127.0.0.1:8002",
         workload: "future-workload",
@@ -376,11 +376,11 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const wlkRow = findServiceRow("WhisperLiveKit");
-    expect(wlkRow?.getAttribute("title")).toContain("语音工作负载：未知");
-    expect(wlkRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
+    const speechrailRow = findServiceRow("SpeechRail ASR");
+    expect(speechrailRow?.getAttribute("title")).toContain("语音工作负载：未知");
+    expect(speechrailRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
 
-    const futureRow = findServiceRow("wlk-future");
+    const futureRow = findServiceRow("speechrail-future");
     expect(futureRow?.getAttribute("title")).toContain("语音工作负载：future-workload");
     expect(futureRow?.getAttribute("title")).toContain("WebSocket 状态：future-ws-state");
   });
@@ -403,7 +403,7 @@ describe("StatusBar aggregate health", () => {
       ok: true,
       json: async () => ({
         services: [
-          { name: "wlk", status: "ok", url: "http://127.0.0.1:8001" },
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
           { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
           { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
         ],
@@ -488,7 +488,7 @@ describe("StatusBar aggregate health", () => {
       ok: true,
       json: async () => ({
         services: [
-          { name: "wlk", status: "unreachable", url: "http://127.0.0.1:8001" },
+          { name: "speechrail", status: "unreachable", url: "http://127.0.0.1:8201/health" },
           { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
           { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
         ],
@@ -500,11 +500,11 @@ describe("StatusBar aggregate health", () => {
       healthButton.click();
     });
 
-    const wlkRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
-      .find((row) => row.textContent?.includes("WhisperLiveKit"));
+    const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail ASR"));
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(wlkRow?.textContent).toContain("当前模式非必需");
-    expect(wlkRow?.classList.contains("state-not-required")).toBe(true);
+    expect(speechrailRow?.textContent).toContain("当前模式非必需");
+    expect(speechrailRow?.classList.contains("state-not-required")).toBe(true);
   });
 
   it("marks required rows and keeps optional rows visually separate", async () => {

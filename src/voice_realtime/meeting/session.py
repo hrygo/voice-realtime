@@ -153,17 +153,10 @@ class MeetingSession:
                     add_audio_listener = getattr(self.gateway, "add_audio_listener", None)
                     if add_audio_listener is not None:
                         add_audio_listener(self.voiceprint_manager.append_audio)
-                if max_speakers is not None:
-                    capture = await self.gateway.prepare_capture(
-                        f"meeting:{record.id}",
-                        timeout_secs=5.0,
-                        max_speakers=max_speakers,
-                    )
-                else:
-                    capture = await self.gateway.prepare_capture(
-                        f"meeting:{record.id}",
-                        timeout_secs=5.0,
-                    )
+                capture = await self.gateway.prepare_capture(
+                    f"meeting:{record.id}",
+                    timeout_secs=5.0,
+                )
             except BaseException as exc:
                 logger.warning(
                     "MeetingSession: 准备会议失败，执行回滚 (meeting_id=%s): %s",

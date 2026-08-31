@@ -71,7 +71,7 @@ class StorageHealth(StrEnum):
 
 
 class NormalizedSegment(_FrozenModel):
-    """从 WhisperLiveKit 窗口规范化得到的一段已确认转录。"""
+    """从 SpeechRail 窗口规范化得到的一段已确认转录。"""
 
     id: UUID = Field(default_factory=uuid4)
     order: int = Field(ge=0)
@@ -103,7 +103,7 @@ class NormalizedSegment(_FrozenModel):
 
 
 class TranscriptWindow(_FrozenModel):
-    """WLK 当前 confirmed 窗口与易失 partial 文本。"""
+    """当前 SpeechRail confirmed 窗口与易失 partial 文本。"""
 
     source_epoch: int = Field(ge=0)
     partial: str = Field(default="", max_length=100_000)

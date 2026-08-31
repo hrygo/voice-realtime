@@ -1,4 +1,4 @@
-"""WhisperLiveKit 字幕代理：可重连 PCM 上行、快照广播与 SRT 落盘。"""
+"""SpeechRail 字幕代理：可重连 PCM 上行、快照广播与 SRT 落盘。"""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from voice_realtime.asr.adapters.speechrail_realtime import ConnectionFactory
-from voice_realtime.asr.adapters.wlk import WLKStreamFactory
+from voice_realtime.asr.adapters.speechrail_realtime import (
+    ConnectionFactory,
+    SpeechRailRealtimeClient,
+    SpeechRailStreamingTranscriber,
+)
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
-from voice_realtime.asr.defaults import build_speechrail_realtime_registry, build_wlk_registry
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
-from voice_realtime.asr.profiles import ASRProfile, SpeechRailRealtimeProfile
-from voice_realtime.asr.registry import ASRBackendRegistry
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
 
@@ -40,7 +40,7 @@ class FinalizationTimeoutError(TimeoutError):
 
     def __init__(self, last_window: TranscriptWindow | None) -> None:
         self.last_window = last_window
-        super().__init__("WhisperLiveKit finalization timed out")
+        super().__init__("SpeechRail finalization timed out")
 
 
 FinalizationTimeout = FinalizationTimeoutError
@@ -63,7 +63,7 @@ class CapturePreparation:
 
 @dataclass(frozen=True)
 class TranscriptionGap:
-    """WLK 重连期间无法转录的样本时钟区间。"""
+    """SpeechRail 重连期间无法转录的样本时钟区间。"""
 
     source_epoch: int
     start_ms: int
@@ -100,7 +100,7 @@ class _ClientChannel:
 
 
 class SubtitleProxy:
-    """显式准备并激活普通字幕或会议 WLK 流。"""
+    """显式准备并激活普通字幕或会议 SpeechRail 流。"""
 
     _CLIENT_QUEUE_SIZE = 8
     _AUDIO_QUEUE_SIZE = 512
@@ -110,39 +110,20 @@ class SubtitleProxy:
         self,
         settings: SubtitleSettings,
         *,
-        registry: ASRBackendRegistry | None = None,
         transcriber_factory: TranscriberFactory | None = None,
-        stream_factory: WLKStreamFactory | None = None,
         speechrail_connection_factory: ConnectionFactory | None = None,
         backoff_delays: Sequence[float] = _DEFAULT_BACKOFF,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not backoff_delays or any(delay <= 0 for delay in backoff_delays):
             raise ValueError("backoff_delays 必须包含正数")
-        if transcriber_factory is not None and (
-            registry is not None
-            or stream_factory is not None
-            or speechrail_connection_factory is not None
-        ):
-            raise ValueError("transcriber_factory 不能与 registry 或连接工厂同时提供")
+        if transcriber_factory is not None and speechrail_connection_factory is not None:
+            raise ValueError("transcriber_factory 不能与 SpeechRail 连接工厂同时提供")
         self._settings = settings
         self._profile = settings.asr_profile
-        if registry is not None:
-            self._registry = registry
-        elif isinstance(self._profile, SpeechRailRealtimeProfile):
-            if stream_factory is not None:
-                raise ValueError("SpeechRail profile 不能使用 WLK stream_factory")
-            self._registry = build_speechrail_realtime_registry(
-                connection_factory=speechrail_connection_factory,
-            )
-        else:
-            if speechrail_connection_factory is not None:
-                raise ValueError("WLK profile 不能使用 SpeechRail connection_factory")
-            self._registry = build_wlk_registry(
-                self._service_url,
-                stream_factory=stream_factory,
-            )
-        self._transcriber_factory = transcriber_factory
+        self._transcriber_factory = transcriber_factory or self._build_speechrail_transcriber(
+            speechrail_connection_factory
+        )
         self._backoff_delays = tuple(backoff_delays)
         self._clock = clock
         self._browser_stream: StreamingTranscriber | None = None
@@ -188,14 +169,25 @@ class SubtitleProxy:
         self._reconnect_count = 0
         self._dropped_chunks = 0
         self._gap_count = 0
-        self._capture_profile: ASRProfile | None = None
 
-    def _create_transcriber(
-        self, context: ASRSessionContext, profile: ASRProfile | None = None
-    ) -> StreamingTranscriber:
-        if self._transcriber_factory is not None:
-            return self._transcriber_factory(context)
-        return self._registry.create_streaming(profile or self._profile, context)
+    def _build_speechrail_transcriber(
+        self, connection_factory: ConnectionFactory | None
+    ) -> TranscriberFactory:
+        def create(context: ASRSessionContext) -> StreamingTranscriber:
+            return SpeechRailStreamingTranscriber(
+                client=SpeechRailRealtimeClient(
+                    url=self._profile.url,
+                    connection_factory=connection_factory,
+                ),
+                context=context,
+                language=self._profile.language,
+                finish_timeout_secs=self._profile.final_timeout_secs,
+            )
+
+        return create
+
+    def _create_transcriber(self, context: ASRSessionContext) -> StreamingTranscriber:
+        return self._transcriber_factory(context)
 
     @property
     def state(self) -> str:
@@ -204,7 +196,7 @@ class SubtitleProxy:
 
     @property
     def last_error(self) -> str | None:
-        """返回最近一次 WLK 连接错误，仅用于本机诊断。"""
+        """返回最近一次 SpeechRail 连接错误，仅用于本机诊断。"""
         return self._last_error
 
     @property
@@ -224,11 +216,6 @@ class SubtitleProxy:
     @property
     def capture_epoch(self) -> int:
         return self._capture_epoch
-
-    @property
-    def _service_url(self) -> str:
-        host = "127.0.0.1" if self._settings.host in {"0.0.0.0", "::"} else self._settings.host
-        return f"ws://{host}:{self._settings.port}"
 
     def add_event_listener(self, listener: CaptureListener) -> None:
         if listener not in self._event_listeners:
@@ -346,7 +333,7 @@ class SubtitleProxy:
         return self._state.value
 
     async def start(self) -> None:
-        """初始化代理；不建立 WLK 连接。"""
+        """初始化代理；不建立 SpeechRail 连接。"""
         if self._running:
             return
         try:
@@ -421,7 +408,7 @@ class SubtitleProxy:
                 await self._browser_ready.wait()
         except TimeoutError as exc:
             await self._close_browser_connection()
-            raise RuntimeError("WhisperLiveKit 未发送 config") from exc
+            raise RuntimeError("SpeechRail 未完成 transcription session 初始化") from exc
         except BaseException:
             await self._close_browser_connection()
             raise
@@ -462,7 +449,6 @@ class SubtitleProxy:
         owner: str,
         *,
         timeout_secs: float,
-        max_speakers: int | None = None,
     ) -> CapturePreparation:
         """建立会议流并等待 ready，但不接收 PCM。"""
         owner = owner.strip()
@@ -496,11 +482,6 @@ class SubtitleProxy:
         self._capture_last_window = None
         self._state = SubtitleProxyState.CONNECTING
 
-        profile = self._profile
-        if max_speakers is not None and 1 <= max_speakers <= 4 and hasattr(profile, "model_copy"):
-            profile = profile.model_copy(update={"diarization_max_speakers": max_speakers})
-        self._capture_profile = profile
-
         try:
             stream = self._create_transcriber(
                 ASRSessionContext(
@@ -508,7 +489,6 @@ class SubtitleProxy:
                     offset_ms=self._capture_offset_ms,
                     purpose="meeting",
                 ),
-                profile=profile,
             )
             self._capture_stream = stream
             async with asyncio.timeout(timeout_secs):
@@ -524,7 +504,7 @@ class SubtitleProxy:
                 await self._capture_ready.wait()
         except TimeoutError as exc:
             await self._close_capture()
-            raise RuntimeError("WhisperLiveKit 未发送 config") from exc
+            raise RuntimeError("SpeechRail 未发送 ready event") from exc
         except BaseException:
             await self._close_capture()
             raise
@@ -783,8 +763,7 @@ class SubtitleProxy:
                         source_epoch=self._capture_epoch,
                         offset_ms=self._capture_offset_ms,
                         purpose="meeting",
-                    ),
-                    profile=self._capture_profile or self._profile,
+                    )
                 )
                 await stream.connect()
                 self._capture_stream = stream
@@ -855,15 +834,15 @@ class SubtitleProxy:
                     self._last_error = None
                     self._state = SubtitleProxyState.CONNECTED
                 attempt = 0
-                logger.info("SubtitleProxy: 已连接 wlk %s", stream.uri)
+                logger.info("SubtitleProxy: 已连接 SpeechRail %s", stream.uri)
                 await self._serve_connection(stream)
                 if self._running:
-                    raise ConnectionError("WLK 字幕连接已关闭")
+                    raise ConnectionError("SpeechRail 字幕连接已关闭")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 self._last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("SubtitleProxy: WLK 连接中断，将自动重连: %s", exc)
+                logger.warning("SubtitleProxy: SpeechRail 连接中断，将自动重连: %s", exc)
             finally:
                 if stream is not None:
                     with contextlib.suppress(Exception):
@@ -1194,7 +1173,6 @@ class SubtitleProxy:
             with contextlib.suppress(Exception):
                 await stream.close()
         self._capture_owner = None
-        self._capture_profile = None
         self._drain_audio_buffer()
         if self._running:
             self._state = (

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键启动 voice-realtime 全套服务 (vr-bridge + vr-subtitles + vr-ui) 默认绑定 localhost: 127.0.0.1
+# 一键启动 voice-realtime 应用服务 (vr-bridge + vr-ui)；ASR 由外部 SpeechRail 提供。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,8 +11,8 @@ export VR_UI_HOST="$(resolve_bind_host "${VR_UI_HOST:-}" "127.0.0.1")"
 export VR_UI_PORT="${VR_UI_PORT:-8100}"
 export VR_BRIDGE_HOST="$(resolve_bind_host "${VR_BRIDGE_HOST:-}" "127.0.0.1")"
 export VR_BRIDGE_PORT="${VR_BRIDGE_PORT:-8765}"
-export VR_SUBTITLE_HOST="$(resolve_bind_host "${VR_SUBTITLE_HOST:-}" "127.0.0.1")"
-export VR_SUBTITLE_PORT="${VR_SUBTITLE_PORT:-8001}"
+export VR_SUBTITLE_SPEECHRAIL_URL="${VR_SUBTITLE_SPEECHRAIL_URL:-ws://127.0.0.1:8201/v2/realtime}"
+export VR_INTERACTION_SPEECHRAIL_REALTIME_URL="${VR_INTERACTION_SPEECHRAIL_REALTIME_URL:-$VR_SUBTITLE_SPEECHRAIL_URL}"
 export VR_MEETING_DATABASE_URL="${VR_MEETING_DATABASE_URL:-postgresql://voice_realtime_app@/knowledge}"
 export VR_MEETING_SCHEMA="${VR_MEETING_SCHEMA:-voice_realtime}"
 
@@ -29,7 +29,7 @@ if [[ "$VR_UI_HOST" == "127.0.0.1" || "$VR_UI_HOST" == "localhost" ]]; then
     echo "🔒 监听模式: 本机独占 (127.0.0.1，默认)"
     echo "🎙️   Voice Studio Web 控制台: http://127.0.0.1:${VR_UI_PORT}"
     echo "🔊  TTS 语音合成桥:         http://127.0.0.1:${VR_BRIDGE_PORT}"
-    echo "📝  字幕识别服务:           ws://127.0.0.1:${VR_SUBTITLE_PORT}"
+    echo "📝  SpeechRail ASR:          ${VR_SUBTITLE_SPEECHRAIL_URL}"
 elif [[ "$VR_UI_HOST" == "0.0.0.0" ]]; then
     echo "🌐 监听模式: 全部网络接口 (0.0.0.0)"
     echo "🎙️   Voice Studio Web 控制台:"
@@ -38,17 +38,17 @@ elif [[ "$VR_UI_HOST" == "0.0.0.0" ]]; then
         echo "    👉 局域网访问: http://${LAN_IP}:${VR_UI_PORT}"
     fi
     echo "🔊  TTS 语音合成桥: http://127.0.0.1:${VR_BRIDGE_PORT} / http://${LAN_IP}:${VR_BRIDGE_PORT}"
-    echo "📝  字幕识别服务:   ws://127.0.0.1:${VR_SUBTITLE_PORT} / ws://${LAN_IP}:${VR_SUBTITLE_PORT}"
+    echo "📝  SpeechRail ASR:   ${VR_SUBTITLE_SPEECHRAIL_URL}"
 else
     echo "🏠 监听模式: 局域网/指定地址 (${VR_UI_HOST})"
     echo "🎙️   Voice Studio Web 控制台: http://${VR_UI_HOST}:${VR_UI_PORT} (本机: http://127.0.0.1:${VR_UI_PORT})"
     echo "🔊  TTS 语音合成桥:         http://${VR_BRIDGE_HOST}:${VR_BRIDGE_PORT}"
-    echo "📝  字幕识别服务:           ws://${VR_SUBTITLE_HOST}:${VR_SUBTITLE_PORT}"
+    echo "📝  SpeechRail ASR:          ${VR_SUBTITLE_SPEECHRAIL_URL}"
 fi
 echo "📄  服务日志目录:           runtime/logs/"
 echo "    - UI 控制台日志:        runtime/logs/ui.log"
 echo "    - TTS 合成桥日志:       runtime/logs/bridge.log"
-echo "    - 字幕识别服务日志:     runtime/logs/subtitles.log"
+echo "    - ASR 服务日志:          由 SpeechRail 独立管理"
 echo "👉  实时跟踪日志: tail -n 50 -f runtime/logs/*.log"
 echo "========================================================"
 echo "按 Ctrl+C 停止所有服务"
@@ -86,7 +86,7 @@ cleanup() {
     done
 
     # `uv run` 是一层包装进程。先向启动时捕获的完整进程树发送 TERM，
-    # 防止包装进程先退出后 vr-subtitles / WLK 被重新托管到 PID 1。
+    # `uv run` 是包装进程；先终止完整子进程树，避免 TTS/UI 被重新托管到 PID 1。
     for target_pid in "${targets[@]}"; do
         if kill -0 "$target_pid" 2>/dev/null; then
             kill -TERM "$target_pid" 2>/dev/null || true
@@ -124,11 +124,7 @@ trap cleanup SIGINT SIGTERM EXIT
 uv run vr-bridge &
 pids+=($!)
 
-# 2. 启动字幕识别服务
-uv run vr-subtitles &
-pids+=($!)
-
-# 3. 启动 UI 主服务
+# 2. 启动 UI 主服务
 uv run vr-ui &
 pids+=($!)
 
