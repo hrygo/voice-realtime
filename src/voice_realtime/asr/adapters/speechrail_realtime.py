@@ -3,87 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from collections.abc import AsyncIterator
 from uuid import NAMESPACE_URL, uuid5
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
-from voice_realtime.speechrail.transport import (
-    ConnectionFactory,
-    SpeechRailV2Transport,
-)
+from voice_realtime.speechrail.transport import ConnectionFactory, SpeechRailRealtimeClient
 
-
-class SpeechRailRealtimeClient:
-    """One non-resumable SpeechRail v2 transcription connection."""
-
-    def __init__(
-        self, *, url: str, connection_factory: ConnectionFactory | None = None
-    ) -> None:
-        self._transport = SpeechRailV2Transport(url=url, connection_factory=connection_factory)
-
-    @property
-    def uri(self) -> str:
-        return self._transport.uri
-
-    async def connect(
-        self,
-        *,
-        language: str,
-        diarization: bool = False,
-        speaker_count_hint: int | None = None,
-        diarization_group_id: str | None = None,
-    ) -> None:
-        await self._transport.connect()
-        try:
-            session: dict[str, object] = {
-                "type": "transcription",
-                "language": language,
-                "audio_format": {
-                    "type": "audio/pcm",
-                    "rate": 16000,
-                    "channels": 1,
-                    "sample_width": 2,
-                },
-                "endpointing": {"mode": "manual"},
-            }
-            if diarization:
-                diarization_config: dict[str, object] = {"enabled": True, "finalize": True}
-                if speaker_count_hint is not None:
-                    diarization_config["speaker_count_hint"] = speaker_count_hint
-                if diarization_group_id is not None:
-                    diarization_config["group_id"] = diarization_group_id
-                session["diarization"] = diarization_config
-            await self._transport.send_event({"type": "session.update", "session": session})
-            created = await self.receive()
-            if created.get("type") != "session.created":
-                raise RuntimeError("SPEECHRAIL_SESSION_CREATE_FAILED")
-        except BaseException:
-            await self.close()
-            raise
-
-    async def append_pcm(self, chunk: bytes) -> None:
-        if not chunk or len(chunk) % 2:
-            raise ValueError("PCM must be non-empty int16")
-        await self._transport.send_event(
-            {
-                "type": "input_audio_buffer.append",
-                "audio": base64.b64encode(chunk).decode("ascii"),
-            }
-        )
-
-    async def commit(self) -> None:
-        await self._transport.send_event({"type": "input_audio_buffer.commit"})
-
-    async def cancel(self) -> None:
-        await self._transport.send_event({"type": "session.cancel"})
-
-    async def receive(self) -> dict[str, object]:
-        return await self._transport.receive()
-
-    async def close(self) -> None:
-        await self._transport.close()
+__all__ = ["ConnectionFactory", "SpeechRailRealtimeClient", "SpeechRailStreamingTranscriber"]
 
 
 class SpeechRailStreamingTranscriber:
