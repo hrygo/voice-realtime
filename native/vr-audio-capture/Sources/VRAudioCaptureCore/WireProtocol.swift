@@ -137,10 +137,12 @@ public struct ControlMessage: Equatable, Sendable {
             throw WireProtocolError("invalid_control", "control type is invalid")
         }
         if let requestID = payload["request_id"] {
-            guard
-                case let .string(value) = requestID,
-                (1 ... 64).contains(value.count)
-            else {
+            switch requestID {
+            case let .string(value) where (1 ... 64).contains(value.count):
+                break
+            case .null where type == "error":
+                break
+            default:
                 throw WireProtocolError(
                     "invalid_control",
                     "request_id is invalid"

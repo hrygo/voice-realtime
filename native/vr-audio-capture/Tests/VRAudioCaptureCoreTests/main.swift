@@ -9,6 +9,8 @@ let tests = wireProtocolTests()
     + frameAccumulatorTests()
     + coreAudioHALTests()
     + tapLifecycleTests()
+    + captureControllerTests()
+    + captureServerTests()
 var failures = 0
 
 for test in tests {

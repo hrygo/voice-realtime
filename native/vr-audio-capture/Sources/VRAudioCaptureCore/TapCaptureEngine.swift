@@ -15,7 +15,8 @@ public struct TapCaptureError: Error, Equatable, CustomStringConvertible, Sendab
     public let description: String
     public let retryable: Bool
 
-    init(_ code: Code) {
+    @_spi(Testing)
+    public init(_ code: Code) {
         self.code = code
         switch code {
         case .unsupportedOS:
