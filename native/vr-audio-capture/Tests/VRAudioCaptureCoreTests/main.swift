@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-let tests = wireProtocolTests()
+let tests = wireProtocolTests() + ringBufferTests()
 var failures = 0
 
 for test in tests {

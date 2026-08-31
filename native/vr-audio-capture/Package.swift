@@ -20,8 +20,12 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "VRAudioCaptureRing",
+            publicHeadersPath: "include"
+        ),
+        .target(
             name: "VRAudioCaptureCore",
-            exclude: ["RingBuffer.swift"]
+            dependencies: ["VRAudioCaptureRing"]
         ),
         .executableTarget(
             name: "VRAudioCaptureHelper",
@@ -30,8 +34,7 @@ let package = Package(
         .executableTarget(
             name: "VRAudioCaptureCoreTests",
             dependencies: ["VRAudioCaptureCore"],
-            path: "Tests/VRAudioCaptureCoreTests",
-            exclude: ["RingBufferTests.swift"]
+            path: "Tests/VRAudioCaptureCoreTests"
         ),
     ],
     swiftLanguageModes: [.v6],
