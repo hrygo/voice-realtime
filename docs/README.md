@@ -69,7 +69,7 @@ docs/
 │   ├── 联调记录模板.md                    # 标准前后端联调验收记录模板
 │   └── 语音交互打断后推理挂起故障排查与修复方案.md # Barge-in 打断导致 LM Studio 挂起故障排障与修复
 │
-├── decisions/                             # 📝 架构决策记录 (ADR-001 ~ ADR-009)
+├── decisions/                             # 📝 架构决策记录 (ADR-001 ~ ADR-010)
 │   ├── 0001-single-owner-interaction-runtime.md
 │   ├── 0002-lm-studio-stateful-chat-context.md
 │   ├── 0003-lm-studio-context-compaction.md
@@ -77,7 +77,9 @@ docs/
 │   ├── 0005-server-side-runtime-workload-arbitration.md
 │   ├── 0006-contract-first-meeting-assistant-separation.md
 │   ├── 0007-bounded-meeting-summary-generation.md
-│   └── 0009-shared-local-inference-platform.md
+│   ├── 0008-speaker-diarization-and-voiceprint-clustering.md
+│   ├── 0009-shared-local-inference-platform.md
+│   └── 0010-physical-output-audio-capture.md
 │
 ├── benchmarks/                            # 📊 评测基准与实验资产
 │   └── asr/
@@ -89,7 +91,7 @@ docs/
 │
 └── superpowers/                           # ⚡ 历史执行计划与规格 (Plans & Specs 归档)
     ├── plans/                             # 研发执行计划 (11 份，含当前草案与历史归档)
-    └── specs/                             # 设计规格 (11 份，含当前评审稿与历史归档)
+    └── specs/                             # 设计规格 (12 份，含当前评审稿与历史归档)
 ```
 
 ---
@@ -166,6 +168,7 @@ graph TD
 | [ADR-007](decisions/0007-bounded-meeting-summary-generation.md) | AI 会议纪要采用有界分段生成与服务端事件收敛 | 🔵 `accepted` | 2026-08-26 | 建立多层超时、字符熔断与 `output_limit` 边界，防止无限生成 |
 | [ADR-008](decisions/0008-speaker-diarization-and-voiceprint-clustering.md) | 会议模式多说话人精准识别与声纹聚类 | 🔵 `accepted` | 2026-08-27 | 迟滞双门限、参会人数先验、时序平滑与 CAM++ 声纹质心及 AHC 聚类 |
 | [ADR-009](decisions/0009-shared-local-inference-platform.md) | LM Studio 原生协议与本地推理准入采用跨业务公共层 | 🔵 `accepted` | 2026-08-27 | 统一 SSE 语义、配置所有权、优先级调度和 Inner OS 边界 |
+| [ADR-010](decisions/0010-physical-output-audio-capture.md) | 本地物理输出音频采用设备绑定的 Core Audio Tap 原生采集 | 🔵 `accepted` | 2026-08-31 | 原生 Helper、设备级作用域、双源混音与单 PCM 推理所有者 |
 
 ### 6. 评测基准与实验资产 (`docs/benchmarks/asr/`)
 
@@ -182,7 +185,7 @@ graph TD
 | 目录 | 数量 | 状态 | 说明 |
 |---|---|---|---|
 | [superpowers/plans/](superpowers/plans/) | 11 份执行计划 | 🟠 `draft` / 🟣 `implemented` | 当前研发计划与历史功能迭代任务清单（含任务 Checkbox 跟踪） |
-| [superpowers/specs/](superpowers/specs/) | 11 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准 |
+| [superpowers/specs/](superpowers/specs/) | 12 份设计规格 | 🟠 `under_review` / 🟣 `implemented` | 当前评审规格与历史技术整改设计及验证标准；新增[本地物理输出设备音频采集设计](superpowers/specs/2026-08-31-physical-output-audio-capture-design.md) |
 
 ---
 
