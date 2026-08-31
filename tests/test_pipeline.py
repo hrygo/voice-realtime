@@ -26,7 +26,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_realtime.audio.audio_injector import AudioInjector
-from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
+from voice_realtime.config import InteractionSettings
 from voice_realtime.interaction.pipeline import (
     BotTextRecorder,
     EchoState,
@@ -67,7 +67,7 @@ def mock_services() -> list[MagicMock]:
     with (
         patch("voice_realtime.interaction.pipeline.SpeechRailConversationSTTFactory", mocks[0]),
         patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
-        patch("voice_realtime.interaction.pipeline.LocalBridgeTTSService", mocks[2]),
+        patch("voice_realtime.interaction.pipeline.SpeechRailTTSService", mocks[2]),
     ):
         yield mocks
 
@@ -164,7 +164,7 @@ class TestBuildPipeline:
             compaction_config=settings.context_compaction_config(),
         )
 
-    def test_tts_points_at_bridge(
+    def test_tts_points_at_speechrail_realtime(
         self,
         settings: InteractionSettings,
         mock_transport: MagicMock,
@@ -176,15 +176,14 @@ class TestBuildPipeline:
             build_pipeline(settings, transport=mock_transport)
         tts_mock = mock_services[2]
         tts_mock.assert_called_once()
-        assert tts_mock.call_args.kwargs["base_url"] == "http://127.0.0.1:8765/v1"
-        # 内部哨兵要求桥使用当前权威音色，避免 OpenAI 的 alloy 占位覆盖热切换。
-        from pipecat.services.openai.tts import VALID_VOICES
-
-        from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE
-
-        tts_mock.Settings.assert_called_with(voice=TTS_ENGINE_DEFAULT_VOICE)
-        assert TTS_ENGINE_DEFAULT_VOICE in VALID_VOICES
-        assert tts_mock.call_args.kwargs["sample_rate"] == TTS_OUTPUT_SAMPLE_RATE
+        assert tts_mock.call_args.kwargs["url"] == settings.speechrail_realtime_url
+        tts_mock.Settings.assert_called_with(
+            model=settings.speechrail_tts_model,
+            voice=settings.tts_voice,
+            language=settings.tts_language,
+        )
+        assert tts_mock.call_args.kwargs["fast_first_clause"] is True
+        assert tts_mock.call_args.kwargs["first_clause_min_chars"] == 8
 
     def test_stt_language_is_chinese(
         self,

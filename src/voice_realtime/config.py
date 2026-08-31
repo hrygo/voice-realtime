@@ -58,6 +58,7 @@ TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 # Pipecat 会在请求发出前强制校验 OpenAI 官方音色白名单；用合法的 alloy
 # 作为内部占位，TTS 桥收到后仍解析为当前 engine.voice。
 TTS_ENGINE_DEFAULT_VOICE = "alloy"
+SPEECHRAIL_TTS_MODEL = "speechrail/qwen3-tts"
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
@@ -207,8 +208,23 @@ class InteractionSettings(BaseSettings):
     )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
     speechrail_realtime_url: str = Field(default="ws://127.0.0.1:8201/v2/realtime")
+    speechrail_tts_rest_url: str = Field(
+        default="http://127.0.0.1:8201/v1",
+        description="SpeechRail TTS REST 试听端点；交互播放走 realtime v2",
+    )
+    speechrail_tts_model: str = Field(
+        default=SPEECHRAIL_TTS_MODEL,
+        description="SpeechRail 公共 TTS 逻辑模型 ID",
+    )
+    tts_voice: str = Field(
+        default="default",
+        min_length=1,
+        description="SpeechRail TTS preset；alloy 仅兼容到 2026-10-31",
+    )
+    tts_language: str = Field(default="auto", description="SpeechRail TTS 语言或 auto")
     tts_bridge_url: str = Field(
-        default="http://127.0.0.1:8765/v1", description="TTS 桥 OpenAI 兼容端点"
+        default="http://127.0.0.1:8765/v1",
+        description="旧 TTS bridge 兼容配置；生产交互 pipeline 不使用",
     )
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     input_device_name: str | None = Field(
@@ -310,6 +326,21 @@ class InteractionSettings(BaseSettings):
             raise ValueError(f"不支持的 STT 语言: {v} (可选 {sorted(ALLOWED_STT_LANGUAGES)})")
         return normalized
 
+    @field_validator("tts_language")
+    @classmethod
+    def _validate_tts_language(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized != "auto" and normalized not in ALLOWED_STT_LANGUAGES:
+            raise ValueError(f"不支持的 TTS 语言: {value}")
+        return normalized
+
+    @field_validator("speechrail_tts_model")
+    @classmethod
+    def _validate_speechrail_tts_model(cls, value: str) -> str:
+        if value != SPEECHRAIL_TTS_MODEL:
+            raise ValueError(f"TTS model 必须是 {SPEECHRAIL_TTS_MODEL}")
+        return value
+
     @field_validator("sample_rate")
     @classmethod
     def _validate_sample_rate(cls, v: int) -> int:
@@ -368,7 +399,9 @@ class InteractionSettings(BaseSettings):
             capacity_ratio=self.context_capacity_ratio,
         )
 
-    _validate_local_urls = field_validator("llm_base_url", "tts_bridge_url")(_validate_service_url)
+    _validate_local_urls = field_validator(
+        "llm_base_url", "speechrail_tts_rest_url", "tts_bridge_url"
+    )(_validate_service_url)
 
 
 class UISettings(BaseSettings):

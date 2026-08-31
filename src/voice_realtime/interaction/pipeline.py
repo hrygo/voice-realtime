@@ -69,7 +69,6 @@ from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
 from voice_realtime.audio.devices import resolve_input_device_index
 from voice_realtime.config import (
-    TTS_ENGINE_DEFAULT_VOICE,
     TTS_OUTPUT_SAMPLE_RATE,
     InteractionSettings,
 )
@@ -78,7 +77,7 @@ from voice_realtime.interaction.reasoning import (
     DEFAULT_SYSTEM_PROMPT,
     LmStudioNativeLLMService,
 )
-from voice_realtime.interaction.tts import LocalBridgeTTSService
+from voice_realtime.interaction.tts import SpeechRailTTSService
 
 logger = logging.getLogger(__name__)
 
@@ -672,13 +671,15 @@ def build_pipeline(
         compaction_config=settings.context_compaction_config(),
     )
 
-    tts = LocalBridgeTTSService(
-        api_key="local",
-        base_url=settings.tts_bridge_url,
-        sample_rate=TTS_OUTPUT_SAMPLE_RATE,
+    tts = SpeechRailTTSService(
+        url=settings.speechrail_realtime_url,
         fast_first_clause=settings.tts_fast_first_clause,
         first_clause_min_chars=settings.tts_first_clause_min_chars,
-        settings=LocalBridgeTTSService.Settings(voice=TTS_ENGINE_DEFAULT_VOICE),
+        settings=SpeechRailTTSService.Settings(
+            model=settings.speechrail_tts_model,
+            voice=settings.tts_voice,
+            language=settings.tts_language,
+        ),
     )
 
     context = context or LLMContext(

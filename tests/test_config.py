@@ -174,13 +174,20 @@ def test_server_settings_resolve_lan_host(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_removed_configuration_knobs_are_not_model_fields() -> None:
-    assert "tts_voice" not in InteractionSettings.model_fields
     assert "interrupt_echo_suppression_ms" not in InteractionSettings.model_fields
     assert "device" not in SubtitleSettings.model_fields
     assert "stt_backend" not in InteractionSettings.model_fields
     assert "stt_model" not in InteractionSettings.model_fields
     assert "backend" not in SubtitleSettings.model_fields
     assert "model_dir" not in SubtitleSettings.model_fields
+
+
+def test_speechrail_tts_configuration_is_explicit_and_uses_public_model() -> None:
+    settings = InteractionSettings(tts_voice="warm", tts_language="ZH")
+
+    assert settings.speechrail_tts_model == "speechrail/qwen3-tts"
+    assert settings.tts_voice == "warm"
+    assert settings.tts_language == "zh"
 
 
 def test_tts_downloads_are_disabled_by_default() -> None:
