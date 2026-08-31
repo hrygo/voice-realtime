@@ -404,6 +404,34 @@ class UISettings(BaseSettings):
     _validate_host = field_validator("host")(_validate_listen_host)
 
 
+class AudioCaptureSettings(BaseSettings):
+    """原生物理输出采集 Helper 的本机进程与 IPC 限额。"""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VR_AUDIO_CAPTURE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = False
+    helper_executable: Path | None = None
+    runtime_dir: Path = Path("runtime/audio-capture")
+    startup_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    command_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
+    queue_size: int = Field(default=8, ge=1, le=128)
+    restart_attempts: int = Field(default=3, ge=0, le=10)
+    restart_backoff_secs: float = Field(default=0.25, ge=0.001, le=10.0)
+    max_restart_backoff_secs: float = Field(default=2.0, ge=0.001, le=30.0)
+
+    @model_validator(mode="after")
+    def _validate_restart_backoff(self) -> AudioCaptureSettings:
+        if self.max_restart_backoff_secs < self.restart_backoff_secs:
+            raise ValueError(
+                "max_restart_backoff_secs must be greater than or equal to restart_backoff_secs"
+            )
+        return self
+
+
 class SubtitleSettings(BaseSettings):
     """WhisperLiveKit 字幕服务配置。"""
 
@@ -672,6 +700,7 @@ class Settings(BaseSettings):
     bridge: BridgeSettings = Field(default_factory=BridgeSettings)
     lm_studio: LMStudioSettings = Field(default_factory=LMStudioSettings)
     interaction: InteractionSettings = Field(default_factory=InteractionSettings)
+    audio_capture: AudioCaptureSettings = Field(default_factory=AudioCaptureSettings)
     subtitles: SubtitleSettings = Field(default_factory=SubtitleSettings)
     meeting: MeetingSettings = Field(default_factory=MeetingSettings)
     ui: UISettings = Field(default_factory=UISettings)
@@ -705,6 +734,7 @@ class Settings(BaseSettings):
             self.bridge,
             self.lm_studio,
             self.interaction,
+            self.audio_capture,
             self.subtitles,
             self.meeting,
             self.ui,

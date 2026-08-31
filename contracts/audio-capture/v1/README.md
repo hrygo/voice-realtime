@@ -23,7 +23,7 @@
 
 JSON frame 的 `header_length=16`，body 上限 65,536 bytes，顶层必须是 object，并符合 [`control-message.schema.json`](control-message.schema.json)。`request_id` 用于请求/响应关联，最大 64 字符。错误只暴露稳定 `code`、安全 `message` 和 `retryable`，不得包含 token、设备 UID、路径、堆栈或 PCM。
 
-握手顺序为 `hello → hello_ack`。握手成功后允许 `list_devices`、`prepare_capture`、`commit_capture`、`abort_capture`、`stop_capture`。Helper 可异步发送 `event` 和 `health`。
+握手顺序为 `hello → hello_ack`。握手成功后允许 `list_devices`、`prepare_capture`、`commit_capture`、`abort_capture`、`stop_capture`；后三者成功时返回统一 `ack`。Helper 可异步发送 `event` 和 `health`。
 
 ## PCM 帧
 

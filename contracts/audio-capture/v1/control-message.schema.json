@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/devices" },
     { "$ref": "#/$defs/prepareCapture" },
     { "$ref": "#/$defs/captureCommand" },
+    { "$ref": "#/$defs/ack" },
     { "$ref": "#/$defs/ready" },
     { "$ref": "#/$defs/event" },
     { "$ref": "#/$defs/health" },
@@ -109,6 +110,17 @@
       "properties": {
         "type": { "enum": ["commit_capture", "abort_capture", "stop_capture"] },
         "request_id": { "$ref": "#/$defs/requestId" },
+        "capture_id": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "ack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "command", "capture_id"],
+      "properties": {
+        "type": { "const": "ack" },
+        "request_id": { "$ref": "#/$defs/requestId" },
+        "command": { "enum": ["commit_capture", "abort_capture", "stop_capture"] },
         "capture_id": { "$ref": "#/$defs/uuid" }
       }
     },
