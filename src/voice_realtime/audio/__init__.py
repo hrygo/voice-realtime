@@ -19,6 +19,12 @@ from voice_realtime.audio.profile import (
     CaptureProfile,
     CaptureSourceSpec,
 )
+from voice_realtime.audio.source import (
+    AudioSource,
+    AudioSourceHealth,
+    AudioSourceState,
+    MicrophoneSource,
+)
 
 __all__ = [
     "AudioFrame",
@@ -34,4 +40,8 @@ __all__ = [
     "AudioInjector",
     "AudioSourceKind",
     "AudioSourceRole",
+    "AudioSource",
+    "AudioSourceHealth",
+    "AudioSourceState",
+    "MicrophoneSource",
 ]
