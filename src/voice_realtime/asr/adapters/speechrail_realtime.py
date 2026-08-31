@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -120,6 +121,11 @@ class SpeechRailStreamingTranscriber:
         self._language = language
         self._ready = False
         self._last_window = TranscriptWindow(source_epoch=context.source_epoch)
+        self._final_ready = asyncio.Event()
+        self._finish_lock = asyncio.Lock()
+        self._commit_sent = False
+        self._events_active = False
+        self._terminal_error: tuple[str, str] | None = None
 
     @property
     def uri(self) -> str:
@@ -133,33 +139,72 @@ class SpeechRailStreamingTranscriber:
         await self._client.append_pcm(chunk)
 
     async def events(self) -> AsyncIterator[ASREvent]:
+        if self._events_active:
+            raise RuntimeError("SPEECHRAIL_EVENTS_ALREADY_CONSUMED")
+        self._events_active = True
         if self._ready:
             self._ready = False
             yield ASREvent(kind="ready")
-        while True:
-            event = await self._client.receive()
-            if event.get("type") == "transcription.delta":
-                text = event.get("text")
-                if not isinstance(text, str):
-                    raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
-                self._last_window = TranscriptWindow(
-                    source_epoch=self._context.source_epoch, partial=text
-                )
-                yield ASREvent(kind="snapshot", window=self._last_window)
-            elif event.get("type") == "transcription.completed":
-                segments = _segments(event.get("segments"), self._context)
-                self._last_window = TranscriptWindow(
-                    source_epoch=self._context.source_epoch, segments=segments
-                )
-                yield ASREvent(kind="final", window=self._last_window)
-                return
+        try:
+            while True:
+                event = await self._client.receive()
+                if event.get("type") == "transcription.delta":
+                    text = event.get("text")
+                    if not isinstance(text, str):
+                        yield self._set_terminal_error(
+                            "SPEECHRAIL_PROTOCOL_ERROR",
+                            "SpeechRail returned a transcription delta without text",
+                        )
+                        return
+                    self._last_window = TranscriptWindow(
+                        source_epoch=self._context.source_epoch, partial=text
+                    )
+                    yield ASREvent(kind="snapshot", window=self._last_window)
+                elif event.get("type") == "transcription.completed":
+                    try:
+                        segments = _segments(event.get("segments"), self._context)
+                    except RuntimeError:
+                        yield self._set_terminal_error(
+                            "SPEECHRAIL_PROTOCOL_ERROR",
+                            "SpeechRail returned invalid completed segments",
+                        )
+                        return
+                    self._last_window = TranscriptWindow(
+                        source_epoch=self._context.source_epoch, segments=segments
+                    )
+                    self._final_ready.set()
+                    yield ASREvent(kind="final", window=self._last_window)
+                    return
+                elif event.get("type") == "error":
+                    yield self._set_terminal_error(
+                        "SPEECHRAIL_REQUEST_FAILED",
+                        "SpeechRail rejected the transcription request",
+                    )
+                    return
+        finally:
+            self._events_active = False
 
     async def finish(self) -> TranscriptWindow:
-        await self._client.commit()
+        async with self._finish_lock:
+            if not self._commit_sent:
+                await self._client.commit()
+                self._commit_sent = True
+        await self._final_ready.wait()
+        if self._terminal_error is not None:
+            code, message = self._terminal_error
+            raise RuntimeError(f"{code}: {message}")
         return self._last_window
 
     async def close(self) -> None:
+        if self._terminal_error is None and not self._final_ready.is_set():
+            self._terminal_error = ("SPEECHRAIL_CLOSED", "SpeechRail connection closed")
+            self._final_ready.set()
         await self._client.close()
+
+    def _set_terminal_error(self, code: str, message: str) -> ASREvent:
+        self._terminal_error = (code, message)
+        self._final_ready.set()
+        return ASREvent(kind="error", error_code=code, error_message=message)
 
 
 def _segments(value: object, context: ASRSessionContext) -> tuple[NormalizedSegment, ...]:
