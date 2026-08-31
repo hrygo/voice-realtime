@@ -4,6 +4,7 @@ import Foundation
 let tests = wireProtocolTests()
     + ringBufferTests()
     + deviceReferenceTests()
+    + deviceCatalogTests()
 var failures = 0
 
 for test in tests {
