@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import shutil
@@ -31,6 +32,13 @@ TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 CaptureListener = Callable[[TranscriptWindow], Awaitable[None]]
 GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
 AudioListener = Callable[[bytes], None]
+
+
+def _diarization_group_id(owner: str | None) -> str:
+    """Keep the application meeting identifier out of the public audio protocol."""
+    if not owner:
+        raise RuntimeError("meeting diarization requires a capture owner")
+    return hashlib.sha256(owner.encode("utf-8")).hexdigest()
 
 
 class FinalizationTimeoutError(TimeoutError):
@@ -494,6 +502,7 @@ class SubtitleProxy:
                     offset_ms=self._capture_offset_ms,
                     purpose="meeting",
                     speaker_count_hint=self._capture_speaker_count_hint,
+                    diarization_group_id=_diarization_group_id(owner),
                 ),
             )
             self._capture_stream = stream
@@ -770,6 +779,7 @@ class SubtitleProxy:
                         offset_ms=self._capture_offset_ms,
                         purpose="meeting",
                         speaker_count_hint=self._capture_speaker_count_hint,
+                        diarization_group_id=_diarization_group_id(self._capture_owner),
                     )
                 )
                 await stream.connect()

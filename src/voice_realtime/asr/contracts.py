@@ -21,6 +21,7 @@ class ASRSessionContext:
     offset_ms: int
     purpose: ASRPurpose
     speaker_count_hint: int | None = None
+    diarization_group_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.source_epoch < 0:
@@ -31,6 +32,8 @@ class ASRSessionContext:
             raise ValueError("speaker_count_hint 必须在 1 到 8 之间")
         if self.purpose != "meeting" and self.speaker_count_hint is not None:
             raise ValueError("speaker_count_hint 仅适用于会议会话")
+        if self.diarization_group_id is not None and self.purpose != "meeting":
+            raise ValueError("diarization_group_id 仅适用于会议会话")
 
 
 @dataclass(frozen=True)

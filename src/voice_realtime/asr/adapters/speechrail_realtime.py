@@ -51,7 +51,12 @@ class SpeechRailRealtimeClient:
         return self._connection.uri if self._connection is not None else self._url
 
     async def connect(
-        self, *, language: str, diarization: bool = False, speaker_count_hint: int | None = None
+        self,
+        *,
+        language: str,
+        diarization: bool = False,
+        speaker_count_hint: int | None = None,
+        diarization_group_id: str | None = None,
     ) -> None:
         if self._connection is not None:
             raise RuntimeError("SPEECHRAIL_ALREADY_CONNECTED")
@@ -75,6 +80,8 @@ class SpeechRailRealtimeClient:
                 diarization_config: dict[str, object] = {"enabled": True, "finalize": True}
                 if speaker_count_hint is not None:
                     diarization_config["speaker_count_hint"] = speaker_count_hint
+                if diarization_group_id is not None:
+                    diarization_config["group_id"] = diarization_group_id
                 session["diarization"] = diarization_config
             await self._send({"type": "session.update", "session": session})
             await self.receive()
@@ -190,6 +197,7 @@ class SpeechRailStreamingTranscriber:
             language=self._language,
             diarization=self._diarization_requested,
             speaker_count_hint=self._context.speaker_count_hint,
+            diarization_group_id=self._context.diarization_group_id,
         )
         self._ready = True
 

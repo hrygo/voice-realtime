@@ -129,7 +129,11 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
                 connection_factory=lambda _: _immediate(connection),
             ),
             context=ASRSessionContext(
-                source_epoch=2, offset_ms=1_000, purpose="meeting", speaker_count_hint=2
+                source_epoch=2,
+                offset_ms=1_000,
+                purpose="meeting",
+                speaker_count_hint=2,
+                diarization_group_id="a" * 64,
             ),
             language="Chinese",
         )
@@ -146,6 +150,7 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
             "enabled": True,
             "finalize": True,
             "speaker_count_hint": 2,
+            "group_id": "a" * 64,
         }
         assert final.window is not None
         assert final.window.segments[0].speaker_key == "epoch:2:speaker:spk_02"
