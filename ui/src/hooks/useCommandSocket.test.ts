@@ -55,6 +55,25 @@ describe("runtime state protocol", () => {
       expect(isRuntimeState(invalid)).toBe(false);
     },
   );
+
+  it("validates optional server audio levels", () => {
+    const audioLevels = {
+      microphone: 0.25,
+      physical_output: 0.5,
+      mixed: 0.625,
+      updated_at_ns: 10,
+    };
+
+    expect(isRuntimeState(snapshot({ audio_levels: audioLevels }))).toBe(true);
+    expect(isRuntimeState({
+      ...SNAPSHOT,
+      audio_levels: { ...audioLevels, mixed: 1.01 },
+    })).toBe(false);
+    expect(isRuntimeState({
+      ...SNAPSHOT,
+      audio_levels: { ...audioLevels, updated_at_ns: -1 },
+    })).toBe(false);
+  });
 });
 
 describe("CommandChannel", () => {
@@ -256,6 +275,39 @@ describe("CommandChannel", () => {
       persona: "最新 persona",
       mic_muted: true,
     });
+  });
+
+  it("applies same-revision audio level updates without changing ownership", () => {
+    const applyState = vi.fn();
+    const channel = new CommandChannel({ applyState });
+    channel.receive(runtimeEvent(snapshot({
+      mode: "meeting",
+      pcm_owner: "meeting",
+      runtime_revision: 9,
+      audio_levels: {
+        microphone: 0.1,
+        physical_output: 0,
+        mixed: 0.1,
+        updated_at_ns: 10,
+      },
+    })));
+
+    channel.receive(runtimeEvent(snapshot({
+      mode: "meeting",
+      pcm_owner: "meeting",
+      runtime_revision: 9,
+      audio_levels: {
+        microphone: 0.8,
+        physical_output: 0,
+        mixed: 0.8,
+        updated_at_ns: 20,
+      },
+    })));
+
+    expect(applyState).toHaveBeenLastCalledWith(expect.objectContaining({
+      runtime_revision: 9,
+      audio_levels: expect.objectContaining({ mixed: 0.8 }),
+    }));
   });
 
   it("adds contract_version to start_subtitles", async () => {
