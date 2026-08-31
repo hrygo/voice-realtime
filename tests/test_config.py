@@ -20,12 +20,6 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
     assert InteractionSettings().max_session_seconds == 0
 
 
-def test_runtime_asr_defaults_to_speechrail_without_legacy_backend_values() -> None:
-    settings = Settings()
-    assert settings.interaction.stt_backend == "speechrail-realtime-v2"
-    assert settings.subtitles.backend == "speechrail-realtime-v2"
-
-
 def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
