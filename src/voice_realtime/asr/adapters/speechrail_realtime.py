@@ -187,6 +187,7 @@ class SpeechRailStreamingTranscriber:
         self._events_active = False
         self._terminal_error: tuple[str, str] | None = None
         self._diarization_requested = context.purpose == "meeting"
+        self._observed_speaker_labels: set[str] = set()
 
     @property
     def uri(self) -> str:
@@ -242,6 +243,10 @@ class SpeechRailStreamingTranscriber:
                     self._last_window = TranscriptWindow(
                         source_epoch=self._context.source_epoch, segments=segments
                     )
+                    if self._diarization_requested:
+                        self._observed_speaker_labels.update(
+                            _speaker_label(segment.speaker_key) for segment in segments
+                        )
                     if not self._diarization_requested:
                         self._final_ready.set()
                         yield ASREvent(kind="final", window=self._last_window)
@@ -254,7 +259,11 @@ class SpeechRailStreamingTranscriber:
                         )
                         return
                     try:
-                        mapping = _speaker_remap(event.get("mapping"), self._context)
+                        mapping = _speaker_remap(
+                            event.get("mapping"),
+                            self._context,
+                            observed_speakers=self._observed_speaker_labels,
+                        )
                     except RuntimeError:
                         yield self._set_terminal_error(
                             "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
@@ -356,10 +365,15 @@ def _segments(
     return tuple(result)
 
 
-def _speaker_remap(value: object, context: ASRSessionContext) -> tuple[tuple[str, str], ...]:
+def _speaker_remap(
+    value: object,
+    context: ASRSessionContext,
+    *,
+    observed_speakers: set[str],
+) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, dict):
         raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
-    result: list[tuple[str, str]] = []
+    mapping: dict[str, str] = {}
     for source, target in value.items():
         if (
             not isinstance(source, str)
@@ -369,6 +383,23 @@ def _speaker_remap(value: object, context: ASRSessionContext) -> tuple[tuple[str
             or source == target
         ):
             raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
-        prefix = f"epoch:{context.source_epoch}:speaker:"
-        result.append((f"{prefix}{source}", f"{prefix}{target}"))
-    return tuple(result)
+        mapping[source] = target
+    if not mapping and context.diarization_group_id is None:
+        return ()
+    if not set(mapping).issubset(observed_speakers):
+        raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
+    source_prefix = f"epoch:{context.source_epoch}:speaker:"
+    if context.diarization_group_id is None:
+        return tuple(
+            (f"{source_prefix}{source}", f"{source_prefix}{target}")
+            for source, target in mapping.items()
+        )
+    target_prefix = f"group:{context.diarization_group_id}:speaker:"
+    return tuple(
+        (f"{source_prefix}{source}", f"{target_prefix}{mapping.get(source, source)}")
+        for source in sorted(observed_speakers)
+    )
+
+
+def _speaker_label(speaker_key: str) -> str:
+    return speaker_key.rsplit(":", maxsplit=1)[-1]

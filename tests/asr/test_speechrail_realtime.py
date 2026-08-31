@@ -123,6 +123,7 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
                 "speakers": [{"id": "spk_02", "confidence": 0.93}],
             }
         ]
+        connection._messages[3]["mapping"] = {"spk_02": "spk_01"}
         adapter = SpeechRailStreamingTranscriber(
             client=SpeechRailRealtimeClient(
                 url=connection.uri,
@@ -154,6 +155,9 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
         }
         assert final.window is not None
         assert final.window.segments[0].speaker_key == "epoch:2:speaker:spk_02"
+        assert final.window.speaker_remap == (
+            ("epoch:2:speaker:spk_02", f"group:{'a' * 64}:speaker:spk_01"),
+        )
 
     asyncio.run(scenario())
 

@@ -137,7 +137,7 @@ cd ui && npm install && npm run build && cd ..
 Git 工作树只保存代码、配置和运行产物：
 
 ```bash
-# 下载 Qwen3-TTS 与会议声纹模型；ASR 模型由 SpeechRail 管理
+# 下载 Qwen3-TTS；ASR 与说话人分离模型均由 SpeechRail 管理
 bash scripts/download-models.sh
 
 # 下载 NLTK punkt_tab 分词数据 (TTS 断句必需)
@@ -145,6 +145,7 @@ bash scripts/install-nltk-data.sh
 ```
 
 > ⚠️ **SpeechRail 前置条件**：先启动本机 SpeechRail，并确认 `http://127.0.0.1:8201/health` 可用。
+> 多人会议还需要在 SpeechRail 配置 Sortformer profile；缺失时会议会明确失败，不会静默降级为单说话人。
 
 ### 步骤 3：初始化 PostgreSQL 数据库 (会议助手必需)
 
@@ -215,7 +216,7 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 ### 2. 🎙️ 会议助手面板 (`Cmd + 2`)
 - **开始会议录制**：点击「开始会议」，系统自动挂起语音交互链路，独占麦克风进行转录。
-- **实时说话人分离**：Sortformer 自动识别说话人变更（`Speaker 1`、`Speaker 2` 等），可随时点击发言人头像进行自定义重命名。
+- **实时说话人分离**：SpeechRail 的 Sortformer profile 自动输出匿名 speaker label；会议在 commit 后原子应用短 TTL group remap，随后可随时点击发言人头像进行自定义重命名。
 - **结束会议与冲刷**：点击「结束会议」，系统执行 EOF 优雅冲刷确保最后一句话不遗漏，并写入 PostgreSQL。
 - **异步 AI 会议纪要**：会议结束后后台自动调度 LLM 生成结构化会议纪要（包含议题、结论、待办事项），并在前端实时渲染 Markdown。
 - **历史记录与导出**：侧边栏快速翻阅历史会议，支持一键导出 Markdown 纪要与 SRT 字幕，或删除历史记录。
