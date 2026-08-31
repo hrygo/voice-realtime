@@ -110,6 +110,7 @@ class TranscriptWindow(_FrozenModel):
     partial_speaker_key: str | None = Field(default=None, min_length=1, max_length=200)
     partial_speaker_name: str | None = Field(default=None, min_length=1, max_length=200)
     segments: tuple[NormalizedSegment, ...] = ()
+    speaker_remap: tuple[tuple[str, str], ...] = ()
 
     @field_validator("partial")
     @classmethod
@@ -122,6 +123,17 @@ class TranscriptWindow(_FrozenModel):
         if value is None:
             return None
         return value.strip() or None
+
+    @field_validator("speaker_remap")
+    @classmethod
+    def _validate_speaker_remap(
+        cls, value: tuple[tuple[str, str], ...]
+    ) -> tuple[tuple[str, str], ...]:
+        if any(not source or not target or source == target for source, target in value):
+            raise ValueError("speaker_remap 必须包含不同的非空 speaker key")
+        if len({source for source, _ in value}) != len(value):
+            raise ValueError("speaker_remap source 必须唯一")
+        return value
 
     @model_validator(mode="after")
     def _validate_partial_speaker(self) -> Self:
