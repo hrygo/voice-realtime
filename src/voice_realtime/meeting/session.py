@@ -18,7 +18,6 @@ from voice_realtime.meeting.models import (
     StorageHealth,
     TranscriptWindow,
 )
-from voice_realtime.meeting.voiceprint import MeetingVoiceprintManager
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
@@ -59,7 +58,6 @@ class MeetingSession:
         recovery_journal: Any | None = None,
         event_publisher: EventPublisher | None = None,
         diarization_smoother: DiarizationSmoother | None = None,
-        voiceprint_manager: MeetingVoiceprintManager | None = None,
     ) -> None:
         if gateway is None:
             gateway = subtitle_proxy
@@ -76,8 +74,6 @@ class MeetingSession:
         self.recovery_journal = recovery_journal
         self.event_publisher = event_publisher
         self.diarization_smoother = diarization_smoother
-        self.voiceprint_manager = voiceprint_manager
-        self._meeting_max_speakers: int = 4
         self._lock = asyncio.Lock()
         self._active_meeting_id: UUID | None = None
         self._record: MeetingRecord | None = None
@@ -147,12 +143,6 @@ class MeetingSession:
                 add_gap_listener = getattr(self.gateway, "add_gap_listener", None)
                 if add_gap_listener is not None:
                     add_gap_listener(self._on_gap)
-                self._meeting_max_speakers = max_speakers or 4
-                if self.voiceprint_manager is not None:
-                    self.voiceprint_manager.clear()
-                    add_audio_listener = getattr(self.gateway, "add_audio_listener", None)
-                    if add_audio_listener is not None:
-                        add_audio_listener(self.voiceprint_manager.append_audio)
                 capture = await self.gateway.prepare_capture(
                     f"meeting:{record.id}",
                     timeout_secs=5.0,
@@ -265,34 +255,15 @@ class MeetingSession:
                     timeout_window = getattr(exc, "last_window", None)
                 if timeout_window is not None:
                     await self._persist_window(meeting_id, timeout_window)
-                    if self.voiceprint_manager is not None and timeout_window.segments:
-                        with contextlib.suppress(Exception):
-                            self.voiceprint_manager.process_segments(timeout_window.segments)
                 if await self._replay_pending_journal(meeting_id):
                     self._storage_degraded = False
 
-                # 会后全局 AHC 声纹聚类二次修正
-                if self.voiceprint_manager is not None:
-                    try:
-                        remapping = self.voiceprint_manager.compute_global_remapping(
-                            max_speakers=self._meeting_max_speakers
-                        )
-                        if remapping:
-                            logger.info(
-                                "MeetingSession: 应用会后 AHC 声纹聚类重映射 (meeting_id=%s): %s",
-                                meeting_id,
-                                remapping,
-                            )
-                            apply_remap = getattr(self.repository, "apply_speaker_remapping", None)
-                            if apply_remap is not None:
-                                record = await apply_remap(meeting_id, remapping)
-                                self._record = record
-                    except Exception as exc:
-                        logger.warning(
-                            "MeetingSession: AHC 声纹聚类二次修正失败 (meeting_id=%s): %s",
-                            meeting_id,
-                            exc,
-                        )
+                if timeout_window is not None and timeout_window.speaker_remap:
+                    apply_remap = getattr(self.repository, "apply_speaker_remapping", None)
+                    if apply_remap is None:
+                        raise RuntimeError("meeting repository does not support speaker remapping")
+                    record = await apply_remap(meeting_id, dict(timeout_window.speaker_remap))
+                    self._record = record
 
                 record = await self.repository.finalize_transcript(
                     meeting_id,
@@ -522,9 +493,6 @@ class MeetingSession:
             )
         if not window.segments:
             return
-        if self.voiceprint_manager is not None:
-            with contextlib.suppress(Exception):
-                self.voiceprint_manager.process_segments(window.segments)
         result = await self._persist_window(meeting_id, window)
         if result is None:
             return
@@ -670,12 +638,6 @@ class MeetingSession:
         if remove_gap_listener is not None:
             with contextlib.suppress(Exception):
                 remove_gap_listener(self._on_gap)
-        if self.voiceprint_manager is not None:
-            remove_audio_listener = getattr(self.gateway, "remove_audio_listener", None)
-            if remove_audio_listener is not None:
-                with contextlib.suppress(Exception):
-                    remove_audio_listener(self.voiceprint_manager.append_audio)
-            self.voiceprint_manager.clear()
 
     async def _resume_summary_worker(self) -> None:
         resume = getattr(self.summary_service, "resume_after_recording", None)

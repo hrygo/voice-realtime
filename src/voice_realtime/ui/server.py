@@ -52,12 +52,6 @@ from voice_realtime.meeting.recovery import RecoveryJournal
 from voice_realtime.meeting.repository import PostgresMeetingRepository
 from voice_realtime.meeting.session import MeetingSession
 from voice_realtime.meeting.summary import MeetingSummaryClient, MeetingSummaryService
-from voice_realtime.meeting.voiceprint import (
-    AHCClusterer,
-    CAMPlusExtractor,
-    CentroidPool,
-    MeetingVoiceprintManager,
-)
 from voice_realtime.network import local_async_client
 from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import ErrorCode, RuntimeStateEvent, RuntimeStateSnapshot
@@ -419,24 +413,6 @@ async def _initialize_meeting_backend(
             min_duration_ms=cfg.meeting.diarization_min_duration_ms,
             hangover_gap_ms=cfg.meeting.diarization_hangover_gap_ms,
         )
-        voiceprint_manager = None
-        if cfg.meeting.voiceprint_clustering_enabled:
-            with contextlib.suppress(Exception):
-                extractor = None
-                if cfg.meeting.voiceprint_model_path.exists():
-                    extractor = CAMPlusExtractor(cfg.meeting.voiceprint_model_path)
-                centroid_pool = CentroidPool(
-                    merge_threshold=cfg.meeting.voiceprint_merge_threshold
-                )
-                clusterer = AHCClusterer(
-                    distance_threshold=cfg.meeting.voiceprint_ahc_threshold
-                )
-                voiceprint_manager = MeetingVoiceprintManager(
-                    extractor=extractor,
-                    centroid_pool=centroid_pool,
-                    clusterer=clusterer,
-                    enabled=True,
-                )
         meeting_session = MeetingSession(
             repository,
             runtime.subtitle_proxy,
@@ -445,7 +421,6 @@ async def _initialize_meeting_backend(
             recovery_journal=journal,
             event_publisher=publish_meeting_event,
             diarization_smoother=smoother,
-            voiceprint_manager=voiceprint_manager,
         )
         runtime.configure_meeting(meeting_session)
         app.state.meeting_repository = repository

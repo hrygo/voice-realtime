@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
@@ -22,7 +22,6 @@ from voice_realtime.meeting.session import (
     MeetingSession,
     MeetingStorageUnavailableError,
 )
-from voice_realtime.meeting.voiceprint import MeetingVoiceprintManager
 
 
 class FakeRepository:
@@ -297,26 +296,21 @@ async def test_stop_flushes_transcript_and_returns_completed(
     assert "minutes" in repository.calls
 
 
-async def test_stop_invokes_voiceprint_clustering_and_applies_remapping(
+async def test_stop_applies_speechrail_final_speaker_remapping(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    voiceprint_manager = MagicMock(spec=MeetingVoiceprintManager)
-    voiceprint_manager.compute_global_remapping.return_value = {"epoch1:s1": "epoch0:s0"}
+    gateway.finish_capture.return_value = TranscriptWindow(
+        source_epoch=1, speaker_remap=(("epoch:1:speaker:spk_02", "epoch:1:speaker:spk_01"),)
+    )
     repository.apply_speaker_remapping = AsyncMock(return_value=MeetingRecord(title="聚类后"))
 
-    session = MeetingSession(
-        repository,
-        gateway,
-        voiceprint_manager=voiceprint_manager,
-    )
+    session = MeetingSession(repository, gateway)
     await _start_session(session)
     result = await session.stop()
 
-    voiceprint_manager.compute_global_remapping.assert_called_once_with(max_speakers=4)
     repository.apply_speaker_remapping.assert_awaited_once_with(
-        result.id, {"epoch1:s1": "epoch0:s0"}
+        result.id, {"epoch:1:speaker:spk_02": "epoch:1:speaker:spk_01"}
     )
-    voiceprint_manager.clear.assert_called()
 
 
 

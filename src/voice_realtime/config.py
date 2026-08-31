@@ -16,7 +16,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from voice_realtime.asr.profiles import SpeechRailRealtimeProfile
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
 from voice_realtime.lm_studio import DEFAULT_LM_STUDIO_API_KEY
-from voice_realtime.model_cache import huggingface_snapshot_path
 
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
@@ -525,32 +524,6 @@ class MeetingSettings(BaseSettings):
         ge=100,
         le=5000,
         description="同一说话人相邻段落合并最大时间间隙（毫秒）",
-    )
-    voiceprint_clustering_enabled: bool = Field(
-        default=True,
-        description="是否在会议模式启用 CAM++ 声纹质心跟踪与全局 AHC 聚类",
-    )
-    voiceprint_model_path: Path = Field(
-        default_factory=lambda: (
-            huggingface_snapshot_path(
-                "csukuangfj/speaker-embedding-models",
-                revision="0743f301363dec56491a490f6d6cbc9d67f9a3bf",
-            )
-            / "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
-        ),
-        description="本地 CAM++ 声纹 ONNX 模型路径",
-    )
-    voiceprint_ahc_threshold: float = Field(
-        default=0.35,
-        ge=0.1,
-        le=0.9,
-        description="AHC 聚类余弦距离截断阈值",
-    )
-    voiceprint_merge_threshold: float = Field(
-        default=0.75,
-        ge=0.5,
-        le=0.99,
-        description="实时质心池自动合并说话人余弦相似度阈值",
     )
     allowed_origins: list[str] = Field(
         default_factory=lambda: [
