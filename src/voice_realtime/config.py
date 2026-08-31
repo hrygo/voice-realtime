@@ -220,6 +220,8 @@ class InteractionSettings(BaseSettings):
         description="已加载模型上下文容量的紧急保护比例",
     )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
+    stt_backend: Literal["sensevoice", "speechrail-realtime-v2"] = "sensevoice"
+    speechrail_realtime_url: str = Field(default="ws://127.0.0.1:8201/v2/realtime")
     stt_model: str = Field(
         default="",
         description=(
