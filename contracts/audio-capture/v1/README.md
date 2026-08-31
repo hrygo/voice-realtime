@@ -25,6 +25,8 @@ JSON frame 的 `header_length=16`，body 上限 65,536 bytes，顶层必须是 o
 
 握手顺序为 `hello → hello_ack`。握手成功后允许 `list_devices`、`prepare_capture`、`commit_capture`、`abort_capture`、`stop_capture`；后三者成功时返回统一 `ack`。Helper 可异步发送 `event` 和 `health`。
 
+设备仅以 `vrdev1_` 加 43 位 base64url 字符的本机 opaque `device_ref` 暴露。该值由 0600 install key 对原始 Core Audio UID 执行 HMAC-SHA256 后派生；UID 不进入协议。`transport` 固定为 `built_in`、`bluetooth`、`usb`、`hdmi`、`display`、`airplay`、`virtual` 或 `other`。
+
 ## PCM 帧
 
 PCM frame 的固定 header 为 84 字节。在公共前缀后依次为：

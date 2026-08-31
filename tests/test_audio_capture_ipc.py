@@ -67,6 +67,48 @@ def test_control_fixture_matches_schema_and_round_trips_fragmented() -> None:
     assert decoded == [ControlMessage(payload=payload)]
 
 
+def test_device_catalog_shape_matches_v1_control_schema() -> None:
+    schema = json.loads((CONTRACT_DIR / "control-message.schema.json").read_text())
+    validator = Draft202012Validator(schema, format_checker=FormatChecker())
+    reference = "vrdev1_" + ("A" * 43)
+
+    for transport in (
+        "built_in",
+        "bluetooth",
+        "usb",
+        "hdmi",
+        "display",
+        "airplay",
+        "virtual",
+        "other",
+    ):
+        validator.validate(
+            {
+                "type": "devices",
+                "request_id": "catalog-contract",
+                "devices": [
+                    {
+                        "device_ref": reference,
+                        "label": "Synthetic Output",
+                        "transport": transport,
+                        "is_default": True,
+                    }
+                ],
+            }
+        )
+
+    validator.validate(
+        {
+            "type": "prepare_capture",
+            "request_id": "prepare-contract",
+            "capture_id": str(CAPTURE_ID),
+            "follow_default_output": False,
+            "device_ref": reference,
+            "exclude_pids": [],
+        }
+    )
+
+
 def test_pcm_header_fixture_round_trips_with_synthetic_silence() -> None:
     expected_header = bytes.fromhex(
         (CONTRACT_DIR / "fixtures" / "pcm-header.hex").read_text().strip()

@@ -63,9 +63,9 @@
       "additionalProperties": false,
       "required": ["device_ref", "label", "transport", "is_default"],
       "properties": {
-        "device_ref": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "device_ref": { "type": "string", "pattern": "^vrdev1_[A-Za-z0-9_-]{43}$" },
         "label": { "type": "string", "minLength": 1, "maxLength": 128 },
-        "transport": { "enum": ["builtin", "wired", "usb", "bluetooth", "hdmi", "airplay", "other"] },
+        "transport": { "enum": ["built_in", "bluetooth", "usb", "hdmi", "display", "airplay", "virtual", "other"] },
         "is_default": { "type": "boolean" }
       }
     },
@@ -88,7 +88,7 @@
         "request_id": { "$ref": "#/$defs/requestId" },
         "capture_id": { "$ref": "#/$defs/uuid" },
         "follow_default_output": { "type": "boolean" },
-        "device_ref": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "device_ref": { "type": ["string", "null"], "pattern": "^vrdev1_[A-Za-z0-9_-]{43}$" },
         "exclude_pids": {
           "type": "array",
           "maxItems": 32,
