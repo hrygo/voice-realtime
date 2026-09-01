@@ -22,7 +22,8 @@ from starlette.websockets import WebSocketDisconnect
 
 from voice_realtime.config import InteractionSettings, Settings, SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
-from voice_realtime.ui import server as server_module
+from voice_realtime.ui import http_routes as http_routes_module
+from voice_realtime.ui import websocket_routes as websocket_routes_module
 from voice_realtime.ui.app_context import (
     get_app_context,
     initialize_meeting_backend,
@@ -324,7 +325,7 @@ class TestServices:
         host: str,
         expected_scope: str,
     ) -> None:
-        assert server_module._network_scope(host) == expected_scope
+        assert http_routes_module._network_scope(host) == expected_scope
 
     def test_services_adds_runtime_workload_diagnostics(self) -> None:
         """HTTP 探活与 paused workload 独立，并复制五类运行时诊断。"""
@@ -364,7 +365,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -438,7 +439,7 @@ class TestServices:
         with (
             patch("voice_realtime.ui.server.UIRuntime") as fake_cls,
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ) as get,
@@ -469,7 +470,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -495,7 +496,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -527,7 +528,7 @@ class TestServices:
         with (
             caplog.at_level(logging.WARNING),
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -575,7 +576,7 @@ class TestServices:
         application = create_app(_settings(), initialize_meeting=False)
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 side_effect=concurrent_get,
             ),
@@ -601,7 +602,7 @@ class TestServices:
         with patch(
             "voice_realtime.ui.server.UIRuntime"
         ) as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ):
@@ -647,7 +648,7 @@ class TestVoices:
         }
 
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ) as get:
@@ -675,7 +676,7 @@ class TestVoices:
         mock_resp.headers = {"content-type": "audio/wav"}
 
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.post",
+            "voice_realtime.ui.http_routes.httpx.AsyncClient.post",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ) as post:
@@ -710,7 +711,7 @@ class TestVoices:
         app = create_app(mock_settings, initialize_meeting=False)
 
         with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             side_effect=httpx.ConnectError("refused"),
         ):
@@ -999,14 +1000,14 @@ class TestMeetingV1Gateway:
         assert event["payload"]["partial"] is None
 
     def test_snapshot_partial_serializes_known_speaker_without_guessing_unknown(self) -> None:
-        known = server_module._partial_snapshot_json(
+        known = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(
                 source_epoch=1,
                 partial="正在说",
                 partial_speaker_key="epoch:1:speaker:2",
             )
         )
-        unknown = server_module._partial_snapshot_json(
+        unknown = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(source_epoch=1, partial="尚未分人")
         )
 
@@ -1016,7 +1017,7 @@ class TestMeetingV1Gateway:
             "speaker_name": "说话人 2",
         }
         assert unknown == {"text": "尚未分人", "speaker_key": None, "speaker_name": None}
-        opaque = server_module._partial_snapshot_json(
+        opaque = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(
                 source_epoch=1,
                 partial="尚未命名",
@@ -1064,14 +1065,14 @@ class TestMeetingV1Gateway:
 
 class TestRuntimeControlBroadcast:
     def test_control_routes_share_only_control_bridge_dispatch(self) -> None:
-        route_source = inspect.getsource(server_module._mount_websocket_routes)
-        handler_source = inspect.getsource(server_module._serve_control_websocket)
+        route_source = inspect.getsource(websocket_routes_module.create_websocket_router)
+        handler_source = inspect.getsource(websocket_routes_module._serve_control_websocket)
 
         assert route_source.count(
-            "await _serve_control_websocket(websocket, runtime, cfg)"
+            "await _serve_control_websocket(websocket, runtime, context)"
         ) == 2
         assert handler_source.count("ControlBridge(runtime)") == 1
-        assert not hasattr(server_module, "_handle_v1_control")
+        assert not hasattr(websocket_routes_module, "_handle_v1_control")
 
     def test_v1_control_broadcasts_to_all_and_acks_only_requester(self) -> None:
         runtime = _FakeRuntime()
@@ -1174,7 +1175,7 @@ class TestRuntimeControlBroadcast:
         responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
         websocket = _RecordingWebSocket()
         sender = asyncio.create_task(
-            server_module._send_control_messages(websocket, responses, runtime_client)
+            websocket_routes_module._send_control_messages(websocket, responses, runtime_client)
         )
         await asyncio.wait_for(websocket.wait_for_messages(1), timeout=1.0)
 
@@ -1248,7 +1249,7 @@ class TestRuntimeControlBroadcast:
         with (
             caplog.at_level(logging.ERROR, logger="voice_realtime.ui.server"),
             patch(
-                "voice_realtime.ui.server.ControlBridge.handle",
+                "voice_realtime.ui.websocket_routes.ControlBridge.handle",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError(secret),
             ),
@@ -1270,7 +1271,7 @@ class TestSubtitleEligibility:
         runtime = _FakeRuntime(mode=RuntimeMode.ASSISTANT)
         websocket = _HandshakeRecordingWebSocket()
 
-        await server_module._serve_subtitle_websocket(websocket, runtime)  # type: ignore[arg-type]
+        await websocket_routes_module._serve_subtitle_websocket(websocket, runtime)  # type: ignore[arg-type]
 
         assert websocket.events == [("accept", None), ("close", 4409)]
         assert not runtime.runtime_events._clients
