@@ -324,16 +324,16 @@ async def test_srt_persist_uses_atomic_replace(tmp_path: Path) -> None:
 async def test_close_epoch_archives_srt_only_once(tmp_path: Path) -> None:
     proxy = _proxy(tmp_path)
     await proxy.start()
-    await proxy._open_subtitle_epoch()
+    await proxy._subtitle_session._open_epoch()
     await proxy._broadcast_payload(
         legacy_subtitle_payload(_window(with_segment=True)), persist=True
     )
 
-    await proxy._close_subtitle_epoch()
+    await proxy._subtitle_session._close_epoch()
     archives = sorted((tmp_path / "subtitles").glob("session-*.srt"))
     assert len(archives) == 1
 
-    await proxy._close_subtitle_epoch()
+    await proxy._subtitle_session._close_epoch()
     assert len(sorted((tmp_path / "subtitles").glob("session-*.srt"))) == 1
     await proxy.stop()
 
@@ -342,12 +342,12 @@ async def test_archive_filename_conflict_uses_numeric_suffix(tmp_path: Path) -> 
     proxy = _proxy(tmp_path)
     await proxy.start()
     payload = legacy_subtitle_payload(_window(with_segment=True))
-    await proxy._open_subtitle_epoch()
+    await proxy._subtitle_session._open_epoch()
     await proxy._broadcast_payload(payload, persist=True)
-    await proxy._close_subtitle_epoch()
-    await proxy._open_subtitle_epoch()
+    await proxy._subtitle_session._close_epoch()
+    await proxy._subtitle_session._open_epoch()
     await proxy._broadcast_payload(payload, persist=True)
-    await proxy._close_subtitle_epoch()
+    await proxy._subtitle_session._close_epoch()
 
     archives = sorted((tmp_path / "subtitles").glob("session-*.srt"))
     assert len(archives) == 2
@@ -367,8 +367,8 @@ async def test_epoch_close_broadcasts_reset_with_source_epoch(
         received.append(text)
 
     proxy.add_client(sender)
-    await proxy._open_subtitle_epoch()
-    await proxy._close_subtitle_epoch()
+    await proxy._subtitle_session._open_epoch()
+    await proxy._subtitle_session._close_epoch()
     await asyncio.sleep(0.05)
 
     assert received == [json.dumps({"type": "reset", "source_epoch": 1}, ensure_ascii=False)]

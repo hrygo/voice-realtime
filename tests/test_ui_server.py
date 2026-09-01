@@ -482,8 +482,8 @@ class TestServices:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
         proxy = runtime.subtitle_proxy
         proxy._state = SubtitleProxyState.CONNECTED
-        proxy._browser_stream = object()
-        proxy._browser_ready.set()
+        proxy._subtitle_session._stream = object()
+        proxy._subtitle_session.ready.set()
         proxy._last_event_at = proxy._clock() - 120.0
         mock_resp = Mock(status_code=200)
 
