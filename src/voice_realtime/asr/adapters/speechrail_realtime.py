@@ -8,7 +8,21 @@ from uuid import NAMESPACE_URL, uuid5
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
-from voice_realtime.speechrail.transport import ConnectionFactory, SpeechRailRealtimeClient
+from voice_realtime.speechrail.transcription_events import (
+    DiarizationCompleted,
+    InputAudioAck,
+    SessionCompleted,
+    SpeechRailSegment,
+    SpeechRailTranscriptionError,
+    TranscriptionCompleted,
+    TranscriptionDelta,
+    decode_transcription_event,
+)
+from voice_realtime.speechrail.transport import (
+    ConnectionFactory,
+    SpeechRailProtocolError,
+    SpeechRailRealtimeClient,
+)
 
 __all__ = ["ConnectionFactory", "SpeechRailRealtimeClient", "SpeechRailStreamingTranscriber"]
 
@@ -76,22 +90,23 @@ class SpeechRailStreamingTranscriber:
         try:
             while True:
                 event = await self._client.receive()
-                if event.get("type") == "transcription.delta":
-                    text = event.get("text")
-                    if not isinstance(text, str):
-                        yield self._set_terminal_error(
-                            "SPEECHRAIL_PROTOCOL_ERROR",
-                            "SpeechRail returned a transcription delta without text",
-                        )
-                        return
+                try:
+                    decoded = decode_transcription_event(event)
+                except SpeechRailProtocolError:
+                    code, message = _terminal_error_for(event)
+                    yield self._set_terminal_error(code, message)
+                    return
+                if isinstance(decoded, InputAudioAck):
+                    continue
+                if isinstance(decoded, TranscriptionDelta):
                     self._last_window = TranscriptWindow(
-                        source_epoch=self._context.source_epoch, partial=text
+                        source_epoch=self._context.source_epoch, partial=decoded.text
                     )
                     yield ASREvent(kind="snapshot", window=self._last_window)
-                elif event.get("type") == "transcription.completed":
+                elif isinstance(decoded, TranscriptionCompleted):
                     try:
                         segments = _segments(
-                            event.get("segments"),
+                            decoded.segments,
                             self._context,
                             require_speaker=self._diarization_requested,
                         )
@@ -108,11 +123,11 @@ class SpeechRailStreamingTranscriber:
                         self._observed_speaker_labels.update(
                             _speaker_label(segment.speaker_key) for segment in segments
                         )
-                    if not self._diarization_requested:
+                    else:
                         self._final_ready.set()
                         yield ASREvent(kind="final", window=self._last_window)
                         return
-                elif event.get("type") == "transcription.diarization.completed":
+                elif isinstance(decoded, DiarizationCompleted):
                     if not self._diarization_requested:
                         yield self._set_terminal_error(
                             "SPEECHRAIL_PROTOCOL_ERROR",
@@ -121,7 +136,7 @@ class SpeechRailStreamingTranscriber:
                         return
                     try:
                         mapping = _speaker_remap(
-                            event.get("mapping"),
+                            decoded.mapping,
                             self._context,
                             observed_speakers=self._observed_speaker_labels,
                         )
@@ -137,13 +152,14 @@ class SpeechRailStreamingTranscriber:
                     self._final_ready.set()
                     yield ASREvent(kind="final", window=self._last_window)
                     return
-                elif event.get("type") == "session.completed" and self._diarization_requested:
-                    yield self._set_terminal_error(
-                        "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
-                        "SpeechRail ended a diarized session without a final mapping",
-                    )
-                    return
-                elif event.get("type") == "error":
+                elif isinstance(decoded, SessionCompleted):
+                    if self._diarization_requested:
+                        yield self._set_terminal_error(
+                            "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
+                            "SpeechRail ended a diarized session without a final mapping",
+                        )
+                        return
+                elif isinstance(decoded, SpeechRailTranscriptionError):
                     yield self._set_terminal_error(
                         "SPEECHRAIL_REQUEST_FAILED",
                         "SpeechRail rejected the transcription request",
@@ -179,72 +195,44 @@ class SpeechRailStreamingTranscriber:
 
 
 def _segments(
-    value: object, context: ASRSessionContext, *, require_speaker: bool = False
+    value: tuple[SpeechRailSegment, ...],
+    context: ASRSessionContext,
+    *,
+    require_speaker: bool = False,
 ) -> tuple[NormalizedSegment, ...]:
-    if not isinstance(value, list):
-        raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
     result: list[NormalizedSegment] = []
-    for index, raw in enumerate(value):
-        if not isinstance(raw, dict):
-            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
-        text = raw.get("text")
-        start_ms = raw.get("start_ms")
-        end_ms = raw.get("end_ms")
-        if (
-            not isinstance(text, str)
-            or not text.strip()
-            or not isinstance(start_ms, int)
-            or not isinstance(end_ms, int)
-            or start_ms < 0
-            or end_ms < start_ms
-        ):
-            raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
-        speaker = raw.get("speaker")
-        if speaker is None and not require_speaker:
+    for index, segment in enumerate(value):
+        if segment.speaker is None:
+            if require_speaker:
+                raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
             speaker_key = "0"
-        elif (
-            not isinstance(speaker, str)
-            or not speaker.startswith("spk_")
-            or len(speaker) > 64
-        ):
-            raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
         else:
-            speaker_key = speaker
-        absolute_start = start_ms + context.offset_ms
-        absolute_end = end_ms + context.offset_ms
+            speaker_key = segment.speaker
+        absolute_start = segment.start_ms + context.offset_ms
+        absolute_end = segment.end_ms + context.offset_ms
         result.append(
             NormalizedSegment(
-                id=uuid5(NAMESPACE_URL, f"speechrail:{context.source_epoch}:{index}:{text}"),
+                id=uuid5(
+                    NAMESPACE_URL, f"speechrail:{context.source_epoch}:{index}:{segment.text}"
+                ),
                 order=index,
                 source_epoch=context.source_epoch,
                 speaker_key=f"epoch:{context.source_epoch}:speaker:{speaker_key}",
                 start_ms=absolute_start,
                 end_ms=absolute_end,
-                text=text,
+                text=segment.text,
             )
         )
     return tuple(result)
 
 
 def _speaker_remap(
-    value: object,
+    value: tuple[tuple[str, str], ...],
     context: ASRSessionContext,
     *,
     observed_speakers: set[str],
 ) -> tuple[tuple[str, str], ...]:
-    if not isinstance(value, dict):
-        raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
-    mapping: dict[str, str] = {}
-    for source, target in value.items():
-        if (
-            not isinstance(source, str)
-            or not isinstance(target, str)
-            or not source.startswith("spk_")
-            or not target.startswith("spk_")
-            or source == target
-        ):
-            raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
-        mapping[source] = target
+    mapping: dict[str, str] = dict(value)
     if not mapping and context.diarization_group_id is None:
         return ()
     if not set(mapping).issubset(observed_speakers):
@@ -253,13 +241,28 @@ def _speaker_remap(
     if context.diarization_group_id is None:
         return tuple(
             (f"{source_prefix}{source}", f"{source_prefix}{target}")
-            for source, target in mapping.items()
+            for source, target in value
         )
     target_prefix = f"group:{context.diarization_group_id}:speaker:"
     return tuple(
         (f"{source_prefix}{source}", f"{target_prefix}{mapping.get(source, source)}")
         for source in sorted(observed_speakers)
     )
+
+
+def _terminal_error_for(event: dict[str, object]) -> tuple[str, str]:
+    """Map a decoder failure to the pre-existing user-visible error semantics."""
+    event_type = event.get("type")
+    if event_type == "transcription.delta":
+        return "SPEECHRAIL_PROTOCOL_ERROR", "SpeechRail returned a transcription delta without text"
+    if event_type == "transcription.completed":
+        return "SPEECHRAIL_PROTOCOL_ERROR", "SpeechRail returned invalid completed segments"
+    if event_type == "transcription.diarization.completed":
+        return (
+            "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
+            "SpeechRail returned an invalid diarization mapping",
+        )
+    return "SPEECHRAIL_PROTOCOL_ERROR", "SpeechRail returned an invalid transcription event"
 
 
 def _speaker_label(speaker_key: str) -> str:

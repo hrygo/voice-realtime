@@ -20,6 +20,16 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_realtime.asr.adapters.speechrail_realtime import SpeechRailRealtimeClient
 from voice_realtime.asr.contracts import ASRCapabilities
+from voice_realtime.speechrail.transcription_events import (
+    DiarizationCompleted,
+    InputAudioAck,
+    SessionCompleted,
+    SpeechRailTranscriptionError,
+    TranscriptionCompleted,
+    TranscriptionDelta,
+    decode_transcription_event,
+)
+from voice_realtime.speechrail.transport import SpeechRailProtocolError
 
 
 class _SpeechRailClient(Protocol):
@@ -79,25 +89,30 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
         try:
             while True:
                 event = await client.receive()
-                event_type = event.get("type")
-                text = event.get("text")
-                if event_type == "input_audio_buffer.ack":
+                try:
+                    decoded = decode_transcription_event(event)
+                except SpeechRailProtocolError:
+                    raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR") from None
+                if isinstance(decoded, InputAudioAck):
                     continue
-                if event_type == "transcription.delta" and isinstance(text, str):
+                if isinstance(decoded, TranscriptionDelta):
                     await self.push_frame(
-                        InterimTranscriptionFrame(text, "user", _timestamp()),
+                        InterimTranscriptionFrame(decoded.text, "user", _timestamp()),
                         FrameDirection.DOWNSTREAM,
                     )
-                elif event_type == "transcription.completed" and isinstance(text, str):
+                elif isinstance(decoded, TranscriptionCompleted):
                     await self.push_frame(
-                        TranscriptionFrame(text, "user", _timestamp(), finalized=True),
+                        TranscriptionFrame(decoded.text, "user", _timestamp(), finalized=True),
                         FrameDirection.DOWNSTREAM,
                     )
                     return
-                elif event_type == "error":
-                    raise RuntimeError("SPEECHRAIL_REQUEST_FAILED")
-                elif event_type == "session.completed":
-                    raise RuntimeError("SPEECHRAIL_FINAL_MISSING")
+                elif isinstance(decoded, SpeechRailTranscriptionError):
+                    raise RuntimeError("SPEECHRAIL_REQUEST_FAILED") from None
+                elif isinstance(decoded, SessionCompleted):
+                    raise RuntimeError("SPEECHRAIL_FINAL_MISSING") from None
+                elif isinstance(decoded, DiarizationCompleted):
+                    # Conversation STT never requests diarization.
+                    raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR") from None
                 else:
                     raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
         finally:
