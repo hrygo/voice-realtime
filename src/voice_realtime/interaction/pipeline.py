@@ -46,12 +46,9 @@ from pipecat.frames.frames import (
     TTSTextFrame,
 )
 
-try:
-    from pypinyin import Style, lazy_pinyin
+from pypinyin import Style, lazy_pinyin
 
-    _HAS_PYPINYIN = True
-except ImportError:  # pragma: no cover
-    _HAS_PYPINYIN = False
+_HAS_PYPINYIN = True
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -73,6 +70,12 @@ from voice_realtime.config import (
     InteractionSettings,
 )
 from voice_realtime.interaction.context_memory import MEMORY_PROTOCOL
+from voice_realtime.interaction.echo import (
+    AdaptiveEnergyGate,
+    EchoState,
+    EchoTextBuffer,
+    SelfEchoPolicy,
+)
 from voice_realtime.interaction.reasoning import (
     DEFAULT_SYSTEM_PROMPT,
     LmStudioNativeLLMService,
@@ -80,6 +83,18 @@ from voice_realtime.interaction.reasoning import (
 from voice_realtime.interaction.tts import SpeechRailTTSService
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "BotTextRecorder",
+    "EchoState",
+    "EchoSuppressionProcessor",
+    "EchoTextBuffer",
+    "HangoverUserMuteStrategy",
+    "SelfEchoFilter",
+    "TTSStateObserver",
+    "build_pipeline",
+    "build_system_prompt",
+]
 
 
 def build_system_prompt(persona: str | None = None) -> str:
@@ -115,7 +130,7 @@ def _rms16(audio: bytes) -> float:
     return float(audioop.rms(audio, 2)) if audio else 0.0
 
 
-class EchoState:
+class _LegacyEchoState:
     """共享回声与播报状态：跨处理器同步 TTS 播报与麦克风物理闭麦窗口。"""
 
     def __init__(self) -> None:
@@ -193,7 +208,7 @@ class TTSStateObserver(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class EchoTextBuffer:
+class _LegacyEchoTextBuffer:
     """机器人最近播报文本的环形缓冲（带时间戳），供自回声文本判定。"""
 
     def __init__(self, window_secs: float = 10.0, max_items: int = 16) -> None:
@@ -371,6 +386,7 @@ class SelfEchoFilter(FrameProcessor):
         self._min_chars = min_chars
         self._echo_state = echo_state or EchoState()
         self._tail_hangover_secs = tail_hangover_secs
+        self._policy = SelfEchoPolicy(min_ratio, min_chars, tail_hangover_secs)
         self._dropped = 0
         self._interruption_pending = False
 
@@ -383,17 +399,16 @@ class SelfEchoFilter(FrameProcessor):
         elif isinstance(frame, (CancelFrame, ErrorFrame)):
             self._interruption_pending = False
         elif isinstance(frame, TextFrame):
-            if not _normalize_text(frame.text):
-                self._dropped += 1
-                logger.debug("self-echo: 丢弃纯标点/空转写文本帧 %r", frame.text)
-                return
-            if self._interruption_pending:
+            protect_next_transcript = self._interruption_pending
+            if protect_next_transcript:
                 self._interruption_pending = False
                 logger.info("self-echo: 放行真人插话后的首条落定转写")
-            elif self._echo_state.is_suppressing(
-                time.monotonic(), self._tail_hangover_secs
-            ) and self._buffer.matches(
-                frame.text, self._min_ratio, self._min_chars, time.monotonic()
+            if self._policy.should_drop(
+                frame.text,
+                now=time.monotonic(),
+                protect_next_transcript=protect_next_transcript,
+                echo_state=self._echo_state,
+                buffer=self._buffer,
             ):
                 self._dropped += 1
                 logger.info("self-echo: 丢弃与机器人近端播报相似的用户转写 %r", frame.text)
@@ -427,6 +442,9 @@ class EchoSuppressionProcessor(FrameProcessor):
         self._tail_hangover_secs = tail_hangover_secs
         self._echo_state = echo_state or EchoState()
         self._allow_barge_in = allow_barge_in
+        self._energy_gate = AdaptiveEnergyGate(
+            gain=barge_in_gain, required_frames=barge_in_frames
+        )
         self._barge_in_active = False
         self._echo_rms: deque[float] = deque(maxlen=50)
         self._peak_envelope: float = 0.0
