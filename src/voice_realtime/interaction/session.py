@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Callable, Sequence
@@ -24,16 +25,17 @@ from pipecat.workers.runner import WorkerRunner
 
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
+from voice_realtime.interaction.echo import EchoState
 from voice_realtime.interaction.ownership import (
     InteractionOwnership,
     InteractionOwnershipError,
 )
 from voice_realtime.interaction.pipeline import (
-    EchoState,
     EchoSuppressionProcessor,
     build_pipeline,
     build_system_prompt,
 )
+from voice_realtime.interaction.pipeline_dependencies import PipelineFactories
 from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
 from voice_realtime.interaction.types import DuplexMode
 
@@ -66,6 +68,7 @@ class InteractionSession:
         handle_signals: bool = False,
         echo_state: EchoState | None = None,
         stt_factory: ConversationSTTFactory | None = None,
+        pipeline_factories: PipelineFactories | None = None,
     ) -> None:
         self._settings = settings
         self._audio_queue = audio_queue
@@ -85,6 +88,7 @@ class InteractionSession:
         self._timeout_task: asyncio.Task[None] | None = None
         self._echo_state = echo_state if echo_state is not None else EchoState()
         self._stt_factory = stt_factory
+        self._pipeline_factories = pipeline_factories
         self._echo_suppressor: EchoSuppressionProcessor | None = None
         self._llm_service: LmStudioNativeLLMService | None = None
         self._persona: str | None = None
@@ -211,6 +215,20 @@ class InteractionSession:
             }
             if self._stt_factory is not None:
                 pipeline_kwargs["stt_factory"] = self._stt_factory
+            if self._pipeline_factories is not None:
+                try:
+                    factory_parameters = inspect.signature(self._pipeline_factory).parameters
+                except (TypeError, ValueError):
+                    factory_parameters = None
+                accepts_factories = factory_parameters is not None and (
+                    "factories" in factory_parameters
+                    or any(
+                        parameter.kind is inspect.Parameter.VAR_KEYWORD
+                        for parameter in factory_parameters.values()
+                    )
+                )
+                if accepts_factories:
+                    pipeline_kwargs["factories"] = self._pipeline_factories
             pipeline = self._pipeline_factory(self._settings, **pipeline_kwargs)
             self._echo_suppressor = next(
                 (

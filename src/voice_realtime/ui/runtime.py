@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from typing import Any
 
@@ -14,6 +15,7 @@ from voice_realtime.config import Settings, normalize_speechrail_tts_voice
 from voice_realtime.interaction.nltk_data import ensure_punkt_tab
 from voice_realtime.interaction.ownership import InteractionOwnership
 from voice_realtime.interaction.pipeline import build_pipeline
+from voice_realtime.interaction.pipeline_dependencies import default_pipeline_factories
 from voice_realtime.interaction.session import InteractionSession
 from voice_realtime.meeting.models import PCMOwner, RuntimeMode
 from voice_realtime.meeting.runtime_mode import (
@@ -59,13 +61,16 @@ class UIRuntime:
             device_name=settings.interaction.input_device_name,
         )
         self.subtitle_proxy = SubtitleProxy(settings.subtitles)
+        factories = default_pipeline_factories(settings.interaction)
+        if conversation_stt_factory is not None:
+            factories = dataclasses.replace(factories, stt_factory=conversation_stt_factory)
         self.session = InteractionSession(
             settings.interaction,
             audio_queue=self.audio_queue,
             observers=[self.observer],
             ownership=InteractionOwnership(),
             pipeline_factory=build_pipeline,
-            stt_factory=conversation_stt_factory,
+            pipeline_factories=factories,
         )
         self.meeting_session = meeting_session
         self._coordinator = RuntimeModeCoordinator(

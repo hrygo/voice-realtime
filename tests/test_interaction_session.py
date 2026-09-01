@@ -37,9 +37,13 @@ def _session(
     end: AsyncMock,
     audio_queue: asyncio.Queue[bytes] | None = None,
     stt_factory: object | None = None,
+    pipeline_factory: object | None = None,
+    pipeline_factories: object | None = None,
 ) -> tuple[InteractionSession, MagicMock, MagicMock]:
     pipeline = MagicMock(processors=[])
-    pipeline_factory = MagicMock(return_value=pipeline)
+    resolved_factory = (
+        pipeline_factory if pipeline_factory is not None else MagicMock(return_value=pipeline)
+    )
     worker = MagicMock()
     worker.queue_frame = AsyncMock()
     worker_factory = MagicMock(return_value=worker)
@@ -52,13 +56,14 @@ def _session(
         InteractionSettings(max_session_seconds=3600),
         audio_queue=audio_queue,
         ownership=InteractionOwnership(tmp_path / "interaction.lock"),
-        pipeline_factory=pipeline_factory,
+        pipeline_factory=resolved_factory,
         worker_factory=worker_factory,
         runner_factory=runner_factory,
         stop_timeout_secs=0.01,
         stt_factory=stt_factory,
+        pipeline_factories=pipeline_factories,
     )
-    return session, pipeline_factory, runner
+    return session, resolved_factory, runner
 
 
 async def test_session_passes_stt_factory_to_pipeline(tmp_path: Path) -> None:
@@ -81,6 +86,80 @@ async def test_session_passes_stt_factory_to_pipeline(tmp_path: Path) -> None:
     await session.start()
 
     assert pipeline_factory.call_args.kwargs["stt_factory"] is stt_factory
+    await session.stop()
+
+
+async def test_session_passes_factories_bundle_to_accepting_factory(
+    tmp_path: Path,
+) -> None:
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        await stopped.wait()
+
+    async def end(*_args: object, **_kwargs: object) -> None:
+        stopped.set()
+
+    received: dict[str, object] = {}
+
+    def recording_factory(
+        settings: object, **kwargs: object
+    ) -> MagicMock:
+        received.update(kwargs)
+        return MagicMock(processors=[])
+
+    bundle = MagicMock(name="pipeline_factories")
+    session, _factory, _runner = _session(
+        tmp_path,
+        run=AsyncMock(side_effect=run),
+        end=AsyncMock(side_effect=end),
+        pipeline_factory=recording_factory,
+        pipeline_factories=bundle,
+    )
+
+    await session.start()
+
+    assert received["factories"] is bundle
+    await session.stop()
+
+
+async def test_session_does_not_pass_factories_to_closed_factory(
+    tmp_path: Path,
+) -> None:
+    stopped = asyncio.Event()
+
+    async def run() -> None:
+        await stopped.wait()
+
+    async def end(*_args: object, **_kwargs: object) -> None:
+        stopped.set()
+
+    pipeline = MagicMock(processors=[])
+    calls: list[dict[str, object]] = []
+
+    def closed_factory(
+        settings: object,
+        *,
+        persona: object | None = None,
+        audio_queue: object | None = None,
+        echo_state: object | None = None,
+    ) -> MagicMock:
+        calls.append(
+            {"persona": persona, "audio_queue": audio_queue, "echo_state": echo_state}
+        )
+        return pipeline
+
+    session, _factory, _runner = _session(
+        tmp_path,
+        run=AsyncMock(side_effect=run),
+        end=AsyncMock(side_effect=end),
+        pipeline_factory=closed_factory,
+        pipeline_factories=MagicMock(name="bundle"),
+    )
+
+    await session.start()
+
+    assert calls == [{"persona": None, "audio_queue": None, "echo_state": session.echo_state}]
     await session.stop()
 
 
