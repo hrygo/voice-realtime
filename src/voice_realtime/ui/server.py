@@ -22,14 +22,13 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
-from voice_realtime.lm_studio import lm_studio_auth_headers, lm_studio_openai_models_url
 from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
@@ -39,7 +38,6 @@ from voice_realtime.meeting.inner_os.private_channel import (
     InnerOSConnectionSession,
 )
 from voice_realtime.meeting.models import RuntimeMode
-from voice_realtime.network import local_async_client
 from voice_realtime.ui.app_context import (
     UIAppContext,
     attach_app_context,
@@ -47,6 +45,7 @@ from voice_realtime.ui.app_context import (
     initialize_meeting_backend,
 )
 from voice_realtime.ui.control import ControlBridge
+from voice_realtime.ui.http_routes import create_http_router
 from voice_realtime.ui.protocol import ErrorCode, RuntimeStateEvent, RuntimeStateSnapshot
 from voice_realtime.ui.runtime import UIRuntime
 from voice_realtime.ui.runtime_events import RuntimeStateClient
@@ -260,104 +259,7 @@ def create_app(
     install_meeting_api(app)
     # Register before the catch-all static mount; dependencies resolve lazily.
     install_inner_os_api(app)
-
-    @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/api/services")
-    async def services() -> dict[str, Any]:
-        """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
-        timeout = min(cfg.ui.api_timeout, 1.0)
-        speechrail = cfg.subtitles
-        lm = cfg.interaction
-        paths = [
-            (
-                "speechrail",
-                speechrail.speechrail_health_url,
-                None,
-                _speechrail_auth_headers(speechrail.speechrail_api_key),
-            ),
-            (
-                "tts",
-                _speechrail_health_url(lm.speechrail_tts_rest_url),
-                lm.speechrail_tts_model,
-                _speechrail_auth_headers(lm.speechrail_api_key),
-            ),
-            (
-                "lm",
-                lm_studio_openai_models_url(lm.llm_base_url),
-                lm.llm_model,
-                lm_studio_auth_headers(lm.llm_api_key),
-            ),
-        ]
-        async with local_async_client(timeout=timeout) as client:
-            tasks = [
-                _do_probe_async(client, name, url, expected_model, headers=headers)
-                for name, url, expected_model, headers in paths
-            ]
-            results = await asyncio.gather(*tasks)
-        service_results = list(results)
-        runtime = _get_runtime(app)
-        workload_diagnostics = _asr_workload_diagnostics(runtime)
-        if workload_diagnostics:
-            speechrail_service = next(
-                (item for item in service_results if item["name"] == "speechrail"),
-                None,
-            )
-            if speechrail_service is not None:
-                speechrail_service.update(workload_diagnostics)
-        return {
-            "network_scope": _network_scope(cfg.ui.host),
-            "services": service_results,
-            "diagnostics": _runtime_diagnostics(runtime),
-        }
-
-    @app.get("/api/runtime")
-    async def runtime_state() -> dict[str, Any]:
-        runtime = _get_runtime(app)
-        if runtime is None:
-            raise HTTPException(status_code=503, detail="runtime 未就绪")
-        return runtime.snapshot().model_dump(mode="json")
-
-    @app.get("/v1/voices")
-    async def voices() -> dict[str, Any]:
-        """代理 SpeechRail 音色列表，供前端音色下拉。"""
-        url = _speechrail_rest_path(cfg.interaction.speechrail_tts_rest_url, "/voices")
-        try:
-            async with local_async_client(timeout=cfg.ui.api_timeout) as client:
-                resp = await client.get(
-                    url,
-                    headers=_speechrail_auth_headers(cfg.interaction.speechrail_api_key),
-                )
-                resp.raise_for_status()
-                return dict(resp.json())
-        except httpx.HTTPError as exc:
-            logger.warning("Voice Studio: SpeechRail /v1/voices 请求失败: %s", exc)
-            raise HTTPException(status_code=502, detail="SpeechRail 音色列表不可用") from exc
-
-    @app.post("/v1/audio/speech")
-    async def proxy_speech(request: Request) -> Response:
-        """代理 SpeechRail 音频合成，供前端音色试听。"""
-        url = _speechrail_rest_path(cfg.interaction.speechrail_tts_rest_url, "/audio/speech")
-        try:
-            body = await request.body()
-            headers = {"Content-Type": "application/json"}
-            async with local_async_client(timeout=10.0) as client:
-                auth_headers = _speechrail_auth_headers(cfg.interaction.speechrail_api_key)
-                if auth_headers is not None:
-                    headers.update(auth_headers)
-                resp = await client.post(url, content=body, headers=headers)
-                resp.raise_for_status()
-                return Response(
-                    content=resp.content,
-                    status_code=resp.status_code,
-                    media_type=resp.headers.get("content-type", "audio/wav"),
-                )
-        except httpx.HTTPError as exc:
-            logger.warning("Voice Studio: SpeechRail /v1/audio/speech 试听请求失败: %s", exc)
-            raise HTTPException(status_code=502, detail="SpeechRail 语音合成不可用") from exc
-
+    app.include_router(create_http_router(context))
     _mount_websocket_routes(app, cfg)
     _mount_static(app, cfg.ui.static_dir)
     return app
