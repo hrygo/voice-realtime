@@ -18,6 +18,11 @@ from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingT
 from voice_realtime.asr.models import ASRWindow
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
 from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.meeting.ports import (
+    CaptureFinalizationTimeout,
+    CaptureGap,
+    CaptureLease,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +30,13 @@ TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 PayloadSink = Callable[[dict[str, object]], Awaitable[None]]
 CapturePayloadSink = Callable[[dict[str, object], bool], Awaitable[None]]
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
-GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
+GapListener = Callable[["CaptureGap"], Awaitable[None]]
+
+# 兼容别名：同一对象定义只保留在 meeting/ports.py。
+CapturePreparation = CaptureLease
+TranscriptionGap = CaptureGap
+FinalizationTimeoutError = CaptureFinalizationTimeout
+FinalizationTimeout = CaptureFinalizationTimeout
 
 
 def _diarization_group_id(owner: str | None) -> str:
@@ -33,36 +44,6 @@ def _diarization_group_id(owner: str | None) -> str:
     if not owner:
         raise RuntimeError("meeting diarization requires a capture owner")
     return hashlib.sha256(owner.encode("utf-8")).hexdigest()
-
-
-class FinalizationTimeoutError(TimeoutError):
-    """会议 ASR 未在时限内排空 PCM 或完成 EOF，携带最后已知窗口。"""
-
-    code = "finalization_timeout"
-
-    def __init__(self, last_window: TranscriptWindow | None) -> None:
-        self.last_window = last_window
-        super().__init__("SpeechRail finalization timed out")
-
-
-FinalizationTimeout = FinalizationTimeoutError
-
-
-@dataclass(frozen=True, slots=True)
-class CapturePreparation:
-    """会议采集连接已 ready、尚未接收 PCM 的一次性凭证。"""
-
-    owner: str
-    generation: int
-
-
-@dataclass(frozen=True)
-class TranscriptionGap:
-    """SpeechRail 重连期间无法转录的样本时钟区间。"""
-
-    source_epoch: int
-    start_ms: int
-    end_ms: int
 
 
 class SubtitleSessionState(StrEnum):

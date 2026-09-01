@@ -14,7 +14,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import MeetingStatus, TranscriptWindow
-from .repository import MeetingRepository
+from .ports import RecoveryReplayRepository
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ class RecoveryJournal:
             )
             return envelope
 
-    async def replay(self, repository: MeetingRepository) -> int:
+    async def replay(self, repository: RecoveryReplayRepository) -> int:
         """按会议与序号回放残留 journal，成功后删除对应文件。"""
         if not self.directory.exists():
             return 0
@@ -110,7 +110,9 @@ class RecoveryJournal:
             total += await self.replay_meeting(repository, meeting_id)
         return total
 
-    async def replay_meeting(self, repository: MeetingRepository, meeting_id: UUID) -> int:
+    async def replay_meeting(
+        self, repository: RecoveryReplayRepository, meeting_id: UUID
+    ) -> int:
         """按序回放指定会议的 journal，并在成功后删除文件。
 
         已经进入终态的会议不再接受转录或生命周期写入；这类残留通常来自旧版本
@@ -122,21 +124,19 @@ class RecoveryJournal:
         lock = self._locks.setdefault(meeting_id, asyncio.Lock())
         async with lock:
             envelopes = self._read(path, meeting_id)
-            get_meeting = getattr(repository, "get_meeting", None)
-            if get_meeting is not None:
-                record = await get_meeting(meeting_id)
-                if record is not None and record.status in {
-                    MeetingStatus.COMPLETED,
-                    MeetingStatus.INTERRUPTED,
-                    MeetingStatus.STORAGE_ERROR,
-                }:
-                    self._unlink(meeting_id)
-                    logger.info(
-                        "RecoveryJournal: 终态会议残留 journal 已清理 (meeting=%s, envelopes=%d)",
-                        meeting_id,
-                        len(envelopes),
-                    )
-                    return len(envelopes)
+            record = await repository.get_meeting(meeting_id)
+            if record is not None and record.status in {
+                MeetingStatus.COMPLETED,
+                MeetingStatus.INTERRUPTED,
+                MeetingStatus.STORAGE_ERROR,
+            }:
+                self._unlink(meeting_id)
+                logger.info(
+                    "RecoveryJournal: 终态会议残留 journal 已清理 (meeting=%s, envelopes=%d)",
+                    meeting_id,
+                    len(envelopes),
+                )
+                return len(envelopes)
             for envelope in envelopes:
                 await self._replay_one(repository, envelope)
             self._unlink(meeting_id)
@@ -194,7 +194,9 @@ class RecoveryJournal:
         return envelopes
 
     @staticmethod
-    async def _replay_one(repository: MeetingRepository, envelope: RecoveryEnvelope) -> None:
+    async def _replay_one(
+        repository: RecoveryReplayRepository, envelope: RecoveryEnvelope
+    ) -> None:
         payload = envelope.payload
         if envelope.operation == "reconcile_window":
             window_payload = payload.get("window")

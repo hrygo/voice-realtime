@@ -12,7 +12,7 @@ import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import Any, Protocol, cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from psycopg.rows import tuple_row
@@ -37,6 +37,7 @@ from .models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
+from .ports import MeetingRepository as MeetingRepository
 
 _MEETING_COLUMNS = """
     id, title, status, language, audio_source, started_at, ended_at,
@@ -81,71 +82,6 @@ class RepositoryUnavailableError(MeetingRepositoryError):
 
 class InvalidCursorError(MeetingRepositoryError):
     """游标不是 repository 产生的有效值。"""
-
-
-class MeetingRepository(Protocol):
-    """运行时和 API 使用的最小异步 repository 契约。"""
-
-    async def check_writable(self) -> bool: ...
-
-    async def create_meeting(
-        self, title: str, *, language: str, audio_source: str
-    ) -> MeetingRecord: ...
-
-    async def get_meeting(self, meeting_id: UUID) -> MeetingRecord | None: ...
-
-    async def list_meetings(self, *, cursor: str | None, limit: int) -> MeetingPage: ...
-
-    async def update_title(self, meeting_id: UUID, title: str) -> MeetingRecord: ...
-
-    async def set_status(
-        self, meeting_id: UUID, status: MeetingStatus, *, reason: str | None = None
-    ) -> MeetingRecord: ...
-
-    async def reconcile_window(
-        self, meeting_id: UUID, window: TranscriptWindow
-    ) -> TranscriptReconcileResult: ...
-
-    async def finalize_transcript(
-        self,
-        meeting_id: UUID,
-        *,
-        final_status: MeetingStatus = MeetingStatus.COMPLETED,
-        reason: str | None = None,
-    ) -> MeetingRecord: ...
-
-    async def get_transcript(self, meeting_id: UUID) -> TranscriptDocument: ...
-
-    async def get_speakers(self, meeting_id: UUID) -> tuple[SpeakerRecord, ...]: ...
-
-    async def get_latest_minutes(self, meeting_id: UUID) -> MinutesRecord | None: ...
-
-    async def rename_speaker(
-        self, meeting_id: UUID, speaker_key: str, display_name: str
-    ) -> MeetingRecord: ...
-
-    async def create_minutes(
-        self, meeting_id: UUID, *, idempotency_key: str | None
-    ) -> MinutesRecord: ...
-
-    async def claim_minutes(self) -> MinutesJob | None: ...
-
-    async def complete_minutes(
-        self, minutes_id: UUID, result: MinutesResult
-    ) -> MinutesRecord: ...
-
-    async def fail_minutes(
-        self,
-        minutes_id: UUID,
-        *,
-        code: str,
-        message: str,
-        raw_output: str | None = None,
-    ) -> None: ...
-
-    async def delete_meeting(self, meeting_id: UUID) -> None: ...
-
-    async def close(self) -> None: ...
 
 
 def _utc_now() -> datetime:

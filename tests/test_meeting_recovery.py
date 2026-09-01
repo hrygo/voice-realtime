@@ -35,6 +35,11 @@ class FakeRecoveryRepository:
         self.calls: list[tuple[str, object]] = []
         self.error: Exception | None = None
 
+    async def get_meeting(self, meeting_id) -> None:
+        if self.error is not None:
+            raise self.error
+        self.calls.append(("get_meeting", meeting_id))
+
     async def reconcile_window(self, meeting_id, window) -> None:
         if self.error is not None:
             raise self.error
@@ -212,15 +217,16 @@ async def test_replay_dispatches_every_supported_operation_and_deletes_file(
 
     assert await journal.replay(repository) == 4
     assert [call[0] for call in repository.calls] == [
+        "get_meeting",
         "reconcile_window",
         "set_status",
         "finalize_transcript",
         "create_minutes",
     ]
-    assert repository.calls[0][1][1] == window
-    assert repository.calls[1][1][1].value == "interrupted"
-    assert repository.calls[1][1][2] == "ASR reconnect"
-    assert repository.calls[3][1][1] == "meeting:v1"
+    assert repository.calls[1][1][1] == window
+    assert repository.calls[2][1][1].value == "interrupted"
+    assert repository.calls[2][1][2] == "ASR reconnect"
+    assert repository.calls[4][1][1] == "meeting:v1"
     assert list((tmp_path / "journal").glob("*.jsonl")) == []
 
 
