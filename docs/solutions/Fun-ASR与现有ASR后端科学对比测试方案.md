@@ -1,12 +1,12 @@
 ---
 title: "Fun-ASR 与现有 ASR 后端科学对比测试方案"
-description: "Qwen3-ASR vs Fun-ASR vs SenseVoiceSmall 的序贯盲测与科学选型评测方案（60 min Core + 45 min Reserve 序贯盲测与决策结论）"
+description: "历史 Qwen3-ASR / Fun-ASR / SenseVoiceSmall 序贯盲测与科学选型记录；不作为当前 SpeechRail 运行基线"
 status: completed
 type: benchmark_report
 category: asr
 version: "v1.3.0"
 date: 2026-08-25
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-core"
@@ -17,6 +17,7 @@ tags:
   - sensevoice
   - benchmark
   - sequential-evaluation
+  - historical
 scope:
   - "voice_realtime.asr"
   - "voice_realtime.subtitles"
@@ -32,7 +33,12 @@ related_documents:
 > **环境基准**：Apple M5 Max / 128GB 统一内存 / macOS 26.6.2 / Python 3.12.14 / PyTorch 2.13.0 (MPS)
 > **核心决策**：(1) 字幕/会议 ASR 选型 (`Qwen3-ASR` vs `Fun-ASR-Nano`)；(2) 交互 STT 选型 (`SenseVoiceSmall` vs `Fun-ASR-Nano`)
 > **方案版本**：v1.3（`60 min Core + 45 min Reserve` 序贯盲测；允许明确降级的公共运营代理证据）
-> **状态**：**Core 已完成（2026-08-25）；Fun-ASR 两个 family 均触发 futility，Reserve 不启封；生产默认不变**
+> **状态**：**历史评测已完成（2026-08-25）；Fun-ASR 两个 family 均触发 futility，Reserve 不启封；该结果不代表当前 SpeechRail 部署验收**
+
+> ⚠️ **当前边界（2026-09-01）**：本文记录的是 SpeechRail 迁移前的本地模型/WS 实验。当前代码不再
+> 运行本文中的 WLK、SenseVoice、Fun-ASR 或本地 Qwen3-ASR worker；当前 ASR/TTS 运行时与真实服务验收
+> 以 [ADR-0011](../decisions/0011-speechrail-only-asr.md)、[SpeechRail Realtime v2 手册](../manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md)
+> 和当前代码为准。
 
 > **v1.2 修订摘要**：v1.1 的 105 分钟完整 Blind Set 保留为最大证据集，但拆为预冻结的 60 分钟
 > Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；三个 primary
@@ -123,7 +129,7 @@ related_documents:
 
 ---
 
-### 1.1 当前落地状态（2026-08-25）
+### 1.1 历史落地状态（2026-08-25）
 
 - **统一契约与接入边界**：ASR 契约、WLK 适配器、profile/registry、字幕注入边界和交互 STT factory 已合入 `main`。
 - **可复现实验 Runner**：已在 `feature/asr-benchmark-runner` 分支实现 `run`、`score`、`compare`，并完成
@@ -192,7 +198,7 @@ flowchart TD
 
 ## 2. 已知事实、假设与待检验项
 
-### 2.1 当前实测与源码事实（2026-08-24）
+### 2.1 历史实测与源码事实（2026-08-24）
 
 - **硬件环境**：Apple M5 Max、128GB 统一内存、macOS 26.6.2。
 - **软件基础**：Python 3.12.14；PyTorch 2.13.0；MPS `built/available` 均为 `true`。

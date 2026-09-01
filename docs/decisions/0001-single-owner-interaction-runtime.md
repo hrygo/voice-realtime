@@ -5,7 +5,7 @@ status: accepted
 type: decision_record
 category: interaction
 date: 2026-08-20
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-core"
@@ -71,6 +71,6 @@ DRY 原则。
 
 - UI 和 headless 的会话行为一致，修复只需落在一个应用服务。
 - 原有 `vr-interact` 命令仍可使用，但不能与 `vr-ui` 并行运行。
-- 启动文档、架构图、健康状态和测试必须改为四个运行单元：`vr-ui`、`vr-subtitles`、
-  `vr-bridge`、LM Studio。
+- 启动文档、架构图、健康状态和测试应描述当前四类运行单元：`vr-ui`、SpeechRail、LM Studio
+  与 PostgreSQL；不再把 `vr-subtitles` 或 `vr-bridge` 当作独立应用进程。
 - 运行时重构会改变内部模块边界，但不改变现有 CLI 命令名和公开 HTTP 路径。

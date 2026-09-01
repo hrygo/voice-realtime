@@ -9,7 +9,7 @@
 
 - 🤖 **全双工实时语音助手 (Voice Assistant)**
   - **实时语音输入**：基于 SpeechRail Realtime v2 + 本地大语言模型 (LM Studio / Qwen3.6) + SpeechRail TTS。
-  - **双重声学防回声**：L1 声学 RMS 自适应打断抑制 + L2 文本相似度过滤，彻底杜绝单机外放播报时的“自我回声死循环”。
+  - **双重声学防回声**：L1 自适应峰值包络/EMA 打断抑制 + L2 文本相似度过滤，阻断单机外放播报时的“自我回声死循环”。
   - **双工模式切换**：支持“🔊 外放保护”（播报期间暂停收音，防误触）与“🎧 耳机双工”（佩戴耳机时随时自然插话打断）。
   - **个性化人设与音色**：内置通用助手、程序员、英语教练等丰富人设模板，支持请求级动态切换音色。
   - **长会话上下文智能滚动压缩**：基于 LM Studio 原生 Token 计数平滑压缩上下文，支持无感长聊。
@@ -47,7 +47,7 @@
 ┌───────────────────────────────┐   ┌────────────────────────┴──────────────┐
 │  Pipecat 管道 (AudioInjector) │   │ SubtitleProxy / WebSocket             │
 ├───────────────────────────────┤   ├───────────────────────────────────────┤
-│ • L1 声学回声抑制 (RMS)       │   │ • SpeechRail Realtime v2               │
+│ • L1 声学回声抑制 (峰值包络/EMA)│   │ • SpeechRail Realtime v2               │
 │ • SpeechRail Realtime STT     │   │ • SpeechRail Realtime ASR              │
 │ • L2 文本相似度自激过滤       │   │ • 窗口对账与快照管理                  │
 │ • LM Studio 原生 /api/v1/chat │   └───────────────────┬───────────────────┘
@@ -68,6 +68,7 @@
 1. **`vr-ui` (端口 `8100`)**：系统默认主进程，集成 Voice Studio Web 控制台、AudioHub 麦克风采集、运行时模式协调（`RuntimeModeCoordinator`）与交互/会议控制网关。
 2. **SpeechRail (端口 `8201`)**：独立 ASR/TTS 服务，提供 OpenAI-compatible REST 与 Realtime v2；`voice-realtime` 只负责客户端适配、播放和模式协调，不管理其进程或模型。
 3. **LM Studio (端口 `1234`)**：本地大模型服务，加载 Qwen3.6 / Qwen3.8 等模型，通过原生 `/api/v1/chat` 提供超低延迟推理与高质量会议纪要生成。
+4. **PostgreSQL**：会议元数据、确认转录、说话人映射与 AI 纪要的唯一事实源；不保存音频。
 
 > 💡 **提示**：`vr-interact` 为 CLI Headless 交互入口，通过文件锁与 `vr-ui` 互斥，适用于无界面的终端交互场景。
 
@@ -130,21 +131,18 @@ uv sync --all-extras
 cd ui && npm install && npm run build && cd ..
 ```
 
-### 步骤 2：下载本地模型与初始化数据
+### 步骤 2：准备 SpeechRail 与本地运行数据
 
-本项目坚持离线优先原则；voice-realtime 自有模型统一保存在项目外缓存中，ASR/TTS 模型由 SpeechRail
-管理，Git 工作树只保存代码、配置和运行产物：
+本项目坚持离线优先原则。ASR、diarization profile 与 TTS 模型均由 SpeechRail 在项目外独立管理，
+`voice-realtime` 不下载或启动这些模型，Git 工作树只保存代码、配置和运行产物：
 
 ```bash
-# 下载 voice-realtime 自有的会议声纹模型；ASR/TTS 模型由 SpeechRail 管理
-bash scripts/download-models.sh
-
 # 下载 NLTK punkt_tab 分词数据 (TTS 断句必需)
 bash scripts/install-nltk-data.sh
 ```
 
 > ⚠️ **SpeechRail 前置条件**：先启动本机 SpeechRail，并确认 `http://127.0.0.1:8201/health` 可用。
-> 多人会议还需要在 SpeechRail 配置 Sortformer profile；缺失时会议会明确失败，不会静默降级为单说话人。
+> 多人会议还需要在 SpeechRail 配置 diarization profile（例如 Sortformer）；缺失时会议会明确失败，不会静默降级为单说话人。
 
 ### 步骤 3：初始化 PostgreSQL 数据库 (会议助手必需)
 
@@ -203,7 +201,7 @@ uv run vr-ui
 Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面：
 
 ### 1. 🤖 语音助手面板 (`Cmd + 1`)
-- **自然交谈**：直接对着麦克风说话，系统自动检测停顿并由 LM Studio 生成流式回答，Qwen3-TTS 实时跟读。
+- **自然交谈**：直接对着麦克风说话，系统自动检测停顿并由 LM Studio 生成流式回答，SpeechRail TTS 实时跟读。
 - **双工模式切换**：
   - **🔊 外放保护 (默认)**：使用外置扬声器时，Agent 播报期间自动抑制麦克风输入，防止自激回声。
   - **🎧 耳机双工**：佩戴耳机时开启，可在 Agent 说话过程中随时开口插话打断（Barge-in）。
@@ -212,7 +210,7 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 ### 2. 🎙️ 会议助手面板 (`Cmd + 2`)
 - **开始会议录制**：点击「开始会议」，系统自动挂起语音交互链路，独占麦克风进行转录。
-- **实时说话人分离**：SpeechRail 的 Sortformer profile 自动输出匿名 speaker label；会议在 commit 后原子应用短 TTL group remap，随后可随时点击发言人头像进行自定义重命名。
+- **实时说话人分离**：SpeechRail 的 diarization profile 自动输出匿名 speaker label；会议在 commit 后原子应用短 TTL group remap，随后可随时点击发言人头像进行自定义重命名。
 - **结束会议与冲刷**：点击「结束会议」，系统执行 EOF 优雅冲刷确保最后一句话不遗漏，并写入 PostgreSQL。
 - **异步 AI 会议纪要**：会议结束后后台自动调度 LLM 生成结构化会议纪要（包含议题、结论、待办事项），并在前端实时渲染 Markdown。
 - **历史记录与导出**：侧边栏快速翻阅历史会议，支持一键导出 Markdown 纪要与 SRT 字幕，或删除历史记录。
@@ -280,13 +278,13 @@ uv run python3 scripts/validate-meeting-contract.py
 # 1. 后端单元与集成测试（需设置 `VR_TEST_DATABASE_URL` 才会运行 PostgreSQL 临时 schema 测试；分支覆盖率门禁 `fail_under=80`）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
-# 2. Python 严格静态类型检查 (Strict mode，87 source files 全绿)
+# 2. Python 严格静态类型检查 (Strict mode)
 uv run mypy src/
 
 # 3. Python 代码风格与 Lint 检查 (全通过)
 uv run ruff check src/ tests/
 
-# 4. 前端单元与组件测试 (144 passed / 17 test files 全绿)
+# 4. 前端单元与组件测试
 cd ui && npm test -- --run
 
 # 5. 前端类型检查与生产构建 (React 19 + TypeScript + Vite 7)
@@ -322,9 +320,10 @@ uv run vr-interact
 <details>
 <summary><b>Q4: 为什么模型在没有外网时无法启动？</b></summary>
 
-本项目默认开启 `allow_model_downloads=False`（离线优先）。首次部署时，请分别按 SpeechRail 的模型
-运行手册准备 ASR/TTS snapshot；`bash scripts/download-models.sh` 只处理 voice-realtime 自有的
-CAM++ 资产。之后应用侧即可在完全离线/断网环境中运行，缺失模型由所属服务明确报错。
+本项目默认开启 `allow_model_downloads=False`（离线优先）。首次部署时，请按 SpeechRail 的运行手册
+准备 ASR/TTS snapshot；ASR/TTS 模型、profile 与运行进程均由 SpeechRail 独立管理，
+`voice-realtime` 不再下载或启动本地 ASR/TTS 模型。之后应用侧即可在完全离线/断网环境中运行，
+缺失模型由所属服务明确报错。
 </details>
 
 ---
@@ -341,10 +340,10 @@ CAM++ 资产。之后应用侧即可在完全离线/断网环境中运行，缺�
 - 📖 [会议模式多说话人精准识别与声纹聚类技术方案](docs/solutions/会议模式多说话人精准识别与声纹聚类技术方案.md)
 - 📖 [会议助手后端运行与前后端联调手册](docs/manuals/会议助手后端运行与前后端联调.md)
 - 📖 [Voice Studio UI 设计方案](docs/manuals/Voice-Studio-UI-设计方案.md)
-- 📖 [Qwen3-ASR 实时语音转文字开发对接手册](docs/manuals/Qwen3-ASR-实时语音转文字开发对接手册.md)
+- 📖 [SpeechRail Realtime v2 语音转文字开发对接手册](docs/manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md)
 - 📖 [物理输出音频采集验收手册](docs/manuals/物理输出音频采集验收手册.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
-- 📝 [架构决策记录 (ADR-001 ~ ADR-008)](docs/decisions)
+- 📝 [架构决策记录 (ADR-001 ~ ADR-012)](docs/decisions)
 
 ---
 

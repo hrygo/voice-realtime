@@ -5,7 +5,7 @@ status: accepted
 type: decision_record
 category: architecture
 date: 2026-08-31
-last_updated: 2026-08-31
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-core"
@@ -85,7 +85,7 @@ Accepted
 
 - microphone-only；
 - physical-output-only；
-- dual：near-end 麦克风与 far-end 物理输出先对齐、补静音、混音和限幅，再向 WhisperLiveKit / ASR 提交一条 PCM 流。
+- dual：near-end 麦克风与 far-end 物理输出先对齐、补静音、混音和限幅，再向 SpeechRail Realtime v2 / ASR 提交一条 PCM 流。
 
 因此，“单 PCM 所有者”继续约束重型推理链，而不是限制采集源只能有一个。初版双源推荐耳机；外放高质量路径后续以输出流作为 WebRTC AEC 的 far-end reference。
 

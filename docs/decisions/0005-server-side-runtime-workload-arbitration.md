@@ -5,7 +5,7 @@ status: accepted
 type: decision_record
 category: architecture
 date: 2026-08-25
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-core"
@@ -31,17 +31,21 @@ related_documents:
 
 Accepted
 
+> **当前实现补充（2026-09-01）**：本文的背景与备选方案保留 2026-08-25 的 WLK-era 语境；当前
+> ASR/TTS 服务边界已由 ADR-0011/0012 迁移到 SpeechRail Realtime v2。下文凡涉及“当前服务”或
+> “可用连接”的内容，按 SpeechRail 解释；历史 WLK 名称仅用于决策溯源。
+
 ## 日期
 
 2026-08-25
 
 ## 背景
 
-Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
+在 2026-08-25 的决策背景中，Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
 
-- 语音助手：SenseVoice → LM Studio → Qwen3-TTS；
-- 实时字幕：WhisperLiveKit Qwen3-ASR → Sortformer；
-- 会议助手：WhisperLiveKit Qwen3-ASR → Sortformer → PostgreSQL。
+- 语音助手（历史）：SenseVoice → LM Studio → Qwen3-TTS；
+- 实时字幕（历史）：WhisperLiveKit Qwen3-ASR → Sortformer；
+- 会议助手（历史）：WhisperLiveKit Qwen3-ASR → Sortformer → PostgreSQL。
 
 现有 `RuntimeModeCoordinator` 只管理 `assistant / meeting / idle`。实时字幕没有服务端模式，
 而是由前端在切换到字幕 Tab 时尽力发送 `stop_session`，再挂载 `/ws/subtitles`。正常单浏览器路径
@@ -75,11 +79,11 @@ Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
    由服务端主动撤销。
 5. `SubtitleProxy` 增加显式的普通字幕捕获启停：
    - 应用启动只初始化代理，不自动建立永久普通字幕流；
-   - 进入 `subtitles` 前可建立无 PCM 的 prepared WLK WebSocket，等待 ready 后再停止来源并提交；
+   - 进入 `subtitles` 前可建立无 PCM 的 prepared SpeechRail Realtime v2 WebSocket，等待 ready 后再停止来源并提交；
    - 离开 `subtitles` 时停止普通字幕流、清空待发 PCM、归档当前 SRT epoch，并清除旧快照；
    - 会议捕获继续使用独占租约、EOF 冲刷和会议后端数据边界，释放后不得自行恢复普通字幕流。
-6. WhisperLiveKit 服务进程继续由 `run-all.sh` 外部启动并常驻预热。模式切换只控制连接和 PCM，
-   不卸载模型、不重启服务，避免约 40 秒冷启动进入交互路径。
+6. SpeechRail 服务进程继续由独立服务管理并可常驻预热。模式切换只控制连接和 PCM，不由
+   `voice-realtime` 卸载模型或重启 SpeechRail，避免冷启动进入交互路径。
 7. 任意时刻最多存在一个 PCM 推理所有者；prepared 连接或已启动但被门控的管道不接收 PCM：
    - `assistant`：只允许交互链路消费 PCM；
    - `subtitles`：只允许普通字幕链路消费 PCM；
@@ -108,13 +112,13 @@ Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
 实现简单，但任意字幕客户端都能在无控制授权语义的情况下停止正在运行的助手；网络重连也可能重复
 触发模式切换。事件订阅不应拥有隐式写操作，因此拒绝。
 
-### 按模式启动、停止并卸载 WLK/TTS 服务进程
+### 按模式启动、停止并卸载旧 ASR/TTS 服务进程
 
 资源隔离最彻底，但会把模型冷启动带入用户切换路径，增加进程监管、失败恢复和端口所有权复杂度，
 并与现有外部服务拓扑冲突。当前 128GB 统一内存不是约束，真正需要隔离的是活跃计算而非模型驻留，
 因此拒绝。
 
-### 同时运行轻量字幕 WLK 与会议 WLK 两个实例
+### 同时运行轻量字幕与会议 ASR 两个实例
 
 可以分别关闭和启用说话人分离，但会复制 ASR 模型、端口、健康检查和恢复路径。现有证据尚未证明
 模式仲裁完成后仍需要双实例，先按 YAGNI 推迟；若单说话人字幕在外部高负载下仍不可用，再独立立项。
@@ -124,7 +128,7 @@ Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
 ### 正向后果
 
 - 资源互斥由服务端保证，多浏览器和控制连接异常不会产生双 ASR 并发。
-- WLK 保持预热，普通模式切换不承担模型冷启动成本。
+- SpeechRail 保持预热，普通模式切换不承担模型冷启动成本。
 - 模式、字幕连接和服务健康不再混为同一个“已连接”状态。
 - 页面启动、命令超时和多浏览器切换能够由同一 revisioned 状态流收敛。
 - 现有会议租约、EOF、PostgreSQL 唯一事实源和零音频持久化约束保持不变。
@@ -141,7 +145,7 @@ Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
 
 ### 保留风险
 
-- 高负载游戏仍可争抢 CPU、GPU/Metal 和内存带宽；应用只能诊断，不能保证在任意外部负载下实时。
-- Sortformer 在本机由 CPU 路径执行，Qwen3-ASR 使用 MPS；单一字幕工作负载仍可能同时受 CPU 和 GPU
+- 高负载进程仍可争抢 CPU、GPU/Metal 和内存带宽；应用只能诊断，不能保证在任意外部负载下实时。
+- SpeechRail profile 的具体 CPU/GPU 路径与资源占用由外部服务决定；单一字幕 workload 仍可能受
   外部负载影响。
 - TTS 预缓冲会增加首播延迟，本决策只先增加音频块节奏观测，不在无对照数据时改变缓冲策略。

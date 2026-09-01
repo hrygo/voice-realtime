@@ -4,9 +4,9 @@ description: "Voice Studio 前端控制台架构设计、单源麦克风控制�
 status: active
 type: guide
 category: frontend
-version: "v1.0.0"
+version: "v1.1.0"
 date: 2026-08-21
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-ui"
@@ -49,7 +49,7 @@ flowchart LR
     HUB --> SP[SubtitleProxy]
     AQ --> SESSION[InteractionSession<br/>Pipecat]
     SESSION --> OBS[StatusBridgeObserver]
-    SP --> SR[SpeechRail Realtime v2 :8201<br/>ASR / Sortformer profile]
+    SP --> SR[SpeechRail Realtime v2 :8201<br/>ASR / diarization profile]
     SESSION --> LM[LM Studio :1234]
     SESSION --> TTS[SpeechRail TTS :8201]
     OBS --> ALOG[/ws/assistant]
@@ -68,7 +68,7 @@ flowchart LR
 - AudioHub 一次读取 512 个采样帧，即约 32ms、1024 bytes；每个 sink 只有一个工作协程和
   固定容量队列。队满丢最旧帧并计数，不创建无限任务。
 - 静音在服务端阻断所有 sink 投递，并清空交互队列；前端不做乐观伪静音。
-- SubtitleProxy 始终消费 SpeechRail transcription events，并在应用边界组装全量快照。快照由所有 confirmed 行与当前 partial 共同构成，
+- SubtitleProxy 在 `subtitles`/`meeting` workload 激活期间消费 SpeechRail transcription events，并在应用边界组装全量快照。快照由所有 confirmed 行与当前 partial 共同构成，
   因而已有 confirmed 不会冻结后续 partial。
 - SpeechRail 断线后清空旧音频并可取消地指数退避；没有浏览器订阅时仍维持上游消费，但不积压
   浏览器消息。
@@ -128,7 +128,7 @@ flowchart LR
 
 - `useEventSocket`：事件面和控制面复用的可取消指数退避实现。
 - `useCommandSocket`：状态握手、`request_id` 关联、超时和断线拒绝。
-- `assistantStore`：默认基准态为 `listening`（👂 聆听麦克风）、`user_silence` / STT `final` → `thinking`（🧠 LM Studio 推理）、`TTS started` → `speaking`（🗣️ Qwen3-TTS 播报）、`TTS stopped` → 闭环返回 `listening`，打断与超时亦安全恢复 `listening`，异常进入 `degraded`/`stopped`。
+- `assistantStore`：默认基准态为 `listening`（👂 聆听麦克风）、`user_silence` / STT `final` → `thinking`（🧠 LM Studio 推理）、`TTS started` → `speaking`（🗣️ SpeechRail TTS 播报）、`TTS stopped` → 闭环返回 `listening`，打断与超时亦安全恢复 `listening`，异常进入 `degraded`/`stopped`。
 - `subtitleStore`：完整快照 reducer、confirmed/partial 分离和 SRT 导出。
 - 会话计时使用服务端 `session_started_at`，不再使用页面加载时间。
 

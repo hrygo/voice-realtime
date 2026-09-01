@@ -5,7 +5,7 @@ status: accepted
 type: decision_record
 category: meeting
 date: 2026-08-26
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
   - "voice-realtime-core"
@@ -39,7 +39,9 @@ Accepted
 
 ## 背景
 
-会议助手后续将由前端团队和后端团队分别开发。当前仓库已经包含 React/TypeScript 前端、Python 后端、PostgreSQL、WhisperLiveKit、Sortformer 和会议 WebSocket，但公共契约、实现代码和测试仍然在同一工作树中演进。
+会议助手后续将由前端团队和后端团队分别开发。在 2026-08-26 的决策背景中，仓库已经包含
+React/TypeScript 前端、Python 后端、PostgreSQL、WhisperLiveKit、Sortformer 和会议 WebSocket；
+当前 ASR/分人运行时已由 SpeechRail Realtime v2 提供，但公共契约、实现代码和测试仍然在同一工作树中演进。
 
 若直接拆分代码仓库，以下问题会被放大：
 
@@ -94,7 +96,7 @@ Accepted
 
 ### 保留风险
 
-- 实时 ASR 的 partial/revision 行为仍受 WLK、模型和机器负载影响；
+- 实时 ASR 的 partial/revision 行为仍受 SpeechRail profile、模型和机器负载影响；
 - 说话人分离仍是匿名 diarization，不能保证真实身份；
 - 外部高负载可能影响延迟，但不改变前后端契约；
 - 如果双方绕过公共契约直接共享内部对象，单仓库仍会重新形成隐式耦合。
