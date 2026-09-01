@@ -5,13 +5,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
-import json
 import logging
-import shutil
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -25,10 +22,11 @@ from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.asr_mapping import to_transcript_window
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
+from voice_realtime.ui.subtitle_archive import SrtArchive
+from voice_realtime.ui.subtitle_clients import ClientSender, SubtitleClientHub
 
 logger = logging.getLogger(__name__)
 
-ClientSender = Callable[[str], Awaitable[None]]
 TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 CaptureListener = Callable[[TranscriptWindow], Awaitable[None]]
 GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
@@ -102,12 +100,6 @@ class SubtitleProxyDiagnostics:
     gap_count: int
 
 
-@dataclass
-class _ClientChannel:
-    queue: asyncio.Queue[str]
-    task: asyncio.Task[None]
-
-
 class SubtitleProxy:
     """显式准备并激活普通字幕或会议 SpeechRail 流。"""
 
@@ -137,8 +129,7 @@ class SubtitleProxy:
         self._clock = clock
         self._browser_stream: StreamingTranscriber | None = None
         self._capture_stream: StreamingTranscriber | None = None
-        self._clients: dict[ClientSender, _ClientChannel] = {}
-        self._client_sequence = 0
+        self._client_hub = SubtitleClientHub(on_channel_closed=self._on_hub_channel_closed)
         self._running = False
         self._state = SubtitleProxyState.STOPPED
         self._last_error: str | None = None
@@ -153,9 +144,7 @@ class SubtitleProxy:
         self._audio_buffer: asyncio.Queue[bytes] = asyncio.Queue(maxsize=self._AUDIO_QUEUE_SIZE)
         self._last_payload: dict[str, Any] | None = None
         self._snapshot_signature: tuple[tuple[tuple[str, ...], ...], str] | None = None
-        self._persisted_confirmed_signature: tuple[tuple[str, ...], ...] | None = None
-        self._archived = False
-        self._session_has_confirmed = False
+        self._archive = SrtArchive(settings.output_dir)
         self._capture_owner: str | None = None
         self._capture_generation = 0
         self._capture_prepared: CapturePreparation | None = None
@@ -254,33 +243,25 @@ class SubtitleProxy:
 
     def add_client(self, ws_send: ClientSender) -> str:
         """注册浏览器发送端；每个客户端拥有独立有界队列并立即接收当前最新快照。"""
-        if ws_send not in self._clients:
-            queue: asyncio.Queue[str] = asyncio.Queue(maxsize=self._CLIENT_QUEUE_SIZE)
-            if self._last_payload is not None:
-                queue.put_nowait(json.dumps(self._last_payload, ensure_ascii=False))
-            task = asyncio.create_task(self._client_send_loop(ws_send, queue))
-            task.add_done_callback(self._consume_client_task_result)
-            self._clients[ws_send] = _ClientChannel(queue=queue, task=task)
-        self._client_sequence += 1
-        logger.info("SubtitleProxy: 新浏览器订阅 (共 %d 个)", len(self._clients))
-        return f"client_{self._client_sequence}"
+        return self._client_hub.add(ws_send, snapshot=self._last_payload)
 
     def remove_client(self, ws_send: ClientSender) -> None:
         """移除浏览器发送端，并在最后一个客户端离开时丢弃待发音频。"""
-        channel = self._clients.pop(ws_send, None)
-        if channel is not None:
-            channel.task.cancel()
-            logger.info("SubtitleProxy: 浏览器取消订阅 (剩余 %d 个)", len(self._clients))
+        self._client_hub.remove(ws_send)
+        self._on_hub_channel_closed()
+
+    @property
+    def has_clients(self) -> bool:
+        return self._client_hub.has_clients
+
+    def _on_hub_channel_closed(self) -> None:
+        """最后一个浏览器客户端离开且无任何 capture 时丢弃待发 PCM。"""
         if (
-            not self._clients
+            not self._client_hub.has_clients
             and not self._browser_capture_active
             and self._capture_owner is None
         ):
             self._drain_audio_buffer()
-
-    @property
-    def has_clients(self) -> bool:
-        return bool(self._clients)
 
     @property
     def is_paused(self) -> bool:
@@ -353,10 +334,8 @@ class SubtitleProxy:
             self._state = SubtitleProxyState.ERROR
             raise
         self._running = True
-        self._archived = False
-        self._session_has_confirmed = False
         self._snapshot_signature = None
-        self._persisted_confirmed_signature = None
+        self._archive.reset_epoch()
         self._last_error = None
         self._last_event_at = None
         self._stop_event.clear()
@@ -373,12 +352,7 @@ class SubtitleProxy:
         if self._capture_owner is not None:
             await self._close_capture()
         await self._close_browser_connection()
-        channels = list(self._clients.values())
-        self._clients.clear()
-        for channel in channels:
-            channel.task.cancel()
-        if channels:
-            await asyncio.gather(*(channel.task for channel in channels), return_exceptions=True)
+        await self._client_hub.close()
         self._state = SubtitleProxyState.STOPPED
         logger.info("SubtitleProxy: 已停止")
 
@@ -605,11 +579,9 @@ class SubtitleProxy:
         await self._close_subtitle_epoch()
         self._subtitle_epoch += 1
         self._subtitle_epoch_open = True
-        self._archived = False
+        self._archive.reset_epoch()
         self._last_payload = None
         self._snapshot_signature = None
-        self._persisted_confirmed_signature = None
-        self._session_has_confirmed = False
         self._browser_ready.clear()
         self._last_event_at = None
         return self._subtitle_epoch
@@ -619,16 +591,14 @@ class SubtitleProxy:
         if not self._subtitle_epoch_open:
             return
         epoch = self._subtitle_epoch
-        self._archive_current_srt()
-        self._atomic_clear_current_srt()
+        self._archive.close_epoch()
+        self._archive.clear_current()
         self._last_payload = None
         self._snapshot_signature = None
-        self._persisted_confirmed_signature = None
-        self._session_has_confirmed = False
         self._browser_ready.clear()
         self._last_event_at = None
         self._subtitle_epoch_open = False
-        if epoch > 0 and self._clients:
+        if epoch > 0 and self._client_hub.has_clients:
             await self._broadcast_untracked(
                 {"type": "reset", "source_epoch": epoch}
             )
@@ -949,44 +919,27 @@ class SubtitleProxy:
             return
         self._snapshot_signature = signature
         if persist:
-            self._persist_confirmed_snapshot(payload, signature[0])
+            self._archive.persist_confirmed(payload)
 
         await self._broadcast_untracked(payload)
 
     async def _broadcast_untracked(self, payload: dict[str, Any]) -> None:
         """广播控制或快照 payload，但不让它成为可回放字幕状态。"""
-        if not self._clients:
-            return
-        text = json.dumps(payload, ensure_ascii=False)
-        for channel in tuple(self._clients.values()):
-            if channel.queue.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    channel.queue.get_nowait()
-            with contextlib.suppress(asyncio.QueueFull):
-                channel.queue.put_nowait(text)
-        await asyncio.sleep(0)
+        await self._client_hub.publish(payload)
 
     async def clear_subtitles(self) -> None:
         """清空当前字幕快照并重置服务端会话。"""
         empty_payload = {"lines": [], "buffer_transcription": ""}
         self._last_payload = empty_payload
         self._snapshot_signature = None
-        self._persisted_confirmed_signature = None
-        self._session_has_confirmed = False
-        self._atomic_clear_current_srt()
+        self._archive.clear_current()
         stream = self._browser_stream
         if stream is not None:
             self._browser_stream = None
             self._browser_ready.clear()
             with contextlib.suppress(Exception):
                 await stream.close()
-        text = json.dumps(empty_payload, ensure_ascii=False)
-        for channel in tuple(self._clients.values()):
-            if channel.queue.full():
-                with contextlib.suppress(asyncio.QueueEmpty):
-                    channel.queue.get_nowait()
-            with contextlib.suppress(asyncio.QueueFull):
-                channel.queue.put_nowait(text)
+        await self._client_hub.publish(empty_payload)
 
     async def push_audio(self, data: bytes) -> None:
         """接收 s16le 音频；会议租约存在时不依赖浏览器订阅。"""
@@ -1041,32 +994,6 @@ class SubtitleProxy:
             finally:
                 self._audio_buffer.task_done()
 
-    async def _client_send_loop(
-        self, callback: ClientSender, queue: asyncio.Queue[str]
-    ) -> None:
-        try:
-            while True:
-                await callback(await queue.get())
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.debug("SubtitleProxy: 浏览器客户端已断开", exc_info=True)
-        finally:
-            current = self._clients.get(callback)
-            if current is not None and current.task is asyncio.current_task():
-                self._clients.pop(callback, None)
-                if (
-                    not self._clients
-                    and not self._browser_capture_active
-                    and self._capture_owner is None
-                ):
-                    self._drain_audio_buffer()
-
-    @staticmethod
-    def _consume_client_task_result(task: asyncio.Task[None]) -> None:
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            task.result()
-
     def _drain_audio_buffer(self) -> None:
         while True:
             try:
@@ -1075,96 +1002,12 @@ class SubtitleProxy:
                 return
             self._audio_buffer.task_done()
 
-    @staticmethod
-    def _confirmed_lines(payload: dict[str, Any]) -> list[dict[str, Any]]:
-        lines = payload.get("lines")
-        if not isinstance(lines, list):
-            return []
-        return [
-            line
-            for line in lines
-            if isinstance(line, dict)
-            and str(line.get("text") or "").strip()
-            and line.get("speaker") != -2
-        ]
-
-    @classmethod
     def _snapshot_key(
-        cls, payload: dict[str, Any]
+        self, payload: dict[str, Any]
     ) -> tuple[tuple[tuple[str, ...], ...], str]:
-        confirmed = tuple(
-            (
-                str(line.get("start") or ""),
-                str(line.get("end") or ""),
-                str(line.get("speaker") if line.get("speaker") is not None else ""),
-                str(line.get("text") or ""),
-            )
-            for line in cls._confirmed_lines(payload)
-        )
+        confirmed = SrtArchive.confirmed_signature(payload)
         partial = str(payload.get("buffer_transcription") or "")
         return confirmed, partial
-
-    def _persist_confirmed_snapshot(
-        self,
-        payload: dict[str, Any],
-        signature: tuple[tuple[str, ...], ...],
-    ) -> None:
-        if not signature or signature == self._persisted_confirmed_signature:
-            return
-        output = self._render_srt(self._confirmed_lines(payload))
-        output_dir = self._settings.output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        temporary = output_dir / "current.srt.tmp"
-        current = output_dir / "current.srt"
-        temporary.write_text(output, encoding="utf-8")
-        temporary.replace(current)
-        self._persisted_confirmed_signature = signature
-        self._session_has_confirmed = True
-
-    def _atomic_clear_current_srt(self) -> None:
-        output_dir = self._settings.output_dir
-        output_dir.mkdir(parents=True, exist_ok=True)
-        temporary = output_dir / "current.srt.tmp"
-        current = output_dir / "current.srt"
-        temporary.write_text("", encoding="utf-8")
-        temporary.replace(current)
-
-    def _archive_current_srt(self) -> None:
-        if self._archived or not self._session_has_confirmed:
-            return
-        current = self._settings.output_dir / "current.srt"
-        if not current.is_file() or not current.stat().st_size:
-            return
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        archive = self._settings.output_dir / f"session-{timestamp}.srt"
-        suffix = 2
-        while archive.exists():
-            archive = self._settings.output_dir / f"session-{timestamp}-{suffix}.srt"
-            suffix += 1
-        shutil.copy2(current, archive)
-        self._archived = True
-
-    @classmethod
-    def _render_srt(cls, lines: list[dict[str, Any]]) -> str:
-        blocks = []
-        for index, line in enumerate(lines, start=1):
-            start = cls._srt_timestamp(line.get("start"))
-            end = cls._srt_timestamp(line.get("end"))
-            text = str(line.get("text") or "").strip()
-            blocks.append(f"{index}\n{start} --> {end}\n{text}")
-        return "\n\n".join(blocks) + "\n"
-
-    @staticmethod
-    def _srt_timestamp(value: object) -> str:
-        raw = str(value or "00:00:00").strip().replace(".", ",")
-        clock, separator, fraction = raw.partition(",")
-        parts = clock.split(":")
-        if len(parts) == 3:
-            hours, minutes, seconds = parts
-        else:
-            hours, minutes, seconds = "0", "0", "0"
-        millis = (fraction if separator else "0").ljust(3, "0")[:3]
-        return f"{hours.zfill(2)}:{minutes.zfill(2)}:{seconds.zfill(2)},{millis}"
 
     async def _close_capture(self) -> None:
         self._capture_accept_audio = False
