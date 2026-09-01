@@ -1,4 +1,4 @@
-"""集中配置层：TTS 桥 / 交互管道 / 字幕服务 三个子系统的全部可调参数。
+"""集中配置层：SpeechRail TTS / 交互管道 / 字幕服务 三个子系统的全部可调参数。
 
 使用 pydantic-settings，支持环境变量覆盖（前缀 `VR_`）与 `.env` 文件。
 """
@@ -17,6 +17,7 @@ from voice_realtime.asr.profiles import SpeechRailRealtimeProfile
 from voice_realtime.interaction.context_memory import ContextCompactionConfig
 from voice_realtime.lm_studio import DEFAULT_LM_STUDIO_API_KEY
 
+# Kept only for parsing the retired BridgeSettings compatibility block.
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
 DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
@@ -58,7 +59,8 @@ TTS_OUTPUT_SAMPLE_RATE = 24000  # Qwen3-TTS 原生输出采样率
 SPEECHRAIL_TTS_MODEL = "speechrail/qwen3-tts"
 SPEECHRAIL_TTS_VOICE_IDS = frozenset({"default", "warm", "bright", "calm"})
 SPEECHRAIL_TTS_VOICE_ALIASES = {"alloy": "default"}
-# Compatibility-only value for the retired ``tts_bridge`` package.
+# Compatibility-only value for clients migrating from the retired bridge;
+# the alias is removed after 2026-10-31.
 TTS_ENGINE_DEFAULT_VOICE = "alloy"
 ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
@@ -102,7 +104,7 @@ def _validate_service_url(value: str) -> str:
 
 
 class BridgeSettings(BaseSettings):
-    """qwen3-tts-openai 桥配置（mlx-audio Qwen3-TTS 引擎）。"""
+    """Retired bridge settings kept for config-file compatibility until 2026-10-31."""
 
     model_config = SettingsConfigDict(env_prefix="VR_BRIDGE_", env_file=".env", extra="ignore")
 
@@ -147,7 +149,7 @@ class BridgeSettings(BaseSettings):
 
 
 class InteractionSettings(BaseSettings):
-    """Pipecat 交互管道配置（SpeechRail STT → LM Studio → TTS 桥）。"""
+    """Pipecat 交互管道配置（SpeechRail STT/TTS → LM Studio）。"""
 
     model_config = SettingsConfigDict(env_prefix="VR_INTERACTION_", env_file=".env", extra="ignore")
 
@@ -232,9 +234,13 @@ class InteractionSettings(BaseSettings):
         description="SpeechRail TTS preset；alloy 仅兼容到 2026-10-31",
     )
     tts_language: str = Field(default="auto", description="SpeechRail TTS 语言或 auto")
+    speechrail_api_key: str | None = Field(
+        default=None,
+        description="SpeechRail 可选 API key；仅通过 HTTP/WebSocket Authorization header 发送",
+    )
     tts_bridge_url: str = Field(
         default="http://127.0.0.1:8765/v1",
-        description="旧 TTS bridge 兼容配置；生产交互 pipeline 不使用",
+        description="旧 TTS bridge 兼容配置；生产 pipeline 不使用，将于 2026-10-31 移除",
     )
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     input_device_name: str | None = Field(
@@ -376,11 +382,12 @@ class InteractionSettings(BaseSettings):
             return stripped or None
         return v
 
-    @field_validator("llm_api_key", mode="before")
+    @field_validator("llm_api_key", "speechrail_api_key", mode="before")
     @classmethod
-    def _normalize_llm_api_key(cls, v: object) -> object:
+    def _normalize_api_key(cls, v: object) -> object:
         if isinstance(v, str):
-            return v.strip()
+            stripped = v.strip()
+            return stripped or None
         return v
 
     @model_validator(mode="after")
@@ -473,11 +480,23 @@ class SubtitleSettings(BaseSettings):
     )
     speechrail_connect_timeout_secs: float = Field(default=5.0, gt=0.0, le=30.0)
     speechrail_finish_timeout_secs: float = Field(default=10.0, gt=0.0, le=120.0)
+    speechrail_api_key: str | None = Field(
+        default=None,
+        description="SpeechRail 可选 API key；仅通过 WebSocket Authorization header 发送",
+    )
 
     @field_validator("speechrail_url")
     @classmethod
     def _validate_speechrail_url(cls, value: str) -> str:
         return SpeechRailRealtimeProfile(url=value, language="zh").url
+
+    @field_validator("speechrail_api_key", mode="before")
+    @classmethod
+    def _normalize_speechrail_api_key(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
 
     @property
     def asr_profile(self) -> SpeechRailRealtimeProfile:

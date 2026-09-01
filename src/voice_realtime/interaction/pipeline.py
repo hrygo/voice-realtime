@@ -1,4 +1,4 @@
-"""Pipecat 交互管道装配：SpeechRail STT → LM Studio → TTS 桥 → 播放。
+"""Pipecat 交互管道装配：SpeechRail STT → LM Studio → SpeechRail TTS → 播放。
 
 处理器链对齐 pipecat 1.7 官方组装（examples/getting-started/06a）：
   transport.input → EchoSuppressionProcessor → SpeechRail STT → SelfEchoFilter
@@ -652,7 +652,8 @@ def build_pipeline(
         )
 
     resolved_stt_factory = stt_factory or SpeechRailConversationSTTFactory(
-        url=settings.speechrail_realtime_url
+        url=settings.speechrail_realtime_url,
+        api_key=settings.speechrail_api_key,
     )
     stt = cast(
         FrameProcessor,
@@ -673,6 +674,7 @@ def build_pipeline(
 
     tts = SpeechRailTTSService(
         url=settings.speechrail_realtime_url,
+        api_key=settings.speechrail_api_key,
         fast_first_clause=settings.tts_fast_first_clause,
         first_clause_min_chars=settings.tts_first_clause_min_chars,
         settings=SpeechRailTTSService.Settings(

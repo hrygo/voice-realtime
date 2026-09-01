@@ -23,12 +23,19 @@ class SpeechRailTTSClient(SpeechRailV2Transport):
         model: str,
         voice: str,
         language: str = "auto",
+        api_key: str | None = None,
         connection_factory: ConnectionFactory | None = None,
     ) -> None:
-        super().__init__(url=url, connection_factory=connection_factory)
-        self._model = model
-        self._voice = "default" if voice == "alloy" else voice
-        self._language = language or "auto"
+        super().__init__(url=url, api_key=api_key, connection_factory=connection_factory)
+        if not model.strip():
+            raise ValueError("model must not be blank")
+        if not voice.strip():
+            raise ValueError("voice must not be blank")
+        if not language.strip():
+            raise ValueError("language must not be blank")
+        self._model = model.strip()
+        self._voice = "default" if voice.strip() == "alloy" else voice.strip()
+        self._language = language.strip() or "auto"
         self._active_response_id: str | None = None
 
     @property
@@ -62,7 +69,7 @@ class SpeechRailTTSClient(SpeechRailV2Transport):
             await self.send_event({"type": "speech_input.commit", "speed": speed})
             while True:
                 event = await self.receive()
-                event_type = event["type"]
+                event_type = event.get("type")
                 if event_type == "response.created":
                     response_id = event.get("response_id")
                     if not isinstance(response_id, str) or not response_id:
@@ -76,7 +83,10 @@ class SpeechRailTTSClient(SpeechRailV2Transport):
                     chunk_index = event.get("chunk_index")
                     if (
                         response_id != self._active_response_id
-                        or not isinstance(chunk_index, int)
+                        or (
+                            not isinstance(chunk_index, int)
+                            or isinstance(chunk_index, bool)
+                        )
                         or chunk_index != expected_chunk_index
                     ):
                         raise SpeechRailProtocolError("SPEECHRAIL_AUDIO_ORDER_ERROR")

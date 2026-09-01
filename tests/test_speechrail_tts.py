@@ -6,6 +6,11 @@ import json
 
 import pytest
 
+import voice_realtime.speechrail.transport as transport_module
+from voice_realtime.speechrail.transport import (
+    SpeechRailProtocolError,
+    SpeechRailV2Transport,
+)
 from voice_realtime.speechrail.tts import SpeechRailTTSClient
 
 
@@ -139,6 +144,25 @@ def test_tts_client_exposes_and_cancels_active_response_for_pipecat() -> None:
     asyncio.run(scenario())
 
 
+def test_tts_client_rejects_boolean_audio_chunk_index() -> None:
+    async def scenario() -> None:
+        connection = FakeSpeechConnection()
+        connection.messages[2]["chunk_index"] = True
+        client = SpeechRailTTSClient(
+            url=connection.uri,
+            model="speechrail/qwen3-tts",
+            voice="default",
+            connection_factory=lambda _: _immediate(connection),
+        )
+
+        with pytest.raises(SpeechRailProtocolError) as error:
+            _ = [chunk async for chunk in client.synthesize("你好")]
+
+        assert error.value.code == "SPEECHRAIL_AUDIO_ORDER_ERROR"
+
+    asyncio.run(scenario())
+
+
 class BlockingSpeechConnection(FakeSpeechConnection):
     def __init__(self) -> None:
         super().__init__()
@@ -166,3 +190,32 @@ class BlockingSpeechConnection(FakeSpeechConnection):
 
 async def _immediate(connection: FakeSpeechConnection) -> FakeSpeechConnection:
     return connection
+
+
+def test_transport_sends_api_key_as_websocket_bearer_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, object]] = []
+
+    async def connect(uri: str, **kwargs: object) -> FakeSpeechConnection:
+        calls.append((uri, kwargs.get("additional_headers")))
+        return FakeSpeechConnection()
+
+    monkeypatch.setattr(transport_module.websockets, "connect", connect)
+
+    async def scenario() -> None:
+        client = SpeechRailV2Transport(
+            url="wss://speechrail.test/v2/realtime",
+            api_key="  secret-key  ",
+        )
+        await client.connect()
+        await client.close()
+
+    asyncio.run(scenario())
+
+    assert calls == [
+        (
+            "wss://speechrail.test/v2/realtime",
+            {"Authorization": "Bearer secret-key"},
+        )
+    ]

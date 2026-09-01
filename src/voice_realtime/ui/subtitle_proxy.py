@@ -186,6 +186,7 @@ class SubtitleProxy:
             return SpeechRailStreamingTranscriber(
                 client=SpeechRailRealtimeClient(
                     url=self._profile.url,
+                    api_key=self._settings.speechrail_api_key,
                     connection_factory=connection_factory,
                 ),
                 context=context,

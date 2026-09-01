@@ -34,7 +34,7 @@ Voice Studio 是本机语音系统的默认运行入口，不只是展示页。`
 
 - 唯一麦克风采集器 `AudioHub`；
 - 注入式 Pipecat 交互会话；
-- WhisperLiveKit 字幕代理；
+- SpeechRail Realtime v2 字幕/会议 ASR 代理；
 - 浏览器事件面、控制面和静态资源。
 
 浏览器不采集音频，只展示服务端事件并发送严格控制命令。关闭浏览器不会停止服务。
@@ -49,9 +49,9 @@ flowchart LR
     HUB --> SP[SubtitleProxy]
     AQ --> SESSION[InteractionSession<br/>Pipecat]
     SESSION --> OBS[StatusBridgeObserver]
-    SP --> WLK[WhisperLiveKit :8001<br/>--pcm-input]
+    SP --> SR[SpeechRail Realtime v2 :8201<br/>ASR / Sortformer profile]
     SESSION --> LM[LM Studio :1234]
-    SESSION --> TTS[TTS Bridge :8765]
+    SESSION --> TTS[SpeechRail TTS :8201]
     OBS --> ALOG[/ws/assistant]
     SP --> SLOG[/ws/subtitles]
     CTRL[/ws/assistant/cmd] --> SESSION
@@ -68,9 +68,9 @@ flowchart LR
 - AudioHub 一次读取 512 个采样帧，即约 32ms、1024 bytes；每个 sink 只有一个工作协程和
   固定容量队列。队满丢最旧帧并计数，不创建无限任务。
 - 静音在服务端阻断所有 sink 投递，并清空交互队列；前端不做乐观伪静音。
-- SubtitleProxy 始终消费 WLK 全量快照。快照由所有 confirmed 行与当前 partial 共同构成，
+- SubtitleProxy 始终消费 SpeechRail transcription events，并在应用边界组装全量快照。快照由所有 confirmed 行与当前 partial 共同构成，
   因而已有 confirmed 不会冻结后续 partial。
-- WLK 断线后清空旧音频并可取消地指数退避；没有浏览器订阅时仍维持上游消费，但不积压
+- SpeechRail 断线后清空旧音频并可取消地指数退避；没有浏览器订阅时仍维持上游消费，但不积压
   浏览器消息。
 - confirmed 字幕原子替换 `runtime/subtitles/current.srt`，停止时生成时间戳归档。
 
@@ -113,7 +113,7 @@ flowchart LR
 
 ### 字幕事件 `/ws/subtitles`
 
-转发 WLK full-state：`lines` 为 confirmed，`buffer_transcription` 为 partial。前端 reducer 用
+转发由 SpeechRail transcription events 组装的 full-state：`lines` 为 confirmed，`buffer_transcription` 为 partial。前端 reducer 用
 快照替换而非追加猜测，并生成标准 `HH:MM:SS,mmm` SRT 时间。
 
 ## 6. 浏览器安全边界
@@ -137,5 +137,5 @@ flowchart LR
 Python 聚焦测试覆盖控制 schema、状态握手、Origin、真实静音、运行时生命周期和安全响应头；
 Vitest 覆盖控制确认、断线重连、助手状态、字幕快照和 StatusBar。全量门禁见项目 README。
 
-历史上“同时运行 vr-ui 与 vr-interact 的五服务冒烟”结论已废止；正确拓扑是四个运行单元，
+历史上“同时运行 vr-ui 与 vr-interact 的多服务冒烟”结论已废止；当前拓扑由 `vr-ui`、SpeechRail、LM Studio 与 PostgreSQL 构成，
 headless 入口只能替代 UI 入口。

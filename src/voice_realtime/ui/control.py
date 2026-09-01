@@ -1,4 +1,4 @@
-"""严格控制协议到交互运行时与 TTS 桥的分发。"""
+"""严格控制协议到交互运行时与 SpeechRail TTS 的分发。"""
 
 from __future__ import annotations
 

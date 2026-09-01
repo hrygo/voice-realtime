@@ -53,6 +53,7 @@ async def test_speechrail_tts_service_normalizes_legacy_voice_and_yields_pcm() -
             "model": "speechrail/qwen3-tts",
             "voice": "default",
             "language": "zh",
+            "api_key": None,
         }
     ]
     assert client.requests == [("你好", 1.0)]

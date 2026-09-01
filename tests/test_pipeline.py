@@ -177,6 +177,7 @@ class TestBuildPipeline:
         tts_mock = mock_services[2]
         tts_mock.assert_called_once()
         assert tts_mock.call_args.kwargs["url"] == settings.speechrail_realtime_url
+        assert tts_mock.call_args.kwargs["api_key"] is None
         tts_mock.Settings.assert_called_with(
             model=settings.speechrail_tts_model,
             voice=settings.tts_voice,
@@ -198,7 +199,10 @@ class TestBuildPipeline:
         ):
             bp(settings, transport=mock_transport)
         factory = mock_services[0]
-        factory.assert_called_once_with(url=settings.speechrail_realtime_url)
+        factory.assert_called_once_with(
+            url=settings.speechrail_realtime_url,
+            api_key=None,
+        )
         factory.return_value.create_processor.assert_called_once_with(
             sample_rate=16000,
             language="zh",

@@ -411,13 +411,18 @@ class TestServices:
         }
         assert "must-not-leak" not in response.text
 
-    def test_services_probe_authenticates_only_lm_models_request(self) -> None:
+    def test_services_authenticates_configured_upstreams(self) -> None:
         settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
-            subtitles={"host": "127.0.0.1", "port": 9998},
+            subtitles={
+                "speechrail_url": "ws://127.0.0.1:9998/v2/realtime",
+                "speechrail_api_key": "subtitle-key",
+            },
             interaction={
                 "llm_base_url": "http://127.0.0.1:9997/v1",
                 "llm_api_key": "test-key",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9996/v1",
+                "speechrail_api_key": "tts-key",
             },
         )
         app = create_app(settings, initialize_meeting=False)
@@ -442,11 +447,14 @@ class TestServices:
             call for call in get.call_args_list if call.args[0].endswith("/v1/models")
         )
         assert lm_call.kwargs["headers"] == {"Authorization": "Bearer test-key"}
-        non_lm_calls = [
-            call for call in get.call_args_list if not call.args[0].endswith("/v1/models")
-        ]
-        assert len(non_lm_calls) == 2
-        assert all(call.kwargs["headers"] is None for call in non_lm_calls)
+        speechrail_call = next(
+            call for call in get.call_args_list if call.args[0].endswith(":9998/health")
+        )
+        assert speechrail_call.kwargs["headers"] == {"Authorization": "Bearer subtitle-key"}
+        tts_call = next(
+            call for call in get.call_args_list if call.args[0].endswith(":9996/health")
+        )
+        assert tts_call.kwargs["headers"] == {"Authorization": "Bearer tts-key"}
 
     def test_services_http_ok_reports_backoff_workload_as_degraded(self) -> None:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
@@ -636,13 +644,55 @@ class TestVoices:
             "voice_realtime.ui.server.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
-        ):
+        ) as get:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
             with TestClient(app) as client:
                 resp = client.get("/v1/voices")
                 assert resp.status_code == 200
                 assert resp.json()["data"][0]["id"] == "default"
+                assert get.call_args.kwargs["headers"] is None
+
+    def test_speech_proxy_uses_speechrail_rest_endpoint_and_authenticates(self) -> None:
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+                "speechrail_api_key": "tts-key",
+            },
+        )
+        app = create_app(mock_settings, initialize_meeting=False)
+        mock_resp = Mock(status_code=200)
+        mock_resp.content = b"RIFF-audio"
+        mock_resp.headers = {"content-type": "audio/wav"}
+
+        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
+            "voice_realtime.ui.server.httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as post:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/audio/speech",
+                    json={
+                        "model": "speechrail/qwen3-tts",
+                        "input": "你好",
+                        "voice": "warm",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.content == b"RIFF-audio"
+        post.assert_awaited_once()
+        assert post.call_args.args[0] == "http://127.0.0.1:9998/v1/audio/speech"
+        assert post.call_args.kwargs["headers"] == {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer tts-key",
+        }
 
     def test_voices_speechrail_down_returns_502(self) -> None:
         """SpeechRail 不可达时返回 502，不抛未处理异常。"""

@@ -1,4 +1,4 @@
-"""ControlBridge 单元测试：命令分发、参数校验、TTS 桥调用。"""
+"""ControlBridge 单元测试：命令分发、参数校验、SpeechRail TTS 状态更新。"""
 
 from __future__ import annotations
 

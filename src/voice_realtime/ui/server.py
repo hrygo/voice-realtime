@@ -96,6 +96,12 @@ def _speechrail_rest_path(rest_url: str, path: str) -> str:
     return f"{rest_url.rstrip('/')}/{path.lstrip('/')}"
 
 
+def _speechrail_auth_headers(api_key: str | None) -> dict[str, str] | None:
+    if not api_key:
+        return None
+    return {"Authorization": f"Bearer {api_key}"}
+
+
 def _network_scope(host: str) -> NetworkScope:
     normalized = host.strip().lower()
     return "local" if normalized in {"127.0.0.1", "localhost", "::1", "[::1]"} else "network"
@@ -119,6 +125,7 @@ async def _do_probe_async(
         }
         if expected_model is not None and resp.status_code < 400:
             model_ids: set[str] = set()
+            body: object = None
             with contextlib.suppress(ValueError, TypeError):
                 body = resp.json()
                 if isinstance(body, dict) and isinstance(body.get("data"), list):
@@ -128,7 +135,11 @@ async def _do_probe_async(
                         if isinstance(item, dict) and isinstance(item.get("id"), str)
                     }
             result["target_model"] = expected_model
-            result["model_present"] = expected_model in model_ids
+            result["model_present"] = (
+                body.get("tts_ready") is True
+                if name == "tts" and isinstance(body, dict) and not model_ids
+                else expected_model in model_ids
+            )
         return result
     except httpx.ConnectError:
         return {"name": name, "status": "unreachable", "url": url}
@@ -278,12 +289,17 @@ def create_app(
         speechrail = cfg.subtitles
         lm = cfg.interaction
         paths = [
-            ("speechrail", speechrail.speechrail_health_url, None, None),
+            (
+                "speechrail",
+                speechrail.speechrail_health_url,
+                None,
+                _speechrail_auth_headers(speechrail.speechrail_api_key),
+            ),
             (
                 "tts",
                 _speechrail_health_url(lm.speechrail_tts_rest_url),
                 lm.speechrail_tts_model,
-                None,
+                _speechrail_auth_headers(lm.speechrail_api_key),
             ),
             (
                 "lm",
@@ -327,7 +343,10 @@ def create_app(
         url = _speechrail_rest_path(cfg.interaction.speechrail_tts_rest_url, "/voices")
         try:
             async with local_async_client(timeout=cfg.ui.api_timeout) as client:
-                resp = await client.get(url)
+                resp = await client.get(
+                    url,
+                    headers=_speechrail_auth_headers(cfg.interaction.speechrail_api_key),
+                )
                 resp.raise_for_status()
                 return dict(resp.json())
         except httpx.HTTPError as exc:
@@ -342,6 +361,9 @@ def create_app(
             body = await request.body()
             headers = {"Content-Type": "application/json"}
             async with local_async_client(timeout=10.0) as client:
+                auth_headers = _speechrail_auth_headers(cfg.interaction.speechrail_api_key)
+                if auth_headers is not None:
+                    headers.update(auth_headers)
                 resp = await client.post(url, content=body, headers=headers)
                 resp.raise_for_status()
                 return Response(

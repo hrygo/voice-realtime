@@ -51,7 +51,7 @@ const REQUIRED_HEALTH_ITEMS = {
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
   speechrail: "SpeechRail ASR (:8201)",
-  tts: "Qwen3-TTS 桥 (:8765)",
+  tts: "SpeechRail TTS (:8201)",
   lm: "LM Studio (:1234)",
 };
 
@@ -65,7 +65,7 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
 
 const SERVICE_DIAGNOSTIC_COMMANDS: Record<string, string> = {
   speechrail: "curl --fail http://127.0.0.1:8201/health",
-  tts: "scripts/run-bridge.sh",
+  tts: "curl --fail http://127.0.0.1:8201/health",
   storage: "psql knowledge -f scripts/bootstrap-meeting-db.sql",
 };
 

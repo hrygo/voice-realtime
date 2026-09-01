@@ -125,10 +125,17 @@ class SpeechRailConversationSTTFactory:
         supports_eof_flush=True,
     )
 
-    def __init__(self, *, url: str, client_factory: ClientFactory | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        url: str,
+        api_key: str | None = None,
+        client_factory: ClientFactory | None = None,
+    ) -> None:
         self._url = url
+        self._api_key = api_key
         self._client_factory = client_factory or (
-            lambda: SpeechRailRealtimeClient(url=self._url)
+            lambda: SpeechRailRealtimeClient(url=self._url, api_key=self._api_key)
         )
 
     def create_processor(self, *, sample_rate: int, language: str) -> FrameProcessor:

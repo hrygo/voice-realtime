@@ -16,25 +16,20 @@ classifiers = [
 ]
 
 dependencies = [
-    # 自研桥核心 (qwen3-tts-openai)
+    # SpeechRail / UI / meeting gateway runtime
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
+    "websockets>=14",
     "huggingface-hub>=0.27",
     "psycopg[binary]>=3.2,<4",
     "psycopg-pool>=3.2,<4",
 ]
 
 [project.optional-dependencies]
-# 实时 TTS 引擎 (mlx-audio Qwen3-TTS) — 重型依赖，独立组
-# 注意: misaki[zh] 要求 Python <3.13 → 项目锁 3.12
-tts = [
-    "mlx-audio[tts]>=0.4.8",
-    "misaki[zh]>=0.9.4",
-]
-# 交互管道 (Pipecat: SpeechRail STT + LLM + 自定义 TTS + AudioHub 采集) — 重型依赖，独立组
+# 交互管道 (Pipecat: SpeechRail STT + LLM + SpeechRail TTS + AudioHub 采集) — 重型依赖，独立组
 interaction = [
     "pipecat-ai[silero,openai,soundfile,websocket,local]>=1.0",
     "torch>=2.5",
@@ -54,7 +49,6 @@ dev = [
 ]
 
 [project.scripts]
-vr-bridge = "voice_realtime.tts_bridge.server:main"
 vr-interact = "voice_realtime.interaction.runner:main"
 vr-ui = "voice_realtime.ui.server:main"
 vr-meeting-mock = "voice_realtime.meeting.mock_server:main"

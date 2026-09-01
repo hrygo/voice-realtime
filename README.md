@@ -8,7 +8,7 @@
 ## 🌟 核心特性
 
 - 🤖 **全双工实时语音助手 (Voice Assistant)**
-  - **实时语音输入**：基于 SpeechRail Realtime v2 + 本地大语言模型 (LM Studio / Qwen3.6) + MLX Qwen3-TTS。
+  - **实时语音输入**：基于 SpeechRail Realtime v2 + 本地大语言模型 (LM Studio / Qwen3.6) + SpeechRail TTS。
   - **双重声学防回声**：L1 声学 RMS 自适应打断抑制 + L2 文本相似度过滤，彻底杜绝单机外放播报时的“自我回声死循环”。
   - **双工模式切换**：支持“🔊 外放保护”（播报期间暂停收音，防误触）与“🎧 耳机双工”（佩戴耳机时随时自然插话打断）。
   - **个性化人设与音色**：内置通用助手、程序员、英语教练等丰富人设模板，支持请求级动态切换音色。
@@ -51,7 +51,7 @@
 │ • SpeechRail Realtime STT     │   │ • SpeechRail Realtime ASR              │
 │ • L2 文本相似度自激过滤       │   │ • 窗口对账与快照管理                  │
 │ • LM Studio 原生 /api/v1/chat │   └───────────────────┬───────────────────┘
-│ • MLX Qwen3-TTS 桥 (:8765)    │                       │
+│ • SpeechRail TTS Realtime v2  │                       │
 └──────────────┬────────────────┘                       │
                │                                        ▼
                ▼ (扬声器/耳机)             ┌────────────────────────────────┐
@@ -66,9 +66,8 @@
 ### 四大核心运行单元
 
 1. **`vr-ui` (端口 `8100`)**：系统默认主进程，集成 Voice Studio Web 控制台、AudioHub 麦克风采集、运行时模式协调（`RuntimeModeCoordinator`）与交互/会议控制网关。
-2. **`vr-bridge` (端口 `8765`)**：基于 `mlx-audio` 的 Qwen3-TTS 语音合成服务，提供 OpenAI 兼容的 `POST /v1/audio/speech` 流式接口。
-3. **SpeechRail (端口 `8201`)**：独立 ASR 服务，提供 REST 与 Realtime v2；`voice-realtime` 不管理其进程或模型。
-4. **LM Studio (端口 `1234`)**：本地大模型服务，加载 Qwen3.6 / Qwen3.8 等模型，通过原生 `/api/v1/chat` 提供超低延迟推理与高质量会议纪要生成。
+2. **SpeechRail (端口 `8201`)**：独立 ASR/TTS 服务，提供 OpenAI-compatible REST 与 Realtime v2；`voice-realtime` 只负责客户端适配、播放和模式协调，不管理其进程或模型。
+3. **LM Studio (端口 `1234`)**：本地大模型服务，加载 Qwen3.6 / Qwen3.8 等模型，通过原生 `/api/v1/chat` 提供超低延迟推理与高质量会议纪要生成。
 
 > 💡 **提示**：`vr-interact` 为 CLI Headless 交互入口，通过文件锁与 `vr-ui` 互斥，适用于无界面的终端交互场景。
 
@@ -107,7 +106,7 @@ Developer ID 发布校验与公证。
 | **硬件平台** | Apple Silicon Mac（M1 / M2 / M3 / M4 / M5 系列芯片） |
 | **统一内存 (RAM)** | 具体取决于你选择的模型；交互助手和会议纪要可以共用同一个模型，不必同时运行两套大模型。推荐 **32GB 及以上**；16GB/24GB 设备也可以选择更小或量化模型使用 |
 | **操作系统** | 主应用 macOS 14.0+；物理输出采集 Helper 要求 macOS 14.2+ |
-| **Python 版本** | **Python 3.12 严格锁定** (`>=3.12,<3.13`，由于 `misaki[zh]` 兼容性要求) |
+| **Python 版本** | **Python 3.12 严格锁定** (`>=3.12,<3.13`) |
 | **包管理工具** | [`uv`](https://docs.astral.sh/uv/)（强力推荐） |
 | **数据库** | PostgreSQL 14+（用于会议助手数据持久化） |
 | **Node.js** | Node.js 18+ & npm（用于编译前端界面） |
@@ -124,7 +123,7 @@ Developer ID 发布校验与公证。
 git clone https://github.com/your-username/voice-realtime.git
 cd voice-realtime
 
-# 2. 一键安装 Python 全量依赖 (含 tts, interaction, dev)
+# 2. 一键安装 Python 全量依赖 (含 interaction, dev)
 uv sync --all-extras
 
 # 3. 安装前端依赖并构建
@@ -133,11 +132,11 @@ cd ui && npm install && npm run build && cd ..
 
 ### 步骤 2：下载本地模型与初始化数据
 
-本项目坚持离线优先原则，模型统一保存在 ModelScope、Hugging Face 或 LM Studio 的项目外缓存中，
-Git 工作树只保存代码、配置和运行产物：
+本项目坚持离线优先原则；voice-realtime 自有模型统一保存在项目外缓存中，ASR/TTS 模型由 SpeechRail
+管理，Git 工作树只保存代码、配置和运行产物：
 
 ```bash
-# 下载 Qwen3-TTS；ASR 与说话人分离模型均由 SpeechRail 管理
+# 下载 voice-realtime 自有的会议声纹模型；ASR/TTS 模型由 SpeechRail 管理
 bash scripts/download-models.sh
 
 # 下载 NLTK punkt_tab 分词数据 (TTS 断句必需)
@@ -180,16 +179,13 @@ VR_BIND_HOST=lan scripts/run-all.sh
 VR_BIND_HOST=0.0.0.0 scripts/run-all.sh
 ```
 
-统一脚本会根据 TTS 桥的实际监听地址自动设置交互管道使用的
-`VR_INTERACTION_TTS_BRIDGE_URL`；如显式设置该变量，则保留显式配置。
+统一脚本只启动 `vr-ui`，并把交互管道连接到外部 SpeechRail 的 Realtime v2 与 REST TTS 地址。
+SpeechRail 必须独立启动并先通过 `http://127.0.0.1:8201/health` 健康检查。
 
-也可以依次在不同终端窗口中独立启动 2 个应用服务单元（SpeechRail 由其自身服务管理）：
+也可以在不同终端窗口中独立启动应用服务单元（SpeechRail 由其自身服务管理）：
 
 ```bash
-# 终端 1: 启动 TTS 语音合成桥 (8765)
-uv run vr-bridge
-
-# 终端 2: 启动 Web 控制台与主运行协调服务 (8100)
+# 启动 Web 控制台与主运行协调服务 (8100)
 export VR_MEETING_DATABASE_URL='postgresql://voice_realtime_app@/knowledge'
 export VR_MEETING_SCHEMA='voice_realtime'
 uv run vr-ui
@@ -246,14 +242,17 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；`lan` 同时支持 localhost 与局域网，实际监听 `0.0.0.0`；也支持显式 `0.0.0.0` / 自定义 IP） |
 | `VR_UI_HOST` | `127.0.0.1` | Voice Studio Web 服务绑定地址（优先于全局变量） |
 | `VR_UI_PORT` | `8100` | Voice Studio Web 服务端口 |
-| `VR_BRIDGE_HOST` | `127.0.0.1` | Qwen3-TTS 桥服务绑定地址（优先于全局变量） |
-| `VR_BRIDGE_PORT` | `8765` | Qwen3-TTS 桥服务端口 |
 | `VR_SUBTITLE_SPEECHRAIL_URL` | `ws://127.0.0.1:8201/v2/realtime` | 字幕与会议使用的 SpeechRail Realtime v2 地址 |
 | `VR_INTERACTION_SPEECHRAIL_REALTIME_URL` | `ws://127.0.0.1:8201/v2/realtime` | 语音助手使用的 SpeechRail Realtime v2 地址 |
+| `VR_INTERACTION_SPEECHRAIL_TTS_REST_URL` | `http://127.0.0.1:8201/v1` | 试听/回放使用的 SpeechRail TTS REST 地址 |
+| `VR_INTERACTION_SPEECHRAIL_TTS_MODEL` | `speechrail/qwen3-tts` | SpeechRail 公共 TTS 逻辑模型 ID |
+| `VR_INTERACTION_TTS_VOICE` | `default` | SpeechRail preset 音色：`default` / `warm` / `bright` / `calm` |
+| `VR_INTERACTION_TTS_LANGUAGE` | `auto` | SpeechRail TTS 语言 |
+| `VR_INTERACTION_SPEECHRAIL_API_KEY` | 空 | SpeechRail 交互 ASR/TTS 的可选 API key；通过 `Authorization: Bearer` 发送 |
+| `VR_SUBTITLE_SPEECHRAIL_API_KEY` | 空 | SpeechRail 字幕/会议 ASR 的可选 API key；通过 `Authorization: Bearer` 发送 |
 | `VR_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
 | `VR_INTERACTION_LLM_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
 | `VR_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
-| `VR_INTERACTION_TTS_BRIDGE_URL` | `http://127.0.0.1:8765/v1` | 交互管道使用的 TTS 端点；`scripts/run-all.sh` 未显式配置时按桥监听地址自动推导 |
 | `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
 | `VR_MEETING_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
@@ -278,7 +277,7 @@ uv run python3 scripts/validate-meeting-contract.py
 [`docs/operations/联调记录模板.md`](docs/operations/联调记录模板.md)。
 
 ```bash
-# 1. 后端单元与集成测试 (带分支覆盖率，fail_under=80，实测 1161 passed, 10 skipped，覆盖率 ~82%)
+# 1. 后端单元与集成测试（需设置 `VR_TEST_DATABASE_URL` 才会运行 PostgreSQL 临时 schema 测试；分支覆盖率门禁 `fail_under=80`）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
 # 2. Python 严格静态类型检查 (Strict mode，87 source files 全绿)
@@ -323,7 +322,9 @@ uv run vr-interact
 <details>
 <summary><b>Q4: 为什么模型在没有外网时无法启动？</b></summary>
 
-本项目默认开启 `allow_model_downloads=False`（离线优先）。首次部署时，请在有网络的环境下执行 `bash scripts/download-models.sh` 将模型完整缓存到本地，之后即可在完全离线/断网环境下秒级冷启。
+本项目默认开启 `allow_model_downloads=False`（离线优先）。首次部署时，请分别按 SpeechRail 的模型
+运行手册准备 ASR/TTS snapshot；`bash scripts/download-models.sh` 只处理 voice-realtime 自有的
+CAM++ 资产。之后应用侧即可在完全离线/断网环境中运行，缺失模型由所属服务明确报错。
 </details>
 
 ---

@@ -183,11 +183,23 @@ def test_removed_configuration_knobs_are_not_model_fields() -> None:
 
 
 def test_speechrail_tts_configuration_is_explicit_and_uses_public_model() -> None:
-    settings = InteractionSettings(tts_voice="warm", tts_language="ZH")
+    settings = InteractionSettings(
+        tts_voice="warm",
+        tts_language="ZH",
+        speechrail_api_key="  speechrail-test-key  ",
+    )
 
     assert settings.speechrail_tts_model == "speechrail/qwen3-tts"
     assert settings.tts_voice == "warm"
     assert settings.tts_language == "zh"
+    assert settings.speechrail_api_key == "speechrail-test-key"
+
+
+def test_subtitle_speechrail_api_key_is_trimmed_and_optional() -> None:
+    assert SubtitleSettings(speechrail_api_key="  subtitle-key  ").speechrail_api_key == (
+        "subtitle-key"
+    )
+    assert SubtitleSettings().speechrail_api_key is None
 
 
 def test_tts_downloads_are_disabled_by_default() -> None:

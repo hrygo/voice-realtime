@@ -346,14 +346,14 @@ describe("StatusBar service diagnostics", () => {
   it("keeps rendering the legacy three-service response", async () => {
     await renderServices([
       { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
-      { name: "tts", status: "timeout", url: "http://127.0.0.1:8765" },
+      { name: "tts", status: "timeout", url: "http://127.0.0.1:8201/health" },
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
     expect(findServiceRow("SpeechRail ASR")?.textContent).toContain("当前模式非必需");
-    expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("必须组件异常");
+    expect(findServiceRow("SpeechRail TTS")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
-    expect(findServiceRow("Qwen3-TTS 桥")?.getAttribute("title")).toContain("连接超时");
+    expect(findServiceRow("SpeechRail TTS")?.getAttribute("title")).toContain("连接超时");
     expect(findServiceRow("LM Studio")?.getAttribute("title")).toContain("服务未启动");
     expect(container.querySelectorAll(".health-popover-row")).toHaveLength(7);
   });
