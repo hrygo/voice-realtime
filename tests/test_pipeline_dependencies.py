@@ -97,15 +97,13 @@ def test_explicit_transport_stt_and_audio_queue_remain_construction_seams(
     stt_factory.create_processor.assert_called_once_with(sample_rate=16_000, language="zh")
 
 
-def test_default_tts_factory_ignores_legacy_bridge_url() -> None:
+def test_default_tts_factory_uses_speechrail_config() -> None:
     settings = InteractionSettings(
-        tts_bridge_url="http://127.0.0.1:9999/v1",
         speechrail_realtime_url="ws://127.0.0.1:8201/v2/realtime",
         speechrail_tts_model="speechrail/qwen3-tts",
         tts_voice="warm",
         tts_language="zh",
     )
-    assert settings.tts_bridge_url == "http://127.0.0.1:9999/v1"
 
     factories = default_pipeline_factories(settings)
     with patch(

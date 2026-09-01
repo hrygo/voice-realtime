@@ -1,7 +1,7 @@
 """交互管道外部构造的 typed factory bundle。
 
-default factories 只读取 SpeechRail Realtime / LM Studio 配置；兼容的
-``tts_bridge_url`` 配置不进入任何 factory（parse-sunset 2026-10-31）。
+default factories 只读取 SpeechRail Realtime / LM Studio 配置，不消费任何
+历史 TTS bridge 兼容配置。
 """
 
 from __future__ import annotations

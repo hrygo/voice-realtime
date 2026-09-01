@@ -238,10 +238,6 @@ class InteractionSettings(BaseSettings):
         default=None,
         description="SpeechRail 可选 API key；仅通过 HTTP/WebSocket Authorization header 发送",
     )
-    tts_bridge_url: str = Field(
-        default="http://127.0.0.1:8765/v1",
-        description="旧 TTS bridge 兼容配置；生产 pipeline 不使用，将于 2026-10-31 移除",
-    )
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     input_device_name: str | None = Field(
         default=None,
@@ -422,7 +418,7 @@ class InteractionSettings(BaseSettings):
         )
 
     _validate_local_urls = field_validator(
-        "llm_base_url", "speechrail_tts_rest_url", "tts_bridge_url"
+        "llm_base_url", "speechrail_tts_rest_url"
     )(_validate_service_url)
 
 

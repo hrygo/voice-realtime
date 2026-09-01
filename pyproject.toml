@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "hrygo" }]
-keywords = ["realtime", "voice", "asr", "tts", "mlx", "pipecat", "whisper"]
+keywords = ["realtime", "voice", "asr", "tts", "pipecat"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

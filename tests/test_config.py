@@ -220,7 +220,6 @@ def test_meeting_settings_rejects_unsafe_schema_name() -> None:
     ("field", "value"),
     [
         ("llm_base_url", "http://192.168.1.20:1234/v1"),
-        ("tts_bridge_url", "http://192.168.1.20:8765/v1"),
     ],
 )
 def test_interaction_accepts_lan_service_urls(field: str, value: str) -> None:
@@ -231,7 +230,6 @@ def test_interaction_accepts_lan_service_urls(field: str, value: str) -> None:
     ("field", "value"),
     [
         ("llm_base_url", "ftp://127.0.0.1:1234/v1"),
-        ("tts_bridge_url", "http://[invalid host]:8765/v1"),
     ],
 )
 def test_interaction_rejects_invalid_service_urls(field: str, value: str) -> None:

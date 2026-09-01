@@ -45,7 +45,6 @@ def settings() -> InteractionSettings:
         llm_base_url="http://localhost:1234/v1",
         llm_model="local/kat-coder-2.5",
         llm_api_key="test-lm-key",
-        tts_bridge_url="http://127.0.0.1:8765/v1",
         silence_secs=0.8,
         sample_rate=16000,
     )
