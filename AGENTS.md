@@ -1,7 +1,7 @@
 # voice-realtime
 
-> 全本地实时语音交互（Voice Assistant）+ 会议助手（Meeting Assistant，含说话人分离、PostgreSQL 持久化、异步 AI 纪要、崩溃恢复 journal）+ 实时语音字幕系统（Live Subtitles）+ 会中内心 OS 伴侣（Inner OS 私密局势研判与发言对策）（Apple Silicon / MLX / 中文优先 / 离线）。  
-> **Python 3.12 严格锁定**（`misaki[zh]` 要求 `<3.13`）；使用 `uv` + `PEP 621` + `hatchling`。
+> 全本地实时语音交互（Voice Assistant）+ 会议助手（Meeting Assistant，含说话人分离、PostgreSQL 持久化、异步 AI 纪要、崩溃恢复 journal）+ 实时语音字幕系统（Live Subtitles）+ 会中内心 OS 伴侣（Inner OS 私密局势研判与发言对策）（Apple Silicon / 中文优先 / 离线）。
+> **Python 3.12 严格锁定**；使用 `uv` + `PEP 621` + `hatchling`。
 
 ---
 
@@ -25,8 +25,8 @@
 
 ```text
 麦克风 ──► vr-ui / AudioHub (单源采集 / 有界扇出 / 真实静音)
-            ├─► AudioInjector / Pipecat ──► LM Studio (/api/v1/chat) ──► TTS 桥 ──► 扬声器 [单人交互模式]
-            ├─► SubtitleProxy ──PCM WS──► vr-subtitles / WhisperLiveKit (Sortformer 分离) [实时字幕]
+            ├─► AudioInjector / Pipecat ──► LM Studio (/api/v1/chat) ──► SpeechRail Realtime v2 TTS ──► 扬声器 [单人交互模式]
+            ├─► SubtitleProxy ──PCM WS──► SpeechRail Realtime v2 (ASR / Sortformer profile) [实时字幕]
             └─► MeetingSession (窗口对账 / EOF 冲刷 / Journal) ──► PostgreSQL ──► MeetingSummary [会议助手模式]
                     │
                     └──► Inner OS (会前底牌 / 局势研判 / 事实核查 / 回应草稿 / 会后即焚) ──► LM Studio [会中伴侣]
@@ -37,7 +37,7 @@
 - **统一所有权与模式协调**：`vr-ui`（端口 `8100`）作为默认主进程，由 `RuntimeModeCoordinator` 协调 `assistant` / `meeting` / `idle` 三种模式。语音助手与会议助手**互斥运行**（启动会议时主动挂起/关闭 Pipecat / LLM / TTS 链路，独占麦克风转录流）。
 - **Headless 替代入口**：`vr-interact` 为命令行单人交互入口，通过 flock 文件锁与 `vr-ui` 互斥，禁止同时运行。
 - **处理器链（`interaction/pipeline.py`）**：  
-  `AudioInjector/transport.input` ➔ `EchoSuppressionProcessor` ➔ `FunASRSTTService` ➔ `SelfEchoFilter` ➔ `LLMUserAggregator (含 SileroVADAnalyzer)` ➔ `LmStudioNativeLLMService` ➔ `BotTextRecorder` ➔ `OpenAITTSService (桥)` ➔ `TTSStateObserver` ➔ `transport.output` ➔ `LLMAssistantAggregator`。
+  `AudioInjector/transport.input` ➔ `EchoSuppressionProcessor` ➔ `SpeechRail STT` ➔ `SelfEchoFilter` ➔ `LLMUserAggregator (含 SileroVADAnalyzer)` ➔ `LmStudioNativeLLMService` ➔ `BotTextRecorder` ➔ `SpeechRailTTSService (Realtime v2)` ➔ `TTSStateObserver` ➔ `transport.output` ➔ `LLMAssistantAggregator`。
 
 ---
 
@@ -45,18 +45,18 @@
 
 | 模块 | 职责与功能 | 关键文件 |
 |---|---|---|
-| `voice_realtime.asr` | ASR 多引擎契约与适配层：流式识别适配器、模型 profiles、worker 队列管理与结果呈现 | `contracts.py`<br>`profiles.py`<br>`registry.py`<br>`defaults.py`<br>`presenters.py` |
+| `voice_realtime.asr` | SpeechRail ASR 契约与适配层：Realtime v2 流式适配器、Pipecat 轮次适配与结果呈现 | `contracts.py`<br>`profiles.py`<br>`adapters/`<br>`presenters.py` |
 | `voice_realtime.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、说话人映射、Sortformer 接入与平滑、CAM++ 声纹质心与 AHC 聚类、异步 AI 纪要生成、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`voiceprint.py`<br>`diarization_smoother.py`<br>`summary.py`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
 | `voice_realtime.ui` | 默认运行时主入口：`RuntimeModeCoordinator` 模式协调、`SubtitleProxy`（带 PCM 重连快照与 ready_to_stop 优雅停机）、严格控制协议网关（`request_id` ack）、助手桥接 | `server.py`<br>`runtime.py`<br>`control.py`<br>`assistant_bridge.py`<br>`subtitle_proxy.py`<br>`protocol.py` |
 | `voice_realtime.interaction` | 共享交互会话/所有权 + Pipecat 管道 + LM Studio 原生服务 + 双层回声防线 + 滚动记忆压缩与 NLTK 依赖自愈 | `session.py`<br>`ownership.py`<br>`pipeline.py`<br>`reasoning.py`<br>`context_memory.py`<br>`runner.py`<br>`nltk_data.py` |
-| `voice_realtime.subtitles` | WhisperLiveKit 启动器、Sortformer Diarization 参数注入、WS 字幕事件桥、事件去重与 SRT 持久化 | `launcher.py`<br>`consumer.py`<br>`events.py` |
+| `voice_realtime.subtitles` | 保留的包命名空间；当前字幕 workload 由 `voice_realtime.ui.subtitle_proxy` 通过 SpeechRail 适配 | `__init__.py` |
 | `voice_realtime.audio` | 单源麦克风采集、有界 sink 扇出、真实静音（零音频吞吐）、Pipecat 音频注入器 | `hub.py`<br>`audio_injector.py` |
-| `voice_realtime.tts_bridge` | mlx-audio Qwen3-TTS → OpenAI 兼容 `POST /v1/audio/speech`，请求级音色、单并发门有界串行生成 | `server.py`<br>`engine.py`<br>`schema.py` |
+| `voice_realtime.speechrail` | SpeechRail Realtime v2 的 ASR/TTS 客户端、事件顺序校验、PCM 解码与取消回收 | `transport.py`<br>`tts.py`<br>`__init__.py` |
 | `voice_realtime.config` | 集中配置层（pydantic-settings，含 Bridge / Interaction / Subtitles / Meeting / UI / ASR） | `config.py` |
 | `ui/` (前端控制台) | React 19 + TypeScript + Vite 7 + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、声学波形、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
 | `ui/src/features/innerOS` | 会中内心 OS 伴侣前端：会前底牌抽屉、Prompt 快捷矩阵、流式多意图研判卡片、会后即焚瞬态管理与历史归档 | `InnerOSPanel.tsx`<br>`InnerOSEphemeralContext.tsx`<br>`InnerOSAnswerCard.tsx`<br>`InnerOSArchive.tsx`<br>`innerOSStore.ts` |
 
-> 📌 **注**：`tools/` 下的 `WhisperLiveKit` 与 `mlx-audio` 为 vendor 子仓库（仅启动/桥接），非自研代码。
+> 📌 **注**：`tools/` 下的 `WhisperLiveKit` 为历史 vendor 子仓库，不属于当前启动链；当前 ASR/TTS 模型与运行时统一由独立 SpeechRail 服务负责。
 
 ---
 
@@ -80,9 +80,10 @@
 
 ### 2. 离线优先与模型下载源
 - 默认 `allow_model_downloads=False` 且使用 `local_files_only=True`，只有显式授权才允许联网。
-- pipecat `FunASRSTTService` 把 funasr `hub` 硬编码为 modelscope（`ms`），在受限网络下会被 **SSRF 拦截** ➔ 任何 repo ID 必须经 `snapshot_download()` 存入 `~/.cache/huggingface/hub` 后使用**本地路径**加载（`pipeline._resolve_stt_model` + `InteractionSettings.stt_model`，空值自动解析 `FunAudioLLM/SenseVoiceSmall` 快照）。
-- Sortformer 与 Qwen3-ASR 均从项目外供应商 cache 的绝对 snapshot 路径加载；缺失时 fail-fast，
-  不隐式联网下载，也不得重新放回 `runtime/`。
+- SpeechRail 独占 ASR/TTS 模型生命周期；`voice-realtime` 只通过 Realtime v2 客户端消费 ASR/TTS，
+  不安装、下载或启动 ASR/TTS 模型。
+- SpeechRail 的 Qwen3-ASR 与 Sortformer profile 必须由 SpeechRail 使用项目外的绝对 snapshot 路径加载；
+  缺失时由 SpeechRail fail-fast，不隐式联网下载，也不得重新放回 `voice-realtime/runtime/`。
 
 ### 3. 会议数据边界与存储隔离
 - PostgreSQL 是会议元数据、confirmed 转录、speaker 映射与 AI 纪要的**唯一事实源**；**绝对不保存音频**；会议采集不写 `runtime/subtitles/current.srt`。
@@ -94,12 +95,12 @@
 - 语音助手与会议助手**不可同时录音**。进入会议模式时主动挂起语音助手；会议结束后返回空闲态。
 
 ### 5. 字幕与会议 EOF 优雅冲刷
-- 会议结束时向 WhisperLiveKit 发送空 PCM 作为 EOF，等待 `ready_to_stop` 信号后再封存 confirmed 转录；超时则标记 `interrupted/finalization_timeout`。
+- 会议结束时通过 SpeechRail Realtime v2 发送空 PCM 作为 EOF，等待 `ready_to_stop` 信号后再封存 confirmed 转录；超时则标记 `interrupted/finalization_timeout`。
 - `SubtitleProxy` 支持重连期间重放 PCM 活跃快照，保证断线重连后转录文本不丢字。
 
 ### 6. HTTP / 控制 WebSocket 测试与边界
 - `httpx.AsyncClient.stream()` 的请求体关键字参数是 **`json=`**（不是 `body=`）；测试 mock 必须同名，否则测试端报错 `KeyError: 'model'`。
-- **TTS 桥 422 排查**：`SpeechRequest.model` 是必填字段；出现 422 错误先检查 payload 字段完整性（`HealthResponse` 无此约束）。
+- **SpeechRail TTS 422 排查**：`SpeechRequest.model` 是必填字段；出现 422 错误先检查 payload 字段完整性（`HealthResponse` 无此约束）。
 - 控制 WebSocket 严格校验 `request_id` 与 loopback Origin。
 
 ### 7. 回声死循环两道防线（勿删）
@@ -128,7 +129,7 @@
 ## 🛡️ 质量门禁（提交前必须全绿）
 
 ```bash
-# 1. 后端单元与集成测试（启用分支覆盖率，fail_under=80，实测 1327 passed，覆盖率 ~83%）
+# 1. 后端单元与集成测试（需设置 `VR_TEST_DATABASE_URL` 才会运行 PostgreSQL 临时 schema 测试；分支覆盖率门禁 `fail_under=80`）
 VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
 # 2. Python 类型检查（strict，108 source files 全绿）
@@ -150,34 +151,30 @@ cd ui && npm run build
 
 ### 依赖与环境初始化
 ```bash
-uv sync --all-extras                                # 安装全量依赖（含 tts, interaction, dev）
+uv sync --all-extras                                # 安装全量依赖（含 interaction, dev）
 psql knowledge -f scripts/bootstrap-meeting-db.sql  # 初始化 PostgreSQL voice_realtime 角色与 schema
-scripts/download-models.sh                          # SenseVoice 经 HF snapshot_download 落本地快照
+scripts/download-models.sh                          # 仅下载 voice-realtime 自有 CAM++ 资产；ASR/TTS 由 SpeechRail 管理
 scripts/install-nltk-data.sh                        # 幂等安装 NLTK punkt_tab（pipecat TTS 断句依赖）
 ```
 
 ### 服务运行
 ```bash
-scripts/run-all.sh                                  # 一键启动全套服务（默认 127.0.0.1，含 ui + bridge + subtitles）
+scripts/run-all.sh                                  # 一键启动应用服务（默认 127.0.0.1，含 ui；SpeechRail 独立管理）
 VR_BIND_HOST=lan scripts/run-all.sh                 # 局域网绑定模式启动全套服务（自动探测 LAN IP）
 VR_BIND_HOST=0.0.0.0 scripts/run-all.sh             # 全网卡绑定模式启动全套服务
 
 # 独立服务启动（也可直接使用对应 scripts/run-*.sh）
 uv run vr-ui                                        # 默认入口：Voice Studio UI + AudioHub + 会议/交互/字幕 (8100)
-uv run vr-bridge                                    # TTS 桥（默认 8765，也可运行 scripts/run-bridge.sh）
-uv run vr-subtitles                                 # 字幕服务：启动 WhisperLiveKit（8001，含 Sortformer 分离）
 uv run vr-interact                                  # Headless 命令行交互替代入口（必须先停止 vr-ui）
-uv run vr-subtitle-events                           # 字幕事件消费者（--url ws://127.0.0.1:8001 --language Chinese）
 ```
 
 > 🌐 **网络绑定配置**：
 > - 默认绑定 `127.0.0.1`（`localhost`，仅限本机访问）；
 > - 支持全局环境变量 `VR_BIND_HOST`（或 `VR_HOST`），可选 `localhost` / `0.0.0.0` / `lan`；
-> - 支持服务级环境变量覆盖：`VR_UI_HOST`（UI 8100）、`VR_BRIDGE_HOST`（TTS 8765）、`VR_SUBTITLE_HOST`（字幕 8001）。
+> - 支持服务级环境变量覆盖：`VR_UI_HOST`（UI 8100）。SpeechRail 的绑定、模型与 profile 配置由 SpeechRail 自身管理。
 
 > 📦 **依赖组说明**：
-> - `tts`：`mlx-audio[tts]` + `misaki[zh]`（重型依赖）
-> - `interaction`：`pipecat-ai[funasr,silero,openai,soundfile,websocket,local]` + `modelscope` + `torch/torchaudio`（重型依赖）
+> - `interaction`：`pipecat-ai[silero,openai,soundfile,websocket,local]` + `torch/torchaudio` + `pyaudio`（重型依赖）
 > - `dev`：`pytest` 系列 + `ruff` + `mypy`
 > - *新增任何依赖前请严格确认 Python 3.12 兼容性锁定。*
 
@@ -190,12 +187,9 @@ uv run vr-subtitle-events                           # 字幕事件消费者（--
 | **硬件平台** | Apple Silicon M-series (M1~M5 / macOS 14+ / 16GB~128GB 等) |
 | **LM Studio** (`localhost:1234`) | - **统一模型（交互 / 纪要 / 标题 / 内心 OS）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b/14b`） |
 | **PostgreSQL** | DSN: `postgresql:///knowledge`，Schema: `voice_realtime` |
-| **TTS 桥服务** (Port: `8765`) | `mlx-audio` Qwen3-TTS (24 kHz WAV/PCM)，`VoiceDesign` 音色 profile |
-| **SenseVoice 缓存快照** | `~/.cache/huggingface/hub/models--FunAudioLLM--SenseVoiceSmall/snapshots/…` |
-| **Sortformer 说话人分离** | Hugging Face cache，固定 revision `5240a64075176943f677d30fa2171c780229f341` |
-| **Qwen3-ASR 本地目录** | ModelScope cache 中 `Qwen/Qwen3-ASR-1.7B@master`（MPS/windowed，12s 左上下文，支持领域词 context） |
+| **SpeechRail ASR/TTS** (Port: `8201`) | ASR Realtime v2、Sortformer profile 与公共 TTS 模型均由 SpeechRail 管理；TTS 公共模型 ID `speechrail/qwen3-tts`，preset `default/warm/bright/calm` |
 | **NLTK punkt_tab** | `~/nltk_data/tokenizers/punkt_tab`（TTS 断句必需；`vr-ui`/`vr-interact` 自动检查与修复） |
-| **实测性能基准 (QA 参考)** | SenseVoice RTF $\approx 0.17$；推理关闭时 TTFT $\approx 0.24 \sim 0.26\text{s}$ / $\sim 97 \sim 113\text{ tok/s}$ |
+| **实测性能基准 (QA 参考)** | SpeechRail ASR/TTS 与 LM Studio 的实测指标以各自服务运行记录为准；voice-realtime 不重复持有模型基准 |
 
 ---
 
