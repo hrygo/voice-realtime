@@ -95,14 +95,6 @@ docs/
 │   ├── 0011-speechrail-only-asr.md
 │   └── 0012-speechrail-realtime-tts.md
 │
-├── benchmarks/                            # 📊 评测基准与实验资产
-│   └── asr/
-│       ├── corpus-v12-20260825/source-inventory.md
-│       ├── public-operational-proxy-v2-20260825/report.md
-│       ├── public-proxy-v1-20260825/report.md
-│       ├── stage0-v12-20260825/report.md
-│       └── target-domain-preflight-v1/README.md
-│
 └── superpowers/                           # ⚡ 历史执行计划与规格 (Plans & Specs 归档)
     ├── plans/                             # 研发执行计划 (14 份，含当前草案与历史归档)
     └── specs/                             # 设计规格 (12 份，含当前评审稿与历史归档)
@@ -125,7 +117,7 @@ graph TD
     Arc --> ArcDocs[docs/architecture/ & docs/decisions/]
     Be --> BeDocs[docs/manuals/ & contracts/]
     Fe --> FeDocs[docs/manuals/ & docs/operations/]
-    Algo --> AlgoDocs[docs/solutions/ & docs/benchmarks/]
+    Algo --> AlgoDocs[docs/solutions/]
     Qa --> QaDocs[docs/operations/]
 ```
 
@@ -191,17 +183,7 @@ graph TD
 | [ADR-011](decisions/0011-speechrail-only-asr.md) | ASR 运行时统一由 SpeechRail 提供 | 🔵 `accepted` | 2026-08-31 | 移除本地 ASR worker/WhisperLiveKit；字幕、会议与交互统一使用 SpeechRail Realtime v2 |
 | [ADR-012](decisions/0012-speechrail-realtime-tts.md) | TTS 运行时统一由 SpeechRail Realtime v2 提供 | 🔵 `accepted` | 2026-09-01 | 移除旧 TTS bridge 与本地 TTS 运行时，应用负责播放、取消和回声状态协调 |
 
-### 6. 评测基准与实验资产 (`docs/benchmarks/asr/`)
-
-| 文档路径 | 状态 | 类型 | 说明 |
-|---|---|---|---|
-| [Stage 0 v1.2 可行性门禁报告](benchmarks/asr/stage0-v12-20260825/report.md) | 🟡 `completed` | `benchmark_report` | Qwen3-ASR、SenseVoiceSmall 与 Fun-ASR-Nano 的 Stage 0 可行性门禁 |
-| [Public Operational Proxy v2 盲测评测报告](benchmarks/asr/public-operational-proxy-v2-20260825/report.md) | 🟡 `completed` | `benchmark_report` | 基于 AISHELL-4 与 ASCEND 的序贯盲测实验报告与 futility 结论 |
-| [ASR 语料库 v1.2/v1.3 资产清单与源溯源](benchmarks/asr/corpus-v12-20260825/source-inventory.md) | 🟡 `completed` | `benchmark_report` | 评测语料清单、切片来源、许可协议与 SHA-256 哈希台账 |
-| [Public Proxy v1 预评测报告](benchmarks/asr/public-proxy-v1-20260825/report.md) | 📦 `archived` | `benchmark_report` | 公共代理语料初测与流程校验报告（历史归档） |
-| [目标域预检协议与规范](benchmarks/asr/target-domain-preflight-v1/README.md) | 📦 `archived` | `benchmark_report` | 目标域 ASR 录音盲测预检协议与数据脱敏规范（历史归档） |
-
-### 7. 历史计划与设计规格归档 (`docs/superpowers/`)
+### 6. 历史计划与设计规格归档 (`docs/superpowers/`)
 
 | 目录 | 数量 | 状态 | 说明 |
 |---|---|---|---|
