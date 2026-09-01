@@ -23,10 +23,14 @@ from starlette.websockets import WebSocketDisconnect
 from voice_realtime.config import InteractionSettings, Settings, SubtitleSettings
 from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
 from voice_realtime.ui import server as server_module
+from voice_realtime.ui.app_context import (
+    get_app_context,
+    initialize_meeting_backend,
+)
 from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
 from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
 from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
-from voice_realtime.ui.server import _initialize_meeting_backend, create_app
+from voice_realtime.ui.server import create_app
 from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
 
 
@@ -220,7 +224,7 @@ class TestHealth:
 
     def test_runtime_snapshot(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/api/runtime")
         assert resp.status_code == 200
@@ -248,21 +252,23 @@ class TestHealth:
         meeting_session = Mock()
 
         with patch(
-            "voice_realtime.ui.server.run_migrations", new_callable=AsyncMock
+            "voice_realtime.ui.app_context.run_migrations", new_callable=AsyncMock
         ) as migrations, patch(
-            "voice_realtime.ui.server.PostgresMeetingRepository",
+            "voice_realtime.ui.app_context.PostgresMeetingRepository",
             return_value=repository,
         ), patch(
-            "voice_realtime.ui.server.RecoveryJournal", return_value=journal
+            "voice_realtime.ui.app_context.RecoveryJournal", return_value=journal
         ), patch(
-            "voice_realtime.ui.server.MeetingSummaryClient", return_value=summary_client
+            "voice_realtime.ui.app_context.MeetingSummaryClient", return_value=summary_client
         ) as summary_client_factory, patch(
-            "voice_realtime.ui.server.MeetingSummaryService",
+            "voice_realtime.ui.app_context.MeetingSummaryService",
             return_value=summary_service,
         ), patch(
-            "voice_realtime.ui.server.MeetingSession", return_value=meeting_session
+            "voice_realtime.ui.app_context.MeetingSession", return_value=meeting_session
         ):
-            ready = await _initialize_meeting_backend(app, settings, runtime)
+            context = get_app_context(app)
+            context.runtime = runtime
+            ready = await initialize_meeting_backend(context)
 
         assert ready
         migrations.assert_awaited_once_with(
@@ -278,9 +284,9 @@ class TestHealth:
             settings.meeting,
             base_url=settings.interaction.llm_base_url,
             api_key=settings.interaction.llm_api_key,
-            scheduler=app.state.inference_scheduler,
+            scheduler=context.inference_scheduler,
         )
-        assert app.state.meeting_repository is repository
+        assert context.meeting_repository is repository
 
 
 class TestServices:
@@ -767,27 +773,27 @@ class TestWebSocketGateways:
             meeting=meeting,
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
     def test_assistant_connection_registers_and_unregisters(self) -> None:
         """/ws/assistant：连接加入 observer 广播，断开移除。"""
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant"):
-            assert client.app.state.runtime.observer.has_clients
-        assert not client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
+        assert not get_app_context(client.app).runtime.observer.has_clients
 
     def test_subtitles_connection_registers_and_unregisters(self) -> None:
         """/ws/subtitles：连接加入 proxy 广播，断开移除。"""
         client = self._app_with_runtime()
-        client.app.state.runtime.force_state(
+        get_app_context(client.app).runtime.force_state(
             RuntimeMode.SUBTITLES,
             PCMOwner.SUBTITLES,
             2,
         )
         with client.websocket_connect("/ws/subtitles"):
-            assert client.app.state.runtime.subtitle_proxy.has_clients
-        assert not client.app.state.runtime.subtitle_proxy.has_clients
+            assert get_app_context(client.app).runtime.subtitle_proxy.has_clients
+        assert not get_app_context(client.app).runtime.subtitle_proxy.has_clients
 
     def test_ws_closed_when_runtime_unavailable(self) -> None:
         """runtime 未装配（测试直连/lifespan 未跑）时拒绝连接。"""
@@ -816,7 +822,7 @@ class TestWebSocketGateways:
                 "origin": "http://localhost:5173",
             },
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     @pytest.mark.parametrize(
         "origin",
@@ -881,7 +887,7 @@ class TestWebSocketGateways:
             "/ws/assistant",
             headers={"host": request_host, "origin": origin},
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     @pytest.mark.parametrize(
         "origin",
@@ -895,7 +901,7 @@ class TestWebSocketGateways:
             "/ws/assistant",
             headers={"host": "192.168.1.10:8100", "origin": origin},
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     def test_forwarded_host_does_not_override_request_host(self) -> None:
         client = self._app_with_runtime(
@@ -924,7 +930,7 @@ class TestCommandGateway:
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
     def test_clear_context_command_executed(self) -> None:
@@ -938,7 +944,7 @@ class TestCommandGateway:
         assert resp["ok"] is True
         assert resp["request_id"] == "1"
         assert resp["state"]["pipeline"] == "running"
-        client.app.state.runtime.clear_context.assert_awaited_once()
+        get_app_context(client.app).runtime.clear_context.assert_awaited_once()
 
     def test_unknown_command_returns_error(self) -> None:
         client = self._app_with_runtime()
@@ -972,7 +978,7 @@ class TestCommandGateway:
 class TestMeetingV1Gateway:
     def test_meeting_socket_sends_contract_snapshot(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/meetings") as ws:
             event = ws.receive_json()
@@ -982,7 +988,7 @@ class TestMeetingV1Gateway:
 
     def test_idle_meeting_snapshot_uses_nil_meeting_and_null_partial(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime(mode=RuntimeMode.IDLE)
+        get_app_context(app).runtime = _FakeRuntime(mode=RuntimeMode.IDLE)
         client = TestClient(app, raise_server_exceptions=False)
 
         with client.websocket_connect("/ws/v1/meetings") as ws:
@@ -1026,7 +1032,7 @@ class TestMeetingV1Gateway:
 
     def test_control_socket_uses_v1_envelope(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/control") as ws:
             handshake = ws.receive_json()
@@ -1039,7 +1045,7 @@ class TestMeetingV1Gateway:
 
     def test_control_socket_rejects_unknown_fields(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/control") as ws:
             ws.receive_json()
@@ -1146,9 +1152,9 @@ class TestRuntimeControlBroadcast:
                     }
                 )
                 assert runtime.command_accepted.wait(timeout=1.0)
-                if not hasattr(client.app.state, "accepted_control_tasks"):
+                if not get_app_context(client.app).accepted_control_tasks:
                     runtime.release_command.set()
-                assert client.app.state.accepted_control_tasks
+                assert get_app_context(client.app).accepted_control_tasks
 
                 requesting.close()
                 runtime.release_command.set()
@@ -1160,7 +1166,7 @@ class TestRuntimeControlBroadcast:
         assert committed["state"]["mode"] == "subtitles"
         assert committed["state"]["runtime_revision"] == 2
         assert not runtime.runtime_events._clients
-        assert not client.app.state.accepted_control_tasks
+        assert not get_app_context(client.app).accepted_control_tasks
 
     async def test_control_sender_is_single_writer_and_cleans_pending_gets(self) -> None:
         runtime = _FakeRuntime()

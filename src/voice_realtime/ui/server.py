@@ -29,30 +29,23 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from voice_realtime.config import Settings, get_settings
-from voice_realtime.inference.scheduler import LocalInferenceScheduler
-from voice_realtime.lm_studio import (
-    LMStudioClient,
-    lm_studio_auth_headers,
-    lm_studio_openai_models_url,
-)
+from voice_realtime.lm_studio import lm_studio_auth_headers, lm_studio_openai_models_url
 from voice_realtime.logging import setup_logging
 from voice_realtime.meeting.api import install_meeting_api, meeting_summary_json
-from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
 from voice_realtime.meeting.events import MeetingEventBroadcaster, MeetingEventClient, make_event
 from voice_realtime.meeting.inner_os.api import install_inner_os_api
-from voice_realtime.meeting.inner_os.model_client import InnerOSModelClient
 from voice_realtime.meeting.inner_os.private_channel import (
     InnerOSChannelError,
     InnerOSConnectionSession,
 )
-from voice_realtime.meeting.inner_os.service import InnerOSQueryService
-from voice_realtime.meeting.migrations import run_migrations
 from voice_realtime.meeting.models import RuntimeMode
-from voice_realtime.meeting.recovery import RecoveryJournal
-from voice_realtime.meeting.repository import PostgresMeetingRepository
-from voice_realtime.meeting.session import MeetingSession
-from voice_realtime.meeting.summary import MeetingSummaryClient, MeetingSummaryService
 from voice_realtime.network import local_async_client
+from voice_realtime.ui.app_context import (
+    UIAppContext,
+    attach_app_context,
+    get_app_context,
+    initialize_meeting_backend,
+)
 from voice_realtime.ui.control import ControlBridge
 from voice_realtime.ui.protocol import ErrorCode, RuntimeStateEvent, RuntimeStateSnapshot
 from voice_realtime.ui.runtime import UIRuntime
@@ -236,34 +229,25 @@ def create_app(
     """构造 Voice Studio 应用。settings 可注入（测试）。"""
     cfg = settings or get_settings()
 
+    context = UIAppContext(
+        settings=cfg,
+        meeting_events=MeetingEventBroadcaster(),
+        accepted_control_tasks=set(),
+    )
+
     @asynccontextmanager
-    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        """lifespan：装配 UIRuntime 并随服务启停。"""
-        runtime = UIRuntime(cfg)
-        await runtime.start()
-        app.state.runtime = runtime
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        context.runtime = UIRuntime(cfg)
+        await context.runtime.start()
         if initialize_meeting:
-            await _initialize_meeting_backend(app, cfg, runtime)
+            await initialize_meeting_backend(context)
         try:
             yield
         finally:
-            await runtime.stop()
-            inner_os_service = getattr(app.state, "inner_os_service", None)
-            if inner_os_service is not None:
-                await inner_os_service.close()
-            summary_service = getattr(app.state, "meeting_summary_service", None)
-            if summary_service is not None:
-                await summary_service.stop()
-            inference_scheduler = getattr(app.state, "inference_scheduler", None)
-            if inference_scheduler is not None:
-                await inference_scheduler.close()
-            repository = getattr(app.state, "meeting_repository", None)
-            if repository is not None:
-                await repository.close()
+            await context.close()
 
     app = FastAPI(title="Voice Studio", version="1.4.0", lifespan=lifespan)
-    app.state.settings = cfg
-    app.state.accepted_control_tasks = set()
+    attach_app_context(app, context)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(
         CORSMiddleware,
@@ -273,7 +257,6 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=["Content-Type", "Idempotency-Key", "X-Request-ID"],
     )
-    app.state.meeting_events = MeetingEventBroadcaster()
     install_meeting_api(app)
     # Register before the catch-all static mount; dependencies resolve lazily.
     install_inner_os_api(app)
@@ -380,110 +363,9 @@ def create_app(
     return app
 
 
-async def _initialize_meeting_backend(
-    app: FastAPI,
-    cfg: Settings,
-    runtime: UIRuntime,
-) -> bool:
-    """装配会议持久化与纪要服务；失败时保留普通语音助手可用。"""
-    repository: PostgresMeetingRepository | None = None
-    summary_service: MeetingSummaryService | None = None
-    try:
-        await run_migrations(cfg.meeting.database_url, schema=cfg.meeting.schema_name)
-        repository = PostgresMeetingRepository(cfg.meeting)
-        await repository.start()
-        journal = RecoveryJournal(cfg.meeting.recovery_dir)
-        await journal.replay(repository)
-        await repository.recover_stale()
-        inference_scheduler = LocalInferenceScheduler()
-        app.state.inference_scheduler = inference_scheduler
-        summary_client = MeetingSummaryClient(
-            cfg.meeting,
-            base_url=cfg.lm_studio.base_url,
-            api_key=cfg.lm_studio.api_key,
-            scheduler=inference_scheduler,
-        )
-        broadcaster = _meeting_broadcaster(app)
-        summary_service = MeetingSummaryService(
-            repository,
-            summary_client,
-            cfg.meeting,
-            event_publisher=broadcaster.publish_event,
-        )
-        if cfg.meeting.inner_os_enabled:
-            inner_os_client = LMStudioClient(
-                base_url=cfg.lm_studio.base_url,
-                api_key=cfg.lm_studio.api_key,
-            )
-            inner_os_model = InnerOSModelClient(
-                inner_os_client,
-                inference_scheduler,
-                model=cfg.meeting.summary_model,
-                max_output_chars=cfg.meeting.inner_os_max_output_chars,
-                fact_timeout_secs=cfg.meeting.inner_os_fact_timeout_secs,
-                analysis_timeout_secs=cfg.meeting.inner_os_analysis_timeout_secs,
-                acquire_timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
-            )
-            app.state.inner_os_service = InnerOSQueryService(
-                repository,
-                inner_os_model,
-                cache_ttl_secs=cfg.meeting.inner_os_cache_ttl_secs,
-                cache_max_entries=cfg.meeting.inner_os_max_cache_entries,
-                cache_max_bytes=cfg.meeting.inner_os_max_cache_bytes,
-                max_context_chars=cfg.meeting.inner_os_max_context_chars,
-                recent_context_chars=cfg.meeting.inner_os_recent_context_chars,
-            )
-        async def publish_meeting_event(
-            event_type: str, meeting_id: str | UUID, payload: Any
-        ) -> None:
-            if event_type == "meeting_state_changed":
-                state = payload.get("status") if isinstance(payload, dict) else None
-                if state == "finalizing" and getattr(app.state, "inner_os_service", None):
-                    await app.state.inner_os_service.cancel_meeting(
-                        UUID(str(meeting_id)),
-                        timeout_secs=cfg.meeting.inner_os_cancel_timeout_secs,
-                    )
-            await broadcaster.publish_event(event_type, meeting_id, payload)
-        smoother = DiarizationSmoother(
-            enabled=cfg.meeting.diarization_smoothing_enabled,
-            min_duration_ms=cfg.meeting.diarization_min_duration_ms,
-            hangover_gap_ms=cfg.meeting.diarization_hangover_gap_ms,
-        )
-        meeting_session = MeetingSession(
-            repository,
-            runtime.subtitle_proxy,
-            summary_service,
-            finalization_timeout_secs=cfg.meeting.finalization_timeout_secs,
-            recovery_journal=journal,
-            event_publisher=publish_meeting_event,
-            diarization_smoother=smoother,
-        )
-        runtime.configure_meeting(meeting_session)
-        app.state.meeting_repository = repository
-        app.state.meeting_summary_service = summary_service
-        app.state.meeting_session = meeting_session
-        app.state.meeting_runtime = runtime
-        await summary_service.start()
-        logger.info("会议助手后端已就绪 (schema=%s)", cfg.meeting.schema_name)
-        return True
-    except Exception as exc:
-        logger.warning(
-            "会议助手后端不可用，普通语音助手继续运行 (%s)",
-            type(exc).__name__,
-        )
-        if summary_service is not None:
-            with contextlib.suppress(Exception):
-                await summary_service.stop()
-        if repository is not None:
-            with contextlib.suppress(Exception):
-                await repository.close()
-        app.state.meeting_backend_error = type(exc).__name__
-        return False
-
-
 def _get_runtime(app: FastAPI) -> UIRuntime | None:
     """取 lifespan 装配的 runtime；未装配（测试直连）返回 None。"""
-    return getattr(app.state, "runtime", None)
+    return get_app_context(app).runtime
 
 
 def _mount_websocket_routes(app: FastAPI, cfg: Settings) -> None:
@@ -767,7 +649,7 @@ def _track_accepted_control_task(
 
 
 def _accepted_control_tasks(app: FastAPI) -> set[asyncio.Task[dict[str, Any]]]:
-    return cast(set[asyncio.Task[dict[str, Any]]], app.state.accepted_control_tasks)
+    return cast(set[asyncio.Task[dict[str, Any]]], get_app_context(app).accepted_control_tasks)
 
 
 def _accepted_control_task_done(
@@ -819,11 +701,7 @@ async def _forward_meeting_events(websocket: WebSocket, client: MeetingEventClie
 
 
 def _meeting_broadcaster(app: FastAPI) -> MeetingEventBroadcaster:
-    broadcaster = getattr(app.state, "meeting_events", None)
-    if broadcaster is None:
-        broadcaster = MeetingEventBroadcaster()
-        app.state.meeting_events = broadcaster
-    return broadcaster
+    return get_app_context(app).meeting_events
 
 
 def _runtime_state_json(runtime: Any) -> dict[str, Any]:
