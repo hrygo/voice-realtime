@@ -7,33 +7,55 @@ from uuid import UUID
 
 from voice_realtime.asr.adapters.speechrail_realtime import _segments
 from voice_realtime.asr.contracts import ASRSessionContext
+from voice_realtime.asr.models import ASRWindow
 from voice_realtime.meeting import transcript as transcript_module
+from voice_realtime.meeting.asr_mapping import to_transcript_window
 from voice_realtime.meeting.models import TranscriptWindow
 from voice_realtime.meeting.transcript import TranscriptAccumulator
+from voice_realtime.speechrail.transcription_events import (
+    SpeechRailSegment,
+    TranscriptionCompleted,
+    decode_transcription_event,
+)
 
 
-def _segments_payload(text: str = "你好") -> list[dict[str, object]]:
-    return [{"text": text, "start_ms": 1_000, "end_ms": 2_500}]
+def _decode_segments(text: str = "你好") -> tuple[SpeechRailSegment, ...]:
+    event = decode_transcription_event(
+        {
+            "type": "transcription.completed",
+            "text": text,
+            "segments": [{"text": text, "start_ms": 1_000, "end_ms": 2_500}],
+        }
+    )
+    assert isinstance(event, TranscriptionCompleted)
+    return event.segments
 
 
 def test_speechrail_segments_use_epoch_and_sample_offset() -> None:
     segments = _segments(
-        _segments_payload(),
+        _decode_segments(),
         ASRSessionContext(source_epoch=2, offset_ms=30_000, purpose="meeting"),
     )
 
     assert segments[0].start_ms == 31_000
     assert segments[0].end_ms == 32_500
     assert segments[0].speaker_key == "epoch:2:speaker:0"
-    assert isinstance(segments[0].id, UUID)
+    mapped = to_transcript_window(
+        ASRWindow(source_epoch=2, segments=segments)
+    )
+    assert isinstance(mapped.segments[0].id, UUID)
 
 
 def test_speechrail_segment_ids_change_when_text_changes() -> None:
     context = ASRSessionContext(source_epoch=1, offset_ms=0, purpose="meeting")
-    first = _segments(_segments_payload("第一版"), context)
-    revised = _segments(_segments_payload("修订版"), context)
+    first = to_transcript_window(
+        ASRWindow(source_epoch=1, segments=_segments(_decode_segments("第一版"), context))
+    )
+    revised = to_transcript_window(
+        ASRWindow(source_epoch=1, segments=_segments(_decode_segments("修订版"), context))
+    )
 
-    assert first[0].id != revised[0].id
+    assert first.segments[0].id != revised.segments[0].id
 
 
 def test_meeting_transcript_has_no_vendor_adapter_dependency() -> None:
