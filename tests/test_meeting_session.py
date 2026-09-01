@@ -1122,8 +1122,11 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
         def __init__(self) -> None:
             self.calls: list[tuple[UUID, TranscriptWindow]] = []
 
-        def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
             self.calls.append((meeting_id, window))
+
+        async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
+            return 0
 
     journal = SyncJournal()
     repository.reconcile_error = RuntimeError("database unavailable")
@@ -1140,7 +1143,7 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
         ),
     ))
 
-    assert await session._persist_window(session.active_meeting_id, window) is None
+    await session._on_window(window)
     assert session.storage_health is StorageHealth.DEGRADED
     assert journal.calls == [(session.active_meeting_id, window)]
     gateway.abort_capture.assert_not_awaited()
@@ -1154,7 +1157,7 @@ async def test_window_recovery_replays_journal_before_next_window_and_stop(
             self.pending: list[tuple[UUID, TranscriptWindow]] = []
             self.replay_calls = 0
 
-        def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
             self.pending.append((meeting_id, window))
 
         async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
@@ -1197,9 +1200,9 @@ async def test_window_recovery_replays_journal_before_next_window_and_stop(
         }
     )
 
-    assert await session._persist_window(session.active_meeting_id, first_window) is None
+    await session._on_window(first_window)
     repository.reconcile_error = None
-    await session._persist_window(session.active_meeting_id, second_window)
+    await session._on_window(second_window)
 
     assert journal.replay_calls == 2
     assert journal.pending == []
@@ -1228,7 +1231,7 @@ async def test_window_persistence_failure_without_journal_aborts_capture(
     ))
 
     with pytest.raises(RuntimeError, match="unavailable"):
-        await session._persist_window(session.active_meeting_id, window)
+        await session._on_window(window)
 
     assert session.storage_health is StorageHealth.DEGRADED
     gateway.abort_capture.assert_awaited_once_with()
@@ -1272,30 +1275,35 @@ async def test_interrupt_supports_sync_summary_resume_callback(
     assert result is not None
 
 
-@pytest.mark.parametrize("journal", [SimpleNamespace(), SimpleNamespace(append=AsyncMock(
-    side_effect=RuntimeError("journal failed")
-))])
+class FailingJournal:
+    async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        raise RuntimeError("journal failed")
+
+    async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
+        return 0
+
+
 async def test_window_persistence_failure_with_unusable_journal_aborts_capture(
-    repository: FakeRepository, gateway: FakeGateway, journal: object
+    repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    repository.reconcile_error = RuntimeError("database unavailable")
-    session = MeetingSession(repository, gateway, recovery_journal=journal)
-    await _start_session(session)
-    window = TranscriptWindow(source_epoch=1, segments=(
-        NormalizedSegment(
-            order=0,
-            source_epoch=1,
-            speaker_key="epoch:1:speaker:1",
-            start_ms=0,
-            end_ms=10,
-            text="journal 错误",
-        ),
-    ))
+        repository.reconcile_error = RuntimeError("database unavailable")
+        session = MeetingSession(repository, gateway, recovery_journal=FailingJournal())
+        await _start_session(session)
+        window = TranscriptWindow(source_epoch=1, segments=(
+            NormalizedSegment(
+                order=0,
+                source_epoch=1,
+                speaker_key="epoch:1:speaker:1",
+                start_ms=0,
+                end_ms=10,
+                text="journal 错误",
+            ),
+        ))
 
-    with pytest.raises(RuntimeError):
-        await session._persist_window(session.active_meeting_id, window)
+        with pytest.raises(RuntimeError, match="journal failed"):
+            await session._on_window(window)
 
-    gateway.abort_capture.assert_awaited_once_with()
+        gateway.abort_capture.assert_awaited_once_with()
 
 
 async def test_gap_emits_reconnect_event_and_ignores_inactive_session(

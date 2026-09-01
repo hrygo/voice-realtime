@@ -18,6 +18,7 @@ from voice_realtime.meeting.models import (
     StorageHealth,
     TranscriptWindow,
 )
+from voice_realtime.meeting.persistence import TranscriptPersistence
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
@@ -80,7 +81,7 @@ class MeetingSession:
         self._preparation: MeetingPreparation | None = None
         self._committed_preparation: MeetingPreparation | None = None
         self._listener: WindowListener | None = None
-        self._last_window_signature: tuple[Any, ...] | None = None
+        self._persistence = TranscriptPersistence(repository, journal=recovery_journal)
         self._storage_degraded = False
         self._speaker_names: dict[str, str] = {}
 
@@ -99,7 +100,8 @@ class MeetingSession:
 
     @property
     def storage_health(self) -> StorageHealth:
-        return StorageHealth.DEGRADED if self._storage_degraded else StorageHealth.OK
+        degraded = self._persistence.degraded or self._storage_degraded
+        return StorageHealth.DEGRADED if degraded else StorageHealth.OK
 
     async def prepare_start(
         self, title: str | None = None, max_speakers: int | None = None
@@ -133,7 +135,6 @@ class MeetingSession:
                     "meeting storage unavailable"
                 ) from exc
             self._record = record
-            self._last_window_signature = None
             self._storage_degraded = False
             self._speaker_names = {}
             listener = self._on_window
@@ -255,9 +256,8 @@ class MeetingSession:
                     capture_closed = True
                     timeout_window = getattr(exc, "last_window", None)
                 if timeout_window is not None:
-                    await self._persist_window(meeting_id, timeout_window)
-                if await self._replay_pending_journal(meeting_id):
-                    self._storage_degraded = False
+                    await self._persistence.reconcile(meeting_id, timeout_window)
+                await self._persistence.replay_pending(meeting_id)
 
                 if timeout_window is not None and timeout_window.speaker_remap:
                     apply_remap = getattr(self.repository, "apply_speaker_remapping", None)
@@ -436,25 +436,6 @@ class MeetingSession:
         result = await recover()
         return int(result or 0)
 
-    async def _replay_pending_journal(self, meeting_id: UUID) -> int:
-        journal = self.recovery_journal
-        if journal is None:
-            return 0
-        replay = getattr(journal, "replay_meeting", None)
-        if replay is None:
-            return 0
-        result = replay(self.repository, meeting_id)
-        if asyncio.iscoroutine(result):
-            result = await result
-        count = int(result or 0)
-        if count > 0:
-            logger.info(
-                "MeetingSession: 重放未处理 Journal 记录 (meeting_id=%s, count=%d)",
-                meeting_id,
-                count,
-            )
-        return count
-
     async def _load_speaker_names(self, meeting_id: UUID) -> dict[str, str]:
         """从 Repository 读取自定义说话人名称映射并更新本地缓存。"""
         try:
@@ -494,7 +475,12 @@ class MeetingSession:
             )
         if not window.segments:
             return
-        result = await self._persist_window(meeting_id, window)
+        try:
+            result = await self._persistence.reconcile(meeting_id, window)
+        except Exception:
+            with contextlib.suppress(Exception):
+                await self.gateway.abort_capture()
+            raise
         if result is None:
             return
         speaker_names = await self._load_speaker_names(meeting_id)
@@ -511,54 +497,6 @@ class MeetingSession:
                 ],
             },
         )
-
-    async def _persist_window(self, meeting_id: UUID, window: TranscriptWindow) -> Any | None:
-        signature = (
-            window.source_epoch,
-            tuple(
-                (
-                    segment.id,
-                    segment.start_ms,
-                    segment.end_ms,
-                    segment.speaker_key,
-                    segment.text,
-                )
-                for segment in window.segments
-            ),
-        )
-        if signature == self._last_window_signature:
-            return None
-        try:
-            await self._replay_pending_journal(meeting_id)
-            result = await self.repository.reconcile_window(meeting_id, window)
-        except Exception as exc:
-            self._storage_degraded = True
-            logger.warning(
-                "MeetingSession: 数据库对账失败，已降级至 RecoveryJournal (meeting_id=%s): %s",
-                meeting_id,
-                exc,
-                exc_info=True,
-            )
-            journal = self.recovery_journal
-            if journal is None:
-                with contextlib.suppress(Exception):
-                    await self.gateway.abort_capture()
-                raise
-            try:
-                append = getattr(journal, "append", None)
-                if append is None:
-                    raise RuntimeError("recovery journal unavailable")
-                result = append(meeting_id, window)
-                if asyncio.iscoroutine(result):
-                    await result
-            except Exception:
-                with contextlib.suppress(Exception):
-                    await self.gateway.abort_capture()
-                raise
-            return None
-        self._last_window_signature = signature
-        self._storage_degraded = False
-        return result
 
     async def _on_gap(self, gap: Any) -> None:
         meeting_id = self._active_meeting_id
