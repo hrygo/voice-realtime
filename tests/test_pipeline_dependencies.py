@@ -26,9 +26,12 @@ def services() -> list[MagicMock]:
     factories = [MagicMock(), MagicMock(), MagicMock()]
     factories[0].return_value.create_processor.return_value = MagicMock(name="stt")
     with (
-        patch("voice_realtime.interaction.pipeline.SpeechRailConversationSTTFactory", factories[0]),
-        patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", factories[1]),
-        patch("voice_realtime.interaction.pipeline.SpeechRailTTSService", factories[2]),
+        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
+            factories[0]),
+        patch("voice_realtime.interaction.pipeline_dependencies.LmStudioNativeLLMService",
+            factories[1]),
+        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService",
+            factories[2]),
     ):
         yield factories
 

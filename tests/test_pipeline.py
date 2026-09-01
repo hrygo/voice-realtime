@@ -65,9 +65,11 @@ def mock_services() -> list[MagicMock]:
     mocks = [MagicMock(), MagicMock(), MagicMock()]
     mocks[0].return_value.create_processor.return_value = MagicMock(name="speechrail_stt")
     with (
-        patch("voice_realtime.interaction.pipeline.SpeechRailConversationSTTFactory", mocks[0]),
-        patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
-        patch("voice_realtime.interaction.pipeline.SpeechRailTTSService", mocks[2]),
+        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
+            mocks[0]),
+        patch("voice_realtime.interaction.pipeline_dependencies.LmStudioNativeLLMService",
+            mocks[1]),
+        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService", mocks[2]),
     ):
         yield mocks
 
@@ -84,11 +86,11 @@ class TestBuildPipeline:
         transport_mock = MagicMock()
         with (
             patch(
-                "voice_realtime.interaction.pipeline.resolve_input_device_index",
+                "voice_realtime.interaction.pipeline_dependencies.resolve_input_device_index",
                 return_value=7,
             ) as resolve_device,
             patch(
-                "voice_realtime.interaction.pipeline.LocalAudioTransport",
+                "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=transport_mock,
             ) as transport_class,
         ):
@@ -111,7 +113,8 @@ class TestBuildPipeline:
         stt_factory = MagicMock(name="stt_factory")
         stt_factory.create_processor.return_value = stt_processor
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(
                 settings,
@@ -135,7 +138,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         assert pipeline is not None
@@ -151,7 +155,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
         llm_mock = mock_services[1]
@@ -171,7 +176,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
         tts_mock = mock_services[2]
@@ -195,7 +201,8 @@ class TestBuildPipeline:
         from voice_realtime.interaction.pipeline import build_pipeline as bp
 
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             bp(settings, transport=mock_transport)
         factory = mock_services[0]
@@ -215,7 +222,8 @@ class TestBuildPipeline:
     ) -> None:
         settings = InteractionSettings(stt_language="EN", sample_rate=16000)
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
         mock_services[0].return_value.create_processor.assert_called_once_with(
@@ -242,7 +250,8 @@ class TestBuildPipeline:
             sample_rate=16000, echo_barge_in_gain=3.0, echo_barge_in_frames=4
         )
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         echo = pipeline.processors[2]
@@ -257,7 +266,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
 
@@ -280,7 +290,8 @@ class TestBuildPipeline:
         """L2 链：SelfEchoFilter 挂在 STT 与 user aggregator 之间，
         BotTextRecorder 挂在 LLM 与 TTS 之间，二者共享同一文本缓冲。"""
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(
                 settings, transport=mock_transport, audio_queue=asyncio.Queue()
@@ -299,7 +310,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         # 1.7：VAD 集成进 LLMUserAggregatorParams，不在独立节点
@@ -316,7 +328,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         # 1.7：user aggregator 在 stt 与 self-echo 过滤之后（index 5），
@@ -888,7 +901,8 @@ class TestInjectorMode:
     ) -> None:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport, audio_queue=queue)
 
@@ -909,7 +923,8 @@ class TestInjectorMode:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
 
@@ -925,7 +940,8 @@ class TestInjectorMode:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         transport_mock = MagicMock()
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=transport_mock
+            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=transport_mock
         ) as mock_cls:
             build_pipeline(settings, audio_queue=queue)
 

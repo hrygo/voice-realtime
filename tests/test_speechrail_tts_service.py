@@ -15,6 +15,7 @@ class FakeSpeechRailTTSClient:
     def __init__(self, *, block_after_audio: bool = False) -> None:
         self.requests: list[tuple[str, float]] = []
         self.cancelled = False
+        self.closed = False
         self._block_after_audio = block_after_audio
 
     async def synthesize(self, text: str, *, speed: float) -> AsyncIterator[bytes]:
@@ -27,6 +28,8 @@ class FakeSpeechRailTTSClient:
         except asyncio.CancelledError:
             self.cancelled = True
             raise
+        finally:
+            self.closed = True
 
 
 async def test_speechrail_tts_service_normalizes_legacy_voice_and_yields_pcm() -> None:
@@ -87,4 +90,5 @@ async def test_speechrail_tts_service_propagates_pipeline_task_cancellation_to_c
         await task
 
     assert client.cancelled
+    assert client.closed
     await service.cleanup()

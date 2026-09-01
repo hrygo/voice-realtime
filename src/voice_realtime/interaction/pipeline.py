@@ -19,18 +19,12 @@ from __future__ import annotations
 
 import asyncio
 import audioop
-import difflib
 import logging
-import re
 import time
 from collections import deque
 from collections.abc import Callable
 from typing import Any, cast
 
-from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
@@ -45,10 +39,6 @@ from pipecat.frames.frames import (
     TTSStoppedFrame,
     TTSTextFrame,
 )
-
-from pypinyin import Style, lazy_pinyin
-
-_HAS_PYPINYIN = True
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -56,19 +46,13 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
-from voice_realtime.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTFactory
 from voice_realtime.asr.contracts import ConversationSTTFactory
 from voice_realtime.audio.audio_injector import AudioInjector
-from voice_realtime.audio.devices import resolve_input_device_index
-from voice_realtime.config import (
-    TTS_OUTPUT_SAMPLE_RATE,
-    InteractionSettings,
-)
+from voice_realtime.config import InteractionSettings
 from voice_realtime.interaction.context_memory import MEMORY_PROTOCOL
 from voice_realtime.interaction.echo import (
     AdaptiveEnergyGate,
@@ -76,11 +60,11 @@ from voice_realtime.interaction.echo import (
     EchoTextBuffer,
     SelfEchoPolicy,
 )
-from voice_realtime.interaction.reasoning import (
-    DEFAULT_SYSTEM_PROMPT,
-    LmStudioNativeLLMService,
+from voice_realtime.interaction.pipeline_dependencies import (
+    PipelineFactories,
+    default_pipeline_factories,
 )
-from voice_realtime.interaction.tts import SpeechRailTTSService
+from voice_realtime.interaction.reasoning import DEFAULT_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -107,81 +91,11 @@ def build_system_prompt(persona: str | None = None) -> str:
 
 _ECHO_BASELINE_WARMUP_FRAMES = 8  # 抑制开启后用于建立扬声器峰值包络的初始帧数（~128ms @16k/512B）
 _ECHO_MIN_MATCH_CHARS = 2  # 自回声文本判定的最短用户文本长度（防短词误杀，去标点后）
-_COMMON_ACKNOWLEDGEMENTS = frozenset({"好", "好的", "嗯", "嗯嗯", "行", "可以", "谢谢", "知道了"})
-_PUNCTUATION_RE = re.compile(
-    r"[\s\.,\?!;:，。？！；：、“”‘’\"\'\(\)\[\]（）—\-_…]+", re.UNICODE
-)
-
-
-def _normalize_text(text: str) -> str:
-    """去标点、空格、转小写，用于自回声模糊与子串比对。"""
-    return _PUNCTUATION_RE.sub("", text).strip().lower()
-
-
-def _pinyin_tokens(text: str) -> list[str]:
-    """提取纯中文拼音序列（用于抗 ASR 谐音错字的回声模糊判定）。"""
-    if not _HAS_PYPINYIN:
-        return []
-    return [p for p in lazy_pinyin(text, style=Style.NORMAL) if p.isalnum()]
 
 
 def _rms16(audio: bytes) -> float:
     """16bit PCM 波形 RMS（stdint 域）。"""
     return float(audioop.rms(audio, 2)) if audio else 0.0
-
-
-class _LegacyEchoState:
-    """共享回声与播报状态：跨处理器同步 TTS 播报与麦克风物理闭麦窗口。"""
-
-    def __init__(self) -> None:
-        self.bot_speaking = False
-        self.last_speaking_stop_time = 0.0
-        self._tts_active = False
-        self._speaker_active = False
-        self.generation = 0
-
-    def on_tts_started(self) -> None:
-        was_active = self._tts_active or self._speaker_active
-        self._tts_active = True
-        self.bot_speaking = True
-        if not was_active:
-            self.generation += 1
-        logger.info("echo-state: 机器人开始生成/播报，激活物理闭麦与回声抑制")
-
-    def on_bot_speaking_started(self) -> None:
-        was_active = self._tts_active or self._speaker_active
-        self._speaker_active = True
-        self.bot_speaking = True
-        if not was_active:
-            self.generation += 1
-        logger.info("echo-state: 扬声器开始发声，保持物理闭麦")
-
-    def on_tts_stopped(self) -> None:
-        self._tts_active = False
-        if not self._speaker_active:
-            self.bot_speaking = False
-            self.last_speaking_stop_time = time.monotonic()
-            logger.info("echo-state: TTS 生成结束，进入尾部混响挂起抑制")
-
-    def on_bot_speaking_stopped(self) -> None:
-        self._speaker_active = False
-        if not self._tts_active:
-            self.bot_speaking = False
-            self.last_speaking_stop_time = time.monotonic()
-            logger.info("echo-state: 扬声器发声完毕，进入尾部混响挂起抑制")
-
-    def reset(self) -> None:
-        """重置状态（会话停止或强行打断时调用）。"""
-        self.generation += 1
-        self.bot_speaking = False
-        self.last_speaking_stop_time = 0.0
-        self._tts_active = False
-        self._speaker_active = False
-
-    def is_suppressing(self, now: float, tail_hangover_secs: float) -> bool:
-        if self.bot_speaking or self._tts_active or self._speaker_active:
-            return True
-        return (now - self.last_speaking_stop_time) < tail_hangover_secs
 
 
 class TTSStateObserver(FrameProcessor):
@@ -206,101 +120,6 @@ class TTSStateObserver(FrameProcessor):
             logger.info("echo-state: 播报被打断或取消，立即解除回声抑制")
 
         await self.push_frame(frame, direction)
-
-
-class _LegacyEchoTextBuffer:
-    """机器人最近播报文本的环形缓冲（带时间戳），供自回声文本判定。"""
-
-    def __init__(self, window_secs: float = 10.0, max_items: int = 16) -> None:
-        self._window_secs = window_secs
-        self._max_items = max_items
-        self._items: deque[tuple[float, str]] = deque()
-
-    def add(self, text: str, now: float) -> None:
-        text = text.strip()
-        if not text:
-            return
-        self._items.append((now, text))
-        if len(self._items) > self._max_items:
-            self._items.popleft()
-
-    def _recent(self, now: float) -> list[str]:
-        cutoff = now - self._window_secs
-        return [text for ts, text in self._items if ts >= cutoff]
-
-    def matches(self, text: str, min_ratio: float, min_chars: int, now: float) -> bool:
-        """用户文本是否为自回声：与近期机器人文本相似、为其子串或拼音/声韵序列高度重合。"""
-        norm_input = _normalize_text(text)
-        if (
-            not norm_input
-            or len(norm_input) < min_chars
-            or norm_input in _COMMON_ACKNOWLEDGEMENTS
-        ):
-            return False
-
-        recent_texts = self._recent(now)
-        if not recent_texts:
-            return False
-
-        combined_bot = "".join(_normalize_text(t) for t in recent_texts)
-        if not combined_bot:
-            return False
-
-        # 1. 单句字面比对：完全子串包含、整句相似度、滑动窗口模糊匹配
-        input_len = len(norm_input)
-        for bot_text in recent_texts:
-            norm_bot = _normalize_text(bot_text)
-            if not norm_bot:
-                continue
-            # 精确子串包含（STT 转写是机器人的子串，或机器人转写是 STT 的子串）
-            if norm_input in norm_bot or norm_bot in norm_input:
-                return True
-            # 整句字面相似度
-            matcher = difflib.SequenceMatcher(None, norm_input, norm_bot)
-            if matcher.ratio() >= min_ratio:
-                return True
-            longest = matcher.find_longest_match(0, input_len, 0, len(norm_bot))
-            if longest.size and (longest.size / input_len >= min_ratio):
-                return True
-            # 短语滑动窗口模糊匹配（容忍 STT 1~2 个同音字误差，如 3~5 字短尾音）
-            if 2 <= input_len <= 8 and len(norm_bot) >= input_len:
-                for i in range(len(norm_bot) - input_len + 1):
-                    sub = norm_bot[i : i + input_len]
-                    sub_ratio = difflib.SequenceMatcher(None, norm_input, sub).ratio()
-                    if sub_ratio >= max(0.65, min_ratio - 0.1):
-                        return True
-
-        # 2. 联合文本字面比对（跨分句/跨分段拼接转写）
-        if norm_input in combined_bot:
-            return True
-        matcher_all = difflib.SequenceMatcher(None, norm_input, combined_bot)
-        if matcher_all.ratio() >= min_ratio:
-            return True
-        longest_all = matcher_all.find_longest_match(0, input_len, 0, len(combined_bot))
-        if longest_all.size and (longest_all.size / input_len >= min_ratio):
-            return True
-
-        # 3. 拼音级（Phonetic）模糊比对：抵御 ASR 谐音错字（如"白昼时长" -> "不市场"）
-        cand_pinyin = _pinyin_tokens(norm_input)
-        bot_pinyin = _pinyin_tokens(combined_bot)
-        if cand_pinyin and bot_pinyin:
-            cand_str = " ".join(cand_pinyin)
-            bot_str = " ".join(bot_pinyin)
-            if cand_str in bot_str:
-                return True
-            matcher_py = difflib.SequenceMatcher(None, cand_pinyin, bot_pinyin)
-            longest_py = matcher_py.find_longest_match(0, len(cand_pinyin), 0, len(bot_pinyin))
-            if longest_py.size >= 2 and (longest_py.size / len(cand_pinyin) >= 0.6):
-                return True
-            cand_py_compact = "".join(cand_pinyin)
-            bot_py_compact = "".join(bot_pinyin)
-            if (
-                difflib.SequenceMatcher(None, cand_py_compact, bot_py_compact).ratio()
-                >= max(0.6, min_ratio - 0.1)
-            ):
-                return True
-
-        return False
 
 
 class HangoverUserMuteStrategy(BaseUserMuteStrategy):
@@ -643,6 +462,7 @@ def build_pipeline(
     echo_state: EchoState | None = None,
     echo_buffer: EchoTextBuffer | None = None,
     stt_factory: ConversationSTTFactory | None = None,
+    factories: PipelineFactories | None = None,
 ) -> Pipeline:
     """按配置装配交互管道。transport 可注入（测试/无麦克风环境）。
 
@@ -652,27 +472,13 @@ def build_pipeline(
     下游 VAD/回声抑制/STT 无感知）。
     """
     use_injector = audio_queue is not None
+    resolved_factories = factories or default_pipeline_factories(settings)
     if transport is None:
-        input_device_index = settings.input_device
-        if not use_injector and settings.input_device_name is not None:
-            input_device_index = resolve_input_device_index(
-                device_index=settings.input_device,
-                device_name=settings.input_device_name,
-            )
-        transport = LocalAudioTransport(
-            LocalAudioTransportParams(
-                audio_in_enabled=not use_injector,
-                audio_out_enabled=True,
-                audio_in_sample_rate=settings.sample_rate,
-                audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
-                input_device_index=input_device_index,
-            )
+        transport = resolved_factories.transport_factory(
+            settings=settings, audio_in_enabled=not use_injector
         )
 
-    resolved_stt_factory = stt_factory or SpeechRailConversationSTTFactory(
-        url=settings.speechrail_realtime_url,
-        api_key=settings.speechrail_api_key,
-    )
+    resolved_stt_factory = stt_factory or resolved_factories.stt_factory
     stt = cast(
         FrameProcessor,
         resolved_stt_factory.create_processor(
@@ -681,26 +487,8 @@ def build_pipeline(
         ),
     )
 
-    llm = LmStudioNativeLLMService(
-        model=settings.llm_model,
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        temperature=settings.llm_temperature,
-        reasoning="off",
-        compaction_config=settings.context_compaction_config(),
-    )
-
-    tts = SpeechRailTTSService(
-        url=settings.speechrail_realtime_url,
-        api_key=settings.speechrail_api_key,
-        fast_first_clause=settings.tts_fast_first_clause,
-        first_clause_min_chars=settings.tts_first_clause_min_chars,
-        settings=SpeechRailTTSService.Settings(
-            model=settings.speechrail_tts_model,
-            voice=settings.tts_voice,
-            language=settings.tts_language,
-        ),
-    )
+    llm = resolved_factories.llm_factory(settings=settings)
+    tts = resolved_factories.tts_factory(settings=settings)
 
     context = context or LLMContext(
         messages=[{"role": "system", "content": build_system_prompt(persona)}]
@@ -731,9 +519,7 @@ def build_pipeline(
         UserTurnStrategies(
             stop=[
                 TurnAnalyzerUserTurnStopStrategy(
-                    turn_analyzer=LocalSmartTurnAnalyzerV3(
-                        params=SmartTurnParams(stop_secs=settings.smart_turn_stop_secs)
-                    )
+                    turn_analyzer=resolved_factories.smart_turn_factory(settings=settings)
                 )
             ]
         )
@@ -746,15 +532,7 @@ def build_pipeline(
     pair = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(
-                sample_rate=settings.sample_rate,
-                params=VADParams(
-                    confidence=settings.vad_confidence,
-                    start_secs=settings.vad_start_secs,
-                    stop_secs=settings.silence_secs,
-                    min_volume=settings.vad_min_volume,
-                ),
-            ),
+            vad_analyzer=resolved_factories.vad_factory(settings=settings),
             user_turn_strategies=user_turn_strategies,
             user_mute_strategies=[
                 HangoverUserMuteStrategy(
