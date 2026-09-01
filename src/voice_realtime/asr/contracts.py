@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol
 
-from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.asr.models import ASRWindow
 
 ASREventKind = Literal["ready", "snapshot", "final", "error"]
 ASRPurpose = Literal["subtitles", "meeting"]
@@ -61,7 +61,7 @@ class ASREvent:
     """从具体运行时规范化得到的原子 ASR 事件。"""
 
     kind: ASREventKind
-    window: TranscriptWindow | None = None
+    window: ASRWindow | None = None
     error_code: str | None = None
     error_message: str | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
@@ -102,7 +102,7 @@ class StreamingTranscriber(Protocol):
 
     def events(self) -> AsyncIterator[ASREvent]: ...
 
-    async def finish(self) -> TranscriptWindow: ...
+    async def finish(self) -> ASRWindow: ...
 
     async def close(self) -> None: ...
 

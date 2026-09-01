@@ -23,6 +23,7 @@ from voice_realtime.asr.adapters.speechrail_realtime import (
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
 from voice_realtime.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
 from voice_realtime.config import SubtitleSettings
+from voice_realtime.meeting.asr_mapping import to_transcript_window
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
 
 logger = logging.getLogger(__name__)
@@ -573,7 +574,7 @@ class SubtitleProxy:
                 await self._audio_buffer.join()
                 self._capture_active.clear()
                 final_window = await stream.finish()
-                self._capture_last_window = final_window
+                self._capture_last_window = to_transcript_window(final_window)
             elapsed_ms = (loop.time() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
         except TimeoutError as exc:
@@ -814,13 +815,14 @@ class SubtitleProxy:
         window = event.window
         if window is None:
             return
-        self._capture_last_window = window
+        transcript_window = to_transcript_window(window)
+        self._capture_last_window = transcript_window
         if event.kind == "final":
             self._capture_ready_to_stop.set()
             return
         for listener in tuple(self._event_listeners):
             try:
-                await listener(window)
+                await listener(transcript_window)
             except Exception:
                 logger.exception("SubtitleProxy: 会议转录监听器失败")
         await self._broadcast_payload(legacy_subtitle_payload(window), persist=False)

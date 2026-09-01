@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from voice_realtime.meeting.models import TranscriptWindow
+from voice_realtime.asr.models import ASRWindow
 
 
 def _raw_speaker(speaker_key: str) -> int | str:
@@ -27,7 +27,7 @@ def legacy_ready_payload() -> dict[str, Any]:
     return {"type": "config", "useAudioWorklet": False, "mode": "full"}
 
 
-def legacy_subtitle_payload(window: TranscriptWindow) -> dict[str, Any]:
+def legacy_subtitle_payload(window: ASRWindow) -> dict[str, Any]:
     """生成前端当前消费的完整字幕快照。"""
     return {
         "type": "full_update",

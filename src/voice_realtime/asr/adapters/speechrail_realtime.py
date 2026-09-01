@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from uuid import NAMESPACE_URL, uuid5
 
 from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
+from voice_realtime.asr.models import ASRSegment, ASRWindow
 from voice_realtime.speechrail.transcription_events import (
     DiarizationCompleted,
     InputAudioAck,
@@ -55,7 +54,7 @@ class SpeechRailStreamingTranscriber:
         self._language = language
         self._finish_timeout_secs = finish_timeout_secs
         self._ready = False
-        self._last_window = TranscriptWindow(source_epoch=context.source_epoch)
+        self._last_window = ASRWindow(source_epoch=context.source_epoch)
         self._final_ready = asyncio.Event()
         self._finish_lock = asyncio.Lock()
         self._commit_sent = False
@@ -99,7 +98,7 @@ class SpeechRailStreamingTranscriber:
                 if isinstance(decoded, InputAudioAck):
                     continue
                 if isinstance(decoded, TranscriptionDelta):
-                    self._last_window = TranscriptWindow(
+                    self._last_window = ASRWindow(
                         source_epoch=self._context.source_epoch, partial=decoded.text
                     )
                     yield ASREvent(kind="snapshot", window=self._last_window)
@@ -116,7 +115,7 @@ class SpeechRailStreamingTranscriber:
                             "SpeechRail returned invalid completed segments",
                         )
                         return
-                    self._last_window = TranscriptWindow(
+                    self._last_window = ASRWindow(
                         source_epoch=self._context.source_epoch, segments=segments
                     )
                     if self._diarization_requested:
@@ -146,8 +145,12 @@ class SpeechRailStreamingTranscriber:
                             "SpeechRail returned an invalid diarization mapping",
                         )
                         return
-                    self._last_window = self._last_window.model_copy(
-                        update={"speaker_remap": mapping}
+                    self._last_window = ASRWindow(
+                        source_epoch=self._context.source_epoch,
+                        partial=self._last_window.partial,
+                        partial_speaker_key=self._last_window.partial_speaker_key,
+                        segments=self._last_window.segments,
+                        speaker_remap=mapping,
                     )
                     self._final_ready.set()
                     yield ASREvent(kind="final", window=self._last_window)
@@ -168,7 +171,7 @@ class SpeechRailStreamingTranscriber:
         finally:
             self._events_active = False
 
-    async def finish(self) -> TranscriptWindow:
+    async def finish(self) -> ASRWindow:
         async with self._finish_lock:
             if not self._commit_sent:
                 await self._client.commit()
@@ -199,8 +202,8 @@ def _segments(
     context: ASRSessionContext,
     *,
     require_speaker: bool = False,
-) -> tuple[NormalizedSegment, ...]:
-    result: list[NormalizedSegment] = []
+) -> tuple[ASRSegment, ...]:
+    result: list[ASRSegment] = []
     for index, segment in enumerate(value):
         if segment.speaker is None:
             if require_speaker:
@@ -208,18 +211,13 @@ def _segments(
             speaker_key = "0"
         else:
             speaker_key = segment.speaker
-        absolute_start = segment.start_ms + context.offset_ms
-        absolute_end = segment.end_ms + context.offset_ms
         result.append(
-            NormalizedSegment(
-                id=uuid5(
-                    NAMESPACE_URL, f"speechrail:{context.source_epoch}:{index}:{segment.text}"
-                ),
+            ASRSegment(
                 order=index,
                 source_epoch=context.source_epoch,
                 speaker_key=f"epoch:{context.source_epoch}:speaker:{speaker_key}",
-                start_ms=absolute_start,
-                end_ms=absolute_end,
+                start_ms=segment.start_ms + context.offset_ms,
+                end_ms=segment.end_ms + context.offset_ms,
                 text=segment.text,
             )
         )
