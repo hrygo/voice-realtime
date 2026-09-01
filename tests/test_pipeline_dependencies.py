@@ -14,6 +14,7 @@ from voice_realtime.interaction.pipeline import (
     TTSStateObserver,
     build_pipeline,
 )
+from voice_realtime.interaction.pipeline_dependencies import default_pipeline_factories
 
 
 @pytest.fixture
@@ -94,3 +95,30 @@ def test_explicit_transport_stt_and_audio_queue_remain_construction_seams(
     assert processors[3] is stt
     transport.input.assert_not_called()
     stt_factory.create_processor.assert_called_once_with(sample_rate=16_000, language="zh")
+
+
+def test_default_tts_factory_ignores_legacy_bridge_url() -> None:
+    settings = InteractionSettings(
+        tts_bridge_url="http://127.0.0.1:9999/v1",
+        speechrail_realtime_url="ws://127.0.0.1:8201/v2/realtime",
+        speechrail_tts_model="speechrail/qwen3-tts",
+        tts_voice="warm",
+        tts_language="zh",
+    )
+    assert settings.tts_bridge_url == "http://127.0.0.1:9999/v1"
+
+    factories = default_pipeline_factories(settings)
+    with patch(
+        "voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService"
+    ) as tts_service:
+        factories.tts_factory(settings=settings)
+
+    kwargs = tts_service.call_args.kwargs
+    assert kwargs["url"] == settings.speechrail_realtime_url
+    assert kwargs["api_key"] == settings.speechrail_api_key
+    tts_service.Settings.assert_called_once_with(
+        model=settings.speechrail_tts_model,
+        voice=settings.tts_voice,
+        language=settings.tts_language,
+    )
+    assert all("bridge" not in str(key) for key in kwargs)

@@ -148,7 +148,7 @@ def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) 
 
         runtime = UIRuntime(settings, conversation_stt_factory=stt_factory)
 
-    assert runtime.session._stt_factory is stt_factory  # type: ignore[attr-defined]
+    assert runtime.session._pipeline_factories.stt_factory is stt_factory  # type: ignore[attr-defined]
 
 
 def test_runtime_constructs_one_idle_coordinator_and_broadcaster(
