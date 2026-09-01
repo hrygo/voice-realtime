@@ -1333,7 +1333,7 @@ async def test_last_window_property_reads_gateway_snapshot(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     window = TranscriptWindow(source_epoch=1, partial="last")
-    gateway._capture_last_window = window
+    gateway.last_window = window
     session = MeetingSession(repository, gateway)
 
     assert session.last_window == window

@@ -94,7 +94,7 @@ class MeetingSession:
 
     @property
     def last_window(self) -> TranscriptWindow | None:
-        value = getattr(self.gateway, "_capture_last_window", None)
+        value = getattr(self.gateway, "last_window", None)
         return value if isinstance(value, TranscriptWindow) else None
 
     @property

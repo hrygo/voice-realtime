@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -17,62 +16,28 @@ from voice_realtime.asr.adapters.speechrail_realtime import (
     SpeechRailRealtimeClient,
     SpeechRailStreamingTranscriber,
 )
-from voice_realtime.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
-from voice_realtime.asr.presenters import legacy_subtitle_payload
+from voice_realtime.asr.contracts import ASRSessionContext, StreamingTranscriber
 from voice_realtime.config import SubtitleSettings
 from voice_realtime.meeting.asr_mapping import to_transcript_window
 from voice_realtime.meeting.models import PCMOwner, TranscriptWindow
 from voice_realtime.ui.subtitle_archive import SrtArchive
 from voice_realtime.ui.subtitle_clients import ClientSender, SubtitleClientHub
 from voice_realtime.ui.subtitle_sessions import (
+    CapturePreparation,
+    FinalizationTimeoutError,
+    MeetingCaptureSession,
     StandardSubtitleSession,
     SubtitlePreparation,
     SubtitleSessionState,
+    TranscriptionGap,
 )
 
 logger = logging.getLogger(__name__)
 
 TranscriberFactory = Callable[[ASRSessionContext], StreamingTranscriber]
 CaptureListener = Callable[[TranscriptWindow], Awaitable[None]]
-GapListener = Callable[["TranscriptionGap"], Awaitable[None]]
+GapListener = Callable[[TranscriptionGap], Awaitable[None]]
 AudioListener = Callable[[bytes], None]
-
-
-def _diarization_group_id(owner: str | None) -> str:
-    """Keep the application meeting identifier out of the public audio protocol."""
-    if not owner:
-        raise RuntimeError("meeting diarization requires a capture owner")
-    return hashlib.sha256(owner.encode("utf-8")).hexdigest()
-
-
-class FinalizationTimeoutError(TimeoutError):
-    """会议 ASR 未在时限内排空 PCM 或完成 EOF，携带最后已知窗口。"""
-
-    code = "finalization_timeout"
-
-    def __init__(self, last_window: TranscriptWindow | None) -> None:
-        self.last_window = last_window
-        super().__init__("SpeechRail finalization timed out")
-
-
-FinalizationTimeout = FinalizationTimeoutError
-
-
-@dataclass(frozen=True, slots=True)
-class CapturePreparation:
-    """会议采集连接已 ready、尚未接收 PCM 的一次性凭证。"""
-
-    owner: str
-    generation: int
-
-
-@dataclass(frozen=True)
-class TranscriptionGap:
-    """SpeechRail 重连期间无法转录的样本时钟区间。"""
-
-    source_epoch: int
-    start_ms: int
-    end_ms: int
 
 
 class SubtitleProxyState(StrEnum):
@@ -124,7 +89,6 @@ class SubtitleProxy:
         )
         self._backoff_delays = tuple(backoff_delays)
         self._clock = clock
-        self._capture_stream: StreamingTranscriber | None = None
         self._client_hub = SubtitleClientHub(on_channel_closed=self._on_hub_channel_closed)
         self._running = False
         self._state = SubtitleProxyState.STOPPED
@@ -137,7 +101,7 @@ class SubtitleProxy:
             backoff_delays=self._backoff_delays,
             stop_event=self._stop_event,
             running=lambda: self._running,
-            capture_active=lambda: self._capture_accept_audio,
+            capture_active=lambda: self._capture_session.accepting,
             on_payload=self._broadcast_payload,
             on_state=self._on_session_state,
             on_epoch_opened=self._on_session_epoch_opened,
@@ -147,27 +111,25 @@ class SubtitleProxy:
             on_last_error=self._on_session_last_error,
             on_dropped_chunk=self._on_session_dropped_chunk,
         )
+        self._capture_session = MeetingCaptureSession(
+            audio_queue=self._audio_buffer,
+            transcriber_factory=self._transcriber_factory,
+            backoff_delays=self._backoff_delays,
+            stop_event=self._stop_event,
+            running=lambda: self._running,
+            to_transcript_window=to_transcript_window,
+            on_payload=lambda payload, persist: self._broadcast_payload(
+                payload, persist=persist
+            ),
+            on_state=self._on_session_state,
+            on_gap=self._on_session_gap,
+            on_reconnect=self._on_session_reconnect,
+            on_last_event=self._on_session_last_event,
+            on_last_error=self._on_session_last_error,
+        )
         self._last_payload: dict[str, Any] | None = None
         self._snapshot_signature: tuple[tuple[tuple[str, ...], ...], str] | None = None
         self._archive = SrtArchive(settings.output_dir)
-        self._capture_owner: str | None = None
-        self._capture_generation = 0
-        self._capture_prepared: CapturePreparation | None = None
-        self._capture_epoch = 0
-        self._capture_offset_ms = 0
-        self._capture_speaker_count_hint: int | None = None
-        self._capture_audio_ms = 0
-        self._capture_input_ms = 0
-        self._capture_accept_audio = False
-        self._capture_active = asyncio.Event()
-        self._capture_ready = asyncio.Event()
-        self._capture_stream_available = asyncio.Event()
-        self._capture_ready_to_stop = asyncio.Event()
-        self._capture_event_task: asyncio.Task[None] | None = None
-        self._capture_send_task: asyncio.Task[None] | None = None
-        self._capture_last_window: TranscriptWindow | None = None
-        self._event_listeners: list[CaptureListener] = []
-        self._gap_listeners: list[GapListener] = []
         self._audio_listeners: list[AudioListener] = []
         self._last_event_at: float | None = None
         self._reconnect_count = 0
@@ -191,9 +153,6 @@ class SubtitleProxy:
 
         return create
 
-    def _create_transcriber(self, context: ASRSessionContext) -> StreamingTranscriber:
-        return self._transcriber_factory(context)
-
     @property
     def state(self) -> str:
         """返回当前状态机状态。"""
@@ -207,7 +166,7 @@ class SubtitleProxy:
     @property
     def capture_owner(self) -> str | None:
         """返回当前会议采集租约持有者；浏览器订阅不影响该租约。"""
-        return self._capture_owner
+        return self._capture_session.owner
 
     @property
     def browser_capture_active(self) -> bool:
@@ -220,23 +179,24 @@ class SubtitleProxy:
 
     @property
     def capture_epoch(self) -> int:
-        return self._capture_epoch
+        return self._capture_session.epoch
+
+    @property
+    def last_window(self) -> TranscriptWindow | None:
+        """会议采集当前已知的最后确认窗口；普通字幕路径不适用。"""
+        return self._capture_session.last_window
 
     def add_event_listener(self, listener: CaptureListener) -> None:
-        if listener not in self._event_listeners:
-            self._event_listeners.append(listener)
+        self._capture_session.add_event_listener(listener)
 
     def remove_event_listener(self, listener: CaptureListener) -> None:
-        with contextlib.suppress(ValueError):
-            self._event_listeners.remove(listener)
+        self._capture_session.remove_event_listener(listener)
 
     def add_gap_listener(self, listener: GapListener) -> None:
-        if listener not in self._gap_listeners:
-            self._gap_listeners.append(listener)
+        self._capture_session.add_gap_listener(listener)
 
     def remove_gap_listener(self, listener: GapListener) -> None:
-        with contextlib.suppress(ValueError):
-            self._gap_listeners.remove(listener)
+        self._capture_session.remove_gap_listener(listener)
 
     def add_audio_listener(self, listener: AudioListener) -> None:
         if listener not in self._audio_listeners:
@@ -264,7 +224,7 @@ class SubtitleProxy:
         if (
             not self._client_hub.has_clients
             and not self._subtitle_session.committed
-            and self._capture_owner is None
+            and self._capture_session.owner is None
         ):
             self._drain_audio_buffer()
 
@@ -298,9 +258,12 @@ class SubtitleProxy:
     def _on_session_dropped_chunk(self) -> None:
         self._dropped_chunks += 1
 
+    def _on_session_gap(self) -> None:
+        self._gap_count += 1
+
     @property
     def is_paused(self) -> bool:
-        return not self._subtitle_session.committed and not self._capture_accept_audio
+        return not self._subtitle_session.committed and not self._capture_session.accepting
 
     def diagnostics(self, expected_owner: PCMOwner) -> SubtitleProxyDiagnostics:
         """返回不以静音时长推断降级的原始工作负载诊断。"""
@@ -313,7 +276,7 @@ class SubtitleProxy:
             committed = (
                 self._subtitle_session.committed
                 if expected_owner is PCMOwner.SUBTITLES
-                else self._capture_accept_audio
+                else self._capture_session.accepting
             )
             ready = self._diagnostic_ready(expected_owner)
             if self._state is SubtitleProxyState.ERROR:
@@ -346,9 +309,9 @@ class SubtitleProxy:
                 and self._state is SubtitleProxyState.CONNECTED
             )
         return (
-            self._capture_stream is not None
-            and self._capture_ready.is_set()
-            and self._capture_stream_available.is_set()
+            self._capture_session.has_stream
+            and self._capture_session.ready.is_set()
+            and self._capture_session.stream_available.is_set()
             and self._state is SubtitleProxyState.CONNECTED
         )
 
@@ -375,15 +338,13 @@ class SubtitleProxy:
         self._last_event_at = None
         self._stop_event.clear()
         self._subtitle_session.reset_flags()
-        self._capture_ready.clear()
-        self._capture_active.clear()
         self._state = SubtitleProxyState.PAUSED
 
     async def stop(self) -> None:
         """停止重连、关闭流和客户端 worker，并归档本次 SRT。"""
         self._running = False
         self._stop_event.set()
-        if self._capture_owner is not None:
+        if self._capture_session.owner is not None:
             await self._close_capture()
         await self._close_browser_connection()
         await self._client_hub.close()
@@ -398,13 +359,13 @@ class SubtitleProxy:
             raise ValueError("timeout_secs 必须大于 0")
         if not self._running:
             await self.start()
-        if self._capture_owner is not None:
+        if self._capture_session.owner is not None:
             raise RuntimeError("会议采集租约存在，无法准备普通字幕")
         return await self._subtitle_session.prepare(timeout_secs=timeout_secs)
 
     def commit_browser_capture(self, preparation: SubtitlePreparation) -> None:
         """同步提升 ready 的普通字幕 preparation。"""
-        if self._capture_owner is not None:
+        if self._capture_session.owner is not None:
             raise RuntimeError("会议采集租约仍存在")
         self._subtitle_session.commit(preparation)
 
@@ -431,55 +392,20 @@ class SubtitleProxy:
             raise ValueError("timeout_secs 必须大于 0")
         if speaker_count_hint is not None and not 1 <= speaker_count_hint <= 8:
             raise ValueError("speaker_count_hint 必须在 1 到 8 之间")
-        if self._capture_owner is not None:
+        if self._capture_session.owner is not None:
             raise RuntimeError("已有会议采集租约")
         if not self._running:
             await self.start()
 
         self._snapshot_signature = None
         self._last_event_at = None
-        self._capture_generation += 1
-        preparation = CapturePreparation(
-            owner=owner,
-            generation=self._capture_generation,
-        )
-        self._capture_prepared = preparation
-        self._capture_epoch += 1
-        self._capture_offset_ms = 0
-        self._capture_speaker_count_hint = speaker_count_hint
-        self._capture_audio_ms = 0
-        self._capture_input_ms = 0
-        self._capture_owner = owner
-        self._capture_accept_audio = False
-        self._capture_active.clear()
-        self._capture_ready.clear()
-        self._capture_stream_available.clear()
-        self._capture_ready_to_stop.clear()
-        self._capture_last_window = None
         self._state = SubtitleProxyState.CONNECTING
-
         try:
-            stream = self._create_transcriber(
-                ASRSessionContext(
-                    source_epoch=self._capture_epoch,
-                    offset_ms=self._capture_offset_ms,
-                    purpose="meeting",
-                    speaker_count_hint=self._capture_speaker_count_hint,
-                    diarization_group_id=_diarization_group_id(owner),
-                ),
+            preparation = await self._capture_session.prepare(
+                owner,
+                timeout_secs=timeout_secs,
+                speaker_count_hint=speaker_count_hint,
             )
-            self._capture_stream = stream
-            async with asyncio.timeout(timeout_secs):
-                await stream.connect()
-                self._state = SubtitleProxyState.CONNECTED
-                self._capture_stream_available.set()
-                self._capture_event_task = asyncio.create_task(
-                    self._capture_event_loop(stream)
-                )
-                self._capture_send_task = asyncio.create_task(
-                    self._capture_send_loop(stream)
-                )
-                await self._capture_ready.wait()
         except TimeoutError as exc:
             await self._close_capture()
             raise RuntimeError("SpeechRail 未发送 ready event") from exc
@@ -490,75 +416,51 @@ class SubtitleProxy:
 
     def commit_capture(self, preparation: CapturePreparation) -> None:
         """同步提升 ready 的会议 preparation。"""
-        if self._capture_prepared is not preparation:
-            raise RuntimeError("无效或已消费的 capture preparation")
-        if (
-            self._capture_stream is None
-            or not self._capture_ready.is_set()
-            or self._capture_event_task is None
-            or self._capture_event_task.done()
-            or self._capture_send_task is None
-            or self._capture_send_task.done()
-        ):
-            raise RuntimeError("capture preparation 未 ready")
         if self._subtitle_session.committed:
             raise RuntimeError("普通字幕仍处于活动状态")
-        self._capture_prepared = None
-        self._capture_accept_audio = True
-        self._capture_active.set()
+        self._capture_session.commit(preparation)
         self._state = SubtitleProxyState.CONNECTED
 
     async def abort_prepared_capture(self, preparation: CapturePreparation) -> None:
         """消费并关闭尚未提交的会议 preparation。"""
-        if self._capture_prepared is not preparation:
-            raise RuntimeError("无效或已消费的 capture preparation")
+        await self._capture_session.abort_prepared(preparation)
         await self._close_capture()
 
     async def finish_capture(self, *, timeout_secs: float) -> TranscriptWindow:
         """发送空 PCM EOF，等待最终快照和 ready_to_stop，再关闭 epoch。"""
-        stream = self._capture_stream
         if (
-            self._capture_owner is None
-            or stream is None
-            or not self._capture_accept_audio
+            self._capture_session.owner is None
+            or not self._capture_session.accepting
         ):
             raise RuntimeError("没有活动的会议采集租约")
         if timeout_secs <= 0:
             raise ValueError("timeout_secs 必须大于 0")
         loop = asyncio.get_running_loop()
         start_time = loop.time()
-        deadline = start_time + timeout_secs
-        logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_owner)
-        self._capture_accept_audio = False
+        logger.info("开始会议 ASR 优雅停机冲刷 (EOF)... 租约: %s", self._capture_session.owner)
         try:
-            async with asyncio.timeout_at(deadline):
-                await self._audio_buffer.join()
-                self._capture_active.clear()
-                final_window = await stream.finish()
-                self._capture_last_window = to_transcript_window(final_window)
+            result = await self._capture_session.finish(timeout_secs=timeout_secs)
             elapsed_ms = (loop.time() - start_time) * 1000
             logger.info("会议 ASR 优雅冲刷完成，耗时 %.1f ms", elapsed_ms)
-        except TimeoutError as exc:
+        except FinalizationTimeoutError as exc:
             elapsed_ms = (loop.time() - start_time) * 1000
             logger.warning(
                 "会议 ASR 优雅冲刷超时 (%.1f ms > %.1fs)，执行强制截断封存",
                 elapsed_ms,
                 timeout_secs,
             )
-            last_window = self._capture_last_window
+            last_window = exc.last_window
             await self._close_capture()
             raise FinalizationTimeoutError(last_window) from exc
         except BaseException:
             await self._close_capture()
             raise
-        result = self._capture_last_window or TranscriptWindow(source_epoch=self._capture_epoch)
         await self._close_capture()
         return result
 
     async def abort_capture(self) -> None:
         """取消会议采集，不发送 EOF；已确认窗口仍由上层保留。"""
-        self._capture_accept_audio = False
-        self._capture_active.clear()
+        await self._capture_session.abort()
         await self._close_capture()
 
     async def _close_browser_connection(self) -> None:
@@ -566,179 +468,9 @@ class SubtitleProxy:
         if self._running:
             self._state = (
                 SubtitleProxyState.CONNECTED
-                if self._capture_accept_audio
+                if self._capture_session.accepting
                 else SubtitleProxyState.PAUSED
             )
-
-    async def _capture_event_loop(self, stream: StreamingTranscriber) -> None:
-        active_stream = stream
-        try:
-            while self._capture_owner is not None:
-                try:
-                    async for event in active_stream.events():
-                        await self._handle_capture_event(event)
-                    if not self._capture_accept_audio:
-                        return
-                    next_stream = await self._reconnect_capture(active_stream)
-                    if next_stream is None:
-                        return
-                    active_stream = next_stream
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    self._last_error = f"{type(exc).__name__}: {exc}"
-                    if not self._capture_accept_audio:
-                        return
-                    next_stream = await self._reconnect_capture(active_stream)
-                    if next_stream is None:
-                        return
-                    active_stream = next_stream
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            self._last_error = f"{type(exc).__name__}: {exc}"
-
-    async def _capture_send_loop(self, stream: StreamingTranscriber) -> None:
-        del stream
-        pending: bytes | None = None
-        try:
-            while self._capture_owner is not None:
-                if pending is None:
-                    await self._capture_active.wait()
-                    if self._capture_owner is None:
-                        return
-                    await self._capture_stream_available.wait()
-                    if self._capture_owner is None:
-                        return
-                    if self._capture_stream is None:
-                        self._capture_stream_available.clear()
-                        continue
-                    pending = await self._audio_buffer.get()
-                active_stream = self._capture_stream
-                if active_stream is None:
-                    self._capture_stream_available.clear()
-                    await self._capture_stream_available.wait()
-                    continue
-                chunk = pending
-                if chunk is None:
-                    continue
-                try:
-                    await active_stream.send_audio(chunk)
-                except Exception as exc:
-                    self._last_error = f"{type(exc).__name__}: {exc}"
-                    if self._capture_stream is active_stream:
-                        self._capture_stream = None
-                    self._capture_stream_available.clear()
-                    with contextlib.suppress(Exception):
-                        await active_stream.close()
-                    gap_start_ms = self._capture_offset_ms + self._capture_audio_ms
-                    self._capture_audio_ms += len(chunk) // 32
-                    await self._notify_capture_gap(
-                        gap_start_ms,
-                        self._capture_offset_ms + self._capture_audio_ms,
-                    )
-                    self._audio_buffer.task_done()
-                    pending = None
-                    await asyncio.sleep(0)
-                    continue
-                self._capture_audio_ms += len(chunk) // 32
-                self._audio_buffer.task_done()
-                pending = None
-        finally:
-            if pending is not None:
-                self._audio_buffer.task_done()
-
-    async def _notify_capture_gap(self, start_ms: int, end_ms: int) -> None:
-        if end_ms <= start_ms:
-            return
-        self._gap_count += 1
-        gap = TranscriptionGap(
-            source_epoch=self._capture_epoch,
-            start_ms=start_ms,
-            end_ms=end_ms,
-        )
-        for listener in tuple(self._gap_listeners):
-            with contextlib.suppress(Exception):
-                await listener(gap)
-
-    async def _reconnect_capture(
-        self, old_stream: StreamingTranscriber
-    ) -> StreamingTranscriber | None:
-        """建立新 ASR epoch，并显式通知无法补录的间隔。"""
-        self._reconnect_count += 1
-        with contextlib.suppress(Exception):
-            await old_stream.close()
-        if self._capture_stream is old_stream:
-            self._capture_stream = None
-        self._capture_stream_available.clear()
-        self._capture_offset_ms += self._capture_audio_ms
-        self._capture_audio_ms = 0
-        self._capture_epoch += 1
-        gap_start_ms = self._capture_offset_ms
-        self._state = SubtitleProxyState.BACKOFF
-        for delay in self._backoff_delays:
-            if self._capture_owner is None or not self._running:
-                return None
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
-                return None
-            try:
-                resume_offset_ms = self._capture_input_ms
-                await self._notify_capture_gap(gap_start_ms, resume_offset_ms)
-                self._capture_offset_ms = resume_offset_ms
-                gap_start_ms = resume_offset_ms
-                self._state = SubtitleProxyState.CONNECTING
-                stream = self._create_transcriber(
-                    ASRSessionContext(
-                        source_epoch=self._capture_epoch,
-                        offset_ms=self._capture_offset_ms,
-                        purpose="meeting",
-                        speaker_count_hint=self._capture_speaker_count_hint,
-                        diarization_group_id=_diarization_group_id(self._capture_owner),
-                    )
-                )
-                await stream.connect()
-                self._capture_stream = stream
-                self._state = SubtitleProxyState.CONNECTED
-                self._capture_stream_available.set()
-                self._capture_ready.clear()
-                return stream
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                self._last_error = f"{type(exc).__name__}: {exc}"
-                self._drain_audio_buffer()
-                self._state = SubtitleProxyState.BACKOFF
-        await self._notify_capture_gap(gap_start_ms, self._capture_input_ms)
-        self._capture_offset_ms = self._capture_input_ms
-        return None
-
-    async def _handle_capture_event(self, event: ASREvent) -> None:
-        self._last_event_at = self._clock()
-        if event.kind == "ready":
-            self._capture_ready.set()
-            return
-        if event.kind == "error":
-            self._last_error = event.error_message
-            await self._broadcast_payload(
-                {"type": "error", "error": event.error_message or "ASR error"},
-                persist=False,
-            )
-            return
-        window = event.window
-        if window is None:
-            return
-        transcript_window = to_transcript_window(window)
-        self._capture_last_window = transcript_window
-        if event.kind == "final":
-            self._capture_ready_to_stop.set()
-            return
-        for listener in tuple(self._event_listeners):
-            try:
-                await listener(transcript_window)
-            except Exception:
-                logger.exception("SubtitleProxy: 会议转录监听器失败")
-        await self._broadcast_payload(legacy_subtitle_payload(window), persist=False)
 
     async def _process_loop(self) -> None:
         """兼容既有测试/调用者的接收循环入口。"""
@@ -773,25 +505,13 @@ class SubtitleProxy:
 
     async def push_audio(self, data: bytes) -> None:
         """接收 s16le 音频；会议租约存在时不依赖浏览器订阅。"""
-        if self._capture_accept_audio:
+        if self._capture_session.accepting:
             for listener in list(self._audio_listeners):
                 try:
                     listener(data)
                 except Exception as exc:
                     logger.warning("SubtitleProxy: 音频监听器处理失败: %s", exc)
-            duration_ms = len(data) // 32
-            start_ms = self._capture_input_ms
-            self._capture_input_ms += duration_ms
-            if (
-                self._capture_stream is None
-                and self._state is SubtitleProxyState.BACKOFF
-            ):
-                return
-            if self._audio_buffer.full():
-                await self._notify_capture_gap(start_ms, self._capture_input_ms)
-                return
-            with contextlib.suppress(asyncio.QueueFull):
-                self._audio_buffer.put_nowait(data)
+            await self._capture_session.push_audio(data)
             return
         await self._subtitle_session.push_audio(data)
 
@@ -815,32 +535,7 @@ class SubtitleProxy:
         return confirmed, partial
 
     async def _close_capture(self) -> None:
-        self._capture_accept_audio = False
-        self._capture_prepared = None
-        self._capture_active.clear()
-        event_task = self._capture_event_task
-        send_task = self._capture_send_task
-        self._capture_event_task = None
-        self._capture_send_task = None
-        for task in (event_task, send_task):
-            if task is not None and task is not asyncio.current_task():
-                task.cancel()
-        tasks = [
-            task
-            for task in (event_task, send_task)
-            if task is not None and task is not asyncio.current_task()
-        ]
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        stream = self._capture_stream
-        self._capture_stream = None
-        self._capture_ready.clear()
-        self._capture_ready_to_stop.clear()
-        self._capture_stream_available.clear()
-        if stream is not None:
-            with contextlib.suppress(Exception):
-                await stream.close()
-        self._capture_owner = None
+        await self._capture_session.close()
         self._drain_audio_buffer()
         if self._running:
             self._state = (

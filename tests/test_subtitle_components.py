@@ -253,7 +253,7 @@ async def test_finish_timeout_carries_last_window(tmp_path: Path) -> None:
     preparation = await proxy.prepare_capture("meeting-1", timeout_secs=1.0)
     proxy.commit_capture(preparation)
 
-    await proxy._handle_capture_event(
+    await proxy._capture_session._handle_event(
         ASREvent(kind="snapshot", window=_window(partial="最后一句", with_segment=True))
     )
 
