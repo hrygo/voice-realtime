@@ -12,13 +12,16 @@ from typing import Any, cast
 from uuid import UUID
 
 from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
+from voice_realtime.meeting.finalization import MeetingFinalizer
 from voice_realtime.meeting.models import (
     MeetingRecord,
     MeetingStatus,
+    MinutesRecord,
     StorageHealth,
     TranscriptWindow,
 )
 from voice_realtime.meeting.persistence import TranscriptPersistence
+from voice_realtime.meeting.ports import CaptureGap
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
@@ -82,6 +85,14 @@ class MeetingSession:
         self._committed_preparation: MeetingPreparation | None = None
         self._listener: WindowListener | None = None
         self._persistence = TranscriptPersistence(repository, journal=recovery_journal)
+        self._finalizer = MeetingFinalizer(
+            gateway=gateway,
+            persistence=self._persistence,
+            speakers=repository,
+            transcripts=repository,
+            minutes_store=repository,
+            timeout_secs=finalization_timeout_secs,
+        )
         self._storage_degraded = False
         self._speaker_names: dict[str, str] = {}
 
@@ -95,8 +106,7 @@ class MeetingSession:
 
     @property
     def last_window(self) -> TranscriptWindow | None:
-        value = getattr(self.gateway, "last_window", None)
-        return value if isinstance(value, TranscriptWindow) else None
+        return cast(TranscriptWindow | None, self.gateway.last_window)
 
     @property
     def storage_health(self) -> StorageHealth:
@@ -141,9 +151,7 @@ class MeetingSession:
             self._listener = listener
             try:
                 self.gateway.add_event_listener(listener)
-                add_gap_listener = getattr(self.gateway, "add_gap_listener", None)
-                if add_gap_listener is not None:
-                    add_gap_listener(self._on_gap)
+                self.gateway.add_gap_listener(self._on_gap)
                 capture = await self.gateway.prepare_capture(
                     f"meeting:{record.id}",
                     timeout_secs=5.0,
@@ -233,7 +241,6 @@ class MeetingSession:
             if meeting_id is None:
                 raise RuntimeError("meeting not active")
             logger.info("MeetingSession: 收到停止会议请求 (meeting_id=%s)", meeting_id)
-            capture_closed = False
             try:
                 record = await self.repository.set_status(
                     meeting_id, MeetingStatus.FINALIZING
@@ -244,68 +251,28 @@ class MeetingSession:
                     meeting_id,
                     self._meeting_state_payload(record),
                 )
-                timed_out = False
-                timeout_window: TranscriptWindow | None = None
-                try:
-                    timeout_window = await self.gateway.finish_capture(
-                        timeout_secs=self.finalization_timeout_secs
-                    )
-                    capture_closed = True
-                except TimeoutError as exc:
-                    timed_out = True
-                    capture_closed = True
-                    timeout_window = getattr(exc, "last_window", None)
-                if timeout_window is not None:
-                    await self._persistence.reconcile(meeting_id, timeout_window)
-                await self._persistence.replay_pending(meeting_id)
-
-                if timeout_window is not None and timeout_window.speaker_remap:
-                    apply_remap = getattr(self.repository, "apply_speaker_remapping", None)
-                    if apply_remap is None:
-                        raise RuntimeError("meeting repository does not support speaker remapping")
-                    record = await apply_remap(meeting_id, dict(timeout_window.speaker_remap))
-                    self._record = record
-
-                record = await self.repository.finalize_transcript(
-                    meeting_id,
-                    final_status=(
-                        MeetingStatus.INTERRUPTED if timed_out else MeetingStatus.COMPLETED
-                    ),
-                    reason="finalization_timeout" if timed_out else None,
-                )
-                self._record = record
+                result = await self._finalizer.finalize(meeting_id)
+                self._record = result.record
                 logger.info(
                     "MeetingSession: 会议录制已封存 (meeting_id=%s, status=%s, timed_out=%s)",
                     meeting_id,
-                    record.status.value,
-                    timed_out,
+                    result.record.status.value,
+                    result.timed_out,
                 )
-                minutes = await self.repository.create_minutes(
-                    meeting_id,
-                    idempotency_key=f"meeting:{meeting_id}:minutes:v1",
-                )
-                minutes_status = getattr(minutes, "status", "queued")
                 await self._emit(
                     "meeting_state_changed",
                     meeting_id,
-                    self._meeting_state_payload(record),
+                    self._meeting_state_payload(result.record),
                 )
                 await self._emit(
                     "minutes_state_changed",
                     meeting_id,
-                    {
-                        "minutes_id": str(getattr(minutes, "id", "")) or None,
-                        "version": int(getattr(minutes, "version", 1)),
-                        "status": str(getattr(minutes_status, "value", minutes_status)),
-                        "error_code": None,
-                        "error_message": None,
-                        "minutes": None,
-                    },
+                    self._minutes_state_payload(result.minutes),
                 )
-                return cast(MeetingRecord, record)
+                return result.record
             except BaseException:
                 failure_cleanup = asyncio.create_task(
-                    self._settle_failed_stop(meeting_id, capture_closed=capture_closed)
+                    self._settle_failed_stop(meeting_id)
                 )
                 await asyncio.shield(failure_cleanup)
                 raise
@@ -313,12 +280,13 @@ class MeetingSession:
                 final_cleanup = asyncio.create_task(self._release_stopped_session())
                 await asyncio.shield(final_cleanup)
 
-    async def _settle_failed_stop(
-        self, meeting_id: UUID, *, capture_closed: bool
-    ) -> None:
-        if not capture_closed:
+    async def _settle_failed_stop(self, meeting_id: UUID) -> None:
+        if not self._finalizer.capture_closed:
             with contextlib.suppress(Exception):
                 await self.gateway.abort_capture()
+        finalized = self._finalizer.finalized_record
+        if finalized is not None:
+            self._record = finalized
         await self._mark_stop_interrupted(meeting_id)
 
     async def _release_stopped_session(self) -> None:
@@ -498,7 +466,7 @@ class MeetingSession:
             },
         )
 
-    async def _on_gap(self, gap: Any) -> None:
+    async def _on_gap(self, gap: CaptureGap) -> None:
         meeting_id = self._active_meeting_id
         if meeting_id is None:
             return
@@ -506,8 +474,8 @@ class MeetingSession:
             "transcription_gap",
             meeting_id,
             {
-                "start_ms": int(getattr(gap, "start_ms", 0)),
-                "end_ms": int(getattr(gap, "end_ms", 0)),
+                "start_ms": gap.start_ms,
+                "end_ms": gap.end_ms,
                 "reason": "asr_reconnect",
             },
         )
@@ -520,6 +488,26 @@ class MeetingSession:
             await publisher(event_type, meeting_id, payload)
         except Exception:
             logger.warning("会议实时事件广播失败: %s", event_type, exc_info=True)
+
+    @staticmethod
+    def _minutes_state_payload(minutes: MinutesRecord | None) -> dict[str, object | None]:
+        if minutes is None:
+            return {
+                "minutes_id": None,
+                "version": 1,
+                "status": "queued",
+                "error_code": None,
+                "error_message": None,
+                "minutes": None,
+            }
+        return {
+            "minutes_id": str(minutes.id),
+            "version": minutes.version,
+            "status": minutes.status.value,
+            "error_code": None,
+            "error_message": None,
+            "minutes": None,
+        }
 
     @staticmethod
     def _meeting_state_payload(record: MeetingRecord) -> dict[str, object | None]:
@@ -573,10 +561,8 @@ class MeetingSession:
         if listener is not None:
             with contextlib.suppress(Exception):
                 self.gateway.remove_event_listener(listener)
-        remove_gap_listener = getattr(self.gateway, "remove_gap_listener", None)
-        if remove_gap_listener is not None:
-            with contextlib.suppress(Exception):
-                remove_gap_listener(self._on_gap)
+        with contextlib.suppress(Exception):
+            self.gateway.remove_gap_listener(self._on_gap)
 
     async def _resume_summary_worker(self) -> None:
         resume = getattr(self.summary_service, "resume_after_recording", None)

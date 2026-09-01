@@ -6,20 +6,28 @@ Task 3 追加 MeetingFinalizer 的严格调用顺序与失败清理测试。
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 
+from voice_realtime.meeting.finalization import MeetingFinalizer
 from voice_realtime.meeting.models import (
     MeetingRecord,
     MeetingStatus,
     MinutesRecord,
+    MinutesStatus,
     NormalizedSegment,
     TranscriptReconcileResult,
     TranscriptWindow,
 )
 from voice_realtime.meeting.persistence import TranscriptPersistence
-from voice_realtime.meeting.ports import RecoveryReplayRepository
+from voice_realtime.meeting.ports import (
+    CaptureFinalizationTimeoutError,
+    RecoveryReplayRepository,
+)
 
 
 def _window(source_epoch: int = 1, text: str = "你好") -> TranscriptWindow:
@@ -36,6 +44,48 @@ def _window(source_epoch: int = 1, text: str = "你好") -> TranscriptWindow:
                 text=text,
             ),
         ),
+    )
+
+
+def _record() -> MeetingRecord:
+    now = datetime.now(UTC)
+    return MeetingRecord(
+        id=uuid4(),
+        title="测试会议",
+        status=MeetingStatus.RECORDING,
+        language="Chinese",
+        audio_source="microphone",
+        started_at=now,
+        ended_at=None,
+        transcript_revision=0,
+        content_revision=0,
+        interruption_reason=None,
+        metadata={},
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _minutes(meeting_id: UUID) -> MinutesRecord:
+    now = datetime.now(UTC)
+    return MinutesRecord(
+        id=uuid4(),
+        meeting_id=meeting_id,
+        version=1,
+        status=MinutesStatus.QUEUED,
+        source_content_revision=0,
+        model="test",
+        prompt_version="test",
+        content_json=None,
+        content_markdown=None,
+        raw_output=None,
+        error_code=None,
+        error_message=None,
+        lease_until=None,
+        attempts=0,
+        created_at=now,
+        generated_at=None,
+        updated_at=now,
     )
 
 
@@ -244,3 +294,221 @@ async def test_replay_pending_without_journal_is_noop() -> None:
     persistence, _, _ = _persistence(journal=None)
     assert await persistence.replay_pending(uuid4()) == 0
     assert persistence.degraded is False
+
+
+# ---------------------------------------------------------------------------
+# Task 3: MeetingFinalizer 严格调用顺序与失败清理
+# ---------------------------------------------------------------------------
+
+
+class CallLogStore:
+    """记录调用顺序的 transcript/speaker/minutes fake。"""
+
+    def __init__(self) -> None:
+        self.order: list[str] = []
+        self.errors: dict[str, Exception] = {}
+        self.record = _record()
+
+    async def reconcile_window(
+        self, meeting_id: UUID, window: TranscriptWindow
+    ) -> TranscriptReconcileResult:
+        self._maybe_raise("reconcile_window")
+        self.order.append("reconcile_window")
+        return TranscriptReconcileResult(
+            meeting_id=meeting_id,
+            transcript_revision=1,
+            content_revision=1,
+            replace_from_ms=0,
+            segments=window.segments,
+        )
+
+    async def apply_speaker_remapping(
+        self, meeting_id: UUID, remapping: dict[str, str]
+    ) -> MeetingRecord:
+        self._maybe_raise("apply_speaker_remapping")
+        self.order.append("apply_speaker_remapping")
+        return self.record
+
+    async def finalize_transcript(
+        self,
+        meeting_id: UUID,
+        *,
+        final_status: MeetingStatus = MeetingStatus.COMPLETED,
+        reason: str | None = None,
+    ) -> MeetingRecord:
+        self._maybe_raise("finalize_transcript")
+        self.order.append("finalize_transcript")
+        self.record = self.record.model_copy(
+            update={"status": final_status, "interruption_reason": reason}
+        )
+        return self.record
+
+    async def create_minutes(
+        self, meeting_id: UUID, *, idempotency_key: str | None
+    ) -> MinutesRecord:
+        self._maybe_raise("create_minutes")
+        self.order.append("create_minutes")
+        return _minutes(meeting_id)
+
+    def _maybe_raise(self, name: str) -> None:
+        error = self.errors.get(name)
+        if error is not None:
+            raise error
+
+
+class NoopJournal:
+    async def append(self, meeting_id: UUID, window: TranscriptWindow) -> object:
+        return object()
+
+    async def replay_meeting(
+        self, repository: RecoveryReplayRepository, meeting_id: UUID
+    ) -> int:
+        return 0
+
+
+def _finalizer(
+    store: CallLogStore | None = None,
+    gateway: AsyncMock | None = None,
+    journal: object | None = None,
+) -> tuple[MeetingFinalizer, CallLogStore, AsyncMock]:
+    store = store or CallLogStore()
+    gateway = gateway or AsyncMock(
+        finish_capture=AsyncMock(return_value=TranscriptWindow(source_epoch=1))
+    )
+    persistence = TranscriptPersistence(store, journal=journal, replay_repository=store)
+    finalizer = MeetingFinalizer(
+        gateway=gateway,
+        persistence=persistence,
+        speakers=store,
+        transcripts=store,
+        minutes_store=store,
+        timeout_secs=8.0,
+    )
+    return finalizer, store, gateway
+
+
+async def test_finalize_normal_order_each_step_once() -> None:
+    finalizer, store, gateway = _finalizer()
+    meeting_id = uuid4()
+
+    result = await finalizer.finalize(meeting_id)
+
+    assert list(store.order) == [
+        "reconcile_window",
+        "finalize_transcript",
+        "create_minutes",
+    ]
+    assert store.order.count("reconcile_window") == 1
+    assert store.order.count("finalize_transcript") == 1
+    assert store.order.count("create_minutes") == 1
+    assert result.timed_out is False
+    assert result.final_window is not None
+    assert result.record.status is MeetingStatus.COMPLETED
+    assert result.minutes.status is MinutesStatus.QUEUED
+    gateway.finish_capture.assert_awaited_once_with(timeout_secs=8.0)
+    gateway.abort_capture.assert_not_awaited()
+
+
+async def test_finalize_typed_timeout_uses_last_window_and_finalizes_interrupted() -> None:
+    last_window = TranscriptWindow(
+        source_epoch=1, speaker_remap=(("epoch:1:speaker:spk_02", "epoch:1:speaker:spk_01"),)
+    )
+    gateway = AsyncMock(
+        finish_capture=AsyncMock(
+            side_effect=CaptureFinalizationTimeoutError(last_window)
+        )
+    )
+    finalizer, store, gateway = _finalizer(gateway=gateway)
+    meeting_id = uuid4()
+
+    result = await finalizer.finalize(meeting_id)
+
+    assert result.timed_out is True
+    assert result.final_window is last_window
+    assert result.record.status is MeetingStatus.INTERRUPTED
+    assert result.record.interruption_reason == "finalization_timeout"
+    assert "apply_speaker_remapping" in store.order
+    assert store.order.index("apply_speaker_remapping") < store.order.index("finalize_transcript")
+    gateway.abort_capture.assert_not_awaited()
+
+
+async def test_finalize_finish_failure_aborts_capture_once() -> None:
+    gateway = AsyncMock(
+        finish_capture=AsyncMock(side_effect=RuntimeError("capture exploded"))
+    )
+    finalizer, store, _ = _finalizer(gateway=gateway)
+
+    with pytest.raises(RuntimeError, match="capture exploded"):
+        await finalizer.finalize(uuid4())
+
+    gateway.abort_capture.assert_awaited_once_with()
+    assert "finalize_transcript" not in store.order
+
+
+async def test_finalize_downstream_failure_does_not_repeat_abort() -> None:
+    store = CallLogStore()
+    store.errors["finalize_transcript"] = RuntimeError("finalize failed")
+    finalizer, _, gateway = _finalizer(store=store)
+
+    with pytest.raises(RuntimeError, match="finalize failed"):
+        await finalizer.finalize(uuid4())
+
+    gateway.abort_capture.assert_not_awaited()
+    assert store.order == ["reconcile_window"]
+
+
+async def test_finalize_without_final_window_skips_reconcile_and_remap() -> None:
+    gateway = AsyncMock(finish_capture=AsyncMock(return_value=None))
+    finalizer, store, _ = _finalizer(gateway=gateway)
+
+    result = await finalizer.finalize(uuid4())
+
+    assert result.final_window is None
+    assert "reconcile_window" not in store.order
+    assert "apply_speaker_remapping" not in store.order
+    assert store.order == ["finalize_transcript", "create_minutes"]
+
+
+async def test_finalize_reconcile_failure_does_not_abort_capture() -> None:
+    store = CallLogStore()
+    store.errors["reconcile_window"] = RuntimeError("db down")
+    finalizer, _, gateway = _finalizer(store=store, journal=None)
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await finalizer.finalize(uuid4())
+
+    gateway.abort_capture.assert_not_awaited()
+
+
+async def test_finalize_cancellation_aborts_capture_once() -> None:
+    never_finish = asyncio.Event()
+
+    async def hang(*_args: object, **_kwargs: object) -> TranscriptWindow:
+        await never_finish.wait()
+        raise AssertionError("unreachable")
+
+    gateway = AsyncMock(finish_capture=hang)
+    finalizer, store, gateway = _finalizer(gateway=gateway)
+    task = asyncio.create_task(finalizer.finalize(uuid4()))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    gateway.abort_capture.assert_awaited_once_with()
+    assert "finalize_transcript" not in store.order
+
+
+async def test_finalize_does_not_swallow_plain_timeout() -> None:
+    gateway = AsyncMock(
+        finish_capture=AsyncMock(side_effect=TimeoutError("socket timeout"))
+    )
+    finalizer, store, gateway = _finalizer(gateway=gateway)
+
+    with pytest.raises(TimeoutError, match="socket timeout"):
+        await finalizer.finalize(uuid4())
+
+    gateway.abort_capture.assert_awaited_once_with()
+    assert "finalize_transcript" not in store.order
+

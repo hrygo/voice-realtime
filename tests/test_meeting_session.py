@@ -18,6 +18,7 @@ from voice_realtime.meeting.models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
+from voice_realtime.meeting.ports import CaptureFinalizationTimeoutError
 from voice_realtime.meeting.session import (
     MeetingSession,
     MeetingStorageUnavailableError,
@@ -104,6 +105,7 @@ class FakeGateway:
         self.listeners: list[Callable[[TranscriptWindow], Awaitable[None]]] = []
         self.gap_listeners: list[Callable[[object], Awaitable[None]]] = []
         self.capture = object()
+        self.last_window: TranscriptWindow | None = None
         self.prepare_capture = AsyncMock(return_value=self.capture)
         self.commit_capture = Mock()
         self.abort_prepared_capture = AsyncMock()
@@ -624,11 +626,9 @@ async def test_start_requeues_summary_and_swallows_requeue_failure(
     requeue.assert_awaited_once_with()
 
 
-async def test_start_supports_sync_summary_requeue_and_gateway_without_gap_hooks(
+async def test_start_supports_sync_summary_requeue(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    gateway.add_gap_listener = None
-    gateway.remove_gap_listener = None
     summary = SimpleNamespace(requeue_for_recording=lambda: None)
     session = MeetingSession(repository, gateway, summary_service=summary)
 
@@ -698,8 +698,7 @@ async def test_stop_timeout_persists_last_window_and_marks_interrupted(
         text="超时前的最后一句",
     )
     last_window = TranscriptWindow(source_epoch=1, segments=(segment,))
-    timeout = TimeoutError("capture did not finish")
-    timeout.last_window = last_window
+    timeout = CaptureFinalizationTimeoutError(last_window)
     gateway.finish_capture.side_effect = timeout
 
     result = await session.stop()
@@ -1318,7 +1317,7 @@ async def test_gap_emits_reconnect_event_and_ignores_inactive_session(
     await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
     assert events == []
     await _start_session(session)
-    await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
+    await session._on_gap(SimpleNamespace(start_ms=10, end_ms=25))
 
     assert events[-1][0] == "transcription_gap"
     assert events[-1][2] == {"start_ms": 10, "end_ms": 25, "reason": "asr_reconnect"}
