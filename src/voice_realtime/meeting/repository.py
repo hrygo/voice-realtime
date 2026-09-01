@@ -88,22 +88,21 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _validate_bounded_text(value: str, *, label: str) -> str:
+    normalized = value.strip()
+    if not 1 <= len(normalized) <= 200:
+        raise ValueError(f"{label}长度必须为 1–200")
+    if any(ord(char) < 32 for char in normalized):
+        raise ValueError(f"{label}不能包含控制字符")
+    return normalized
+
+
 def _validate_title(value: str) -> str:
-    title = value.strip()
-    if not 1 <= len(title) <= 200:
-        raise ValueError("会议标题长度必须为 1–200")
-    if any(ord(char) < 32 for char in title):
-        raise ValueError("会议标题不能包含控制字符")
-    return title
+    return _validate_bounded_text(value, label="会议标题")
 
 
 def _validate_display_name(value: str) -> str:
-    name = value.strip()
-    if not 1 <= len(name) <= 200:
-        raise ValueError("说话人名称长度必须为 1–200")
-    if any(ord(char) < 32 for char in name):
-        raise ValueError("说话人名称不能包含控制字符")
-    return name
+    return _validate_bounded_text(value, label="说话人名称")
 
 
 def _encode_cursor(created_at: datetime, meeting_id: UUID) -> str:

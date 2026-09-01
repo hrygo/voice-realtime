@@ -20,8 +20,14 @@ from voice_realtime.meeting.models import (
     StorageHealth,
     TranscriptWindow,
 )
-from voice_realtime.meeting.persistence import TranscriptPersistence
-from voice_realtime.meeting.ports import CaptureGap
+from voice_realtime.meeting.persistence import RecoveryJournalPort, TranscriptPersistence
+from voice_realtime.meeting.ports import (
+    CaptureGap,
+    CaptureLease,
+    MeetingCaptureGateway,
+    MeetingRepository,
+    SummaryWorkloadControl,
+)
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
@@ -38,12 +44,22 @@ class MeetingStorageUnavailableError(RuntimeError):
 MeetingStorageUnavailable = MeetingStorageUnavailableError
 
 
+class _NullSummaryWorkload:
+    """无 summary service 时的 Null Object。"""
+
+    async def requeue_for_recording(self) -> None:
+        return None
+
+    async def resume_after_recording(self) -> None:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class MeetingPreparation:
     """会议记录与无 PCM capture 已准备完成的一次性凭证。"""
 
     record: MeetingRecord
-    capture: object
+    capture: CaptureLease
 
 
 class MeetingSession:
@@ -51,15 +67,15 @@ class MeetingSession:
 
     def __init__(
         self,
-        repository: Any,
-        gateway: Any | None = None,
-        summary_service: Any | None = None,
+        repository: MeetingRepository,
+        gateway: MeetingCaptureGateway | None = None,
+        summary_service: SummaryWorkloadControl | None = None,
         *,
-        subtitle_proxy: Any | None = None,
+        subtitle_proxy: MeetingCaptureGateway | None = None,
         language: str = "Chinese",
         audio_source: str = "microphone",
         finalization_timeout_secs: float = 8.0,
-        recovery_journal: Any | None = None,
+        recovery_journal: RecoveryJournalPort | None = None,
         event_publisher: EventPublisher | None = None,
         diarization_smoother: DiarizationSmoother | None = None,
     ) -> None:
@@ -71,7 +87,7 @@ class MeetingSession:
             raise ValueError("finalization_timeout_secs 必须大于 0")
         self.repository = repository
         self.gateway = gateway
-        self.summary_service = summary_service
+        self.summary_service = summary_service or _NullSummaryWorkload()
         self.language = language
         self.audio_source = audio_source
         self.finalization_timeout_secs = finalization_timeout_secs
@@ -106,7 +122,7 @@ class MeetingSession:
 
     @property
     def last_window(self) -> TranscriptWindow | None:
-        return cast(TranscriptWindow | None, self.gateway.last_window)
+        return self.gateway.last_window
 
     @property
     def storage_health(self) -> StorageHealth:
@@ -199,12 +215,8 @@ class MeetingSession:
                 or self._active_meeting_id != preparation.record.id
             ):
                 raise RuntimeError("无效或已消费的 meeting preparation")
-            requeue = getattr(self.summary_service, "requeue_for_recording", None)
-            if requeue is not None:
-                with contextlib.suppress(Exception):
-                    result = requeue()
-                    if asyncio.iscoroutine(result):
-                        await result
+            with contextlib.suppress(Exception):
+                await self.summary_service.requeue_for_recording()
             await self._emit(
                 "meeting_state_changed",
                 preparation.record.id,
@@ -384,7 +396,7 @@ class MeetingSession:
                     meeting_id,
                     self._meeting_state_payload(record),
                 )
-                result = cast(MeetingRecord, record)
+                result = record
             except asyncio.CancelledError as exc:
                 initial_cancellation = exc
             finally:
@@ -398,24 +410,18 @@ class MeetingSession:
             return result
 
     async def recover_stale(self) -> int:
-        recover = getattr(self.repository, "recover_stale", None)
-        if recover is None:
-            return 0
-        result = await recover()
+        result = await self.repository.recover_stale()
         return int(result or 0)
 
     async def _load_speaker_names(self, meeting_id: UUID) -> dict[str, str]:
         """从 Repository 读取自定义说话人名称映射并更新本地缓存。"""
         try:
-            get_speakers = getattr(self.repository, "get_speakers", None)
-            if get_speakers is None:
-                return self._speaker_names
-            speakers = await get_speakers(meeting_id)
+            speakers = await self.repository.get_speakers(meeting_id)
             names: dict[str, str] = {}
             for spk in speakers:
-                key = str(getattr(spk, "speaker_key", ""))
-                display = str(getattr(spk, "display_name", ""))
-                default = str(getattr(spk, "default_label", ""))
+                key = spk.speaker_key
+                display = spk.display_name
+                default = spk.default_label
                 if key and display and display != default:
                     names[key] = display
             self._speaker_names = names
@@ -565,10 +571,5 @@ class MeetingSession:
             self.gateway.remove_gap_listener(self._on_gap)
 
     async def _resume_summary_worker(self) -> None:
-        resume = getattr(self.summary_service, "resume_after_recording", None)
-        if resume is None:
-            return
         with contextlib.suppress(Exception):
-            result = resume()
-            if asyncio.iscoroutine(result):
-                await result
+            await self.summary_service.resume_after_recording()

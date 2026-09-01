@@ -629,7 +629,7 @@ async def test_start_requeues_summary_and_swallows_requeue_failure(
 async def test_start_supports_sync_summary_requeue(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    summary = SimpleNamespace(requeue_for_recording=lambda: None)
+    summary = SimpleNamespace(requeue_for_recording=AsyncMock())
     session = MeetingSession(repository, gateway, summary_service=summary)
 
     preparation = await session.prepare_start("周会")
@@ -1062,18 +1062,12 @@ async def test_interrupt_cleanup_failure_chains_body_cancellation(
     assert exc_info.value.__cause__.args == ("first",)
 
 
-async def test_recover_stale_delegates_and_defaults_without_method(
+async def test_recover_stale_delegates_to_repository(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
     repository.stale_count = 3
     assert await session.recover_stale() == 3
-
-    class RepositoryWithoutRecovery:
-        pass
-
-    no_recovery = MeetingSession(RepositoryWithoutRecovery(), gateway)
-    assert await no_recovery.recover_stale() == 0
 
 
 async def test_window_without_segments_only_emits_partial(
@@ -1265,7 +1259,7 @@ async def test_stop_resumes_summary_worker_and_swallows_resume_failure(
 async def test_interrupt_supports_sync_summary_resume_callback(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    summary = SimpleNamespace(resume_after_recording=lambda: None)
+    summary = SimpleNamespace(resume_after_recording=AsyncMock())
     session = MeetingSession(repository, gateway, summary_service=summary)
     await _start_session(session)
 

@@ -18,6 +18,7 @@ from voice_realtime.meeting.models import (
     RuntimeMode,
     StorageHealth,
 )
+from voice_realtime.meeting.session import MeetingPreparation
 
 LOGGER = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -61,13 +62,13 @@ class MeetingWorkload(Protocol):
 
     async def prepare_start(
         self, title: str | None = None, max_speakers: int | None = None
-    ) -> Any: ...
+    ) -> MeetingPreparation: ...
 
-    def commit_start(self, preparation: Any) -> MeetingRecord: ...
+    def commit_start(self, preparation: MeetingPreparation) -> MeetingRecord: ...
 
-    async def publish_started(self, preparation: Any) -> None: ...
+    async def publish_started(self, preparation: MeetingPreparation) -> None: ...
 
-    async def abort_start(self, preparation: Any) -> None: ...
+    async def abort_start(self, preparation: MeetingPreparation) -> None: ...
 
     async def stop(self) -> MeetingRecord: ...
 
@@ -228,10 +229,10 @@ class RuntimeModeCoordinator:
         if meeting is None:
             raise MeetingUnavailable("meeting service unavailable")
 
-        async def command() -> tuple[Any, MeetingRecord]:
+        async def command() -> tuple[MeetingPreparation, MeetingRecord]:
             return await self._start_meeting_locked(title, max_speakers=max_speakers)
 
-        async def publish_started(result: tuple[Any, MeetingRecord]) -> None:
+        async def publish_started(result: tuple[MeetingPreparation, MeetingRecord]) -> None:
             preparation, _record = result
             await self._publish_committed_meeting_started(meeting, preparation)
 
@@ -395,25 +396,25 @@ class RuntimeModeCoordinator:
 
     async def _start_meeting_locked(
         self, title: str | None, max_speakers: int | None = None
-    ) -> tuple[Any, MeetingRecord]:
+    ) -> tuple[MeetingPreparation, MeetingRecord]:
         if self._mode is RuntimeMode.MEETING:
             raise ModeConflict("meeting 已经在录制")
         meeting = self.meeting
         if meeting is None:
             raise MeetingUnavailable("meeting service unavailable")
 
-        async def prepare() -> Any:
+        async def prepare() -> MeetingPreparation:
             if max_speakers is not None:
                 return await meeting.prepare_start(title, max_speakers=max_speakers)
             return await meeting.prepare_start(title)
 
-        def commit(preparation: Any) -> MeetingRecord:
+        def commit(preparation: MeetingPreparation) -> MeetingRecord:
             record = meeting.commit_start(preparation)
             self._meeting_record = record
             self._active_meeting_id = record.id
             return record
 
-        async def abort(preparation: Any) -> None:
+        async def abort(preparation: MeetingPreparation) -> None:
             await meeting.abort_start(preparation)
 
         return await self._switch_workload(
@@ -426,7 +427,7 @@ class RuntimeModeCoordinator:
 
     @staticmethod
     async def _publish_committed_meeting_started(
-        meeting: MeetingWorkload, preparation: Any
+        meeting: MeetingWorkload, preparation: MeetingPreparation
     ) -> None:
         """屏蔽调用者取消直至已提交会议的 started 事件发布完成。"""
         publish_task = asyncio.create_task(meeting.publish_started(preparation))

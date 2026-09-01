@@ -222,6 +222,14 @@ class RecoveryReplayRepository(Protocol):
     ) -> MinutesRecord: ...
 
 
+class SummaryWorkloadControl(Protocol):
+    """录制优先时释放纪要 worker 租约的异步控制面。"""
+
+    async def requeue_for_recording(self) -> None: ...
+
+    async def resume_after_recording(self) -> None: ...
+
+
 __all__ = [
     "CaptureFinalizationTimeout",
     "CaptureFinalizationTimeoutError",
@@ -236,6 +244,7 @@ __all__ = [
     "RecoveryReplayRepository",
     "RepositoryMaintenance",
     "SpeakerStore",
+    "SummaryWorkloadControl",
     "TranscriptStore",
     "WindowListener",
 ]
