@@ -12,9 +12,9 @@ from enum import StrEnum
 
 from pipecat.frames.frames import (
     LLMMessagesUpdateFrame,
+    LLMRunFrame,
     TranscriptionFrame,
     TTSUpdateSettingsFrame,
-    UserStoppedSpeakingFrame,
 )
 from pipecat.observers.base_observer import BaseObserver
 from pipecat.pipeline.pipeline import Pipeline
@@ -186,7 +186,12 @@ class InteractionSession:
             await worker.queue_frame(
                 TranscriptionFrame(text=text, user_id="user", timestamp=now)
             )
-            await worker.queue_frame(UserStoppedSpeakingFrame())
+            # A synthetic UserStoppedSpeakingFrame only updates Pipecat's
+            # speaking state; it does not satisfy the configured turn-stop
+            # strategy and therefore never pushes context to the LLM.  Text
+            # input has already provided its turn boundary, so explicitly
+            # request one LLM run after the transcript reaches the aggregator.
+            await worker.queue_frame(LLMRunFrame())
 
     async def _start_locked(self) -> None:
         if self._state in {InteractionSessionState.STARTING, InteractionSessionState.RUNNING}:

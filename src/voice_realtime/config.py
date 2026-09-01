@@ -20,7 +20,7 @@ from voice_realtime.lm_studio import DEFAULT_LM_STUDIO_API_KEY
 # Kept only for parsing the retired BridgeSettings compatibility block.
 DEFAULT_QWEN3_TTS_MODEL = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
 DEFAULT_LM_STUDIO_URL = "http://localhost:1234/v1"
-DEFAULT_LLM_MODEL = "qwen/qwen3.6-35b-a3b"
+DEFAULT_LLM_MODEL = "local/kat-coder-2.5"
 
 
 class LMStudioSettings(BaseSettings):
@@ -534,7 +534,7 @@ class MeetingSettings(BaseSettings):
         serialization_alias="schema",
         description="会议表所在独立 schema",
     )
-    summary_model: str = Field(default="qwen/qwen3.6-35b-a3b", description="会后纪要模型 ID")
+    summary_model: str = Field(default=DEFAULT_LLM_MODEL, description="会后纪要模型 ID")
     summary_temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     summary_reasoning: str = Field(default="off", description="纪要推理开关，首版固定 off")
     inner_os_enabled: bool = Field(default=False, description="是否启用会议内心 OS")

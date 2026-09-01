@@ -1,5 +1,5 @@
 ---
-title: "Qwen3-ASR 实时语音转文字开发对接手册（历史文件名）"
+title: "Qwen3-ASR 实时语音转文字开发对接手册"
 description: "历史 Qwen3-ASR 直连对接手册；当前客户端请使用 SpeechRail Realtime v2 手册"
 status: archived
 type: manual

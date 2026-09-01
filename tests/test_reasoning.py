@@ -262,7 +262,7 @@ class TestLmStudioNativeLLMService:
 
     async def test_native_request_payload_and_sse_conversion(self) -> None:
         svc = LmStudioNativeLLMService(
-            model="qwen/qwen3.6-35b-a3b",
+            model="local/kat-coder-2.5",
             base_url="http://localhost:1234/v1",
             temperature=0.9,
         )
@@ -286,7 +286,7 @@ class TestLmStudioNativeLLMService:
         payload = captured["body"]
         assert captured["method"] == "POST"
         assert captured["url"].endswith("/api/v1/chat")
-        assert payload["model"] == "qwen/qwen3.6-35b-a3b"
+        assert payload["model"] == "local/kat-coder-2.5"
         assert payload["reasoning"] == "off"
         assert payload["temperature"] == 0.9
         assert payload["stream"] is True

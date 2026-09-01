@@ -26,7 +26,7 @@ related_documents:
   - "docs/manuals/会议助手后端运行与前后端联调.md"
 ---
 
-# Voice Studio UI 设计方案（架构整治版，2026-08-21）
+# Voice Studio UI 设计方案
 
 ## 1. 目标与边界
 
@@ -123,6 +123,12 @@ flowchart LR
   1008 拒绝。无 Origin 的本地非浏览器客户端保留可用性。
 - HTTP 响应带 CSP、`nosniff`、`no-referrer` 和 `DENY` frame 头。
 - `/api/runtime` 返回权威组件状态；`/api/services` 返回外部探活与目标 LLM 是否加载。
+
+状态栏健康中心按重构后的运行时边界展示状态：SpeechRail 作为一个统一服务单元，ASR/TTS 以能力状态呈现；
+HTTP 进程状态与当前 `workload/ws_state` 分开显示。活动模式下，必需 SpeechRail workload 为
+`degraded` 时总状态显示“核心组件降级”，`error` 或目标模型未加载时显示“核心组件异常”；旧响应缺少
+`model_present` 时仍按 HTTP 探活结果兼容处理。PostgreSQL `degraded` 表示 RecoveryJournal 已接管暂存写入，
+不再显示为普通的“探活中”。
 
 ## 7. 前端状态管理
 

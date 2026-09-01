@@ -10,6 +10,7 @@ from voice_realtime.asr.adapters.speechrail_realtime import (
     SpeechRailStreamingTranscriber,
 )
 from voice_realtime.asr.contracts import ASREvent, ASRSessionContext
+from voice_realtime.speechrail.transport import SpeechRailV2Transport
 
 
 class FakeConnection:
@@ -74,6 +75,35 @@ class FakeConnection:
 
     async def close(self) -> None:
         return None
+
+
+class Websockets17StyleConnection:
+    """Minimal websockets 17 connection shape: no public ``uri`` attribute."""
+
+    async def send(self, payload: str) -> None:
+        return None
+
+    async def recv(self) -> str:
+        raise AssertionError("recv should not be called by the transport URI test")
+
+    async def close(self) -> None:
+        return None
+
+
+def test_transport_uri_uses_configured_url_when_connection_has_no_uri() -> None:
+    async def scenario() -> None:
+        connection = Websockets17StyleConnection()
+        transport = SpeechRailV2Transport(
+            url="ws://speechrail.test/v2/realtime",
+            connection_factory=lambda _: _immediate(connection),
+        )
+
+        await transport.connect()
+
+        assert transport.uri == "ws://speechrail.test/v2/realtime"
+        await transport.close()
+
+    asyncio.run(scenario())
 
 
 def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:

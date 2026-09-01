@@ -24,7 +24,7 @@ class FakeService:
             "source_transcript_revision": 1,
             "source_content_revision": 1,
             "used_ephemeral_context": False,
-            "model": "qwen/qwen3.6-35b-a3b",
+            "model": "local/kat-coder-2.5",
             "reasoning": "off",
             "prompt_version": "inner-os-v1",
         }

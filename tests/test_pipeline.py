@@ -43,7 +43,7 @@ from voice_realtime.interaction.pipeline import (
 def settings() -> InteractionSettings:
     return InteractionSettings(
         llm_base_url="http://localhost:1234/v1",
-        llm_model="qwen/qwen3.6-35b-a3b",
+        llm_model="local/kat-coder-2.5",
         llm_api_key="test-lm-key",
         tts_bridge_url="http://127.0.0.1:8765/v1",
         silence_secs=0.8,
@@ -156,7 +156,7 @@ class TestBuildPipeline:
             build_pipeline(settings, transport=mock_transport)
         llm_mock = mock_services[1]
         llm_mock.assert_called_once_with(
-            model="qwen/qwen3.6-35b-a3b",
+            model="local/kat-coder-2.5",
             base_url="http://localhost:1234/v1",
             api_key="test-lm-key",
             temperature=0.7,

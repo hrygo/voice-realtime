@@ -157,7 +157,7 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 ### 步骤 4：配置并启动 LM Studio
 
 1. 打开 **LM Studio**，下载并加载推荐模型：
-   - **推荐统一模型（交互 / 纪要 / 标题）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b-instruct` / `qwen2.5-14b-instruct`）
+   - **推荐统一模型（交互 / 纪要 / 标题）**：`local/kat-coder-2.5`
 2. 在 LM Studio 中启动 Local Server，监听 `localhost:1234`。
 3. 如果 Local Server 开启了 API authentication，将 key 写入项目根目录 `.env` 的
    `VR_INTERACTION_LLM_API_KEY`；程序会以 `Bearer` header 发送，启动配置表会自动脱敏。
@@ -249,10 +249,10 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 | `VR_INTERACTION_SPEECHRAIL_API_KEY` | 空 | SpeechRail 交互 ASR/TTS 的可选 API key；通过 `Authorization: Bearer` 发送 |
 | `VR_SUBTITLE_SPEECHRAIL_API_KEY` | 空 | SpeechRail 字幕/会议 ASR 的可选 API key；通过 `Authorization: Bearer` 发送 |
 | `VR_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
-| `VR_INTERACTION_LLM_MODEL` | `qwen/qwen3.6-35b-a3b` | 语音交互 LLM 模型名称 |
+| `VR_INTERACTION_LLM_MODEL` | `local/kat-coder-2.5` | 语音交互 LLM 模型名称 |
 | `VR_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
 | `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
-| `VR_MEETING_SUMMARY_MODEL` | `qwen/qwen3.6-35b-a3b` | 会议纪要 LLM 模型名称 |
+| `VR_MEETING_SUMMARY_MODEL` | `local/kat-coder-2.5` | 会议纪要 LLM 模型名称 |
 | `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
 | `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
 | `VR_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` / `headphone_duplex`) |

@@ -9,6 +9,28 @@ export interface AudioLevelsSnapshot {
   readonly updated_at_ns: number;
 }
 
+export type ServiceProbeStatus = "ok" | "unreachable" | "timeout" | "error";
+
+export interface ServiceInfo {
+  readonly name: string;
+  readonly status: ServiceProbeStatus;
+  readonly url: string;
+  readonly target_model?: string | null;
+  readonly model_present?: boolean | null;
+  readonly workload?: string | null;
+  readonly ws_state?: string | null;
+  readonly reconnect_count?: number | null;
+  readonly last_event_age_ms?: number | null;
+  readonly dropped_chunks?: number | null;
+  readonly gap_count?: number | null;
+}
+
+export interface ServicesResponse {
+  readonly services: ServiceInfo[];
+  readonly diagnostics?: unknown;
+  readonly network_scope?: "local" | "network";
+}
+
 export interface RuntimeStateSnapshot {
   readonly mode: RuntimeMode;
   readonly pcm_owner: PCMOwner;
@@ -62,6 +84,51 @@ export interface CommandResponse {
     readonly request_id?: string;
     readonly details?: Record<string, unknown>;
   } | null;
+}
+
+export function isServicesResponse(value: unknown): value is ServicesResponse {
+  return isRecord(value)
+    && Array.isArray(value.services)
+    && value.services.every(isServiceInfo)
+    && (value.network_scope === undefined
+      || value.network_scope === "local"
+      || value.network_scope === "network");
+}
+
+function isServiceInfo(value: unknown): value is ServiceInfo {
+  return isRecord(value)
+    && typeof value.name === "string"
+    && isServiceProbeStatus(value.status)
+    && typeof value.url === "string"
+    && isOptionalString(value.target_model)
+    && isOptionalBoolean(value.model_present)
+    && isOptionalString(value.workload)
+    && isOptionalString(value.ws_state)
+    && isOptionalNonNegativeInteger(value.reconnect_count)
+    && isOptionalNonNegativeInteger(value.last_event_age_ms)
+    && isOptionalNonNegativeInteger(value.dropped_chunks)
+    && isOptionalNonNegativeInteger(value.gap_count);
+}
+
+function isServiceProbeStatus(value: unknown): value is ServiceProbeStatus {
+  return value === "ok"
+    || value === "unreachable"
+    || value === "timeout"
+    || value === "error";
+}
+
+function isOptionalString(value: unknown): value is string | null | undefined {
+  return value === undefined || value === null || typeof value === "string";
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | null | undefined {
+  return value === undefined || value === null || typeof value === "boolean";
+}
+
+function isOptionalNonNegativeInteger(value: unknown): value is number | null | undefined {
+  return value === undefined
+    || value === null
+    || (typeof value === "number" && Number.isInteger(value) && value >= 0);
 }
 
 export function isRuntimeState(value: unknown): value is RuntimeStateSnapshot {

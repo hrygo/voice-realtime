@@ -175,7 +175,7 @@ async def test_echo_state_and_is_echo_suppressing(tmp_path: Path) -> None:
 
 
 async def test_send_text_queues_frames(tmp_path: Path) -> None:
-    """测试 send_text 向 worker 队列推送 TranscriptionFrame 和 UserStoppedSpeakingFrame。"""
+    """测试 send_text 推送文本帧并显式触发一次 LLM 运行。"""
     stopped = asyncio.Event()
 
     async def run() -> None:
@@ -204,6 +204,6 @@ async def test_send_text_queues_frames(tmp_path: Path) -> None:
     second_frame = worker.queue_frame.call_args_list[1].args[0]
     assert type(first_frame).__name__ == "TranscriptionFrame"
     assert first_frame.text == "你好，语音助手"
-    assert type(second_frame).__name__ == "UserStoppedSpeakingFrame"
+    assert type(second_frame).__name__ == "LLMRunFrame"
 
     await session.stop()

@@ -303,15 +303,16 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const row = findServiceRow("SpeechRail ASR");
-    expect(row?.textContent).toContain("运行正常");
+    const row = findServiceRow("SpeechRail 服务");
+    expect(row?.textContent).toContain("必须组件降级");
     expect(row?.textContent).not.toContain("语音工作负载：degraded");
     expect(row?.textContent).not.toContain("WebSocket 状态：reconnecting");
     expect(row?.textContent).not.toContain("重连次数：3");
+    expect(row?.getAttribute("title")).toContain("HTTP 状态：运行正常");
     expect(row?.getAttribute("title")).toContain("语音工作负载：degraded");
     expect(row?.getAttribute("title")).toContain("WebSocket 状态：reconnecting");
     expect(row?.getAttribute("title")).toContain("重连次数：3");
-    expect(row?.querySelector(".light-dot")?.classList.contains("state-normal")).toBe(true);
+    expect(row?.querySelector(".light-dot")?.classList.contains("state-required-degraded")).toBe(true);
   });
 
   it("shows a long last-event age as an unclassified raw value", async () => {
@@ -325,7 +326,7 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const row = findServiceRow("SpeechRail ASR");
+    const row = findServiceRow("SpeechRail 服务");
     expect(row?.getAttribute("title")).toContain("距最近事件：987654 ms");
     expect(row?.textContent).not.toContain("关闭游戏");
     expect(row?.textContent).not.toContain("CPU");
@@ -350,7 +351,7 @@ describe("StatusBar service diagnostics", () => {
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
-    expect(findServiceRow("SpeechRail ASR")?.textContent).toContain("当前模式非必需");
+    expect(findServiceRow("SpeechRail 服务")?.textContent).toContain("运行正常");
     expect(findServiceRow("SpeechRail TTS")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("SpeechRail TTS")?.getAttribute("title")).toContain("连接超时");
@@ -376,7 +377,7 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const speechrailRow = findServiceRow("SpeechRail ASR");
+    const speechrailRow = findServiceRow("SpeechRail 服务");
     expect(speechrailRow?.getAttribute("title")).toContain("语音工作负载：未知");
     expect(speechrailRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
 
@@ -451,11 +452,16 @@ describe("StatusBar aggregate health", () => {
     return healthButton as HTMLButtonElement;
   }
 
+  function findHealthRow(name: string): HTMLDivElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes(name));
+  }
+
   it("excludes paused subtitles from assistant aggregate health using authoritative mode", async () => {
     const healthButton = await renderHealth("assistant", "running", "paused", "subtitles");
 
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(healthButton.textContent).toContain("系统正常 (4/4)");
+    expect(healthButton.textContent).toContain("系统正常 (5/5)");
   });
 
   it.each(["subtitles", "meeting"] as const)(
@@ -469,7 +475,7 @@ describe("StatusBar aggregate health", () => {
   );
 
   it.each([
-    ["assistant", "error", "paused", "核心组件异常 (3/4)"],
+    ["assistant", "error", "paused", "核心组件异常 (4/5)"],
     ["subtitles", "stopped", "error", "核心组件异常 (2/3)"],
   ] as const)("marks required %s workload errors in aggregate health", async (
     mode,
@@ -483,25 +489,123 @@ describe("StatusBar aggregate health", () => {
     expect(healthButton.textContent).toContain(expectedLabel);
   });
 
-  it("renders non-required services as neutral even when they are unavailable", async () => {
+  it("keeps required checking states distinct from hard failures", async () => {
+    const healthButton = await renderHealth("assistant", "starting", "paused", "assistant");
+
+    expect(healthButton.classList.contains("checking")).toBe(true);
+    expect(healthButton.classList.contains("has-error")).toBe(false);
+    expect(healthButton.textContent).toContain("核心组件探活中 (4/5)");
+  });
+
+  it("treats a reachable service with a missing required model as unhealthy", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         services: [
-          { name: "speechrail", status: "unreachable", url: "http://127.0.0.1:8201/health" },
-          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
-          { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
+          {
+            name: "tts",
+            status: "ok",
+            url: "http://127.0.0.1:8201/health",
+            target_model: "speechrail/qwen3-tts",
+            model_present: false,
+          },
+          {
+            name: "lm",
+            status: "ok",
+            url: "http://127.0.0.1:1234/v1/models",
+            target_model: "local/kat-coder-2.5",
+            model_present: true,
+          },
         ],
       }),
     }));
 
     const healthButton = await renderHealth("assistant", "running", "paused", "assistant");
+    expect(healthButton.classList.contains("has-error")).toBe(true);
+    expect(healthButton.textContent).toContain("核心组件异常 (4/5)");
+
+    act(() => {
+      healthButton.click();
+    });
+    const ttsRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail TTS"));
+    expect(ttsRow?.textContent).toContain("必须组件异常");
+    expect(ttsRow?.getAttribute("title")).toContain("目标模型未加载");
+  });
+
+  it("surfaces a required SpeechRail workload degradation in the aggregate health", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        services: [
+          {
+            name: "speechrail",
+            status: "ok",
+            url: "http://127.0.0.1:8201/health",
+            workload: "degraded",
+            ws_state: "reconnecting",
+          },
+        ],
+      }),
+    }));
+
+    const healthButton = await renderHealth("subtitles", "stopped", "connected", "subtitles");
+    expect(healthButton.classList.contains("has-degraded")).toBe(true);
+    expect(healthButton.textContent).toContain("核心组件降级 (2/3)");
+
+    act(() => {
+      healthButton.click();
+    });
+    const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail 服务"));
+    expect(speechrailRow?.textContent).toContain("必须组件降级");
+  });
+
+  it("shows PostgreSQL journal takeover as an explicit storage degradation", async () => {
+    useUISettingsStore.setState({ storageHealth: "degraded" });
+
+    await act(async () => {
+      root.render(createElement(StatusBar, {
+        commandSocket: {
+          ...commandSocket,
+          snapshot: { ...assistantSnapshot, mode: "meeting", pcm_owner: "meeting" },
+        },
+        activeTab: "meeting",
+      }));
+    });
+
+    const updatedHealthButton = container.querySelector<HTMLButtonElement>(".health-master-pill");
+    expect(updatedHealthButton?.classList.contains("has-degraded")).toBe(true);
+    expect(updatedHealthButton?.textContent).toContain("核心组件降级 (4/5)");
+    act(() => {
+      updatedHealthButton?.click();
+    });
+    const storageRow = findHealthRow("PostgreSQL 知识库");
+    expect(storageRow?.textContent).toContain("必须组件降级");
+    expect(storageRow?.getAttribute("title")).toContain("RecoveryJournal");
+
+  });
+
+  it("renders non-required services as neutral even when they are unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        services: [
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
+          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
+          { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
+        ],
+      }),
+    }));
+
+    const healthButton = await renderHealth("subtitles", "stopped", "connected", "subtitles");
     act(() => {
       healthButton.click();
     });
 
     const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
-      .find((row) => row.textContent?.includes("SpeechRail ASR"));
+      .find((row) => row.textContent?.includes("LM Studio"));
     expect(healthButton.classList.contains("all-ok")).toBe(true);
     expect(speechrailRow?.textContent).toContain("当前模式非必需");
     expect(speechrailRow?.classList.contains("state-not-required")).toBe(true);

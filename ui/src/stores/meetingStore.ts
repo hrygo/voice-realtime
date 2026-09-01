@@ -466,7 +466,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
           version,
           status,
           source_content_revision: existing?.source_content_revision ?? state.contentRevision,
-          model: existing?.model || "qwen/qwen3.6-35b-a3b",
+          model: existing?.model || "local/kat-coder-2.5",
           prompt_version: existing?.prompt_version || "v4-map-domain-10240",
           content_json: null,
           content_markdown: null,

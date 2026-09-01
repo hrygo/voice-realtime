@@ -1,5 +1,5 @@
 ---
-title: "Voice Studio 会议助手与『内心 OS』前端 UI/UX 设计复核与综合方案"
+title: "Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案"
 description: "集合会议助手已有 UI/UX 的全局架构复核、弹性多栏自适应优化、可折叠边栏、工具栏重构、内心 OS 交互与视觉规范"
 status: active
 type: specification
@@ -30,9 +30,10 @@ related_documents:
   - "docs/manuals/会议助手后端运行与前后端联调.md"
 ---
 
-# Voice Studio 会议助手与『内心 OS』前端 UI/UX 设计复核与综合方案
+# Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案
 
-> **设计版本**：V2.0.0 (架构复核与适应性优化版)  
+> **设计版本**：V2.0.0  
+> **设计重点**：架构复核、适应性布局与内心 OS 交互  
 > **关联技术规范**：`docs/superpowers/specs/2026-08-27-meeting-inner-os-design.md`  
 > **关联实施计划**：`docs/superpowers/plans/2026-08-27-meeting-inner-os-p0-p1.md`  
 > **核心设计定位**：**私密 · 证据 · 弹性 · 专注 · 10秒即时价值**

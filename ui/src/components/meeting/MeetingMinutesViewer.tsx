@@ -193,7 +193,7 @@ export function MeetingMinutesViewer({
             </div>
             <div className="ai-generating-footer">
               <span className="ai-model-tag">
-                🤖 模型: {minutes?.model || "qwen/qwen3.6-35b-a3b"}
+                🤖 模型: {minutes?.model || "local/kat-coder-2.5"}
               </span>
               <span className="ai-safe-tip">
                 🛡️ 本地推理 · 左侧转录可独立查看与导出

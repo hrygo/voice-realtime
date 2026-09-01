@@ -12,8 +12,6 @@ import websockets
 
 
 class SpeechRailConnection(Protocol):
-    uri: str
-
     async def send(self, payload: str) -> None: ...
 
     async def recv(self) -> str: ...
@@ -72,7 +70,10 @@ class SpeechRailV2Transport:
 
     @property
     def uri(self) -> str:
-        return self._connection.uri if self._connection is not None else self._url
+        # websockets 14+ returns a ClientConnection without the legacy
+        # ``uri`` attribute.  The configured endpoint is the authoritative
+        # URI for this transport and remains available while disconnected.
+        return self._url
 
     async def connect(self) -> None:
         """Open the socket without sending a protocol-specific session update."""

@@ -546,6 +546,12 @@
   color: var(--color-red);
 }
 
+.health-master-pill.has-degraded {
+  border-color: color-mix(in srgb, var(--color-yellow) 45%, transparent);
+  background: color-mix(in srgb, var(--color-yellow) 10%, var(--bg-secondary));
+  color: var(--color-yellow);
+}
+
 .health-master-label {
   letter-spacing: -0.01em;
 }
@@ -687,6 +693,11 @@
   background: color-mix(in srgb, var(--color-red) 15%, transparent);
 }
 
+.health-row-status.status-required-degraded {
+  color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 15%, transparent);
+}
+
 .health-row-status.status-not-required {
   color: var(--text-muted);
   background: var(--bg-secondary);
@@ -754,6 +765,11 @@
   animation: pulse-dot 1.2s infinite;
 }
 
+.light-dot.dot-degraded {
+  background: var(--color-yellow);
+  box-shadow: 0 0 6px var(--color-yellow-glow);
+}
+
 .light-dot.health-state-dot {
   animation: none;
 }
@@ -766,6 +782,11 @@
 .light-dot.health-state-dot.state-required-error {
   background: var(--color-red);
   box-shadow: 0 0 6px var(--color-red-glow);
+}
+
+.light-dot.health-state-dot.state-required-degraded {
+  background: var(--color-yellow);
+  box-shadow: 0 0 6px var(--color-yellow-glow);
 }
 
 .light-dot.health-state-dot.state-checking {

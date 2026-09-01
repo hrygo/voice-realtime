@@ -472,7 +472,7 @@ class MeetingSummaryClient:
         http_client: httpx.AsyncClient | None = None,
         scheduler: LocalInferenceScheduler | None = None,
     ) -> None:
-        self.model = model or str(getattr(settings, "summary_model", "qwen/qwen3.6-35b-a3b"))
+        self.model = model or str(getattr(settings, "summary_model", "local/kat-coder-2.5"))
         self.reasoning = reasoning or str(getattr(settings, "summary_reasoning", "off"))
         self.temperature = (
             float(temperature)

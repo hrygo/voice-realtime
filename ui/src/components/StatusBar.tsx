@@ -8,30 +8,19 @@ import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { MeetingStatus, RuntimeMode } from "../contracts/meetingContract";
 import type { AssistantPhase } from "../stores/assistantStore";
 import { apiUrl } from "../config/runtimeConfig";
+import {
+  isServicesResponse,
+  type ServiceInfo,
+  type ServicesResponse,
+  type ServiceProbeStatus,
+} from "../protocol";
 import "./StatusBar.css";
 
-type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
+type ServiceStatus = ServiceProbeStatus | "checking" | "degraded";
 type NetworkScope = "local" | "network";
 type HealthRequirement = "required" | "not-required";
-type HealthDisplayState = "normal" | "required-error" | "not-required";
-
-interface ServiceInfo {
-  name: string;
-  status: ServiceStatus;
-  url: string;
-  workload?: string | null;
-  ws_state?: string | null;
-  reconnect_count?: number | null;
-  last_event_age_ms?: number | null;
-  dropped_chunks?: number | null;
-  gap_count?: number | null;
-}
-
-interface ServicesResponse {
-  services: ServiceInfo[];
-  diagnostics?: unknown;
-  network_scope?: NetworkScope;
-}
+type HealthDisplayState = "normal" | "required-error" | "required-degraded" | "not-required";
+type ServiceViewInfo = Omit<ServiceInfo, "status"> & { status: ServiceStatus };
 
 interface HealthItem {
   id: string;
@@ -43,15 +32,15 @@ interface HealthItem {
 }
 
 const REQUIRED_HEALTH_ITEMS = {
-  assistant: ["ws", "pipeline", "tts", "lm"],
+  assistant: ["ws", "pipeline", "speechrail", "tts", "lm"],
   subtitles: ["ws", "subtitle", "speechrail"],
   meeting: ["ws", "subtitle", "speechrail", "storage", "lm"],
   idle: ["ws"],
 } as const satisfies Record<RuntimeMode, readonly string[]>;
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
-  speechrail: "SpeechRail ASR (:8201)",
-  tts: "SpeechRail TTS (:8201)",
+  speechrail: "SpeechRail 服务 (:8201)",
+  tts: "SpeechRail TTS 能力",
   lm: "LM Studio (:1234)",
 };
 
@@ -60,6 +49,7 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
   unreachable: "服务未启动",
   timeout: "连接超时",
   error: "服务异常",
+  degraded: "服务降级",
   checking: "检测中",
 };
 
@@ -98,6 +88,7 @@ export function classifyHealthState(
   requirement: HealthRequirement,
 ): HealthDisplayState {
   if (requirement === "not-required") return "not-required";
+  if (status === "degraded") return "required-degraded";
   return status === "ok" ? "normal" : "required-error";
 }
 
@@ -114,8 +105,14 @@ function formatDiagnosticNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "未知";
 }
 
-function serviceDiagnosticDetails(service: ServiceInfo): string[] {
-  const details: string[] = [];
+function serviceDiagnosticDetails(service: ServiceViewInfo): string[] {
+  const details: string[] = [`HTTP 状态：${STATUS_LABELS[service.status] || service.status}`];
+  if (service.target_model !== undefined && service.target_model !== null) {
+    details.push(`目标模型：${formatDiagnosticText(service.target_model)}`);
+  }
+  if (service.model_present !== undefined && service.model_present !== null) {
+    details.push(service.model_present ? "目标模型已加载" : "目标模型未加载");
+  }
   if (service.workload !== undefined) {
     details.push(`语音工作负载：${formatDiagnosticText(service.workload)}`);
   }
@@ -135,6 +132,21 @@ function serviceDiagnosticDetails(service: ServiceInfo): string[] {
     details.push(`音频缺口：${formatDiagnosticNumber(service.gap_count)}`);
   }
   return details;
+}
+
+function serviceHealthStatus(
+  service: ServiceViewInfo,
+  mode: RuntimeMode | undefined,
+): ServiceStatus {
+  if (service.status !== "ok") return service.status;
+  if (service.model_present === false) return "error";
+  if (service.name !== "speechrail" || (mode !== "subtitles" && mode !== "meeting")) {
+    return "ok";
+  }
+  if (service.workload === "error") return "error";
+  if (service.workload === "degraded") return "degraded";
+  if (service.workload === "starting") return "checking";
+  return "ok";
 }
 
 export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now()): number {
@@ -365,7 +377,7 @@ export default function StatusBar({
   switchError = null,
   onTabChange,
 }: StatusBarProps) {
-  const [services, setServices] = useState<ServiceInfo[]>([
+  const [services, setServices] = useState<ServiceViewInfo[]>([
     { name: "speechrail", status: "checking", url: "http://127.0.0.1:8201/health" },
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
@@ -462,7 +474,12 @@ export default function StatusBar({
     try {
       const resp = await fetch(apiUrl("/api/services"));
       if (!resp.ok) return;
-      const data: ServicesResponse = await resp.json();
+      const value: unknown = await resp.json();
+      if (!isServicesResponse(value)) {
+        if (isManual) showToast("服务健康响应格式无效", "warning");
+        return;
+      }
+      const data: ServicesResponse = value;
       setNetworkScope(normalizeNetworkScope(data.network_scope));
       if (Array.isArray(data.services) && data.services.length > 0) {
         setServices(data.services);
@@ -517,7 +534,7 @@ export default function StatusBar({
 
   // Compute aggregate system health
   const storageStatus: ServiceStatus =
-    storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error";
+    storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "degraded" : "error";
   const authoritativeMode = commandSocket.snapshot?.mode;
   const createHealthItem = (
     id: string,
@@ -550,17 +567,29 @@ export default function StatusBar({
       "字幕代理 (SubtitleProxy)",
       subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
     ),
-    createHealthItem("storage", "PostgreSQL 知识库", storageStatus),
+    createHealthItem(
+      "storage",
+      "PostgreSQL 知识库",
+      storageStatus,
+      storageHealth === "degraded" ? ["RecoveryJournal 已接管暂存写入"] : undefined,
+    ),
     ...services.map((s): HealthItem => {
       const details = serviceDiagnosticDetails(s);
-      return createHealthItem(s.name, SERVICE_DISPLAY_NAMES[s.name] || s.name, s.status, details);
+      return createHealthItem(
+        s.name,
+        SERVICE_DISPLAY_NAMES[s.name] || s.name,
+        serviceHealthStatus(s, authoritativeMode),
+        details,
+      );
     }),
   ];
 
   const orderedHealthItems = [...healthItems].sort((a, b) => {
     const priority = (item: HealthItem): number => {
       if (item.status === "checking") return 1;
-      return item.displayState === "required-error" ? 0 : item.displayState === "normal" ? 1 : 2;
+      return item.displayState === "required-error" || item.displayState === "required-degraded"
+        ? 0
+        : item.displayState === "normal" ? 1 : 2;
     };
     return priority(a) - priority(b);
   });
@@ -568,11 +597,17 @@ export default function StatusBar({
   const requiredOkCount = requiredHealthItems.filter((item) => item.status === "ok").length;
   const requiredCount = requiredHealthItems.length;
   const nonRequiredCount = healthItems.length - requiredCount;
-  const hasRequiredError = requiredHealthItems.some(
-    (item) => item.status !== "ok" && item.status !== "checking",
+  const hasRequiredHardError = requiredHealthItems.some(
+    (item) => item.status !== "ok" && item.status !== "checking" && item.status !== "degraded",
+  );
+  const hasRequiredDegraded = requiredHealthItems.some(
+    (item) => item.displayState === "required-degraded",
   );
   const hasRequiredChecking = requiredHealthItems.some((item) => item.status === "checking");
-  const isAllOk = !hasRequiredError && !hasRequiredChecking && requiredOkCount === requiredCount;
+  const isAllOk = !hasRequiredHardError
+    && !hasRequiredDegraded
+    && !hasRequiredChecking
+    && requiredOkCount === requiredCount;
   const switchTarget = pendingTab ?? (switchError ? activeTab : null);
   const switchTargetLabel = switchTarget === "subtitles"
     ? "实时字幕"
@@ -731,21 +766,23 @@ export default function StatusBar({
         <div className="status-health-container" ref={popoverRef}>
           <button
             type="button"
-            className={`health-master-pill ${isAllOk ? "all-ok" : hasRequiredError ? "has-error" : "checking"}`}
+            className={`health-master-pill ${isAllOk ? "all-ok" : hasRequiredHardError ? "has-error" : hasRequiredDegraded ? "has-degraded" : "checking"}`}
             onClick={() => setHealthPopoverOpen((prev) => !prev)}
             title="点击查看当前模式的服务健康状态与探活"
           >
             <span
-              className={`light-dot ${isAllOk ? "dot-ok" : hasRequiredError ? "dot-error" : "dot-checking"}`}
+              className={`light-dot ${isAllOk ? "dot-ok" : hasRequiredHardError ? "dot-error" : hasRequiredDegraded ? "dot-degraded" : "dot-checking"}`}
               aria-hidden="true"
             />
             <span className="health-master-label">
               <span className="health-label-full">
                 {isAllOk
                   ? `系统正常 (${requiredOkCount}/${requiredCount})`
-                  : hasRequiredError
+                  : hasRequiredHardError
                     ? `核心组件异常 (${requiredOkCount}/${requiredCount})`
-                    : `核心组件探活中 (${requiredOkCount}/${requiredCount})`}
+                    : hasRequiredChecking
+                      ? `核心组件探活中 (${requiredOkCount}/${requiredCount})`
+                      : `核心组件降级 (${requiredOkCount}/${requiredCount})`}
               </span>
               <span className="health-label-short">
                 {requiredOkCount}/{requiredCount}
@@ -787,7 +824,9 @@ export default function StatusBar({
                       ? "运行正常"
                       : item.status === "checking"
                         ? "检测中"
-                        : "必须组件异常";
+                        : item.status === "degraded"
+                          ? "必须组件降级"
+                          : "必须组件异常";
                   const diagnosticTitle = item.details?.join(" · ");
                   const title = item.requirement === "not-required"
                     ? diagnosticTitle
@@ -819,11 +858,11 @@ export default function StatusBar({
                             e.stopPropagation();
                             const cmd = SERVICE_DIAGNOSTIC_COMMANDS[item.id];
                             void copyTextToClipboard(cmd).then(
-                              () => showToast(`已复制启动命令: ${cmd}`, "success"),
+                              () => showToast(`已复制诊断命令: ${cmd}`, "success"),
                               () => showToast("复制失败", "error"),
                             );
                           }}
-                          title={`复制终端启动命令: ${SERVICE_DIAGNOSTIC_COMMANDS[item.id]}`}
+                          title={`复制终端诊断命令: ${SERVICE_DIAGNOSTIC_COMMANDS[item.id]}`}
                         >
                           📋 复制命令
                         </button>
