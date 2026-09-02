@@ -71,6 +71,27 @@ def attach_app_context(app: FastAPI, context: UIAppContext) -> None:
     app.state.sona_context = context
 
 
+def sync_app_state(app: FastAPI, context: UIAppContext) -> None:
+    """将 composition root 依赖镜像到 ``app.state``。
+
+    meeting/api.py 与 inner_os/api.py 的请求处理器仍通过
+    ``request.app.state.<key>`` 兼容读取（历史契约），因此服务装配完成后
+    必须同步一次，否则 ``/api/v1/meetings`` 等端点会因依赖缺失返回 503。
+    """
+    app.state.settings = context.settings
+    app.state.runtime = context.runtime
+    app.state.meeting_runtime = context.runtime
+    app.state.meeting_events = context.meeting_events
+    app.state.accepted_control_tasks = context.accepted_control_tasks
+    app.state.meeting_repository = context.meeting_repository
+    app.state.meeting_summary_service = context.meeting_summary_service
+    app.state.meeting_session = context.meeting_session
+    app.state.inference_scheduler = context.inference_scheduler
+    app.state.inner_os_service = context.inner_os_service
+    app.state.inner_os_exchange_repository = context.inner_os_exchange_repository
+    app.state.meeting_backend_error = context.meeting_backend_error
+
+
 def get_app_context(app: FastAPI) -> UIAppContext:
     context = getattr(app.state, "sona_context", None)
     if not isinstance(context, UIAppContext):

@@ -40,7 +40,7 @@ class _FakeRuntime:
 
     def __init__(self, *, mode: RuntimeMode = RuntimeMode.ASSISTANT) -> None:
         self.observer = StatusBridgeObserver()
-        self.subtitle_proxy = SubtitleProxy(SubtitleSettings())
+        self.subtitle_proxy = SubtitleProxy(SubtitleSettings(_env_file=None))
         self.start = AsyncMock()
         self.stop = AsyncMock()
         self.clear_context = AsyncMock()
@@ -633,6 +633,7 @@ class TestVoices:
             interaction={
                 "llm_base_url": "http://127.0.0.1:9997/v1",
                 "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+                "speechrail_api_key": None,
             },
         )
         app = create_app(mock_settings, initialize_meeting=False)

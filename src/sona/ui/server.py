@@ -29,6 +29,7 @@ from sona.ui.app_context import (
     attach_app_context,
     get_app_context,
     initialize_meeting_backend,
+    sync_app_state,
 )
 from sona.ui.http_routes import create_http_router
 from sona.ui.runtime import UIRuntime
@@ -77,6 +78,7 @@ def create_app(
         await context.runtime.start()
         if initialize_meeting:
             await initialize_meeting_backend(context)
+        sync_app_state(app, context)
         try:
             yield
         finally:
