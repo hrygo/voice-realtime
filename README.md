@@ -1,4 +1,4 @@
-# Sona (sona)
+# Sona
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/hrygo/sona/main/docs/assets/logo.png" alt="Sona Logo" width="120" onerror="this.style.display='none'"/>
@@ -137,7 +137,7 @@ src/sona/
 | **依赖管理工具** | [`uv`](https://docs.astral.sh/uv/)（极速 Rust 编写的 Python 依赖管理工具） | 严禁直接使用全局 pip 混用污染环境 |
 | **数据库** | **PostgreSQL 14+** | 用于会议助手持久化存储（不存音频，仅存结构化数据） |
 | **前端工具** | **Node.js 18+ & npm** | 用于构建 React 19 + TypeScript + Vite 7 前端控制台 |
-| **本地 LLM 服务** | [LM Studio](https://lmstudio.ai/) 0.3+（开启本地 Server `localhost:1234`） | 推荐模型：`qwen/qwen3.6-35b-a3b` 或 `qwen2.5-7b/14b` |
+| **本地 LLM 服务** | [LM Studio](https://lmstudio.ai/) 0.3+（开启本地 Server `localhost:1234`） | 推荐模型：`local/kat-coder-2.5` |
 | **ASR/TTS 引擎** | [SpeechRail](https://github.com/hrygo/SpeechRail)（端口 `8201`） | 负责 Qwen3-ASR / Diarization / Qwen3-TTS 物理推理 |
 
 ---
@@ -178,7 +178,7 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 
 ### 步骤 4：配置并启动 LM Studio
 
-1. 打开 **LM Studio**，下载并加载推荐模型（例如 `qwen/qwen3.6-35b-a3b`）；
+1. 打开 **LM Studio**，下载并加载推荐模型（例如 `local/kat-coder-2.5`）；
 2. 启动 Local Server，监听 `127.0.0.1:1234`；
 3. **重要提示**：确保关闭深度思考模式（`reasoning: "off"`），以获得毫秒级首字吐词延迟。
 
@@ -247,9 +247,12 @@ Sona 提供了现代化响应式设计、支持深浅双色无障碍高对比度
 | | `SONA_INTERACTION_SPEECHRAIL_REALTIME_URL` | `ws://127.0.0.1:8201/v1/realtime` | 语音助手 ASR/TTS 使用的 WebSocket 地址 |
 | | `SONA_INTERACTION_TTS_VOICE` | `default` | 默认合成音色预设 (`default` / `warm` / `bright` / `calm`) |
 | | `SONA_INTERACTION_SPEECHRAIL_API_KEY` | 空 | SpeechRail 鉴权密钥 (如有) |
-| **LM Studio** | `SONA_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio 服务根地址 |
-| | `SONA_INTERACTION_LLM_MODEL` | `local/kat-coder-2.5` | 交互助手与会议纪要模型名称 |
-| | `SONA_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio 授权密钥 |
+| **LM Studio** | `SONA_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | 交互助手 LLM 服务根地址（可配置） |
+| | `SONA_INTERACTION_LLM_API_KEY` | `lm-studio` | 交互助手 LLM 授权密钥（可配置） |
+| | `SONA_INTERACTION_LLM_MODEL` | `local/kat-coder-2.5` | 交互助手模型 ID（可配置） |
+| | `SONA_LM_STUDIO_BASE_URL` | `http://localhost:1234/v1` | 纪要 / 标题 / 内心 OS 共享 LM Studio 服务根地址（缺省回落 `SONA_INTERACTION_LLM_BASE_URL`） |
+| | `SONA_LM_STUDIO_API_KEY` | `lm-studio` | 共享 LM Studio 授权密钥（缺省回落 `SONA_INTERACTION_LLM_API_KEY`） |
+| | `SONA_MEETING_SUMMARY_MODEL` | `local/kat-coder-2.5` | 会议纪要、标题与内心 OS 模型 ID（可配置） |
 | **会议持久化** | `SONA_MEETING_DATABASE_URL` | `postgresql://sona_app@/knowledge`| PostgreSQL 数据库连接 DSN |
 | | `SONA_MEETING_SCHEMA` | `sona` | 会议表所在 Schema |
 | **音频与双工** | `SONA_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` 外放保护 / `headphone_duplex` 耳机双工) |

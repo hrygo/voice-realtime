@@ -184,7 +184,7 @@ uv run sona-interact                                  # Headless 命令行交互
 | 依赖组件 | 规格与配置要求 |
 |---|---|
 | **硬件平台** | Apple Silicon / macOS 14+；具体设备与资源以当前实测为准 |
-| **LM Studio** (`localhost:1234`) | - **统一模型（交互 / 纪要 / 标题 / 内心 OS）**：`qwen/qwen3.6-35b-a3b`（或 `qwen2.5-7b/14b`） |
+| **LM Studio** (`localhost:1234`) | - **统一默认模型（交互 / 纪要 / 标题 / 内心 OS）**：`local/kat-coder-2.5`；服务 URL、API Key 与各业务模型 ID 均经环境变量可配置（交互：`SONA_INTERACTION_LLM_BASE_URL/API_KEY/MODEL`；纪要 / 标题 / 内心 OS：`SONA_LM_STUDIO_BASE_URL/API_KEY` + `SONA_MEETING_SUMMARY_MODEL`） |
 | **PostgreSQL** | DSN: `postgresql:///knowledge`，Schema: `sona` |
 | **SpeechRail ASR/TTS** (Port: `8201`) | ASR Realtime v2、diarization profile 与公共 TTS 模型均由 SpeechRail 管理；TTS 公共模型 ID `speechrail/qwen3-tts`，preset `default/warm/bright/calm` |
 | **NLTK punkt_tab** | `~/nltk_data/tokenizers/punkt_tab`（TTS 断句必需；`sona-ui`/`sona-interact` 自动检查与修复） |
