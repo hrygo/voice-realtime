@@ -6,31 +6,33 @@ import json
 
 import pytest
 
-import voice_realtime.speechrail.transport as transport_module
-from voice_realtime.speechrail.transport import (
+import sona.speechrail.transport as transport_module
+from sona.speechrail.transport import (
+    SpeechRailOpenAITransport,
     SpeechRailProtocolError,
-    SpeechRailV2Transport,
 )
-from voice_realtime.speechrail.tts import SpeechRailTTSClient
+from sona.speechrail.tts import SpeechRailTTSClient
 
 
 class FakeSpeechConnection:
-    uri = "ws://speechrail.test/v2/realtime"
+    uri = "ws://speechrail.test/v1/realtime"
 
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
         self.messages = [
-            self._event("session.created", 1, session={"type": "speech"}),
-            self._event("response.created", 2, response_id="resp-1"),
+            self._event("session.created", 1, session={"id": "sess-1"}),
+            self._event("session.updated", 2, session={"id": "sess-1"}),
+            self._event("conversation.created", 3, conversation={"id": "conv-1"}),
+            self._event("conversation.item.created", 4),
+            self._event("response.created", 5, response={"id": "resp-1", "status": "in_progress"}),
             self._event(
-                "response.audio.delta",
-                3,
+                "response.output_audio.delta",
+                6,
                 response_id="resp-1",
-                chunk_index=0,
-                audio=base64.b64encode(b"\x00\x00").decode("ascii"),
+                delta=base64.b64encode(b"\x00\x00").decode("ascii"),
             ),
-            self._event("response.audio.completed", 4, response_id="resp-1", total_chunks=1),
-            self._event("session.completed", 5),
+            self._event("response.output_audio.done", 7, response_id="resp-1"),
+            self._event("response.done", 8, response={"id": "resp-1", "status": "completed"}),
         ]
 
     @staticmethod
@@ -39,7 +41,6 @@ class FakeSpeechConnection:
             "type": event_type,
             "event_id": f"evt-{sequence}",
             "session_id": "sess-1",
-            "request_id": "req-1",
             "sequence": sequence,
             **payload,
         }
@@ -54,7 +55,7 @@ class FakeSpeechConnection:
         return None
 
 
-def test_tts_client_sends_v2_speech_session_and_yields_ordered_pcm() -> None:
+def test_tts_client_sends_openai_session_and_yields_pcm() -> None:
     async def scenario() -> None:
         connection = FakeSpeechConnection()
         client = SpeechRailTTSClient(
@@ -72,20 +73,21 @@ def test_tts_client_sends_v2_speech_session_and_yields_ordered_pcm() -> None:
             {
                 "type": "session.update",
                 "session": {
-                    "type": "speech",
                     "model": "speechrail/qwen3-tts",
                     "voice": "warm",
                     "language": "zh",
-                    "audio_format": {
-                        "type": "audio/pcm",
-                        "rate": 24_000,
-                        "channels": 1,
-                        "sample_width": 2,
-                    },
+                    "output_audio_format": "pcm16",
                 },
             },
-            {"type": "speech_input.append", "text": "你好"},
-            {"type": "speech_input.commit", "speed": 1.1},
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "你好"}],
+                },
+            },
+            {"type": "response.create", "response": {"voice": "warm"}},
         ]
 
     asyncio.run(scenario())
@@ -111,7 +113,7 @@ def test_tts_client_cancels_the_active_response_when_consumer_stops() -> None:
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        assert {"type": "response.cancel", "response_id": "resp-cancel"} in connection.sent
+        assert {"type": "response.cancel"} in connection.sent
         assert connection.closed is True
 
     asyncio.run(scenario())
@@ -136,7 +138,7 @@ def test_tts_client_exposes_and_cancels_active_response_for_pipecat() -> None:
         assert client.active_response_id == "resp-cancel"
         await client.cancel("resp-cancel")
         assert client.active_response_id is None
-        assert {"type": "response.cancel", "response_id": "resp-cancel"} in connection.sent
+        assert {"type": "response.cancel"} in connection.sent
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
@@ -144,10 +146,10 @@ def test_tts_client_exposes_and_cancels_active_response_for_pipecat() -> None:
     asyncio.run(scenario())
 
 
-def test_tts_client_rejects_boolean_audio_chunk_index() -> None:
+def test_tts_client_rejects_audio_with_mismatched_response_id() -> None:
     async def scenario() -> None:
         connection = FakeSpeechConnection()
-        connection.messages[2]["chunk_index"] = True
+        connection.messages[5]["response_id"] = "resp-other"
         client = SpeechRailTTSClient(
             url=connection.uri,
             model="speechrail/qwen3-tts",
@@ -158,7 +160,7 @@ def test_tts_client_rejects_boolean_audio_chunk_index() -> None:
         with pytest.raises(SpeechRailProtocolError) as error:
             _ = [chunk async for chunk in client.synthesize("你好")]
 
-        assert error.value.code == "SPEECHRAIL_AUDIO_ORDER_ERROR"
+        assert error.value.code == "SPEECHRAIL_RESPONSE_ERROR"
 
     asyncio.run(scenario())
 
@@ -167,7 +169,12 @@ class BlockingSpeechConnection(FakeSpeechConnection):
     def __init__(self) -> None:
         super().__init__()
         self.sent = []
-        self.messages = [self._event("session.created", 1, session={"type": "speech"})]
+        self.messages = [
+            self._event("session.created", 1, session={"id": "sess-1"}),
+            self._event("session.updated", 2, session={"id": "sess-1"}),
+            self._event("conversation.created", 3, conversation={"id": "conv-1"}),
+            self._event("conversation.item.created", 4),
+        ]
         self.response_created = asyncio.Event()
         self.release = asyncio.Event()
         self.closed = False
@@ -175,8 +182,14 @@ class BlockingSpeechConnection(FakeSpeechConnection):
     async def send(self, payload: str) -> None:
         event = json.loads(payload)
         self.sent.append(event)
-        if event.get("type") == "speech_input.commit":
-            self.messages.append(self._event("response.created", 2, response_id="resp-cancel"))
+        if event.get("type") == "response.create":
+            self.messages.append(
+                self._event(
+                    "response.created",
+                    5,
+                    response={"id": "resp-cancel", "status": "in_progress"},
+                )
+            )
             self.response_created.set()
 
     async def recv(self) -> str:
@@ -204,8 +217,8 @@ def test_transport_sends_api_key_as_websocket_bearer_header(
     monkeypatch.setattr(transport_module.websockets, "connect", connect)
 
     async def scenario() -> None:
-        client = SpeechRailV2Transport(
-            url="wss://speechrail.test/v2/realtime",
+        client = SpeechRailOpenAITransport(
+            url="wss://speechrail.test/v1/realtime",
             api_key="  secret-key  ",
         )
         await client.connect()
@@ -215,7 +228,7 @@ def test_transport_sends_api_key_as_websocket_bearer_header(
 
     assert calls == [
         (
-            "wss://speechrail.test/v2/realtime",
+            "wss://speechrail.test/v1/realtime",
             {"Authorization": "Bearer secret-key"},
         )
     ]

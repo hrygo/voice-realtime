@@ -159,7 +159,7 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
       ? `${lines[0]?.start ?? "00:00:00"} ~ ${lines.at(-1)?.end ?? lines.at(-1)?.start ?? "00:00:00"}`
       : "00:00:00";
 
-  let md = `# Voice Studio 会议与语音对话纪要\n\n`;
+  let md = `# Sona 会议与语音对话纪要\n\n`;
   md += `> 自动生成于：${dateStr} ${timeStr} | 引擎：SpeechRail / Apple Silicon\n\n`;
 
   md += `## 📋 会议概要\n\n`;
@@ -204,7 +204,7 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
     }
   });
 
-  md += `\n\n---\n*由 Voice Studio 本地离线工作台导出*\n`;
+  md += `\n\n---\n*由 Sona 本地离线工作台导出*\n`;
   return md;
 }
 

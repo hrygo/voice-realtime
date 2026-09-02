@@ -8,7 +8,7 @@ date: 2026-08-26
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - meeting-assistant
@@ -17,7 +17,7 @@ tags:
   - openapi
   - asyncapi
 scope:
-  - "voice_realtime.meeting"
+  - "sona.meeting"
   - "ui"
   - "contracts"
 related_documents:
@@ -41,7 +41,7 @@ Accepted
 
 会议助手后续将由前端团队和后端团队分别开发。在 2026-08-26 的决策背景中，仓库已经包含
 React/TypeScript 前端、Python 后端、PostgreSQL、WhisperLiveKit、Sortformer 和会议 WebSocket；
-当前 ASR/分人运行时已由 SpeechRail Realtime v2 提供，但公共契约、实现代码和测试仍然在同一工作树中演进。
+当前 ASR/分人运行时已由 SpeechRail OpenAI Realtime `/v1` 提供，但公共契约、实现代码和测试仍然在同一工作树中演进。
 
 若直接拆分代码仓库，以下问题会被放大：
 

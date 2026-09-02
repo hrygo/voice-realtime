@@ -1,5 +1,5 @@
 ---
-title: "voice-realtime DRY/SOLID 重构总控计划"
+title: "sona DRY/SOLID 重构总控计划"
 description: "六个可独立验证的内部结构重构阶段，以及与 SpeechRail 的跨仓闭环门禁。"
 status: draft
 type: execution_plan
@@ -8,9 +8,9 @@ version: "2.0.0"
 date: 2026-09-01
 last_updated: 2026-09-01
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
-  - voice-realtime
+  - sona
   - dry
   - solid
   - clean-architecture
@@ -24,7 +24,7 @@ contracts:
   - "contracts/meeting-assistant/v1/"
 ---
 
-# voice-realtime DRY/SOLID Refactor Program Plan
+# sona DRY/SOLID Refactor Program Plan
 
 > **For Codex:** REQUIRED SUB-SKILL: Use `executing-plans` to execute one linked child plan at a time. Do not implement this umbrella document as one change set.
 
@@ -71,7 +71,7 @@ uv run pytest \
 ## 全局约束
 
 - Python 保持 `>=3.12,<3.13`；继续使用 `uv`、PEP 621 和现有 PostgreSQL 测试配置。
-- voice-realtime 继续拥有会议、字幕、AudioHub、Pipecat、LM Studio、播放、PostgreSQL、UI 与 speaker display name。
+- sona 继续拥有会议、字幕、AudioHub、Pipecat、LM Studio、播放、PostgreSQL、UI 与 speaker display name。
 - SpeechRail 继续拥有 ASR/TTS 模型 lifecycle、Realtime v2 wire contract、worker、voice catalog 与 readiness。
 - 不导入 SpeechRail 内部 Python 模块；只消费 public HTTP/WebSocket contract、typed local adapter 和脱敏 fixture。
 - 断线创建新 session/source epoch；不重放或持久化旧 PCM、embedding、完整原始转写或完整 TTS prompt。
@@ -145,7 +145,7 @@ git log -5 --oneline
 
 - [ ] 先定义 capture/repository ports，再提取 persistence，最后提取 finalizer。
 - [ ] 使用调用日志精确验证 persist/replay/remap/finalize/minutes 顺序。
-- [ ] 不新增 schema/migration/PgSession；数据库测试使用现有 `VR_TEST_DATABASE_URL`。
+- [ ] 不新增 schema/migration/PgSession；数据库测试使用现有 `SONA_TEST_DATABASE_URL`。
 - [ ] normal、timeout、repository/journal failure、minutes failure 与 cancellation cleanup 都通过后进入 V4。
 
 ## Stage 4: 执行 V4 Interaction pipeline
@@ -172,7 +172,7 @@ git log -5 --oneline
 - [ ] 运行 Python 全量门禁。
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest
 uv run --extra dev ruff check src tests
 uv run --extra dev mypy src
 git diff --check

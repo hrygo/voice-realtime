@@ -9,7 +9,7 @@ date: 2026-08-25
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - runtime-arbitration
   - workload-arbitration
@@ -25,8 +25,8 @@ tags:
 - 状态：方案已批准，审查修订稿待复核
 - 决策记录：[`ADR-005`](../../decisions/0005-server-side-runtime-workload-arbitration.md)
 - 代码基线：`main`，`HEAD=407c980ec9be5d4473256931af5cb58f93a51f9c`
-- 图证据：`Users-hrygo-Documents-voice-realtime`，generation
-  `2026-08-25T14:02:46Z`，相关源码与文档路径均无已记录覆盖缺口；`src/voice_realtime/ui/__pycache__`
+- 图证据：`Users-hrygo-Documents-sona`，generation
+  `2026-08-25T14:02:46Z`，相关源码与文档路径均无已记录覆盖缺口；`src/sona/ui/__pycache__`
   为按设计排除范围，该信号为 best-effort
 - 运行态证据：`runtime/` 日志和本机进程快照直接读取，不属于知识图覆盖范围
 
@@ -101,7 +101,7 @@ tags:
 
 - 不更换 Qwen3-ASR、SenseVoice、Sortformer、Qwen3-TTS 或 LM Studio 模型。
 - 不实现生产 ASR 后端热切换；既有科学测试 registry 不转化为运行时切换产品功能。
-- 不让 `vr-ui` 接管 WLK、TTS 或 LM Studio 服务进程生命周期。
+- 不让 `sona-ui` 接管 WLK、TTS 或 LM Studio 服务进程生命周期。
 - 不增加第二个 WLK 实例或动态切换 diarization。
 - 不自动扫描、结束、暂停或限速游戏及其他用户进程。
 - 不在本阶段增加 TTS 预缓冲或修改 `chunk_ms`；先完成资源隔离和节奏观测。
@@ -473,7 +473,7 @@ TTS 指标名称必须使用 `source_chunk_gap`，不能在没有音频设备回
 
 本阶段保持现有 WLK Qwen3-ASR + Sortformer 默认身份，避免同时改变模式调度和模型变量。
 
-现有 `VR_SUBTITLE_DIARIZATION=false` 可作为明确的单说话人低负载启动配置，但它有以下边界：
+现有 `SONA_SUBTITLE_DIARIZATION=false` 可作为明确的单说话人低负载启动配置，但它有以下边界：
 
 - 需要重启 `vr-subtitles`；
 - 会议将失去匿名 speaker labels；
@@ -513,16 +513,16 @@ TTS 指标名称必须使用 `source_chunk_gap`，不能在没有音频设备回
 
 | 文件 | 单一责任变化 |
 |---|---|
-| `src/voice_realtime/meeting/runtime_mode.py` | 增加 `subtitles`、`pcm_owner`、两阶段转换、取消与补偿回滚 |
-| `src/voice_realtime/meeting/session.py` | 将会议启动拆为 prepare/commit/abort，保证 recording 事件在 mode 提交后发布 |
-| `src/voice_realtime/ui/subtitle_proxy.py` | 增加 prepared/active stream、显式停机、SRT epoch、ready 和诊断快照；删除会议后自动恢复 |
-| `src/voice_realtime/ui/runtime.py` | 实现 `pcm_owner` 门控、队列屏障、目标 preparation，并发布 revision 变化 |
-| `src/voice_realtime/ui/runtime_events.py` | 新增独立的有界 `RuntimeStateBroadcaster`，避免把多客户端状态分发塞入 server 路由 |
-| `src/voice_realtime/ui/protocol.py` | 增加 `StartSubtitlesCommand`、`pcm_owner` 和 additive runtime/diagnostic 字段 |
-| `src/voice_realtime/ui/control.py` | 路由 `start_subtitles` 并保持统一 ack/error 包络 |
-| `src/voice_realtime/ui/server.py` | 接入 runtime broadcaster、约束字幕 WS 建立/存续模式、聚合健康 |
-| `src/voice_realtime/audio/hub.py` | 暴露只读 sink drop 诊断，不改变背压策略 |
-| `src/voice_realtime/ui/assistant_bridge.py` | 记录 TTS 源块节奏，不改变播放路径 |
+| `src/sona/meeting/runtime_mode.py` | 增加 `subtitles`、`pcm_owner`、两阶段转换、取消与补偿回滚 |
+| `src/sona/meeting/session.py` | 将会议启动拆为 prepare/commit/abort，保证 recording 事件在 mode 提交后发布 |
+| `src/sona/ui/subtitle_proxy.py` | 增加 prepared/active stream、显式停机、SRT epoch、ready 和诊断快照；删除会议后自动恢复 |
+| `src/sona/ui/runtime.py` | 实现 `pcm_owner` 门控、队列屏障、目标 preparation，并发布 revision 变化 |
+| `src/sona/ui/runtime_events.py` | 新增独立的有界 `RuntimeStateBroadcaster`，避免把多客户端状态分发塞入 server 路由 |
+| `src/sona/ui/protocol.py` | 增加 `StartSubtitlesCommand`、`pcm_owner` 和 additive runtime/diagnostic 字段 |
+| `src/sona/ui/control.py` | 路由 `start_subtitles` 并保持统一 ack/error 包络 |
+| `src/sona/ui/server.py` | 接入 runtime broadcaster、约束字幕 WS 建立/存续模式、聚合健康 |
+| `src/sona/audio/hub.py` | 暴露只读 sink drop 诊断，不改变背压策略 |
+| `src/sona/ui/assistant_bridge.py` | 记录 TTS 源块节奏，不改变播放路径 |
 | `ui/src/App.tsx` | 首快照门控、revision 对账、ack 后提交 Tab、维护 pending/超时状态 |
 | `ui/src/hooks/useCommandSocket.ts` | 接受 unsolicited runtime state，只应用非过期 revision |
 | `ui/src/protocol.ts` | 接受 `subtitles`、`pcm_owner` 和 additive 诊断字段 |
@@ -589,7 +589,7 @@ TTS 指标名称必须使用 `source_chunk_gap`，不能在没有音频设备回
 ### 15.5 全量门禁
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 cd ui && npm test -- --run
@@ -649,7 +649,7 @@ cd ui && npm run build
 ### 18.2 回退方式
 
 该变更不修改数据库 schema、模型文件或外部服务配置；prepared meeting abort 只使用现有字段保留
-`interrupted/mode_switch_aborted` 记录。若发布后出现阻断问题，回退整个原子产品变更并重启 `vr-ui`，
+`interrupted/mode_switch_aborted` 记录。若发布后出现阻断问题，回退整个原子产品变更并重启 `sona-ui`，
 恢复发布前前后端组合；不要只回退前端或后端，也不引入临时双拓扑开关。回退不得删除数据、清理
 会议记录或改变模型；新代码产生的 interrupted 记录由旧版本按现有模型继续读取。
 

@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from voice_realtime.audio.levels import AudioLevelMeter
-from voice_realtime.config import Settings
-from voice_realtime.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
-from voice_realtime.meeting.runtime_mode import (
+from sona.audio.levels import AudioLevelMeter
+from sona.config import Settings
+from sona.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
+from sona.meeting.runtime_mode import (
     MeetingUnavailableError,
     ModeConflictError,
     RuntimeModeCoordinator,
 )
-from voice_realtime.ui.runtime import AUDIO_QUEUE_MAXSIZE, UIRuntime
+from sona.ui.runtime import AUDIO_QUEUE_MAXSIZE, UIRuntime
 
 
 class _FakeSubtitleProxy:
@@ -76,7 +76,7 @@ class _FakeSubtitleProxy:
 
 @pytest.fixture()
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
+    monkeypatch.delenv("SONA_MEETING_INNER_OS_ENABLED", raising=False)
     return Settings(
         bridge={"host": "127.0.0.1", "port": 9999},
         subtitles={"host": "127.0.0.1", "port": 9998},
@@ -93,18 +93,18 @@ def _patched(stack: ExitStack) -> tuple:
             proxy_cls, hub_cls, *_ = _patched(stack)
             runtime = UIRuntime(settings)   # 必须在 with 内构造（__init__ 即 new 组件）
     """
-    stack.enter_context(patch("voice_realtime.ui.runtime.InteractionOwnership"))
-    stack.enter_context(patch("voice_realtime.ui.runtime.ensure_punkt_tab", return_value=True))
+    stack.enter_context(patch("sona.ui.runtime.InteractionOwnership"))
+    stack.enter_context(patch("sona.ui.runtime.ensure_punkt_tab", return_value=True))
     proxy_cls = stack.enter_context(
-        patch("voice_realtime.ui.runtime.SubtitleProxy", side_effect=_FakeSubtitleProxy)
+        patch("sona.ui.runtime.SubtitleProxy", side_effect=_FakeSubtitleProxy)
     )
     others = tuple(
         stack.enter_context(patch(path))
         for path in (
-            "voice_realtime.ui.runtime.AudioHub",
-            "voice_realtime.ui.runtime.build_pipeline",
-            "voice_realtime.interaction.session.PipelineWorker",
-            "voice_realtime.interaction.session.WorkerRunner",
+            "sona.ui.runtime.AudioHub",
+            "sona.ui.runtime.build_pipeline",
+            "sona.interaction.session.PipelineWorker",
+            "sona.interaction.session.WorkerRunner",
         )
     )
     return (proxy_cls, *others)

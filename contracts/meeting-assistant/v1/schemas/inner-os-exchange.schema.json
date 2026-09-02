@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "voice-studio://meeting-assistant/v1/inner-os-exchange.schema.json",
+  "$id": "sona://meeting-assistant/v1/inner-os-exchange.schema.json",
   "title": "InnerOSExchange",
   "type": "object",
   "additionalProperties": false,

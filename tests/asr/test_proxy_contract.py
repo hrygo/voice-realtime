@@ -8,14 +8,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from voice_realtime.asr.contracts import (
+from sona.asr.contracts import (
     ASRCapabilities,
     ASREvent,
     ASRSessionContext,
 )
-from voice_realtime.asr.models import ASRSegment, ASRWindow
-from voice_realtime.config import SubtitleSettings
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+from sona.asr.models import ASRSegment, ASRWindow
+from sona.config import SubtitleSettings
+from sona.ui.subtitle_proxy import SubtitleProxy
 
 
 class FakeTranscriber:

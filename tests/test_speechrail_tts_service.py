@@ -1,4 +1,4 @@
-"""SpeechRail Realtime v2 到 Pipecat TTS 的边界适配。"""
+"""SpeechRail OpenAI Realtime 到 Pipecat TTS 的边界适配。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 import pytest
 from pipecat.frames.frames import TTSAudioRawFrame
 
-from voice_realtime.interaction.tts import SpeechRailTTSService
+from sona.interaction.tts import SpeechRailTTSService
 
 
 class FakeSpeechRailTTSClient:
@@ -41,7 +41,7 @@ async def test_speechrail_tts_service_normalizes_legacy_voice_and_yields_pcm() -
         return client
 
     service = SpeechRailTTSService(
-        url="ws://speechrail.test/v2/realtime",
+        url="ws://speechrail.test/v1/realtime",
         client_factory=client_factory,
         settings=SpeechRailTTSService.Settings(
             model="speechrail/qwen3-tts", voice="alloy", language="zh"
@@ -52,7 +52,7 @@ async def test_speechrail_tts_service_normalizes_legacy_voice_and_yields_pcm() -
 
     assert factory_calls == [
         {
-            "url": "ws://speechrail.test/v2/realtime",
+            "url": "ws://speechrail.test/v1/realtime",
             "model": "speechrail/qwen3-tts",
             "voice": "default",
             "language": "zh",
@@ -72,7 +72,7 @@ async def test_speechrail_tts_service_normalizes_legacy_voice_and_yields_pcm() -
 async def test_speechrail_tts_service_propagates_pipeline_task_cancellation_to_client() -> None:
     client = FakeSpeechRailTTSClient(block_after_audio=True)
     service = SpeechRailTTSService(
-        url="ws://speechrail.test/v2/realtime",
+        url="ws://speechrail.test/v1/realtime",
         client_factory=lambda **_: client,
         settings=SpeechRailTTSService.Settings(
             model="speechrail/qwen3-tts", voice="warm", language="auto"

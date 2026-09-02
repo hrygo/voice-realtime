@@ -32,7 +32,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     try {
       if (typeof window !== "undefined" && window.localStorage) {
-        return window.localStorage.getItem("voice-studio:meeting-sidebar-collapsed") === "true";
+        return window.localStorage.getItem("sona:meeting-sidebar-collapsed") === "true";
       }
     } catch {
       // Ignore
@@ -45,7 +45,7 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
       const next = !prev;
       try {
         if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem("voice-studio:meeting-sidebar-collapsed", String(next));
+          window.localStorage.setItem("sona:meeting-sidebar-collapsed", String(next));
         }
       } catch {
         // Ignore

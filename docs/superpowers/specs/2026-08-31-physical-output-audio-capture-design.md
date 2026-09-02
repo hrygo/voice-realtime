@@ -9,7 +9,7 @@ date: 2026-08-31
 last_updated: 2026-08-31
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - core-audio
   - system-audio-capture
@@ -21,7 +21,7 @@ related_documents:
   - "docs/decisions/0010-physical-output-audio-capture.md"
   - "docs/decisions/0005-server-side-runtime-workload-arbitration.md"
   - "docs/architecture/系统总体架构与详细设计方案.md"
-  - "docs/manuals/Voice-Studio-UI-设计方案.md"
+  - "docs/manuals/Sona-UI-设计方案.md"
 ---
 
 # 本地物理输出设备音频采集设计
@@ -139,7 +139,7 @@ related_documents:
 ```mermaid
 flowchart LR
     Apps[任意本机应用音频] --> Device[选定输出端点]
-    Device --> Tap["vr-audio-capture.app<br/>设备绑定 Core Audio Tap"]
+    Device --> Tap["sona-audio-capture.app<br/>设备绑定 Core Audio Tap"]
     Tap --> Ring[预分配 SPSC Ring]
     Ring --> Convert["AVAudioConverter<br/>16 kHz / mono / s16le"]
     Convert --> UDS[Unix Domain Socket]
@@ -227,7 +227,7 @@ stopped
 
 ### 9.1 进程与分发形态
 
-- 新增独立的 `vr-audio-capture.app`，使用稳定 Bundle ID、稳定代码签名和 `NSAudioCaptureUsageDescription`。
+- 新增独立的 `sona-audio-capture.app`，使用稳定 Bundle ID、稳定代码签名和 `NSAudioCaptureUsageDescription`。
 - 发布构建启用 Hardened Runtime 并完成签名/公证；开发构建也应保持固定签名身份，避免权限记录随构建漂移。
 - Helper 作为无 Dock 主窗口的后台附件应用运行，但必须能够展示首次授权与“打开系统设置”引导。
 - 仅当用户显式选择物理输出来源或执行设备测试时启动并请求系统音频权限；空闲态不保持 Tap。
@@ -512,16 +512,16 @@ Helper 至少监听：
 后续实施计划应优先落在以下边界，最终文件名可在计划阶段微调：
 
 ```text
-native/vr-audio-capture/                 # Swift Helper、签名配置与原生测试
-src/voice_realtime/audio/frame.py        # AudioFrame 与统一格式
-src/voice_realtime/audio/source.py       # AudioSource 契约
-src/voice_realtime/audio/router.py       # 来源路由、状态、健康与 owner gate
-src/voice_realtime/audio/output_source.py # Helper / UDS 适配器
-src/voice_realtime/audio/mixer.py        # 双源对齐与混音
-src/voice_realtime/audio/hub.py          # 仅补时间戳与 source adapter，不改为通用 Hub
-src/voice_realtime/config/config.py      # Capture / Helper / Mixer 配置
-src/voice_realtime/meeting/              # preflight、事件、模型与迁移
-src/voice_realtime/ui/                   # 控制协议、状态事件与服务端能量
+native/sona-audio-capture/                 # Swift Helper、签名配置与原生测试
+src/sona/audio/frame.py        # AudioFrame 与统一格式
+src/sona/audio/source.py       # AudioSource 契约
+src/sona/audio/router.py       # 来源路由、状态、健康与 owner gate
+src/sona/audio/output_source.py # Helper / UDS 适配器
+src/sona/audio/mixer.py        # 双源对齐与混音
+src/sona/audio/hub.py          # 仅补时间戳与 source adapter，不改为通用 Hub
+src/sona/config/config.py      # Capture / Helper / Mixer 配置
+src/sona/meeting/              # preflight、事件、模型与迁移
+src/sona/ui/                   # 控制协议、状态事件与服务端能量
 contracts/meeting-assistant/v2/          # CaptureProfile 与事件契约
 ui/src/                                  # 来源选择、权限、状态、双路波形
 ```

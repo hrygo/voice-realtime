@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.config import (
+from sona.config import (
     BridgeSettings,
     InteractionSettings,
     LMStudioSettings,
@@ -23,7 +23,7 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
 def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
+    monkeypatch.delenv("SONA_MEETING_INNER_OS_ENABLED", raising=False)
     settings = Settings(_env_file=None, meeting=MeetingSettings(_env_file=None))
     assert settings.meeting.inner_os_enabled is False
     assert settings.meeting.inner_os_analysis_enabled is False
@@ -40,7 +40,7 @@ def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
 def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("VR_INTERACTION_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("SONA_INTERACTION_LLM_API_KEY", raising=False)
     assert InteractionSettings(_env_file=None).llm_api_key == "lm-studio"
 
 
@@ -168,7 +168,7 @@ def test_server_settings_default_to_localhost() -> None:
 
 
 def test_server_settings_resolve_lan_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("voice_realtime.network.get_lan_ip", lambda: "192.168.1.123")
+    monkeypatch.setattr("sona.network.get_lan_ip", lambda: "192.168.1.123")
     assert UISettings(host="lan").host == "192.168.1.123"
     assert BridgeSettings(host="LAN").host == "192.168.1.123"
 
@@ -213,7 +213,7 @@ def test_meeting_settings_reject_invalid_database_url() -> None:
 
 def test_meeting_settings_rejects_unsafe_schema_name() -> None:
     with pytest.raises(ValidationError):
-        MeetingSettings(schema="voice-realtime")
+        MeetingSettings(schema="123-schema")
 
 
 @pytest.mark.parametrize(
@@ -240,8 +240,8 @@ def test_interaction_rejects_invalid_service_urls(field: str, value: str) -> Non
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1:8201/v2/realtime",
-        "ws://token@127.0.0.1:8201/v2/realtime",
+        "http://127.0.0.1:8201/v1/realtime",
+        "ws://token@127.0.0.1:8201/v1/realtime",
         "ws://127.0.0.1:8201/asr",
     ],
 )

@@ -8,7 +8,7 @@ date: 2026-08-24
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - asr
@@ -16,7 +16,7 @@ tags:
   - sequential-evaluation
   - futility-stopping
 scope:
-  - "voice_realtime.asr"
+  - "sona.asr"
 related_documents:
   - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
   - "docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md"

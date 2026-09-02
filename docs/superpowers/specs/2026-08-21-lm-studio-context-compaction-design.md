@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - lm-studio
   - context-compaction
@@ -377,18 +377,18 @@ LM Studio response chain 一致的轮次。即使下游 TTS 尚未播放完，�
 
 ## 修改范围
 
-- `src/voice_realtime/config.py`
+- `src/sona/config.py`
   - 增加压缩配置和范围校验。
-- `src/voice_realtime/interaction/reasoning.py`
+- `src/sona/interaction/reasoning.py`
   - 解析 `chat.end.stats`。
   - 增加原生非流式摘要/预热调用、压缩状态和原子链切换。
   - 用记忆包恢复失效 response chain。
-- `src/voice_realtime/interaction/context_memory.py`（新增）
+- `src/sona/interaction/context_memory.py`（新增）
   - Pydantic schema、历史选择、packet 组装、校验和 compaction policy。
-- `src/voice_realtime/interaction/pipeline.py`
+- `src/sona/interaction/pipeline.py`
   - 注入压缩设置和固定记忆协议。
   - 不直接启用 Pipecat 默认自动摘要，也不重写完整事实视图。
-- `src/voice_realtime/interaction/session.py`
+- `src/sona/interaction/session.py`
   - clear/stop/persona 生命周期取消压缩并清理内存状态。
 - `tests/test_context_memory.py`（新增）
   - schema、历史选择、来源校验、水位和注入防护。
@@ -461,7 +461,7 @@ LM Studio response chain 一致的轮次。即使下游 TTS 尚未播放完，�
 ## 部署、迁移与回退
 
 本设计没有数据库或持久化迁移。默认启用前必须完成真实长链验收；若希望保守灰度，可以通过
-`VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 回到当前有状态链行为。
+`SONA_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 回到当前有状态链行为。
 
 回退时取消后台任务并忽略所有候选，新建 InteractionSession 即恢复旧链逻辑。已经由 LM Studio
 本地保存但不再引用的 orphan response chains 由 LM Studio 自身存储策略管理；项目不假设存在删除

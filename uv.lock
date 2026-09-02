@@ -1492,6 +1492,66 @@ wheels = [
 ]
 
 [[package]]
+name = "sona"
+version = "1.4.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "psycopg-pool" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "asgi-lifespan" },
+    { name = "jsonschema" },
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "ruff" },
+]
+interaction = [
+    { name = "pipecat-ai", extra = ["local", "soundfile", "websocket"] },
+    { name = "pyaudio" },
+    { name = "torch" },
+    { name = "torchaudio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "asgi-lifespan", marker = "extra == 'dev'", specifier = ">=2.1" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "huggingface-hub", specifier = ">=0.27" },
+    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
+    { name = "pipecat-ai", extras = ["silero", "openai", "soundfile", "websocket", "local"], marker = "extra == 'interaction'", specifier = ">=1.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
+    { name = "psycopg-pool", specifier = ">=3.2,<4" },
+    { name = "pyaudio", marker = "extra == 'interaction'", specifier = ">=0.2.14" },
+    { name = "pydantic", specifier = ">=2.10" },
+    { name = "pydantic-settings", specifier = ">=2.7" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
+    { name = "torch", marker = "extra == 'interaction'", specifier = ">=2.5" },
+    { name = "torchaudio", marker = "extra == 'interaction'", specifier = ">=2.5" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
+    { name = "websockets", specifier = ">=14" },
+]
+provides-extras = ["interaction", "dev"]
+
+[[package]]
 name = "soundfile"
 version = "0.13.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1676,66 +1736,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/90/60/97362554ac21e20e81bcef1150cb2a7e4ffdaf8ea1e5b2e8bf7a053caa18/uvloop-0.22.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:e047cc068570bac9866237739607d1313b9253c3051ad84738cbb095be0537b2", size = 4131970, upload-time = "2025-10-16T22:16:34.015Z" },
     { url = "https://files.pythonhosted.org/packages/99/39/6b3f7d234ba3964c428a6e40006340f53ba37993f46ed6e111c6e9141d18/uvloop-0.22.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:512fec6815e2dd45161054592441ef76c830eddaad55c8aa30952e6fe1ed07c0", size = 4296343, upload-time = "2025-10-16T22:16:35.149Z" },
 ]
-
-[[package]]
-name = "voice-realtime"
-version = "1.4.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "huggingface-hub" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "psycopg-pool" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "uvicorn", extra = ["standard"] },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "asgi-lifespan" },
-    { name = "jsonschema" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-timeout" },
-    { name = "ruff" },
-]
-interaction = [
-    { name = "pipecat-ai", extra = ["local", "soundfile", "websocket"] },
-    { name = "pyaudio" },
-    { name = "torch" },
-    { name = "torchaudio" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asgi-lifespan", marker = "extra == 'dev'", specifier = ">=2.1" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "huggingface-hub", specifier = ">=0.27" },
-    { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.23" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
-    { name = "pipecat-ai", extras = ["silero", "openai", "soundfile", "websocket", "local"], marker = "extra == 'interaction'", specifier = ">=1.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
-    { name = "psycopg-pool", specifier = ">=3.2,<4" },
-    { name = "pyaudio", marker = "extra == 'interaction'", specifier = ">=0.2.14" },
-    { name = "pydantic", specifier = ">=2.10" },
-    { name = "pydantic-settings", specifier = ">=2.7" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.25" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
-    { name = "torch", marker = "extra == 'interaction'", specifier = ">=2.5" },
-    { name = "torchaudio", marker = "extra == 'interaction'", specifier = ">=2.5" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
-    { name = "websockets", specifier = ">=14" },
-]
-provides-extras = ["interaction", "dev"]
 
 [[package]]
 name = "watchfiles"

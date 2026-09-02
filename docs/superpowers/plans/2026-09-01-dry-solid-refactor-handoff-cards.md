@@ -1,5 +1,5 @@
 ---
-title: "voice-realtime DRY/SOLID 重构工作交接任务卡"
+title: "sona DRY/SOLID 重构工作交接任务卡"
 description: "六个串行重构工作包、仓库级验收和 SpeechRail 跨仓闭环的可领取任务卡。"
 status: active
 type: handoff_cards
@@ -8,9 +8,9 @@ version: "1.0.0"
 date: 2026-09-01
 last_updated: 2026-09-01
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
-  - voice-realtime
+  - sona
   - handoff
   - dry
   - solid
@@ -21,11 +21,11 @@ related_documents:
   - "docs/decisions/0012-speechrail-realtime-tts.md"
 ---
 
-# voice-realtime DRY/SOLID 重构工作交接任务卡
+# sona DRY/SOLID 重构工作交接任务卡
 
 > **交接状态：** Ready for assignment（2026-09-01）
 >
-> **用途：** 供 voice-realtime 团队按依赖顺序领取、实施、审查和验收结构重构。
+> **用途：** 供 sona 团队按依赖顺序领取、实施、审查和验收结构重构。
 >
 > **总控计划：** [2026-09-01-dry-solid-refactor.md](2026-09-01-dry-solid-refactor.md)
 
@@ -55,12 +55,12 @@ related_documents:
 | VR-04 | Interaction pipeline dependencies | VR-03 | 待领取 | L1/L2 分离，factory seam 与旧 keyword 兼容 |
 | VR-05 | UI backend composition | VR-03、VR-04 | 待领取 | 单一 typed context，route/lifespan/安全行为不变 |
 | VR-06 | UI shared helpers | VR-05 | 待领取 | 只收敛同构 helper，前端全测与 build 通过 |
-| VR-07 | voice-realtime 仓库级验收 | VR-06 | 待领取 | Python、DB、Ruff、mypy、frontend 与 diff gate 通过 |
+| VR-07 | sona 仓库级验收 | VR-06 | 待领取 | Python、DB、Ruff、mypy、frontend 与 diff gate 通过 |
 | XR-01 | 两仓公共契约闭环 | VR-07、SpeechRail `SR-04` | 待领取 | fake/contract 与真实 runtime 状态分别留证 |
 
 ## VR-00：执行前基线与所有权锁定
 
-**责任角色：** voice-realtime 技术负责人领取；各模块负责人确认目标 hunk 所有权。
+**责任角色：** sona 技术负责人领取；各模块负责人确认目标 hunk 所有权。
 
 **写入范围：** 无生产文件写入；只在团队 issue/PR 中记录执行信息。
 
@@ -199,7 +199,7 @@ git diff --check
 - [ ] 使用现有测试数据库运行会议聚焦矩阵。
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_meeting_ports.py tests/test_meeting_finalization.py tests/test_meeting_session.py \
   tests/test_meeting_repository.py tests/test_meeting_recovery.py tests/test_meeting_api.py \
   tests/test_runtime_mode.py tests/test_ui_server.py -q --no-cov
@@ -276,7 +276,7 @@ git diff --check
 - [ ] 使用现有测试数据库运行 UI/backend 聚焦矩阵。
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_ui_app_context.py tests/test_ui_server.py tests/test_meeting_api.py \
   tests/test_inner_os_api.py tests/test_runtime_mode.py tests/asr/test_proxy_contract.py \
   -q --no-cov
@@ -327,7 +327,7 @@ git diff --check
 - [ ] 全量 Vitest 与 production build 通过，无新增依赖或 build artifact 入库。
 - [ ] 当前并行 CSS、protocol、store、meeting UI 与 API test hunk 未被覆盖或混入本卡提交。
 
-## VR-07：voice-realtime 仓库级验收
+## VR-07：sona 仓库级验收
 
 **责任角色：** 未参与主要实现的验证负责人执行；技术负责人签收。
 
@@ -340,7 +340,7 @@ git diff --check
 - [ ] 运行 Python、数据库与静态 gate。
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest
 uv run --extra dev ruff check src tests
 uv run --extra dev mypy src
 git diff --check
@@ -367,7 +367,7 @@ npm --prefix ui run build
 
 ## XR-01：两仓公共契约闭环
 
-**共同责任：** voice-realtime 团队执行 adapter/workflow 验证；SpeechRail 团队发布服务端 contract/runtime 证据；跨团队验证负责人汇总。
+**共同责任：** sona 团队执行 adapter/workflow 验证；SpeechRail 团队发布服务端 contract/runtime 证据；跨团队验证负责人汇总。
 
 **依赖：** 本仓 VR-07 与 SpeechRail `SR-04` 均完成。
 

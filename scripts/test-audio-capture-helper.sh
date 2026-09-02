@@ -3,10 +3,10 @@
 set -euo pipefail
 
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-APP_PATH=${VR_AUDIO_CAPTURE_APP_PATH:-"${PROJECT_ROOT}/build/vr-audio-capture/vr-audio-capture.app"}
+APP_PATH=${SONA_AUDIO_CAPTURE_APP_PATH:-"${PROJECT_ROOT}/build/sona-audio-capture/sona-audio-capture.app"}
 MODE=${1:---static}
 INFO_PLIST="${APP_PATH}/Contents/Info.plist"
-EXECUTABLE="${APP_PATH}/Contents/MacOS/vr-audio-capture-helper"
+EXECUTABLE="${APP_PATH}/Contents/MacOS/sona-audio-capture-helper"
 
 fail() {
     echo "audio capture helper check failed: $1" >&2
@@ -22,9 +22,9 @@ check_static_bundle() {
     [[ -f "${INFO_PLIST}" ]] || fail "Info.plist is missing"
     [[ -x "${EXECUTABLE}" ]] || fail "helper executable is missing"
 
-    [[ "$(plist_value CFBundleIdentifier)" == "local.voice-realtime.audio-capture" ]] || \
+    [[ "$(plist_value CFBundleIdentifier)" == "local.sona.audio-capture" ]] || \
         fail "unexpected bundle identifier"
-    [[ "$(plist_value CFBundleExecutable)" == "vr-audio-capture-helper" ]] || \
+    [[ "$(plist_value CFBundleExecutable)" == "sona-audio-capture-helper" ]] || \
         fail "unexpected executable name"
     [[ "$(plist_value CFBundlePackageType)" == "APPL" ]] || \
         fail "unexpected package type"

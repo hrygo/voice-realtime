@@ -9,7 +9,7 @@ date: 2026-08-25
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - runtime-arbitration
@@ -37,7 +37,7 @@ tags:
 - 麦克风继续由 `AudioHub` 单源采集；稳定状态只允许一个 `pcm_owner`，转换屏障期间必须为 `none`。
 - 保留 `EchoSuppressionProcessor` 与 `SelfEchoFilter` 双层回声防线，不改其参数和调用顺序。
 - PostgreSQL 继续作为会议 confirmed 文本、speaker 映射和纪要唯一事实源；会议不写 `current.srt`，任何路径都不保存音频。
-- `RuntimeModeCoordinator` 继续位于 `src/voice_realtime/meeting/runtime_mode.py`；多客户端状态广播独立放入 `src/voice_realtime/ui/runtime_events.py`。
+- `RuntimeModeCoordinator` 继续位于 `src/sona/meeting/runtime_mode.py`；多客户端状态广播独立放入 `src/sona/ui/runtime_events.py`。
 - 用户命令串行且非抢占；控制 WebSocket 断开或客户端 ack 超时不得取消已被服务端接受的转换。
 - shutdown 是唯一可取消在途转换的路径；取消后 abort prepared target、尽力停止全部工作负载并提交 `idle/none`。
 - `runtime_revision` 只排序 `mode`、`pcm_owner`、`active_meeting_id` 和模式驱动 Tab；persona、mic、pipeline、会议转录继续使用既有更新语义。
@@ -49,9 +49,9 @@ tags:
 ### Task 1: 冻结模式、PCM owner 与控制协议契约
 
 **Files:**
-- Modify: `src/voice_realtime/meeting/models.py`
-- Modify: `src/voice_realtime/ui/protocol.py`
-- Modify: `src/voice_realtime/ui/control.py`
+- Modify: `src/sona/meeting/models.py`
+- Modify: `src/sona/ui/protocol.py`
+- Modify: `src/sona/ui/control.py`
 - Modify: `tests/test_meeting_models.py`
 - Modify: `tests/test_control.py`
 
@@ -135,14 +135,14 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/meeting/models.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/control.py tests/test_meeting_models.py tests/test_control.py
+git add src/sona/meeting/models.py src/sona/ui/protocol.py src/sona/ui/control.py tests/test_meeting_models.py tests/test_control.py
 git commit -m "feat(runtime): 增加字幕模式与 PCM 所有权契约"
 ```
 
 ### Task 2: 建立 latest-only RuntimeStateBroadcaster
 
 **Files:**
-- Create: `src/voice_realtime/ui/runtime_events.py`
+- Create: `src/sona/ui/runtime_events.py`
 - Create: `tests/test_runtime_events.py`
 
 **Interfaces:**
@@ -181,7 +181,7 @@ def test_add_client_captures_current_state_without_await() -> None:
 
 Run: `uv run pytest tests/test_runtime_events.py -q --no-cov`
 
-Expected: `voice_realtime.ui.runtime_events` 不存在。
+Expected: `sona.ui.runtime_events` 不存在。
 
 - [ ] **Step 3: 实现广播器**
 
@@ -234,14 +234,14 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/ui/runtime_events.py tests/test_runtime_events.py
+git add src/sona/ui/runtime_events.py tests/test_runtime_events.py
 git commit -m "feat(runtime): 增加权威状态广播器"
 ```
 
 ### Task 3: 将 SubtitleProxy 改为显式 prepared/active 生命周期
 
 **Files:**
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitle_proxy.py`
 
 **Interfaces:**
@@ -340,14 +340,14 @@ Expected: PASS。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/voice_realtime/ui/subtitle_proxy.py tests/test_subtitle_proxy.py
+git add src/sona/ui/subtitle_proxy.py tests/test_subtitle_proxy.py
 git commit -m "refactor(subtitles): 拆分字幕与会议采集准备提交"
 ```
 
 ### Task 4: 建立普通字幕 epoch、SRT 归档和 Proxy 诊断
 
 **Files:**
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitle_proxy.py`
 
 **Interfaces:**
@@ -423,14 +423,14 @@ Expected: PASS。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/voice_realtime/ui/subtitle_proxy.py tests/test_subtitle_proxy.py
+git add src/sona/ui/subtitle_proxy.py tests/test_subtitle_proxy.py
 git commit -m "feat(subtitles): 隔离连接 epoch 与 SRT 边界"
 ```
 
 ### Task 5: 将 MeetingSession 启动拆为 prepare/commit/publish/abort
 
 **Files:**
-- Modify: `src/voice_realtime/meeting/session.py`
+- Modify: `src/sona/meeting/session.py`
 - Modify: `tests/test_meeting_session.py`
 
 **Interfaces:**
@@ -517,14 +517,14 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/meeting/session.py tests/test_meeting_session.py
+git add src/sona/meeting/session.py tests/test_meeting_session.py
 git commit -m "refactor(meeting): 拆分会议启动事务与事件发布"
 ```
 
 ### Task 6: 重写 RuntimeModeCoordinator 两阶段状态机
 
 **Files:**
-- Modify: `src/voice_realtime/meeting/runtime_mode.py`
+- Modify: `src/sona/meeting/runtime_mode.py`
 - Modify: `tests/test_runtime_mode.py`
 
 **Interfaces:**
@@ -628,14 +628,14 @@ Expected: PASS。
 - [ ] **Step 8: 提交**
 
 ```bash
-git add src/voice_realtime/meeting/runtime_mode.py src/voice_realtime/meeting/session.py src/voice_realtime/ui/subtitle_proxy.py tests/test_runtime_mode.py tests/test_meeting_session.py tests/test_subtitle_proxy.py
+git add src/sona/meeting/runtime_mode.py src/sona/meeting/session.py src/sona/ui/subtitle_proxy.py tests/test_runtime_mode.py tests/test_meeting_session.py tests/test_subtitle_proxy.py
 git commit -m "feat(runtime): 实现两阶段工作负载仲裁"
 ```
 
 ### Task 7: 在 UIRuntime 接入 coordinator、广播器与双重 PCM 门控
 
 **Files:**
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Modify: `src/sona/ui/runtime.py`
 - Modify: `tests/test_runtime.py`
 
 **Interfaces:**
@@ -719,14 +719,14 @@ Expected: PASS。
 - [ ] **Step 7: 提交**
 
 ```bash
-git add src/voice_realtime/ui/runtime.py tests/test_runtime.py
+git add src/sona/ui/runtime.py tests/test_runtime.py
 git commit -m "feat(runtime): 接入 PCM 门控与状态广播"
 ```
 
 ### Task 8: 改造控制 WebSocket 并撤销失去资格的字幕订阅
 
 **Files:**
-- Modify: `src/voice_realtime/ui/server.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_ui_server.py`
 
 **Interfaces:**
@@ -797,7 +797,7 @@ Expected: PASS。
 - [ ] **Step 7: 提交**
 
 ```bash
-git add src/voice_realtime/ui/server.py tests/test_ui_server.py
+git add src/sona/ui/server.py tests/test_ui_server.py
 git commit -m "feat(ui): 广播运行时状态并约束字幕订阅"
 ```
 
@@ -916,7 +916,7 @@ git commit -m "feat(ui): 按 revision 仲裁运行时所有权"
 
 ```typescript
 it("does not mount subtitles from localStorage before authoritative state", () => {
-  localStorage.setItem("voice-studio:workspace-tab", "subtitles");
+  localStorage.setItem("sona:workspace-tab", "subtitles");
   commandSocket.ready = false;
   commandSocket.snapshot = null;
   act(() => root.render(<App />));
@@ -974,9 +974,9 @@ git commit -m "feat(ui): 按服务端状态提交工作区切换"
 ### Task 11: 增加 AudioHub、interaction 与 TTS 源块诊断
 
 **Files:**
-- Modify: `src/voice_realtime/audio/hub.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
-- Modify: `src/voice_realtime/ui/assistant_bridge.py`
+- Modify: `src/sona/audio/hub.py`
+- Modify: `src/sona/ui/runtime.py`
+- Modify: `src/sona/ui/assistant_bridge.py`
 - Modify: `tests/test_audio_hub.py`
 - Modify: `tests/test_runtime.py`
 - Modify: `tests/test_assistant_bridge.py`
@@ -1029,14 +1029,14 @@ Expected: PASS。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/voice_realtime/audio/hub.py src/voice_realtime/ui/runtime.py src/voice_realtime/ui/assistant_bridge.py tests/test_audio_hub.py tests/test_runtime.py tests/test_assistant_bridge.py
+git add src/sona/audio/hub.py src/sona/ui/runtime.py src/sona/ui/assistant_bridge.py tests/test_audio_hub.py tests/test_runtime.py tests/test_assistant_bridge.py
 git commit -m "feat(diagnostics): 暴露音频队列与 TTS 源块指标"
 ```
 
 ### Task 12: 扩展 `/api/services` 工作负载健康与原始诊断
 
 **Files:**
-- Modify: `src/voice_realtime/ui/server.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_ui_server.py`
 - Modify: `ui/src/components/StatusBar.tsx`
 - Modify: `ui/src/components/StatusBar.test.ts`
@@ -1089,7 +1089,7 @@ Expected: PASS。
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/voice_realtime/ui/server.py tests/test_ui_server.py ui/src/components/StatusBar.tsx ui/src/components/StatusBar.test.ts
+git add src/sona/ui/server.py tests/test_ui_server.py ui/src/components/StatusBar.tsx ui/src/components/StatusBar.test.ts
 git commit -m "feat(diagnostics): 区分进程与语音工作负载健康"
 ```
 
@@ -1127,7 +1127,7 @@ Expected: PASS；测试覆盖 target prepare 失败不停止来源、source quie
 Run:
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 ```
@@ -1147,7 +1147,7 @@ Expected: 全部退出码为 0，生产构建成功。
 
 - [ ] **Step 5: 执行 localhost 与 LAN 真实闭环**
 
-先用默认 localhost 启动，再用 `VR_BIND_HOST=lan scripts/run-all.sh` 启动；每轮完成以下场景并记录时间、最高 revision、mode、pcm_owner 和诊断计数，不记录音频或完整转写：
+先用默认 localhost 启动，再用 `SONA_BIND_HOST=lan scripts/run-all.sh` 启动；每轮完成以下场景并记录时间、最高 revision、mode、pcm_owner 和诊断计数，不记录音频或完整转写：
 
 1. 启动后 assistant 可用且 WLK 普通字幕 workload 为 paused；assistant PCM 不进入 WLK。
 2. assistant→subtitles→assistant，UI 只在 ack/权威状态后切换，SRT epoch 正确归档，TTS 恢复正常。

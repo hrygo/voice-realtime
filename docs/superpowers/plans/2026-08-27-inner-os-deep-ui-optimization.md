@@ -4,7 +4,7 @@
 
 **Goal:** 在不改变会议后端契约和问答业务逻辑的前提下，统一 Inner OS 的展示层、回答卡片层级、Token 和输入区布局。
 
-**Architecture:** 保留 `InnerOSPanel` 负责会话编排，新增纯展示型 `InnerOSAnswerContent` 作为事实/判断/草稿内容层；完整答案卡片只用于实时结果，历史和未保存托盘使用紧凑摘要与可展开内容。样式继续复用全局 Voice Studio Token，并将 Inner OS 的语义别名限定在自身容器范围内。
+**Architecture:** 保留 `InnerOSPanel` 负责会话编排，新增纯展示型 `InnerOSAnswerContent` 作为事实/判断/草稿内容层；完整答案卡片只用于实时结果，历史和未保存托盘使用紧凑摘要与可展开内容。样式继续复用全局 Sona Token，并将 Inner OS 的语义别名限定在自身容器范围内。
 
 **Tech Stack:** React 19、TypeScript、Zustand、CSS、Vitest、Vite。
 

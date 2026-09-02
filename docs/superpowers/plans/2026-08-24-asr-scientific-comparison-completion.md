@@ -9,7 +9,7 @@ date: 2026-08-24
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - asr
@@ -42,7 +42,7 @@ Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交�
 
 - Python 严格保持 `>=3.12,<3.13`，默认离线且禁止隐式下载。
 - 模型、语料、逐字稿和逐样本实验产物只放项目外；Git 只保存契约、聚合指标和脱敏报告。
-- 主机排他锁默认位于用户 cache 根目录的 `voice-realtime/locks/asr-experiment.lock`；锁目录 `0700`、锁文件 `0600`。
+- 主机排他锁默认位于用户 cache 根目录的 `sona/locks/asr-experiment.lock`；锁目录 `0700`、锁文件 `0600`。
 - 模型加载、ASR/TTS/LLM 服务、基准实验、故障注入和全量质量门禁不得并行；服务启动前再次检查端口与锁持有者。
 - worker 只允许并行进行只读调查或修改彼此不重叠的文件；测试、模型加载、提交与删除由主 Agent 串行执行。
 - `PYTORCH_ENABLE_MPS_FALLBACK=0`；MPS 实验必须验证真实参数 device，失败单列 `infeasible`，不得静默转 CPU。
@@ -76,8 +76,8 @@ Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交�
 ### Task 1: 建立主机级实验排他锁
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/resource_lock.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/benchmarks/resource_lock.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/benchmarks/test_resource_lock.py`
 - Modify: `tests/benchmarks/test_asr_cli.py`
 
@@ -95,7 +95,7 @@ Qwen 隔离 worker、Qwen adapter 与 SenseVoice CPU adapter 基础层已提交�
 
 Run: `uv run pytest tests/benchmarks/test_resource_lock.py tests/benchmarks/test_asr_cli.py -q --no-cov`
 
-Expected: `voice_realtime.benchmarks.resource_lock` 不存在而失败。
+Expected: `sona.benchmarks.resource_lock` 不存在而失败。
 
 - [x] **Step 3: 实现最小排他锁**
 
@@ -112,20 +112,20 @@ Expected: PASS，且现有 runner 产物契约不变。
 - [x] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/benchmarks tests/benchmarks
+git add src/sona/benchmarks tests/benchmarks
 git commit -m "feat(asr): 增加实验主机资源排他锁"
 ```
 
 ### Task 2: 增加 Qwen3-ASR 原生离线实验臂
 
 **Files:**
-- Create: `src/voice_realtime/asr/adapters/qwen3_native.py`
-- Create: `src/voice_realtime/asr/workers/__init__.py`
-- Create: `src/voice_realtime/asr/workers/qwen3_native_worker.py`
-- Modify: `src/voice_realtime/asr/adapters/__init__.py`
-- Modify: `src/voice_realtime/asr/profiles.py`
-- Modify: `src/voice_realtime/asr/defaults.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/asr/adapters/qwen3_native.py`
+- Create: `src/sona/asr/workers/__init__.py`
+- Create: `src/sona/asr/workers/qwen3_native_worker.py`
+- Modify: `src/sona/asr/adapters/__init__.py`
+- Modify: `src/sona/asr/profiles.py`
+- Modify: `src/sona/asr/defaults.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/asr/test_qwen3_native_adapter.py`
 - Modify: `tests/asr/test_profiles.py`
 - Modify: `tests/asr/test_defaults.py`
@@ -161,7 +161,7 @@ Run:
 
 ```bash
 uv run pytest tests/asr/test_qwen3_native_adapter.py tests/asr/test_profiles.py tests/asr/test_defaults.py tests/benchmarks/test_asr_cli.py -q --no-cov
-uv run mypy src/voice_realtime/asr/adapters/qwen3_native.py src/voice_realtime/asr/workers/qwen3_native_worker.py src/voice_realtime/benchmarks/asr/cli.py
+uv run mypy src/sona/asr/adapters/qwen3_native.py src/sona/asr/workers/qwen3_native_worker.py src/sona/benchmarks/asr/cli.py
 ```
 
 Expected: PASS。
@@ -169,18 +169,18 @@ Expected: PASS。
 - [x] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md
+git add src/sona/asr tests/asr src/sona/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md
 git commit -m "feat(asr): 增加Qwen3原生离线实验臂"
 ```
 
 ### Task 3: 增加 SenseVoiceSmall 原生离线实验臂
 
 **Files:**
-- Create: `src/voice_realtime/asr/adapters/sensevoice_native.py`
-- Modify: `src/voice_realtime/asr/adapters/__init__.py`
-- Modify: `src/voice_realtime/asr/profiles.py`
-- Modify: `src/voice_realtime/asr/defaults.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/asr/adapters/sensevoice_native.py`
+- Modify: `src/sona/asr/adapters/__init__.py`
+- Modify: `src/sona/asr/profiles.py`
+- Modify: `src/sona/asr/defaults.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/asr/test_sensevoice_native_adapter.py`
 - Modify: `tests/asr/test_profiles.py`
 - Modify: `tests/asr/test_defaults.py`
@@ -214,7 +214,7 @@ Run:
 
 ```bash
 uv run pytest tests/asr/test_sensevoice_native_adapter.py tests/asr/test_pipecat_sensevoice.py tests/test_pipeline.py tests/benchmarks/test_asr_cli.py -q --no-cov
-uv run mypy src/voice_realtime/asr/adapters/sensevoice_native.py
+uv run mypy src/sona/asr/adapters/sensevoice_native.py
 ```
 
 Expected: PASS，生产 `PipecatSenseVoiceFactory` 默认参数不变。
@@ -222,16 +222,16 @@ Expected: PASS，生产 `PipecatSenseVoiceFactory` 默认参数不变。
 - [x] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr tests/asr src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py
+git add src/sona/asr tests/asr src/sona/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py
 git commit -m "feat(asr): 增加SenseVoice原生离线实验臂"
 ```
 
 ### Task 4: 统一离线 profile 调度与冻结身份校验
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/backend_factory.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
-- Modify: `src/voice_realtime/asr/profiles.py`
+- Create: `src/sona/benchmarks/asr/backend_factory.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
+- Modify: `src/sona/asr/profiles.py`
 - Create: `tests/benchmarks/test_asr_backend_factory.py`
 - Modify: `tests/benchmarks/test_asr_cli.py`
 
@@ -265,16 +265,16 @@ Expected: PASS。
 - [x] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr tests/benchmarks src/voice_realtime/asr/profiles.py tests/asr/test_profiles.py
+git add src/sona/benchmarks/asr tests/benchmarks src/sona/asr/profiles.py tests/asr/test_profiles.py
 git commit -m "refactor(asr): 统一基准后端构建与身份核验"
 ```
 
 ### Task 5: 建立外部语料制备与盲测冻结工具
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/corpus.py`
-- Create: `src/voice_realtime/benchmarks/asr/analysis_plan.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/benchmarks/asr/corpus.py`
+- Create: `src/sona/benchmarks/asr/analysis_plan.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/benchmarks/test_asr_corpus.py`
 - Create: `tests/benchmarks/test_asr_analysis_plan.py`
 - Modify: `tests/benchmarks/test_asr_manifest.py`
@@ -307,7 +307,7 @@ Expected: corpus/analysis_plan 模块不存在而失败。
 
 - [ ] **Step 4: 制备公开集、dev 与 blind 目录**
 
-在 `~/.cache/voice-realtime/benchmarks/asr/corpora/` 下创建版本化目录。Public 先冻结版本、许可、来源
+在 `~/.cache/sona/benchmarks/asr/corpora/` 下创建版本化目录。Public 先冻结版本、许可、来源
 与 checksum，但完整 1–2 小时运行延后到 baseline + winner。目标域同时冻结 60m Core/约 58 切片与
 45m Reserve/约 40 切片；两段各覆盖近讲、会议、code-switch、口音、噪声、实体和负样本，合计至少
 20 名全局唯一说话人。Reliability Set 固定为 1×60m canonical cursor，不与 2×30m 重复执行。
@@ -318,7 +318,7 @@ Expected: corpus/analysis_plan 模块不存在而失败。
 Run: `uv run pytest tests/benchmarks/test_asr_corpus.py tests/benchmarks/test_asr_analysis_plan.py tests/benchmarks/test_asr_manifest.py -q --no-cov`
 
 ```bash
-git add src/voice_realtime/benchmarks/asr tests/benchmarks docs/Fun-ASR与现有ASR后端科学对比测试方案.md
+git add src/sona/benchmarks/asr tests/benchmarks docs/Fun-ASR与现有ASR后端科学对比测试方案.md
 git commit -m "feat(asr): 增加语料制备与盲测冻结工具"
 ```
 
@@ -417,7 +417,7 @@ git commit -m "docs(asr): 冻结Stage1盲测分析计划"
 > `Promote` 已固定八项 gate、60 分钟、五个故障计数及 Stage 1–4/hash 证据链，不能用任意 gate 绕过。
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/report.py`
+- Create: `src/sona/benchmarks/asr/report.py`
 - Create: `tests/benchmarks/test_asr_report.py`
 - Create: `docs/benchmarks/asr/stage1-v12-20260825/blind-report.md`
 - Create: `docs/benchmarks/asr/stage1-v12-20260825/blind-summary.csv`
@@ -453,7 +453,7 @@ Qwen Core → SenseVoice Core → Fun MPS Core。Fun 输出只生成一次并同
 - [ ] **Step 5: 提交代码与聚合报告**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/report.py tests/benchmarks/test_asr_report.py docs/benchmarks/asr docs/Fun-ASR与现有ASR后端科学对比测试方案.md
+git add src/sona/benchmarks/asr/report.py tests/benchmarks/test_asr_report.py docs/benchmarks/asr docs/Fun-ASR与现有ASR后端科学对比测试方案.md
 git commit -m "feat(asr): 生成Stage1序贯盲测决策报告"
 ```
 
@@ -463,8 +463,8 @@ git commit -m "feat(asr): 生成Stage1序贯盲测决策报告"
 否则标记 `not-applicable`，不得为其增加生产服务。交互 family 不需要单独建设此字幕 WS runtime。
 
 **Files:**
-- Create: `src/voice_realtime/asr/services/funasr_nano_streaming.py`
-- Create: `src/voice_realtime/asr/services/__init__.py`
+- Create: `src/sona/asr/services/funasr_nano_streaming.py`
+- Create: `src/sona/asr/services/__init__.py`
 - Create: `tests/asr/test_funasr_nano_streaming_service.py`
 - Modify: `pyproject.toml`
 - Modify: `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
@@ -494,7 +494,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr/services tests/asr/test_funasr_nano_streaming_service.py pyproject.toml docs/Fun-ASR与现有ASR后端科学对比测试方案.md
+git add src/sona/asr/services tests/asr/test_funasr_nano_streaming_service.py pyproject.toml docs/Fun-ASR与现有ASR后端科学对比测试方案.md
 git commit -m "feat(asr): 增加Fun-ASR本机流式候选服务"
 ```
 
@@ -616,10 +616,10 @@ git commit -m "test(asr): 完成Stage5长时可靠性验收"
 ### Task 14: 固定唯一生产后端并清理落选方案
 
 **Files:**
-- Modify: `src/voice_realtime/config.py`
-- Modify: `src/voice_realtime/asr/defaults.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
-- Modify: `src/voice_realtime/subtitles/launcher.py`
+- Modify: `src/sona/config.py`
+- Modify: `src/sona/asr/defaults.py`
+- Modify: `src/sona/interaction/pipeline.py`
+- Modify: `src/sona/subtitles/launcher.py`
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `docs/系统总体架构与详细设计方案.md`
@@ -677,7 +677,7 @@ blind 泄漏、模型/语料路径逃逸、音频落盘和 PostgreSQL 测试隔�
 
 - [ ] **Step 2: 执行全量后端门禁**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Expected: 全部 PASS，分支覆盖率不低于 80%。
 

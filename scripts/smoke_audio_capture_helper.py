@@ -16,17 +16,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from voice_realtime.audio.output_source import (
+from sona.audio.output_source import (
     AudioCaptureClient,
     AudioCaptureError,
     HelperSupervisor,
 )
-from voice_realtime.config import AudioCaptureSettings
+from sona.config import AudioCaptureSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_HELPER = (
     PROJECT_ROOT
-    / "build/vr-audio-capture/vr-audio-capture.app/Contents/MacOS/vr-audio-capture-helper"
+    / "build/sona-audio-capture/sona-audio-capture.app/Contents/MacOS/sona-audio-capture-helper"
 )
 
 

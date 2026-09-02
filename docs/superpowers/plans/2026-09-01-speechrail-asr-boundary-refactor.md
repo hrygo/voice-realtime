@@ -3,7 +3,7 @@ title: "SpeechRail ASR 边界重构实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/decisions/0011-speechrail-only-asr.md"
   - "docs/decisions/0012-speechrail-realtime-tts.md"
@@ -23,7 +23,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 前置：SpeechRail 当前 public `contracts/realtime-v2.md` 作为只读事实来源；无需导入 SpeechRail Python 源码。
 - 后续：`2026-09-01-subtitle-proxy-refactor.md` 依赖本计划稳定的 `ASRWindow` 与 mapper。
 - `SpeechRailV2Transport.receive()` 已验证 JSON object、严格递增 sequence、非空 type/session/request ID 及同会话一致性；新 decoder 不重复这些检查。
@@ -34,14 +34,14 @@ related_documents:
 
 ## 目标文件
 
-- Create: `src/voice_realtime/speechrail/transcription_events.py`
-- Create: `src/voice_realtime/asr/models.py`
-- Create: `src/voice_realtime/meeting/asr_mapping.py`
-- Modify: `src/voice_realtime/asr/contracts.py`
-- Modify: `src/voice_realtime/asr/presenters.py`
-- Modify: `src/voice_realtime/asr/adapters/speechrail_realtime.py`
-- Modify: `src/voice_realtime/asr/adapters/speechrail_pipecat.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/speechrail/transcription_events.py`
+- Create: `src/sona/asr/models.py`
+- Create: `src/sona/meeting/asr_mapping.py`
+- Modify: `src/sona/asr/contracts.py`
+- Modify: `src/sona/asr/presenters.py`
+- Modify: `src/sona/asr/adapters/speechrail_realtime.py`
+- Modify: `src/sona/asr/adapters/speechrail_pipecat.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Create: `tests/asr/test_speechrail_events.py`
 - Modify: `tests/asr/test_contracts.py`
 - Modify: `tests/asr/test_speechrail_realtime.py`
@@ -52,7 +52,7 @@ related_documents:
 
 **Files:**
 
-- Create: `src/voice_realtime/speechrail/transcription_events.py`
+- Create: `src/sona/speechrail/transcription_events.py`
 - Create: `tests/asr/test_speechrail_events.py`
 
 - [ ] **Step 1: 写 event-specific 红灯测试**
@@ -118,9 +118,9 @@ type SpeechRailTranscriptionEvent = (
 
 ```bash
 uv run --extra dev pytest tests/asr/test_speechrail_events.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/speechrail/transcription_events.py tests/asr/test_speechrail_events.py
-uv run --extra dev mypy src/voice_realtime/speechrail/transcription_events.py
-git add src/voice_realtime/speechrail/transcription_events.py tests/asr/test_speechrail_events.py
+uv run --extra dev ruff check src/sona/speechrail/transcription_events.py tests/asr/test_speechrail_events.py
+uv run --extra dev mypy src/sona/speechrail/transcription_events.py
+git add src/sona/speechrail/transcription_events.py tests/asr/test_speechrail_events.py
 git commit -m "refactor: centralize speechrail asr events"
 ```
 
@@ -128,8 +128,8 @@ git commit -m "refactor: centralize speechrail asr events"
 
 **Files:**
 
-- Modify: `src/voice_realtime/asr/adapters/speechrail_realtime.py`
-- Modify: `src/voice_realtime/asr/adapters/speechrail_pipecat.py`
+- Modify: `src/sona/asr/adapters/speechrail_realtime.py`
+- Modify: `src/sona/asr/adapters/speechrail_pipecat.py`
 - Modify: `tests/asr/test_speechrail_realtime.py`
 - Modify: `tests/asr/test_speechrail_pipecat.py`
 
@@ -147,9 +147,9 @@ git commit -m "refactor: centralize speechrail asr events"
 uv run --extra dev pytest tests/asr/test_speechrail_events.py \
   tests/asr/test_speechrail_realtime.py tests/asr/test_speechrail_pipecat.py \
   -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/asr/adapters tests/asr
-uv run --extra dev mypy src/voice_realtime/asr src/voice_realtime/speechrail
-git add src/voice_realtime/asr/adapters tests/asr/test_speechrail_realtime.py tests/asr/test_speechrail_pipecat.py
+uv run --extra dev ruff check src/sona/asr/adapters tests/asr
+uv run --extra dev mypy src/sona/asr src/sona/speechrail
+git add src/sona/asr/adapters tests/asr/test_speechrail_realtime.py tests/asr/test_speechrail_pipecat.py
 git commit -m "refactor: reuse speechrail transcription decoder"
 ```
 
@@ -157,19 +157,19 @@ git commit -m "refactor: reuse speechrail transcription decoder"
 
 **Files:**
 
-- Create: `src/voice_realtime/asr/models.py`
-- Create: `src/voice_realtime/meeting/asr_mapping.py`
-- Modify: `src/voice_realtime/asr/contracts.py`
-- Modify: `src/voice_realtime/asr/presenters.py`
-- Modify: `src/voice_realtime/asr/adapters/speechrail_realtime.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/asr/models.py`
+- Create: `src/sona/meeting/asr_mapping.py`
+- Modify: `src/sona/asr/contracts.py`
+- Modify: `src/sona/asr/presenters.py`
+- Modify: `src/sona/asr/adapters/speechrail_realtime.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/asr/test_contracts.py`
 - Modify: `tests/asr/test_speechrail_realtime.py`
 - Modify: `tests/asr/test_proxy_contract.py`
 
 - [ ] **Step 1: 写依赖方向红灯测试**
 
-`tests/asr/test_contracts.py` 断言 `voice_realtime.asr` 可在不导入 `voice_realtime.meeting.models` 的情况下加载；DTO 验证非负 epoch/order/timestamp、非空 speaker/text 和 immutable tuple。
+`tests/asr/test_contracts.py` 断言 `sona.asr` 可在不导入 `sona.meeting.models` 的情况下加载；DTO 验证非负 epoch/order/timestamp、非空 speaker/text 和 immutable tuple。
 
 - [ ] **Step 2: 定义 neutral result**
 
@@ -210,11 +210,11 @@ class ASRWindow:
 ```bash
 uv run --extra dev pytest tests/asr/test_contracts.py tests/asr/test_speechrail_realtime.py \
   tests/asr/test_speechrail_pipecat.py tests/asr/test_proxy_contract.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/asr src/voice_realtime/meeting/asr_mapping.py \
-  src/voice_realtime/ui/subtitle_proxy.py tests/asr
+uv run --extra dev ruff check src/sona/asr src/sona/meeting/asr_mapping.py \
+  src/sona/ui/subtitle_proxy.py tests/asr
 uv run --extra dev mypy src
-git add src/voice_realtime/asr src/voice_realtime/meeting/asr_mapping.py \
-  src/voice_realtime/ui/subtitle_proxy.py tests/asr
+git add src/sona/asr src/sona/meeting/asr_mapping.py \
+  src/sona/ui/subtitle_proxy.py tests/asr
 git commit -m "refactor: decouple asr results from meeting models"
 ```
 

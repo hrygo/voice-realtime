@@ -1,4 +1,4 @@
-"""Voice Studio UI 服务基础测试。"""
+"""Sona UI 服务基础测试。"""
 
 from __future__ import annotations
 
@@ -20,19 +20,19 @@ from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from voice_realtime.config import InteractionSettings, Settings, SubtitleSettings
-from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
-from voice_realtime.ui import http_routes as http_routes_module
-from voice_realtime.ui import websocket_routes as websocket_routes_module
-from voice_realtime.ui.app_context import (
+from sona.config import InteractionSettings, Settings, SubtitleSettings
+from sona.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
+from sona.ui import http_routes as http_routes_module
+from sona.ui import websocket_routes as websocket_routes_module
+from sona.ui.app_context import (
     get_app_context,
     initialize_meeting_backend,
 )
-from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
-from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
-from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
-from voice_realtime.ui.server import create_app
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
+from sona.ui.assistant_bridge import StatusBridgeObserver
+from sona.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from sona.ui.runtime_events import RuntimeStateBroadcaster
+from sona.ui.server import create_app
+from sona.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
 
 
 class _FakeRuntime:
@@ -165,7 +165,7 @@ def _settings() -> Settings:
 def _running_client(runtime: _FakeRuntime) -> Iterator[TestClient]:
     application = create_app(_settings(), initialize_meeting=False)
     with (
-        patch("voice_realtime.ui.server.UIRuntime", return_value=runtime),
+        patch("sona.ui.server.UIRuntime", return_value=runtime),
         TestClient(
             application,
             raise_server_exceptions=False,
@@ -189,7 +189,7 @@ def app() -> TestClient:
     """构造一个注入 mock 服务的测试客户端。"""
     mock_settings = Settings(
         bridge={"host": "127.0.0.1", "port": 9999},  # unreachable
-        subtitles={"speechrail_url": "ws://127.0.0.1:9998/v2/realtime"},  # unreachable
+        subtitles={"speechrail_url": "ws://127.0.0.1:9998/v1/realtime"},  # unreachable
         interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},  # unreachable
         ui={"static_dir": Path("/nonexistent/dist")},  # 无 dist 时走 placeholder
     )
@@ -253,19 +253,19 @@ class TestHealth:
         meeting_session = Mock()
 
         with patch(
-            "voice_realtime.ui.app_context.run_migrations", new_callable=AsyncMock
+            "sona.ui.app_context.run_migrations", new_callable=AsyncMock
         ) as migrations, patch(
-            "voice_realtime.ui.app_context.PostgresMeetingRepository",
+            "sona.ui.app_context.PostgresMeetingRepository",
             return_value=repository,
         ), patch(
-            "voice_realtime.ui.app_context.RecoveryJournal", return_value=journal
+            "sona.ui.app_context.RecoveryJournal", return_value=journal
         ), patch(
-            "voice_realtime.ui.app_context.MeetingSummaryClient", return_value=summary_client
+            "sona.ui.app_context.MeetingSummaryClient", return_value=summary_client
         ) as summary_client_factory, patch(
-            "voice_realtime.ui.app_context.MeetingSummaryService",
+            "sona.ui.app_context.MeetingSummaryService",
             return_value=summary_service,
         ), patch(
-            "voice_realtime.ui.app_context.MeetingSession", return_value=meeting_session
+            "sona.ui.app_context.MeetingSession", return_value=meeting_session
         ):
             context = get_app_context(app)
             context.runtime = runtime
@@ -365,7 +365,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -422,7 +422,7 @@ class TestServices:
         settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={
-                "speechrail_url": "ws://127.0.0.1:9998/v2/realtime",
+                "speechrail_url": "ws://127.0.0.1:9998/v1/realtime",
                 "speechrail_api_key": "subtitle-key",
             },
             interaction={
@@ -437,9 +437,9 @@ class TestServices:
         mock_resp.json.return_value = {"data": [{"id": settings.interaction.llm_model}]}
 
         with (
-            patch("voice_realtime.ui.server.UIRuntime") as fake_cls,
+            patch("sona.ui.server.UIRuntime") as fake_cls,
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ) as get,
@@ -470,7 +470,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -496,7 +496,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -528,7 +528,7 @@ class TestServices:
         with (
             caplog.at_level(logging.WARNING),
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -576,7 +576,7 @@ class TestServices:
         application = create_app(_settings(), initialize_meeting=False)
         with (
             patch(
-                "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 side_effect=concurrent_get,
             ),
@@ -600,9 +600,9 @@ class TestServices:
         mock_resp.status_code = 200
 
         with patch(
-            "voice_realtime.ui.server.UIRuntime"
+            "sona.ui.server.UIRuntime"
         ) as fake_cls, patch(
-            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ):
@@ -647,8 +647,8 @@ class TestVoices:
             ],
         }
 
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ) as get:
@@ -675,8 +675,8 @@ class TestVoices:
         mock_resp.content = b"RIFF-audio"
         mock_resp.headers = {"content-type": "audio/wav"}
 
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.http_routes.httpx.AsyncClient.post",
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.post",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ) as post:
@@ -710,8 +710,8 @@ class TestVoices:
         )
         app = create_app(mock_settings, initialize_meeting=False)
 
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.http_routes.httpx.AsyncClient.get",
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             side_effect=httpx.ConnectError("refused"),
         ):
@@ -736,7 +736,7 @@ class TestStaticMount:
         """有 ui/dist/index.html 时返回 HTML 内容。"""
         dist = tmp_path / "ui" / "dist"
         dist.mkdir(parents=True)
-        (dist / "index.html").write_text("<html><body>Voice Studio</body></html>")
+        (dist / "index.html").write_text("<html><body>Sona</body></html>")
 
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
@@ -745,13 +745,13 @@ class TestStaticMount:
             ui={"static_dir": dist},
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+        with patch("sona.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
             with TestClient(app) as client:
                 resp = client.get("/")
                 assert resp.status_code == 200
-                assert "Voice Studio" in resp.text
+                assert "Sona" in resp.text
 
 
 class TestWebSocketGateways:
@@ -1247,9 +1247,9 @@ class TestRuntimeControlBroadcast:
         runtime = _FakeRuntime()
         secret = "external-payload-must-not-leak"
         with (
-            caplog.at_level(logging.ERROR, logger="voice_realtime.ui.server"),
+            caplog.at_level(logging.ERROR, logger="sona.ui.server"),
             patch(
-                "voice_realtime.ui.websocket_routes.ControlBridge.handle",
+                "sona.ui.websocket_routes.ControlBridge.handle",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError(secret),
             ),

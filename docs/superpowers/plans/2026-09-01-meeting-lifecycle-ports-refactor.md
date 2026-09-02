@@ -3,7 +3,7 @@ title: "会议生命周期与窄 Ports 重构实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "contracts/meeting-assistant/v1/README.md"
@@ -23,7 +23,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 前置：完成 `2026-09-01-subtitle-proxy-refactor.md`，`SubtitleProxy.last_window` 已是 typed property。
 - 后续：UI backend composition 计划依赖本计划的 repository/context 类型。
 - 当前 `MeetingSession.stop()` 的正确顺序必须原样保持：
@@ -49,14 +49,14 @@ set FINALIZING + publish
 
 ## 目标文件
 
-- Create: `src/voice_realtime/meeting/ports.py`
-- Create: `src/voice_realtime/meeting/persistence.py`
-- Create: `src/voice_realtime/meeting/finalization.py`
-- Modify: `src/voice_realtime/meeting/session.py`
-- Modify: `src/voice_realtime/meeting/repository.py`
-- Modify: `src/voice_realtime/meeting/recovery.py`
-- Modify: `src/voice_realtime/meeting/runtime_mode.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/meeting/ports.py`
+- Create: `src/sona/meeting/persistence.py`
+- Create: `src/sona/meeting/finalization.py`
+- Modify: `src/sona/meeting/session.py`
+- Modify: `src/sona/meeting/repository.py`
+- Modify: `src/sona/meeting/recovery.py`
+- Modify: `src/sona/meeting/runtime_mode.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Create: `tests/test_meeting_ports.py`
 - Create: `tests/test_meeting_finalization.py`
 - Modify: `tests/test_meeting_session.py`
@@ -68,10 +68,10 @@ set FINALIZING + publish
 
 **Files:**
 
-- Create: `src/voice_realtime/meeting/ports.py`
-- Modify: `src/voice_realtime/meeting/repository.py`
-- Modify: `src/voice_realtime/meeting/recovery.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/meeting/ports.py`
+- Modify: `src/sona/meeting/repository.py`
+- Modify: `src/sona/meeting/recovery.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Create: `tests/test_meeting_ports.py`
 - Modify: `tests/test_meeting_repository.py`
 - Modify: `tests/test_meeting_recovery.py`
@@ -136,15 +136,15 @@ class MeetingCaptureGateway(Protocol):
 - [ ] **Step 5: 运行并提交 ports**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_meeting_ports.py tests/test_meeting_repository.py tests/test_meeting_recovery.py \
   -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/meeting/ports.py \
-  src/voice_realtime/meeting/repository.py src/voice_realtime/meeting/recovery.py \
-  src/voice_realtime/ui/subtitle_proxy.py tests/test_meeting_ports.py
-uv run --extra dev mypy src/voice_realtime/meeting src/voice_realtime/ui/subtitle_proxy.py
-git add src/voice_realtime/meeting/ports.py src/voice_realtime/meeting/repository.py \
-  src/voice_realtime/meeting/recovery.py src/voice_realtime/ui/subtitle_proxy.py \
+uv run --extra dev ruff check src/sona/meeting/ports.py \
+  src/sona/meeting/repository.py src/sona/meeting/recovery.py \
+  src/sona/ui/subtitle_proxy.py tests/test_meeting_ports.py
+uv run --extra dev mypy src/sona/meeting src/sona/ui/subtitle_proxy.py
+git add src/sona/meeting/ports.py src/sona/meeting/repository.py \
+  src/sona/meeting/recovery.py src/sona/ui/subtitle_proxy.py \
   tests/test_meeting_ports.py tests/test_meeting_repository.py tests/test_meeting_recovery.py
 git commit -m "refactor: define narrow meeting ports"
 ```
@@ -153,8 +153,8 @@ git commit -m "refactor: define narrow meeting ports"
 
 **Files:**
 
-- Create: `src/voice_realtime/meeting/persistence.py`
-- Modify: `src/voice_realtime/meeting/session.py`
+- Create: `src/sona/meeting/persistence.py`
+- Modify: `src/sona/meeting/session.py`
 - Create: `tests/test_meeting_finalization.py`
 - Modify: `tests/test_meeting_session.py`
 - Modify: `tests/test_meeting_recovery.py`
@@ -192,10 +192,10 @@ class TranscriptPersistence:
 
 ```bash
 uv run --extra dev pytest tests/test_meeting_finalization.py tests/test_meeting_session.py tests/test_meeting_recovery.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/meeting/persistence.py src/voice_realtime/meeting/session.py \
+uv run --extra dev ruff check src/sona/meeting/persistence.py src/sona/meeting/session.py \
   tests/test_meeting_finalization.py tests/test_meeting_session.py
-uv run --extra dev mypy src/voice_realtime/meeting
-git add src/voice_realtime/meeting/persistence.py src/voice_realtime/meeting/session.py \
+uv run --extra dev mypy src/sona/meeting
+git add src/sona/meeting/persistence.py src/sona/meeting/session.py \
   tests/test_meeting_finalization.py tests/test_meeting_session.py tests/test_meeting_recovery.py
 git commit -m "refactor: isolate meeting transcript persistence"
 ```
@@ -204,8 +204,8 @@ git commit -m "refactor: isolate meeting transcript persistence"
 
 **Files:**
 
-- Create: `src/voice_realtime/meeting/finalization.py`
-- Modify: `src/voice_realtime/meeting/session.py`
+- Create: `src/sona/meeting/finalization.py`
+- Modify: `src/sona/meeting/session.py`
 - Modify: `tests/test_meeting_finalization.py`
 - Modify: `tests/test_meeting_session.py`
 
@@ -262,10 +262,10 @@ typed timeout 从 exception 读取 `last_window` 后执行同样的 persist/repl
 
 ```bash
 uv run --extra dev pytest tests/test_meeting_finalization.py tests/test_meeting_session.py tests/test_runtime_mode.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/meeting/finalization.py src/voice_realtime/meeting/session.py \
+uv run --extra dev ruff check src/sona/meeting/finalization.py src/sona/meeting/session.py \
   tests/test_meeting_finalization.py tests/test_meeting_session.py
-uv run --extra dev mypy src/voice_realtime/meeting
-git add src/voice_realtime/meeting/finalization.py src/voice_realtime/meeting/session.py \
+uv run --extra dev mypy src/sona/meeting
+git add src/sona/meeting/finalization.py src/sona/meeting/session.py \
   tests/test_meeting_finalization.py tests/test_meeting_session.py tests/test_runtime_mode.py
 git commit -m "refactor: isolate meeting finalization"
 ```
@@ -274,9 +274,9 @@ git commit -m "refactor: isolate meeting finalization"
 
 **Files:**
 
-- Modify: `src/voice_realtime/meeting/session.py`
-- Modify: `src/voice_realtime/meeting/runtime_mode.py`
-- Modify: `src/voice_realtime/meeting/repository.py`
+- Modify: `src/sona/meeting/session.py`
+- Modify: `src/sona/meeting/runtime_mode.py`
+- Modify: `src/sona/meeting/repository.py`
 - Modify: `tests/test_runtime_mode.py`
 - Modify: `tests/test_meeting_repository.py`
 
@@ -301,14 +301,14 @@ def _validate_bounded_text(value: str, *, label: str) -> str:
 - [ ] **Step 3: 运行数据库与 runtime 回归并提交**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_meeting_repository.py tests/test_meeting_session.py tests/test_meeting_recovery.py \
   tests/test_meeting_finalization.py tests/test_runtime_mode.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/meeting tests/test_meeting_repository.py tests/test_runtime_mode.py
+uv run --extra dev ruff check src/sona/meeting tests/test_meeting_repository.py tests/test_runtime_mode.py
 uv run --extra dev mypy src
 git diff --check
-git add src/voice_realtime/meeting/session.py src/voice_realtime/meeting/runtime_mode.py \
-  src/voice_realtime/meeting/repository.py tests/test_runtime_mode.py tests/test_meeting_repository.py
+git add src/sona/meeting/session.py src/sona/meeting/runtime_mode.py \
+  src/sona/meeting/repository.py tests/test_runtime_mode.py tests/test_meeting_repository.py
 git commit -m "refactor: type meeting lifecycle boundaries"
 ```
 
@@ -317,7 +317,7 @@ git commit -m "refactor: type meeting lifecycle boundaries"
 - [ ] **Step 1: 运行会议聚焦矩阵**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_meeting_ports.py tests/test_meeting_finalization.py tests/test_meeting_session.py \
   tests/test_meeting_repository.py tests/test_meeting_recovery.py tests/test_meeting_api.py \
   tests/test_runtime_mode.py tests/test_ui_server.py -q --no-cov

@@ -9,7 +9,7 @@ date: 2026-09-01
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - documentation
   - index
@@ -27,8 +27,8 @@ tags:
 以下规则优先于历史方案、评测记录和早期实现说明：
 
 - ASR 与 TTS 的模型、profile、进程和健康状态均由独立 SpeechRail 服务管理，默认地址为 `127.0.0.1:8201`。
-- `voice-realtime` 只通过 SpeechRail Realtime v2 / REST 客户端消费能力：字幕与会议使用 ASR Realtime v2，语音助手使用 SpeechRail STT/TTS 与 LM Studio；仓库内不再运行本地 ASR/TTS worker、WhisperLiveKit 或旧 TTS bridge。
-- `scripts/run-all.sh` 只启动 `vr-ui`；SpeechRail 必须单独启动并准备所需 snapshot/profile。Realtime v2 当前为不可透明恢复的会话，断线后由应用创建新会话并执行 source epoch/窗口对账。
+- `sona` 只通过 SpeechRail **OpenAI Realtime (`/v1/realtime`) / REST** 客户端消费能力：字幕与会议使用 ASR OpenAI Realtime，语音助手使用 SpeechRail STT/TTS 与 LM Studio；仓库内不再运行本地 ASR/TTS worker、WhisperLiveKit 或旧 TTS bridge。
+- `scripts/run-all.sh` 只启动 `sona-ui`；SpeechRail 必须单独启动并准备所需 snapshot/profile。Realtime 当前为不可透明恢复的会话，断线后由应用创建新会话并执行 source epoch/窗口对账。
 - 会议分人使用 SpeechRail diarization 的匿名 speaker group，应用侧仅负责平滑、会议作用域 remap 和持久化映射；本仓库不再运行本地 CAM++/AHC 声纹运行时。
 - “当前已实现”与“外部 SpeechRail 部署/模型的真实端到端验收”分开记录；未完成外部服务验收的内容不得写成已验证基线。
 
@@ -68,10 +68,10 @@ docs/
 │   └── Fun-ASR与现有ASR后端科学对比测试方案.md # SpeechRail 迁移前的 ASR 序贯盲测历史报告 (v1.3)
 │
 ├── manuals/                               # 📖 开发对接与运行手册
-│   ├── SpeechRail-Realtime-v2-语音转文字开发对接手册.md # 当前 SpeechRail Realtime v2 / REST 流式与文件转写对接接口手册
+│   ├── SpeechRail-Realtime-v2-语音转文字开发对接手册.md # SpeechRail Realtime v2 对接手册（已归档；当前基线为 OpenAI `/v1/realtime`）
 │   ├── Qwen3-ASR-实时语音转文字开发对接手册.md # 历史兼容入口（已归档）
 │   ├── 会议助手后端运行与前后端联调.md     # PostgreSQL环境准备、后端启动与前后端联调规范
-│   ├── Voice-Studio-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
+│   ├── Sona-UI-设计方案.md        # 前端控制台架构设计、组件状态机与交互契约
 │   └── 物理输出音频采集验收手册.md         # Helper 自动化门禁、人工 capture 与设备矩阵验收
 │
 ├── operations/                            # 📋 协作交接、联调记录与排障分析
@@ -79,6 +79,7 @@ docs/
 │   ├── 会议助手前后端分离工作交接清单.md   # C0/B1/D1/F1/Q1 五类工作包交接清单与验收基准
 │   ├── 前后端接线验证记录-2026-08-26.md    # 2026-08-26 前后端联调接线验证记录
 │   ├── 联调记录模板.md                    # 标准前后端联调验收记录模板
+│   ├── SpeechRail-OpenAI标准协议功能需求交割单.md # sona→SpeechRail 的 OpenAI 标准协议功能需求交割单
 │   └── 语音交互打断后推理挂起故障排查与修复方案.md # Barge-in 打断导致 LM Studio 挂起故障排障与修复
 │
 ├── decisions/                             # 📝 架构决策记录 (ADR-001 ~ ADR-012)
@@ -110,7 +111,7 @@ graph TD
     
     Role -->|系统架构 / 全局审计| Arc[1. 系统总体架构<br/>2. 决策记录 ADRs<br/>3. 工作负载仲裁]
     Role -->|后端研发| Be[1. 会议助手运行手册<br/>2. 架构详细设计<br/>3. 契约规范 contracts/]
-    Role -->|前端研发| Fe[1. Voice Studio UI 方案<br/>2. 前后端联调手册<br/>3. 转录体验优化方案]
+    Role -->|前端研发| Fe[1. Sona UI 方案<br/>2. 前后端联调手册<br/>3. 转录体验优化方案]
     Role -->|AI / 算法评测| Algo[1. 实时转录体验优化方案<br/>2. SpeechRail 对接契约<br/>3. 历史评测与基准]
     Role -->|QA / 发布联调| Qa[1. 接线验证记录<br/>2. 联调记录模板<br/>3. 交接清单]
 
@@ -135,7 +136,7 @@ graph TD
 |---|---|---|---|---|
 | [系统总体架构与详细设计方案](architecture/系统总体架构与详细设计方案.md) | 🟢 `active` | `architecture` | `v2.2` | **权威总体架构**：SpeechRail ASR/TTS 拓扑、分层架构、交互/字幕/会议/控制端到端时序与详细设计规范 |
 | [全链路语音交互与会议助手-技术方案与实施方案](architecture/全链路语音交互与会议助手-技术方案与实施方案.md) | 🟢 `active` | `architecture` | `v1.0.0` | **完整技术方案与实施路径**：SpeechRail 边界、断句/分人/对账、前沿调研、ROI 与阶段落地 |
-| [实时语音交互与字幕-方案与最佳实践](architecture/实时语音交互与字幕-方案与最佳实践.md) | 🟢 `active` | `architecture` | `v2.1` | SpeechRail Realtime v2 语音交互与字幕技术方案、单 PCM owner 仲裁契约及验收边界 |
+| [实时语音交互与字幕-方案与最佳实践](architecture/实时语音交互与字幕-方案与最佳实践.md) | 🟢 `active` | `architecture` | `v2.1` | SpeechRail OpenAI Realtime `/v1/realtime` 语音交互与字幕技术方案、单 PCM owner 仲裁契约及验收边界 |
 | [声学防回声与全双工交互设计方案](architecture/声学防回声与全双工交互设计方案.md) | 🟣 `implemented` | `architecture` | `v1.1` | 后端 L1/L2 防回声与 SubtitleProxy 音频门控；UI 融合仍标注为后续设计项 |
 
 ### 2. 专项技术方案与深度设计 (`docs/solutions/`)
@@ -150,10 +151,10 @@ graph TD
 
 | 文档名称 | 状态 | 类型 | 版本 | 核心内容与设计要点 |
 |---|---|---|---|---|
-| [SpeechRail Realtime v2 语音转文字开发对接手册](manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md) | 🟢 `active` | `manual` | `v2.0` | **SpeechRail Realtime v2 开发对接手册**：WebSocket / REST 音频流式与文件转写对接指南 |
+| [SpeechRail Realtime v2 语音转文字开发对接手册](manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md) | 📦 `archived` | `manual` | `v2.0` | **历史**：SpeechRail Realtime v2 对接手册；已被 OpenAI `/v1/realtime` 基线取代，当前基线见[功能需求交割单](operations/SpeechRail-OpenAI标准协议功能需求交割单.md) |
 | [会议助手后端运行与前后端联调手册](manuals/会议助手后端运行与前后端联调.md) | 🟢 `active` | `manual` | `v1.1` | SpeechRail 独立依赖、会议运行手册、PostgreSQL 数据库准备、接口定义与前后端联调规范 |
-| [Voice Studio UI 设计方案](manuals/Voice-Studio-UI-设计方案.md) | 🟢 `active` | `guide` | `v1.1` | 前端控制台架构设计、SpeechRail 事件展示、单源麦克风控制面、组件状态机与交互契约 |
-| [Voice Studio 会议助手『内心 OS』前端 UI/UX 设计方案](manuals/Voice-Studio-会议助手-内心OS-UI-UX-设计方案.md) | 🟢 `active` | `specification` | `v1.0` | **内心 OS 专属设计方案**：私密副驾驶信息架构、事实/判断/草稿三层卡片、证据定位与状态机 |
+| [Sona UI 设计方案](manuals/Sona-UI-设计方案.md) | 🟢 `active` | `guide` | `v1.1` | 前端控制台架构设计、SpeechRail 事件展示、单源麦克风控制面、组件状态机与交互契约 |
+| [Sona 会议助手『内心 OS』前端 UI/UX 设计方案](manuals/Sona-会议助手-内心OS-UI-UX-设计方案.md) | 🟢 `active` | `specification` | `v1.0` | **内心 OS 专属设计方案**：私密副驾驶信息架构、事实/判断/草稿三层卡片、证据定位与状态机 |
 | [物理输出音频采集验收手册](manuals/物理输出音频采集验收手册.md) | 🟠 `under_review` | `manual` | `v1.0` | 物理输出 Helper 自动化门禁、显式 30 秒 capture、隐私边界与全设备矩阵 |
 
 ### 4. 协作交接、联调记录与排障 (`docs/operations/`)
@@ -164,13 +165,14 @@ graph TD
 | [会议助手前后端分离工作交接清单](operations/会议助手前后端分离工作交接清单.md) | 🟡 `completed` | `guide` | `v1.1` | C0/B1/D1/F1/Q1 五类工作包交接资料、SpeechRail 依赖边界、验收物与交接清单 |
 | [前后端接线验证记录 (2026-08-26)](operations/前后端接线验证记录-2026-08-26.md) | 🟡 `completed` | `test_record` | `v1.0` | 会议助手前后端分离接线联调验证记录、测试结果矩阵与验收结论 |
 | [会议助手前后端分离联调记录模板](operations/联调记录模板.md) | ⚪ `template` | `template` | `v1.0` | 每次契约/后端/前端版本发布前执行联调验收的标准记录模板 |
+| [SpeechRail-OpenAI标准协议功能需求交割单](operations/SpeechRail-OpenAI标准协议功能需求交割单.md) | ✅ `completed` | `technical_spec` | `v1.0` | **sona → SpeechRail 交割单**：OpenAI 兼容实时协议已覆盖流式 ASR 分人/TTS/取消/EOF，`/v2/realtime` 已移除 |
 | [语音交互打断后推理挂起故障排查与修复方案](operations/语音交互打断后推理挂起故障排查与修复方案.md) | 🟣 `implemented` | `postmortem` | `v1.1` | SpeechRail 迁移前发生的 Barge-in 故障记录；EchoState、取消与状态机修复仍适用于当前链路 |
 
 ### 5. 架构决策记录 (`docs/decisions/`)
 
 | ADR 编号 | 决策标题 | 状态 | 日期 | 核心决策要点 |
 |---|---|---|---|---|
-| [ADR-001](decisions/0001-single-owner-interaction-runtime.md) | 交互管道采用单一所有者运行时 | 🔵 `accepted` | 2026-08-20 | `vr-ui` 为交互管道唯一所有者，`vr-interact` 为互斥 headless 替代入口 |
+| [ADR-001](decisions/0001-single-owner-interaction-runtime.md) | 交互管道采用单一所有者运行时 | 🔵 `accepted` | 2026-08-20 | `sona-ui` 为交互管道唯一所有者，`sona-interact` 为互斥 headless 替代入口 |
 | [ADR-002](decisions/0002-lm-studio-stateful-chat-context.md) | LM Studio 交互上下文采用原生有状态会话链 | 🔵 `accepted` | 2026-08-21 | 废弃 OpenAI 兼容端点，改用原生 `/api/v1/chat` + `reasoning: "off"` |
 | [ADR-003](decisions/0003-lm-studio-context-compaction.md) | LM Studio 长会话采用结构化记忆预热与原子换链 | 🔵 `accepted` | 2026-08-21 | 基于输入 token 与 TTFT 动态监控，结构化摘要预热新链并原子换链 |
 | [ADR-004](decisions/0004-asr-sequential-evaluation.md) | ASR 选型采用两阶段序贯盲测与 Finalist-Only 验收 | 🔵 `accepted` | 2026-08-24 | SpeechRail 迁移前的评测流程决策；当前运行时选型以 ADR-0011 为准 |
@@ -180,8 +182,8 @@ graph TD
 | [ADR-008](decisions/0008-speaker-diarization-and-voiceprint-clustering.md) | 会议模式多说话人精准识别与声纹聚类 | 🔵 `accepted` | 2026-08-27 | 历史本地 CAM++/AHC 方案；当前运行时由 ADR-0011 的 SpeechRail diarization 路径替代 |
 | [ADR-009](decisions/0009-shared-local-inference-platform.md) | LM Studio 原生协议与本地推理准入采用跨业务公共层 | 🔵 `accepted` | 2026-08-27 | 统一 SSE 语义、配置所有权、优先级调度和 Inner OS 边界 |
 | [ADR-010](decisions/0010-physical-output-audio-capture.md) | 本地物理输出音频采用设备绑定的 Core Audio Tap 原生采集 | 🔵 `accepted` | 2026-08-31 | 原生 Helper、设备级作用域、双源混音与单 PCM 推理所有者 |
-| [ADR-011](decisions/0011-speechrail-only-asr.md) | ASR 运行时统一由 SpeechRail 提供 | 🔵 `accepted` | 2026-08-31 | 移除本地 ASR worker/WhisperLiveKit；字幕、会议与交互统一使用 SpeechRail Realtime v2 |
-| [ADR-012](decisions/0012-speechrail-realtime-tts.md) | TTS 运行时统一由 SpeechRail Realtime v2 提供 | 🔵 `accepted` | 2026-09-01 | 移除旧 TTS bridge 与本地 TTS 运行时，应用负责播放、取消和回声状态协调 |
+| [ADR-011](decisions/0011-speechrail-only-asr.md) | ASR 运行时统一由 SpeechRail 提供 | 🔵 `accepted` | 2026-08-31 | 移除本地 ASR worker/WhisperLiveKit；字幕、会议与交互统一使用 SpeechRail OpenAI Realtime `/v1/realtime` |
+| [ADR-012](decisions/0012-speechrail-realtime-tts.md) | TTS 运行时统一由 SpeechRail 提供 | 🔵 `accepted` | 2026-09-01 | 移除旧 TTS bridge 与本地 TTS 运行时，应用负责播放、取消和回声状态协调 |
 
 ### 6. 历史计划与设计规格归档 (`docs/superpowers/`)
 
@@ -213,12 +215,12 @@ date: 2026-08-27        # 创建日期
 last_updated: 2026-08-27# 最后维护日期
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
-  - voice-realtime
+  - sona
   - keyword1
 scope:
-  - "voice_realtime.module"
+  - "sona.module"
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
 contracts:              # 若涉及前后端或外部通信协议

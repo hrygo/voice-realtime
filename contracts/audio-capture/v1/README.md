@@ -1,6 +1,6 @@
 # Audio Capture IPC v1
 
-该契约定义 `vr-audio-capture.app` 与本机 Python 进程之间的唯一 wire protocol。传输仅允许用户私有 Unix Domain Socket；所有多字节整数均为 big-endian。
+该契约定义 `sona-audio-capture.app` 与本机 Python 进程之间的唯一 wire protocol。传输仅允许用户私有 Unix Domain Socket；所有多字节整数均为 big-endian。
 
 ## 公共前缀
 

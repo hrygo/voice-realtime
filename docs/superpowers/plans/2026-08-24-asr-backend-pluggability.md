@@ -9,7 +9,7 @@ date: 2026-08-24
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - asr
@@ -40,7 +40,7 @@ tags:
 - 麦克风仍由 `AudioHub` 单源采集；助手和会议录音继续互斥。
 - 会议不保存音频、不写 `runtime/subtitles/current.srt`；PostgreSQL 仍是 confirmed 文本唯一事实源。
 - 保留 `EchoSuppressionProcessor` 与 `SelfEchoFilter` 双层回声防线。
-- 不修改 vendor 子仓库来伪装统一接口；差异由 `src/voice_realtime/asr/adapters/` 吸收。
+- 不修改 vendor 子仓库来伪装统一接口；差异由 `src/sona/asr/adapters/` 吸收。
 - 默认后端保持 `wlk-qwen3-streaming` 和 Pipecat SenseVoice，直到科学对比门禁通过。
 - 活动会话内不支持热切换。
 
@@ -49,13 +49,13 @@ tags:
 ### Task 1: 冻结 ASR 领域契约
 
 **Files:**
-- Create: `src/voice_realtime/asr/__init__.py`
-- Create: `src/voice_realtime/asr/contracts.py`
+- Create: `src/sona/asr/__init__.py`
+- Create: `src/sona/asr/contracts.py`
 - Create: `tests/asr/test_contracts.py`
 
 **Interfaces:**
 - Produces: `ASRCapabilities`、`ASREvent`、`StreamingTranscriber`、`ConversationSTTFactory`。
-- Consumes: `voice_realtime.meeting.models.TranscriptWindow`。
+- Consumes: `sona.meeting.models.TranscriptWindow`。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -83,7 +83,7 @@ def test_error_event_requires_code_and_message() -> None:
 
 Run: `uv run pytest tests/asr/test_contracts.py -q --no-cov`
 
-Expected: import 因 `voice_realtime.asr.contracts` 不存在而失败。
+Expected: import 因 `sona.asr.contracts` 不存在而失败。
 
 - [ ] **Step 3: 实现最小契约**
 
@@ -99,18 +99,18 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr tests/asr/test_contracts.py
+git add src/sona/asr tests/asr/test_contracts.py
 git commit -m "feat(asr): 定义统一后端能力与事件契约"
 ```
 
 ### Task 2: 用 WLK 适配器平移现有协议
 
 **Files:**
-- Create: `src/voice_realtime/asr/adapters/__init__.py`
-- Create: `src/voice_realtime/asr/adapters/wlk.py`
-- Create: `src/voice_realtime/asr/presenters.py`
-- Modify: `src/voice_realtime/subtitles/events.py`
-- Modify: `src/voice_realtime/meeting/transcript.py`
+- Create: `src/sona/asr/adapters/__init__.py`
+- Create: `src/sona/asr/adapters/wlk.py`
+- Create: `src/sona/asr/presenters.py`
+- Modify: `src/sona/subtitles/events.py`
+- Modify: `src/sona/meeting/transcript.py`
 - Create: `tests/asr/test_wlk_adapter.py`
 - Modify: `tests/test_subtitles.py`
 - Modify: `tests/test_meeting_transcript.py`
@@ -150,23 +150,23 @@ Expected: PASS，golden fixture 字段逐项一致。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr/adapters src/voice_realtime/subtitles/events.py src/voice_realtime/meeting/transcript.py tests/asr tests/test_subtitles.py tests/test_meeting_transcript.py
+git add src/sona/asr/adapters src/sona/subtitles/events.py src/sona/meeting/transcript.py tests/asr tests/test_subtitles.py tests/test_meeting_transcript.py
 git commit -m "refactor(asr): 隔离 WhisperLiveKit 协议适配"
 ```
 
 ### Task 3: 增加判别配置、能力校验与注册表
 
 **Files:**
-- Create: `src/voice_realtime/asr/profiles.py`
-- Create: `src/voice_realtime/asr/registry.py`
-- Modify: `src/voice_realtime/config.py`
+- Create: `src/sona/asr/profiles.py`
+- Create: `src/sona/asr/registry.py`
+- Modify: `src/sona/config.py`
 - Create: `tests/asr/test_profiles.py`
 - Create: `tests/asr/test_registry.py`
 - Modify: `tests/test_config.py`
 
 **Interfaces:**
 - Produces: `ASRProfile` 判别联合和 `ASRBackendRegistry.create_streaming(profile)`。
-- Preserves: `VR_SUBTITLE_BACKEND=qwen3-streaming|funasr|auto` 兼容输入。
+- Preserves: `SONA_SUBTITLE_BACKEND=qwen3-streaming|funasr|auto` 兼容输入。
 
 - [ ] **Step 1: 写配置与注册失败测试**
 
@@ -204,16 +204,16 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr src/voice_realtime/config.py tests/asr tests/test_config.py
+git add src/sona/asr src/sona/config.py tests/asr tests/test_config.py
 git commit -m "feat(asr): 增加后端配置与注册表"
 ```
 
 ### Task 4: 让 SubtitleProxy 和 UIRuntime 依赖接口
 
 **Files:**
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
+- Modify: `src/sona/ui/runtime.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_subtitle_proxy.py`
 - Modify: `tests/test_runtime.py`
 - Modify: `tests/test_ui_server.py`
@@ -248,19 +248,19 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/ui tests/test_subtitle_proxy.py tests/test_runtime.py tests/test_ui_server.py tests/test_meeting_session.py
+git add src/sona/ui tests/test_subtitle_proxy.py tests/test_runtime.py tests/test_ui_server.py tests/test_meeting_session.py
 git commit -m "refactor(asr): 通过统一接口注入字幕后端"
 ```
 
 ### Task 5: 建立可复现实验 runner
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/__init__.py`
-- Create: `src/voice_realtime/benchmarks/asr/__init__.py`
-- Create: `src/voice_realtime/benchmarks/asr/manifest.py`
-- Create: `src/voice_realtime/benchmarks/asr/replay.py`
-- Create: `src/voice_realtime/benchmarks/asr/metrics.py`
-- Create: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/benchmarks/__init__.py`
+- Create: `src/sona/benchmarks/asr/__init__.py`
+- Create: `src/sona/benchmarks/asr/manifest.py`
+- Create: `src/sona/benchmarks/asr/replay.py`
+- Create: `src/sona/benchmarks/asr/metrics.py`
+- Create: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/benchmarks/test_asr_manifest.py`
 - Create: `tests/benchmarks/test_asr_replay.py`
 - Create: `tests/benchmarks/test_asr_metrics.py`
@@ -301,17 +301,17 @@ Expected: PASS。
 - [x] **Step 6: 提交**
 
 ```bash
-git add src/voice_realtime/benchmarks tests/benchmarks pyproject.toml
+git add src/sona/benchmarks tests/benchmarks pyproject.toml
 git commit -m "feat(asr): 增加可复现对比测试运行器"
 ```
 
 ### Task 6: 接入 Fun-ASR-Nano 官方 WebSocket 候选
 
 **Files:**
-- Create: `src/voice_realtime/asr/adapters/funasr_nano_ws.py`
-- Modify: `src/voice_realtime/asr/profiles.py`
-- Modify: `src/voice_realtime/asr/defaults.py`
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Create: `src/sona/asr/adapters/funasr_nano_ws.py`
+- Modify: `src/sona/asr/profiles.py`
+- Modify: `src/sona/asr/defaults.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Create: `tests/asr/test_funasr_nano_ws_adapter.py`
 - Create: `tests/asr/test_defaults.py`
 - Modify: `tests/asr/test_profiles.py`
@@ -354,10 +354,10 @@ git commit -m "feat(asr): 接入 Fun-ASR 并规范模型缓存"
 ### Task 7: 抽离交互助手 STT 工厂
 
 **Files:**
-- Create: `src/voice_realtime/asr/adapters/pipecat_sensevoice.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
-- Modify: `src/voice_realtime/interaction/session.py`
-- Modify: `src/voice_realtime/config.py`
+- Create: `src/sona/asr/adapters/pipecat_sensevoice.py`
+- Modify: `src/sona/interaction/pipeline.py`
+- Modify: `src/sona/interaction/session.py`
+- Modify: `src/sona/config.py`
 - Modify: `tests/test_pipeline.py`
 - Modify: `tests/test_interaction_session.py`
 - Modify: `tests/test_config.py`
@@ -391,7 +391,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr/adapters/pipecat_sensevoice.py src/voice_realtime/interaction src/voice_realtime/config.py tests/test_pipeline.py tests/test_interaction_session.py tests/test_config.py
+git add src/sona/asr/adapters/pipecat_sensevoice.py src/sona/interaction src/sona/config.py tests/test_pipeline.py tests/test_interaction_session.py tests/test_config.py
 git commit -m "refactor(asr): 抽离交互助手 STT 工厂"
 ```
 
@@ -402,10 +402,10 @@ git commit -m "refactor(asr): 抽离交互助手 STT 工厂"
 没有生产需求支撑的 supervisor、切换事务或 UI/API 切换入口。以下步骤仅保留为历史计划，不执行。
 
 **Files:**
-- Create: `src/voice_realtime/asr/switching.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
-- Modify: `src/voice_realtime/ui/protocol.py`
-- Modify: `src/voice_realtime/ui/control.py`
+- Create: `src/sona/asr/switching.py`
+- Modify: `src/sona/ui/runtime.py`
+- Modify: `src/sona/ui/protocol.py`
+- Modify: `src/sona/ui/control.py`
 - Create: `tests/asr/test_switching.py`
 - Modify: `tests/test_runtime_mode.py`
 - Modify: `tests/test_control.py`
@@ -439,7 +439,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/voice_realtime/asr/switching.py src/voice_realtime/ui tests/asr/test_switching.py tests/test_runtime_mode.py tests/test_control.py tests/test_ui_server.py
+git add src/sona/asr/switching.py src/sona/ui tests/asr/test_switching.py tests/test_runtime_mode.py tests/test_control.py tests/test_ui_server.py
 git commit -m "feat(asr): 增加空闲态后端冷切换"
 ```
 
@@ -462,7 +462,7 @@ git commit -m "feat(asr): 增加空闲态后端冷切换"
 Run:
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 cd ui && npm test -- --run

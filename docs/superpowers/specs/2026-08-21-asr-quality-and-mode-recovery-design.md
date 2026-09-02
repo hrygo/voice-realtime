@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - qwen3-asr
   - whisperlivekit
@@ -53,7 +53,7 @@ tags:
 
 ### 2. 单一本地模型解析边界
 
-新增 `voice_realtime.model_cache.resolve_model_snapshot()`：
+新增 `sona.model_cache.resolve_model_snapshot()`：
 
 - 已存在的本地文件或目录原样返回。
 - 仓库 ID 通过 `huggingface_hub.snapshot_download()` 解析。

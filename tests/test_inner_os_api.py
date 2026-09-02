@@ -6,8 +6,8 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from voice_realtime.meeting.api import MeetingAPIError, _meeting_error_handler
-from voice_realtime.meeting.inner_os.api import install_inner_os_api
+from sona.meeting.api import MeetingAPIError, _meeting_error_handler
+from sona.meeting.inner_os.api import install_inner_os_api
 
 MEETING_ID = UUID("00000000-0000-0000-0000-000000000001")
 EXCHANGE_ID = UUID("00000000-0000-0000-0000-000000000002")

@@ -1,5 +1,5 @@
 ---
-title: "Voice Studio 会议助手‘内心 OS’设计规格"
+title: "Sona 会议助手‘内心 OS’设计规格"
 description: "本地私密会议副驾驶的证据问答、发言草稿、持久化契约、产品门禁与迭代路线设计"
 status: under_review
 type: technical_spec
@@ -9,7 +9,7 @@ date: 2026-08-27
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - meeting-assistant
   - inner-os
@@ -17,20 +17,20 @@ tags:
   - privacy
   - evidence-grounded-ai
 scope:
-  - "voice_realtime.meeting"
-  - "voice_realtime.ui"
+  - "sona.meeting"
+  - "sona.ui"
   - "ui.features.innerOS"
 related_documents:
   - "docs/superpowers/specs/2026-08-21-meeting-assistant-design.md"
   - "docs/architecture/全链路语音交互与会议助手-技术方案与实施方案.md"
-  - "docs/manuals/Voice-Studio-UI-设计方案.md"
+  - "docs/manuals/Sona-UI-设计方案.md"
   - "docs/decisions/0005-server-side-runtime-workload-arbitration.md"
   - "docs/decisions/0007-bounded-meeting-summary-generation.md"
 contracts:
   - "contracts/meeting-assistant/v1/"
 ---
 
-# Voice Studio 会议助手“内心 OS”设计规格
+# Sona 会议助手“内心 OS”设计规格
 
 ## 1. 文档状态
 
@@ -179,7 +179,7 @@ InnerOSPanel ──连接私有 WS──► InnerOSQueryService ──同一连�
 ### 6.1 会议开始与临时背景
 
 1. 会议进入 `recording` 后，前端显示“内心 OS · 仅你可见”。
-2. “仅你可见”的承诺只在 loopback 单用户边界内成立；`VR_BIND_HOST=lan` 或 `0.0.0.0` 时服务端拒绝启用首版 Inner OS，并返回稳定配置错误。
+2. “仅你可见”的承诺只在 loopback 单用户边界内成立；`SONA_BIND_HOST=lan` 或 `0.0.0.0` 时服务端拒绝启用首版 Inner OS，并返回稳定配置错误。
 3. 用户可以填写目标、议程和背景；内容只保存在当前 `InnerOSPanel` 组件内存，不写入 localStorage、Zustand persist、服务端会话或数据库。
 4. 用户修改背景时由前端递增 `context_version`；提交问题时把规范化背景、版本和是否为空随请求发送，服务端只复制到该次不可变快照。
 5. 刷新页面、会议结束或用户清空内容时，临时背景被清除；服务端不提供恢复接口。
@@ -494,7 +494,7 @@ inner_os_private_channel_required
 | ASR 非劣 | 不新增 transcription gap，confirmed 延迟 p95 相对基线退化 ≤ 10% |
 | 缓存 | 条数、总字节和 TTL 三项上限均可观测且测试覆盖 |
 
-任何硬门禁失败时 `VR_MEETING_INNER_OS_ENABLED` 必须保持默认关闭；不得仅凭平均值或单次冒烟开启。
+任何硬门禁失败时 `SONA_MEETING_INNER_OS_ENABLED` 必须保持默认关闭；不得仅凭平均值或单次冒烟开启。
 
 功能验收以以下结果为准：
 
@@ -528,8 +528,8 @@ inner_os_private_channel_required
 ## 14. 发布与回退
 
 - 新表和接口采用纯新增 migration；旧版本应用忽略新表，不需要破坏性降级。
-- 通过 `VR_MEETING_INNER_OS_ENABLED` 进行总开关控制，默认关闭，完成本机并发与隐私验收后再开启。
-- `VR_MEETING_INNER_OS_ANALYSIS_ENABLED` 独立控制 `analysis / mixed`，默认关闭；关闭时服务端必须返回 `inner_os_intent_disabled`，不能只依赖前端隐藏入口。
+- 通过 `SONA_MEETING_INNER_OS_ENABLED` 进行总开关控制，默认关闭，完成本机并发与隐私验收后再开启。
+- `SONA_MEETING_INNER_OS_ANALYSIS_ENABLED` 独立控制 `analysis / mixed`，默认关闭；关闭时服务端必须返回 `inner_os_intent_disabled`，不能只依赖前端隐藏入口。
 - 首版开关只有在 UI 和 API 实际绑定均为 loopback 时才可启用；检测到 LAN/全网卡绑定时 fail-closed。
 - 关闭开关只停止新问答入口，不删除已经保存的内心 OS 记录。
 - 不新增模型下载；沿用已验证的本地 LM Studio 模型和原生 API 通道，模型 ID、采样和预算均配置化。

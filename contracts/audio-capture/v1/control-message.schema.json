@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://voice-realtime.local/contracts/audio-capture/v1/control-message.schema.json",
+  "$id": "https://sona.local/contracts/audio-capture/v1/control-message.schema.json",
   "title": "Audio Capture IPC v1 control message",
   "oneOf": [
     { "$ref": "#/$defs/hello" },

@@ -30,11 +30,11 @@
 
 ### 新增文件
 
-- `src/voice_realtime/audio/frame.py`：统一格式、来源枚举、flags 与不可变 `AudioFrame`。
-- `src/voice_realtime/audio/profile.py`：严格 `CaptureProfile`、来源布局校验和 v1 `audio_source` 投影。
-- `src/voice_realtime/audio/source.py`：`AudioSource` Protocol、健康快照和 `MicrophoneSource` 适配器。
-- `src/voice_realtime/audio/router.py`：两阶段单来源路由、有界队列和丢帧诊断。
-- `src/voice_realtime/audio/levels.py`：PCM16 RMS 归一化、来源能量和发布节流。
+- `src/sona/audio/frame.py`：统一格式、来源枚举、flags 与不可变 `AudioFrame`。
+- `src/sona/audio/profile.py`：严格 `CaptureProfile`、来源布局校验和 v1 `audio_source` 投影。
+- `src/sona/audio/source.py`：`AudioSource` Protocol、健康快照和 `MicrophoneSource` 适配器。
+- `src/sona/audio/router.py`：两阶段单来源路由、有界队列和丢帧诊断。
+- `src/sona/audio/levels.py`：PCM16 RMS 归一化、来源能量和发布节流。
 - `tests/test_audio_frame.py`：帧与 profile 合法/非法边界。
 - `tests/test_audio_source.py`：麦克风来源状态机、时间戳和背压。
 - `tests/test_audio_router.py`：prepare/commit/abort、单来源传递与 bounded drop-oldest。
@@ -43,10 +43,10 @@
 
 ### 修改文件
 
-- `src/voice_realtime/audio/__init__.py`：导出稳定公共类型。
-- `src/voice_realtime/audio/hub.py`：只增加只读 `running` 状态，供适配器判断所有权。
-- `src/voice_realtime/ui/protocol.py`：新增默认安全的 `AudioLevelsSnapshot`。
-- `src/voice_realtime/ui/runtime.py`：增加实际 PCM level sink、节流广播与诊断。
+- `src/sona/audio/__init__.py`：导出稳定公共类型。
+- `src/sona/audio/hub.py`：只增加只读 `running` 状态，供适配器判断所有权。
+- `src/sona/ui/protocol.py`：新增默认安全的 `AudioLevelsSnapshot`。
+- `src/sona/ui/runtime.py`：增加实际 PCM level sink、节流广播与诊断。
 - `tests/test_audio_hub.py`：验证 `running` 生命周期。
 - `tests/test_runtime.py`：验证 level sink、snapshot 和静音广播。
 - `tests/test_control.py`：验证控制快照默认能量契约。
@@ -61,10 +61,10 @@
 ### Task 1: 统一 `AudioFrame` 与 `CaptureProfile`
 
 **Files:**
-- Create: `src/voice_realtime/audio/frame.py`
-- Create: `src/voice_realtime/audio/profile.py`
+- Create: `src/sona/audio/frame.py`
+- Create: `src/sona/audio/profile.py`
 - Create: `tests/test_audio_frame.py`
-- Modify: `src/voice_realtime/audio/__init__.py`
+- Modify: `src/sona/audio/__init__.py`
 
 **Interfaces:**
 - Produces: `AudioSourceKind`, `AudioSourceRole`, `AudioFrameFlag`, `AudioFrame`。
@@ -79,13 +79,13 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.audio.frame import (
+from sona.audio.frame import (
     AudioFrame,
     AudioFrameFlag,
     AudioSourceKind,
     AudioSourceRole,
 )
-from voice_realtime.audio.profile import CaptureProfile
+from sona.audio.profile import CaptureProfile
 
 
 def test_audio_frame_accepts_normalized_pcm() -> None:
@@ -155,7 +155,7 @@ def test_capture_profile_rejects_invalid_dual_layout() -> None:
 
 Run: `uv run pytest tests/test_audio_frame.py -q --no-cov`
 
-Expected: FAIL，提示 `voice_realtime.audio.frame` 尚不存在。
+Expected: FAIL，提示 `sona.audio.frame` 尚不存在。
 
 - [x] **Step 3: 实现不可变帧、枚举与严格 profile**
 
@@ -237,14 +237,14 @@ Expected: PASS，5 tests passed。
 
 - [x] **Step 5: 运行静态检查并提交**
 
-Run: `uv run mypy src/voice_realtime/audio/frame.py src/voice_realtime/audio/profile.py`
+Run: `uv run mypy src/sona/audio/frame.py src/sona/audio/profile.py`
 
-Run: `uv run ruff check src/voice_realtime/audio/frame.py src/voice_realtime/audio/profile.py tests/test_audio_frame.py`
+Run: `uv run ruff check src/sona/audio/frame.py src/sona/audio/profile.py tests/test_audio_frame.py`
 
 Commit:
 
 ```bash
-git add src/voice_realtime/audio/__init__.py src/voice_realtime/audio/frame.py src/voice_realtime/audio/profile.py tests/test_audio_frame.py
+git add src/sona/audio/__init__.py src/sona/audio/frame.py src/sona/audio/profile.py tests/test_audio_frame.py
 git commit -m "feat(audio): 建立统一音频帧与采集配置"
 ```
 
@@ -253,10 +253,10 @@ git commit -m "feat(audio): 建立统一音频帧与采集配置"
 ### Task 2: `AudioSource` 生命周期与麦克风适配器
 
 **Files:**
-- Create: `src/voice_realtime/audio/source.py`
+- Create: `src/sona/audio/source.py`
 - Create: `tests/test_audio_source.py`
-- Modify: `src/voice_realtime/audio/hub.py`
-- Modify: `src/voice_realtime/audio/__init__.py`
+- Modify: `src/sona/audio/hub.py`
+- Modify: `src/sona/audio/__init__.py`
 - Modify: `tests/test_audio_hub.py`
 
 **Interfaces:**
@@ -272,8 +272,8 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.audio.hub import AudioHub
-from voice_realtime.audio.source import AudioSourceState, MicrophoneSource
+from sona.audio.hub import AudioHub
+from sona.audio.source import AudioSourceState, MicrophoneSource
 
 
 async def test_microphone_source_prepare_commit_and_frame() -> None:
@@ -328,7 +328,7 @@ async def test_microphone_source_rejects_commit_before_prepare() -> None:
 
 Run: `uv run pytest tests/test_audio_source.py -q --no-cov`
 
-Expected: FAIL，提示 `voice_realtime.audio.source` 尚不存在。
+Expected: FAIL，提示 `sona.audio.source` 尚不存在。
 
 - [x] **Step 3: 实现 Protocol、健康快照与麦克风适配器**
 
@@ -403,14 +403,14 @@ Expected: PASS。
 
 - [x] **Step 5: 运行静态检查并提交**
 
-Run: `uv run mypy src/voice_realtime/audio/source.py src/voice_realtime/audio/hub.py`
+Run: `uv run mypy src/sona/audio/source.py src/sona/audio/hub.py`
 
-Run: `uv run ruff check src/voice_realtime/audio/source.py src/voice_realtime/audio/hub.py tests/test_audio_source.py tests/test_audio_hub.py`
+Run: `uv run ruff check src/sona/audio/source.py src/sona/audio/hub.py tests/test_audio_source.py tests/test_audio_hub.py`
 
 Commit:
 
 ```bash
-git add src/voice_realtime/audio/__init__.py src/voice_realtime/audio/hub.py src/voice_realtime/audio/source.py tests/test_audio_hub.py tests/test_audio_source.py
+git add src/sona/audio/__init__.py src/sona/audio/hub.py src/sona/audio/source.py tests/test_audio_hub.py tests/test_audio_source.py
 git commit -m "feat(audio): 增加麦克风音频源生命周期"
 ```
 
@@ -419,9 +419,9 @@ git commit -m "feat(audio): 增加麦克风音频源生命周期"
 ### Task 3: 两阶段有界 `AudioSourceRouter`
 
 **Files:**
-- Create: `src/voice_realtime/audio/router.py`
+- Create: `src/sona/audio/router.py`
 - Create: `tests/test_audio_router.py`
-- Modify: `src/voice_realtime/audio/__init__.py`
+- Modify: `src/sona/audio/__init__.py`
 
 **Interfaces:**
 - Consumes: `CaptureProfile`、`AudioSource`、`AudioFrame`。
@@ -438,10 +438,10 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.audio.frame import AudioFrame, AudioSourceKind, AudioSourceRole
-from voice_realtime.audio.profile import CaptureProfile
-from voice_realtime.audio.router import AudioSourceRouter, UnsupportedCaptureProfileError
-from voice_realtime.audio.source import AudioSourceHealth, AudioSourceState
+from sona.audio.frame import AudioFrame, AudioSourceKind, AudioSourceRole
+from sona.audio.profile import CaptureProfile
+from sona.audio.router import AudioSourceRouter, UnsupportedCaptureProfileError
+from sona.audio.source import AudioSourceHealth, AudioSourceState
 
 
 VALID_DUAL = {
@@ -541,7 +541,7 @@ async def test_router_drops_oldest_without_growing_queue() -> None:
 
 Run: `uv run pytest tests/test_audio_router.py -q --no-cov`
 
-Expected: FAIL，提示 `voice_realtime.audio.router` 尚不存在。
+Expected: FAIL，提示 `sona.audio.router` 尚不存在。
 
 - [x] **Step 3: 实现 prepare/commit/abort/stop 与 pump**
 
@@ -642,14 +642,14 @@ Expected: PASS。
 
 - [x] **Step 5: 运行静态检查并提交**
 
-Run: `uv run mypy src/voice_realtime/audio/`
+Run: `uv run mypy src/sona/audio/`
 
-Run: `uv run ruff check src/voice_realtime/audio/ tests/test_audio_frame.py tests/test_audio_source.py tests/test_audio_router.py`
+Run: `uv run ruff check src/sona/audio/ tests/test_audio_frame.py tests/test_audio_source.py tests/test_audio_router.py`
 
 Commit:
 
 ```bash
-git add src/voice_realtime/audio/__init__.py src/voice_realtime/audio/router.py tests/test_audio_router.py
+git add src/sona/audio/__init__.py src/sona/audio/router.py tests/test_audio_router.py
 git commit -m "feat(audio): 建立两阶段有界来源路由"
 ```
 
@@ -658,11 +658,11 @@ git commit -m "feat(audio): 建立两阶段有界来源路由"
 ### Task 4: 服务端真实 PCM 能量与 runtime snapshot
 
 **Files:**
-- Create: `src/voice_realtime/audio/levels.py`
+- Create: `src/sona/audio/levels.py`
 - Create: `tests/test_audio_levels.py`
-- Modify: `src/voice_realtime/audio/__init__.py`
-- Modify: `src/voice_realtime/ui/protocol.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Modify: `src/sona/audio/__init__.py`
+- Modify: `src/sona/ui/protocol.py`
+- Modify: `src/sona/ui/runtime.py`
 - Modify: `tests/test_runtime.py`
 - Modify: `tests/test_control.py`
 
@@ -674,8 +674,8 @@ git commit -m "feat(audio): 建立两阶段有界来源路由"
 - [x] **Step 1: 写 PCM 能量失败测试**
 
 ```python
-from voice_realtime.audio.frame import AudioSourceKind
-from voice_realtime.audio.levels import AudioLevelMeter, pcm16_level
+from sona.audio.frame import AudioSourceKind
+from sona.audio.levels import AudioLevelMeter, pcm16_level
 
 
 def test_pcm16_level_maps_silence_to_zero() -> None:
@@ -709,7 +709,7 @@ def test_meter_mute_clears_microphone_and_mixed() -> None:
 
 Run: `uv run pytest tests/test_audio_levels.py -q --no-cov`
 
-Expected: FAIL，提示 `voice_realtime.audio.levels` 尚不存在。
+Expected: FAIL，提示 `sona.audio.levels` 尚不存在。
 
 - [x] **Step 3: 实现纯函数和节流 meter**
 
@@ -784,16 +784,16 @@ class RuntimeStateSnapshot(BaseModel):
 
 Run: `uv run pytest tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py -q --no-cov`
 
-Run: `uv run mypy src/voice_realtime/audio/levels.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/runtime.py`
+Run: `uv run mypy src/sona/audio/levels.py src/sona/ui/protocol.py src/sona/ui/runtime.py`
 
-Run: `uv run ruff check src/voice_realtime/audio/levels.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/runtime.py tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py`
+Run: `uv run ruff check src/sona/audio/levels.py src/sona/ui/protocol.py src/sona/ui/runtime.py tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py`
 
 Expected: 全部 exit 0。
 
 - [x] **Step 8: 提交服务端能量链路**
 
 ```bash
-git add src/voice_realtime/audio/__init__.py src/voice_realtime/audio/levels.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/runtime.py tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py
+git add src/sona/audio/__init__.py src/sona/audio/levels.py src/sona/ui/protocol.py src/sona/ui/runtime.py tests/test_audio_levels.py tests/test_runtime.py tests/test_control.py
 git commit -m "feat(ui): 广播服务端真实音频能量"
 ```
 
@@ -954,7 +954,7 @@ git commit -m "refactor(ui): 移除浏览器麦克风能量采集"
 
 - [x] **Step 1: 运行后端完整质量门禁**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Expected: 全部测试通过，分支覆盖率不低于 80%。
 

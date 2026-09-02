@@ -3,7 +3,7 @@ title: "前端共享 Helper 重构实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
 ---
@@ -22,7 +22,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 可独立执行，但不得与其他任务同时修改相同 UI 文件。
 - 真实路径是 `ui/src/App.tsx`、`ui/src/features/innerOS/InnerOSEvidenceItem.tsx` 和 `ui/src/components/meeting/*`；不存在 `ui/src/components/App.tsx` 或 `ui/src/components/InnerOSEvidenceItem.tsx`。
 - 当前存在三种必须显式保留的时间语义：App 的 seconds→累计分钟 `mm:ss`；Inner OS evidence 的 milliseconds→累计分钟 `mm:ss`；meeting/status 的 seconds→超过一小时显示 `hh:mm:ss`。

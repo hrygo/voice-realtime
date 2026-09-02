@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 下载 voice-realtime 自有的会议声纹模型（使用供应商标准外部缓存，不写入 Git 工作树）。
+# 下载 sona 自有的会议声纹模型（使用供应商标准外部缓存，不写入 Git 工作树）。
 # ASR/TTS 模型快照由 SpeechRail 独立配置和管理，本脚本不下载它们。
 set -euo pipefail
 cd "$(dirname "$0")/.."

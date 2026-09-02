@@ -12,21 +12,21 @@ import pytest
 from scripts import smoke_audio_capture_helper as smoke
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RESOURCE_DIR = PROJECT_ROOT / "native/vr-audio-capture/Resources"
+RESOURCE_DIR = PROJECT_ROOT / "native/sona-audio-capture/Resources"
 INFO_PLIST = RESOURCE_DIR / "Info.plist"
-ENTITLEMENTS = RESOURCE_DIR / "VRAudioCapture.entitlements"
+ENTITLEMENTS = RESOURCE_DIR / "SonaAudioCapture.entitlements"
 BUILD_SCRIPT = PROJECT_ROOT / "scripts/build-audio-capture-helper.sh"
 TEST_SCRIPT = PROJECT_ROOT / "scripts/test-audio-capture-helper.sh"
 SMOKE_SCRIPT = PROJECT_ROOT / "scripts/smoke_audio_capture_helper.py"
-APP_PATH = PROJECT_ROOT / "build/vr-audio-capture/vr-audio-capture.app"
+APP_PATH = PROJECT_ROOT / "build/sona-audio-capture/sona-audio-capture.app"
 
 
 def test_audio_capture_bundle_metadata_is_minimal_and_permission_scoped() -> None:
     with INFO_PLIST.open("rb") as file:
         info = plistlib.load(file)
 
-    assert info["CFBundleIdentifier"] == "local.voice-realtime.audio-capture"
-    assert info["CFBundleExecutable"] == "vr-audio-capture-helper"
+    assert info["CFBundleIdentifier"] == "local.sona.audio-capture"
+    assert info["CFBundleExecutable"] == "sona-audio-capture-helper"
     assert info["CFBundlePackageType"] == "APPL"
     assert info["LSMinimumSystemVersion"] == "14.2"
     assert info["LSUIElement"] is True
@@ -49,8 +49,8 @@ def test_audio_capture_build_and_test_scripts_enforce_release_contract() -> None
     assert TEST_SCRIPT.stat().st_mode & 0o111
     assert "-c release" in build_script
     assert "--options runtime" in build_script
-    assert "VR_AUDIO_CAPTURE_SIGNING_IDENTITY" in build_script
-    assert "VR_AUDIO_CAPTURE_CODESIGN_TIMESTAMP" in build_script
+    assert "SONA_AUDIO_CAPTURE_SIGNING_IDENTITY" in build_script
+    assert "SONA_AUDIO_CAPTURE_CODESIGN_TIMESTAMP" in build_script
     assert "Developer ID Application:" not in build_script
     assert "--verify --deep --strict" in test_script
     assert "com\\.apple\\.security\\.network" in test_script

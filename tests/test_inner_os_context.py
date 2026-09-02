@@ -2,8 +2,8 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.inner_os.context import build_context_snapshot
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptDocument
+from sona.meeting.inner_os.context import build_context_snapshot
+from sona.meeting.models import NormalizedSegment, TranscriptDocument
 
 MEETING_ID = UUID("11111111-1111-4111-8111-111111111111")
 SEGMENT_ID = UUID("11111111-1111-4111-8111-111111111112")

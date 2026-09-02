@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Protocol
 from uuid import UUID, uuid4
 
-from voice_realtime.meeting import ports
-from voice_realtime.meeting.models import (
+from sona.meeting import ports
+from sona.meeting.models import (
     MeetingPage,
     MeetingRecord,
     MeetingStatus,
@@ -23,7 +23,7 @@ from voice_realtime.meeting.models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
-from voice_realtime.meeting.ports import (
+from sona.meeting.ports import (
     CaptureFinalizationTimeout,
     CaptureFinalizationTimeoutError,
     CaptureGap,
@@ -38,7 +38,7 @@ from voice_realtime.meeting.ports import (
     SpeakerStore,
     TranscriptStore,
 )
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+from sona.ui.subtitle_proxy import SubtitleProxy
 
 
 def _window() -> TranscriptWindow:
@@ -347,12 +347,12 @@ def test_capture_value_types_are_aliased_by_proxy() -> None:
     assert ports.CaptureFinalizationTimeout is CaptureFinalizationTimeout
     assert CaptureFinalizationTimeout is CaptureFinalizationTimeoutError
     # proxy 兼容别名指向同一对象定义
-    assert SubtitleProxy.__module__ == "voice_realtime.ui.subtitle_proxy"
+    assert SubtitleProxy.__module__ == "sona.ui.subtitle_proxy"
 
 
 def test_proxy_capture_types_alias_ports() -> None:
-    from voice_realtime.ui import subtitle_proxy as proxy_module
-    from voice_realtime.ui import subtitle_sessions as sessions_module
+    from sona.ui import subtitle_proxy as proxy_module
+    from sona.ui import subtitle_sessions as sessions_module
 
     assert proxy_module.CapturePreparation is ports.CaptureLease
     assert proxy_module.TranscriptionGap is ports.CaptureGap

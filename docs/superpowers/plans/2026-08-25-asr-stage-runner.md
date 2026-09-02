@@ -9,7 +9,7 @@ date: 2026-08-25
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - asr
@@ -50,7 +50,7 @@ tags:
 或另一个 gate 并行：
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 cd ui && npm test -- --run
@@ -64,15 +64,15 @@ Expected: 后端测试全部通过且 branch coverage ≥80%；mypy/ruff 无错�
 
 | 路径 | 责任 |
 |:---|:---|
-| `src/voice_realtime/benchmarks/asr/stage_contracts.py` | Stage 输入、lineage、状态、gate、selection 与最终报告的不可变 schema |
-| `src/voice_realtime/benchmarks/asr/stage_inputs.py` | 显式输入 manifest 加载、项目外路径解析、字节/hash/时长验证和确定帧/action 流 |
-| `src/voice_realtime/benchmarks/asr/stage_artifacts.py` | 私有 run 目录、原子 snapshot、JSONL/CSV、失败保留和 `ArtifactIndex` 最终封存 |
-| `src/voice_realtime/benchmarks/asr/stage_executors.py` | `StageExecutor` Protocol、capabilities、observations 与显式 registry |
-| `src/voice_realtime/benchmarks/asr/stage_evaluators.py` | Screen/Confirm、Stage 3 checkpoint 与 Stage 5 纯函数 policy |
-| `src/voice_realtime/benchmarks/asr/stage_runner.py` | 唯一资源锁 owner、状态机、schedule/cursor、executor 生命周期、故障编排 |
-| `src/voice_realtime/benchmarks/asr/stage_decision.py` | 打开并验证封存制品、上游报告、finalist selection，生成 `StageDecisionReport` |
-| `src/voice_realtime/benchmarks/resource_lock.py` | 现有 flock 以及清理失败后的项目外 resource quarantine |
-| `src/voice_realtime/benchmarks/asr/cli.py` | `run-stage` 与 `decide-stage` 边界，不重复持锁 |
+| `src/sona/benchmarks/asr/stage_contracts.py` | Stage 输入、lineage、状态、gate、selection 与最终报告的不可变 schema |
+| `src/sona/benchmarks/asr/stage_inputs.py` | 显式输入 manifest 加载、项目外路径解析、字节/hash/时长验证和确定帧/action 流 |
+| `src/sona/benchmarks/asr/stage_artifacts.py` | 私有 run 目录、原子 snapshot、JSONL/CSV、失败保留和 `ArtifactIndex` 最终封存 |
+| `src/sona/benchmarks/asr/stage_executors.py` | `StageExecutor` Protocol、capabilities、observations 与显式 registry |
+| `src/sona/benchmarks/asr/stage_evaluators.py` | Screen/Confirm、Stage 3 checkpoint 与 Stage 5 纯函数 policy |
+| `src/sona/benchmarks/asr/stage_runner.py` | 唯一资源锁 owner、状态机、schedule/cursor、executor 生命周期、故障编排 |
+| `src/sona/benchmarks/asr/stage_decision.py` | 打开并验证封存制品、上游报告、finalist selection，生成 `StageDecisionReport` |
+| `src/sona/benchmarks/resource_lock.py` | 现有 flock 以及清理失败后的项目外 resource quarantine |
+| `src/sona/benchmarks/asr/cli.py` | `run-stage` 与 `decide-stage` 边界，不重复持锁 |
 | `tests/benchmarks/asr_stage_fakes.py` | 仅测试使用的 deterministic synthetic executor/policy 工具 |
 | `tests/benchmarks/test_asr_stage_*.py` | 对应模块的单元与合成集成测试 |
 | `docs/Fun-ASR与现有ASR后端科学对比测试方案.md` | 新 CLI、状态、制品和 synthetic 非正式边界 |
@@ -82,7 +82,7 @@ Expected: 后端测试全部通过且 branch coverage ≥80%；mypy/ruff 无错�
 ### Task 1: 扩展 Stage 执行与证据契约
 
 **Files:**
-- Modify: `src/voice_realtime/benchmarks/asr/stage_contracts.py`
+- Modify: `src/sona/benchmarks/asr/stage_contracts.py`
 - Modify: `tests/benchmarks/test_asr_stage_contracts.py`
 
 **Interfaces:**
@@ -342,18 +342,18 @@ Expected: PASS。
 
 - [ ] **Step 6: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_contracts.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_contracts.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_contracts.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_contracts.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 7: 运行 Mandatory Per-Commit Gate 并提交契约变更**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_contracts.py
+git add src/sona/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_contracts.py
 git commit -m "feat(asr): 扩展阶段执行契约"
 ```
 
@@ -362,7 +362,7 @@ git commit -m "feat(asr): 扩展阶段执行契约"
 ### Task 2: 验证并解析冻结 Stage 输入
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/stage_inputs.py`
+- Create: `src/sona/benchmarks/asr/stage_inputs.py`
 - Create: `tests/benchmarks/test_asr_stage_inputs.py`
 
 **Interfaces:**
@@ -527,7 +527,7 @@ def _interaction_fixture(
 
 Run: `uv run pytest tests/benchmarks/test_asr_stage_inputs.py -q`
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'voice_realtime.benchmarks.asr.stage_inputs'`。
+Expected: FAIL with `ModuleNotFoundError: No module named 'sona.benchmarks.asr.stage_inputs'`。
 
 - [ ] **Step 3: 实现显式 loader、外部路径和 PCM 校验**
 
@@ -723,18 +723,18 @@ Expected: PASS。
 
 - [ ] **Step 6: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_inputs.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_inputs.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_inputs.py tests/benchmarks/test_asr_stage_inputs.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_inputs.py tests/benchmarks/test_asr_stage_inputs.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 7: 运行 Mandatory Per-Commit Gate 并提交输入解析器**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_inputs.py tests/benchmarks/test_asr_stage_inputs.py
+git add src/sona/benchmarks/asr/stage_inputs.py tests/benchmarks/test_asr_stage_inputs.py
 git commit -m "feat(asr): 验证阶段冻结输入"
 ```
 
@@ -743,7 +743,7 @@ git commit -m "feat(asr): 验证阶段冻结输入"
 ### Task 3: 原子写入并封存 Stage 制品
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/stage_artifacts.py`
+- Create: `src/sona/benchmarks/asr/stage_artifacts.py`
 - Create: `tests/benchmarks/test_asr_stage_artifacts.py`
 
 **Interfaces:**
@@ -921,18 +921,18 @@ Expected: PASS。
 
 - [ ] **Step 6: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_artifacts.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_artifacts.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_artifacts.py tests/benchmarks/test_asr_stage_artifacts.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_artifacts.py tests/benchmarks/test_asr_stage_artifacts.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 7: 运行 Mandatory Per-Commit Gate 并提交 artifact writer**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_artifacts.py tests/benchmarks/test_asr_stage_artifacts.py
+git add src/sona/benchmarks/asr/stage_artifacts.py tests/benchmarks/test_asr_stage_artifacts.py
 git commit -m "feat(asr): 封存阶段运行制品"
 ```
 
@@ -941,7 +941,7 @@ git commit -m "feat(asr): 封存阶段运行制品"
 ### Task 4: 定义执行器、observation 与测试 registry
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/stage_executors.py`
+- Create: `src/sona/benchmarks/asr/stage_executors.py`
 - Create: `tests/benchmarks/asr_stage_fakes.py`
 - Create: `tests/benchmarks/test_asr_stage_executors.py`
 
@@ -1131,18 +1131,18 @@ Expected: PASS。
 
 - [ ] **Step 6: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_executors.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_executors.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_executors.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_executors.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_executors.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_executors.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 7: 运行 Mandatory Per-Commit Gate 并提交执行器接口**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_executors.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_executors.py
+git add src/sona/benchmarks/asr/stage_executors.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_executors.py
 git commit -m "feat(asr): 定义阶段执行器边界"
 ```
 
@@ -1151,9 +1151,9 @@ git commit -m "feat(asr): 定义阶段执行器边界"
 ### Task 5: 实现资源 quarantine 与核心 Screen/Confirm 状态机
 
 **Files:**
-- Modify: `src/voice_realtime/benchmarks/resource_lock.py`
-- Create: `src/voice_realtime/benchmarks/asr/stage_evaluators.py`
-- Create: `src/voice_realtime/benchmarks/asr/stage_runner.py`
+- Modify: `src/sona/benchmarks/resource_lock.py`
+- Create: `src/sona/benchmarks/asr/stage_evaluators.py`
+- Create: `src/sona/benchmarks/asr/stage_runner.py`
 - Modify: `tests/benchmarks/asr_stage_fakes.py`
 - Modify: `tests/benchmarks/test_resource_lock.py`
 - Create: `tests/benchmarks/test_asr_stage_runner.py`
@@ -1593,18 +1593,18 @@ Expected: PASS。
 
 - [ ] **Step 9: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_runner.py src/voice_realtime/benchmarks/asr/stage_evaluators.py src/voice_realtime/benchmarks/resource_lock.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_runner.py src/sona/benchmarks/asr/stage_evaluators.py src/sona/benchmarks/resource_lock.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_runner.py src/voice_realtime/benchmarks/asr/stage_evaluators.py src/voice_realtime/benchmarks/resource_lock.py tests/benchmarks/test_asr_stage_runner.py tests/benchmarks/test_resource_lock.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_runner.py src/sona/benchmarks/asr/stage_evaluators.py src/sona/benchmarks/resource_lock.py tests/benchmarks/test_asr_stage_runner.py tests/benchmarks/test_resource_lock.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 10: 运行 Mandatory Per-Commit Gate 并提交核心状态机**
 
 ```bash
-git add src/voice_realtime/benchmarks/resource_lock.py src/voice_realtime/benchmarks/asr/stage_evaluators.py src/voice_realtime/benchmarks/asr/stage_runner.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_resource_lock.py tests/benchmarks/test_asr_stage_runner.py
+git add src/sona/benchmarks/resource_lock.py src/sona/benchmarks/asr/stage_evaluators.py src/sona/benchmarks/asr/stage_runner.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_resource_lock.py tests/benchmarks/test_asr_stage_runner.py
 git commit -m "feat(asr): 实现阶段运行状态机"
 ```
 
@@ -1613,8 +1613,8 @@ git commit -m "feat(asr): 实现阶段运行状态机"
 ### Task 6: 编排 Stage 5 故障和 Stage 3/5 共用会话
 
 **Files:**
-- Modify: `src/voice_realtime/benchmarks/asr/stage_evaluators.py`
-- Modify: `src/voice_realtime/benchmarks/asr/stage_runner.py`
+- Modify: `src/sona/benchmarks/asr/stage_evaluators.py`
+- Modify: `src/sona/benchmarks/asr/stage_runner.py`
 - Modify: `tests/benchmarks/asr_stage_fakes.py`
 - Modify: `tests/benchmarks/test_asr_stage_runner.py`
 
@@ -1750,18 +1750,18 @@ Expected: PASS。
 
 - [ ] **Step 7: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_runner.py src/voice_realtime/benchmarks/asr/stage_evaluators.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_runner.py src/sona/benchmarks/asr/stage_evaluators.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_runner.py src/voice_realtime/benchmarks/asr/stage_evaluators.py tests/benchmarks/test_asr_stage_runner.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_runner.py src/sona/benchmarks/asr/stage_evaluators.py tests/benchmarks/test_asr_stage_runner.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 8: 运行 Mandatory Per-Commit Gate 并提交故障与复用会话**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_runner.py src/voice_realtime/benchmarks/asr/stage_evaluators.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_runner.py
+git add src/sona/benchmarks/asr/stage_runner.py src/sona/benchmarks/asr/stage_evaluators.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_runner.py
 git commit -m "feat(asr): 编排阶段故障与复用会话"
 ```
 
@@ -1770,9 +1770,9 @@ git commit -m "feat(asr): 编排阶段故障与复用会话"
 ### Task 7: 从真实源制品构造 Stage 决策
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/asr/stage_decision.py`
+- Create: `src/sona/benchmarks/asr/stage_decision.py`
 - Create: `tests/benchmarks/test_asr_stage_decision.py`
-- Modify: `src/voice_realtime/benchmarks/asr/stage_contracts.py`
+- Modify: `src/sona/benchmarks/asr/stage_contracts.py`
 - Modify: `tests/benchmarks/asr_stage_fakes.py`
 - Modify: `tests/benchmarks/test_asr_stage_contracts.py`
 
@@ -1921,18 +1921,18 @@ Expected: PASS。
 
 - [ ] **Step 7: 运行定点类型与 lint**
 
-Run: `uv run mypy src/voice_realtime/benchmarks/asr/stage_decision.py src/voice_realtime/benchmarks/asr/stage_contracts.py`
+Run: `uv run mypy src/sona/benchmarks/asr/stage_decision.py src/sona/benchmarks/asr/stage_contracts.py`
 
 Expected: `Success: no issues found`。
 
-Run: `uv run ruff check src/voice_realtime/benchmarks/asr/stage_decision.py src/voice_realtime/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_decision.py tests/benchmarks/test_asr_stage_contracts.py`
+Run: `uv run ruff check src/sona/benchmarks/asr/stage_decision.py src/sona/benchmarks/asr/stage_contracts.py tests/benchmarks/test_asr_stage_decision.py tests/benchmarks/test_asr_stage_contracts.py`
 
 Expected: `All checks passed!`。
 
 - [ ] **Step 8: 运行 Mandatory Per-Commit Gate 并提交决策 verifier**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/stage_decision.py src/voice_realtime/benchmarks/asr/stage_contracts.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_decision.py tests/benchmarks/test_asr_stage_contracts.py
+git add src/sona/benchmarks/asr/stage_decision.py src/sona/benchmarks/asr/stage_contracts.py tests/benchmarks/asr_stage_fakes.py tests/benchmarks/test_asr_stage_decision.py tests/benchmarks/test_asr_stage_contracts.py
 git commit -m "feat(asr): 验证阶段决策证据链"
 ```
 
@@ -1941,7 +1941,7 @@ git commit -m "feat(asr): 验证阶段决策证据链"
 ### Task 8: 接入 CLI、更新科学方案并完成全量门禁
 
 **Files:**
-- Modify: `src/voice_realtime/benchmarks/asr/cli.py`
+- Modify: `src/sona/benchmarks/asr/cli.py`
 - Modify: `tests/benchmarks/test_asr_cli.py`
 - Modify: `docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
 
@@ -2052,7 +2052,7 @@ Expected: PASS。
 
 - [ ] **Step 6: 运行完整质量门禁，严格串行且不启动模型或服务**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Expected: 全部测试通过，branch coverage 不低于 80%。
 
@@ -2078,11 +2078,11 @@ Run: `git diff --check`
 
 Expected: 无输出。
 
-Run: `rg -n '/Users/|file://|rtk ' src/voice_realtime/benchmarks/asr/stage_*.py tests/benchmarks/test_asr_stage_*.py docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
+Run: `rg -n '/Users/|file://|rtk ' src/sona/benchmarks/asr/stage_*.py tests/benchmarks/test_asr_stage_*.py docs/Fun-ASR与现有ASR后端科学对比测试方案.md`
 
 Expected: 无输出；代码/文档中没有个人绝对路径、`file://` 或 RTK 持久化命令。
 
-Run: `rg -n 'reference_raw|reference_normalized' src/voice_realtime/benchmarks/asr/stage_*.py`
+Run: `rg -n 'reference_raw|reference_normalized' src/sona/benchmarks/asr/stage_*.py`
 
 Expected: 无输出；Stage runner 生产模块的类型边界不包含 reference。
 
@@ -2093,7 +2093,7 @@ Expected: 只包含本 Task 的 CLI、测试和文档变更。
 - [ ] **Step 8: 提交 CLI 与文档（Step 6 已完成本 Task 的 Mandatory Per-Commit Gate）**
 
 ```bash
-git add src/voice_realtime/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/Fun-ASR与现有ASR后端科学对比测试方案.md
+git add src/sona/benchmarks/asr/cli.py tests/benchmarks/test_asr_cli.py docs/Fun-ASR与现有ASR后端科学对比测试方案.md
 git commit -m "feat(asr): 接入阶段执行器命令"
 ```
 

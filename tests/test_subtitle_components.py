@@ -12,11 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
-from voice_realtime.asr.models import ASRSegment, ASRWindow
-from voice_realtime.asr.presenters import legacy_subtitle_payload
-from voice_realtime.config import SubtitleSettings
-from voice_realtime.ui.subtitle_proxy import (
+from sona.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
+from sona.asr.models import ASRSegment, ASRWindow
+from sona.asr.presenters import legacy_subtitle_payload
+from sona.config import SubtitleSettings
+from sona.ui.subtitle_proxy import (
     FinalizationTimeoutError,
     SubtitleProxy,
     TranscriptionGap,

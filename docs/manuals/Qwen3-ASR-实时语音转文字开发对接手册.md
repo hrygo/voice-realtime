@@ -1,6 +1,6 @@
 ---
 title: "Qwen3-ASR 实时语音转文字开发对接手册"
-description: "历史 Qwen3-ASR 直连对接手册；当前客户端请使用 SpeechRail Realtime v2 手册"
+description: "历史 Qwen3-ASR 直连对接手册；当前客户端请使用 SpeechRail OpenAI Realtime `/v1/realtime` 契约"
 status: archived
 type: manual
 category: asr
@@ -9,7 +9,7 @@ date: 2026-08-25
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-subtitles"
+  - "sona-subtitles"
 tags:
   - archived
   - websocket
@@ -17,8 +17,8 @@ tags:
   - streaming-transcription
   - developer-guide
 scope:
-  - "voice_realtime.subtitles"
-  - "voice_realtime.asr"
+  - "sona.subtitles"
+  - "sona.asr"
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
@@ -27,7 +27,7 @@ related_documents:
 # Qwen3-ASR 实时语音转文字开发对接手册
 
 > ⚠️ 本文已归档，不是当前接口基线。旧的 `172.18.24.62:8001/asr`、二进制 WebSocket、空字节 EOF
-> 和 `lines` 快照协议均已废弃。请阅读当前的 [SpeechRail Realtime v2 语音转文字开发对接手册](SpeechRail-Realtime-v2-语音转文字开发对接手册.md)。
+> 和 `lines` 快照协议均已废弃。请阅读当前的 [SpeechRail OpenAI Realtime 功能需求交割单](../operations/SpeechRail-OpenAI标准协议功能需求交割单.md)。
 
 > 本手册用于指导外部客户端接入 **Qwen3-ASR 1.7B 语音识别服务**，实现**实时流式音频识别（低延迟字字上屏）**与**录音文件转文字**。
 

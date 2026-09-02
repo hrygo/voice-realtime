@@ -10,7 +10,7 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.models import (
+from sona.meeting.models import (
     MeetingRecord,
     MeetingStatus,
     NormalizedSegment,
@@ -18,8 +18,8 @@ from voice_realtime.meeting.models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
-from voice_realtime.meeting.ports import CaptureFinalizationTimeoutError
-from voice_realtime.meeting.session import (
+from sona.meeting.ports import CaptureFinalizationTimeoutError
+from sona.meeting.session import (
     MeetingSession,
     MeetingStorageUnavailableError,
 )

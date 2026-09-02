@@ -10,8 +10,8 @@ from uuid import UUID
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
-from voice_realtime.audio.frame import AudioFrameFlag, AudioSourceKind, AudioSourceRole
-from voice_realtime.audio.ipc import (
+from sona.audio.frame import AudioFrameFlag, AudioSourceKind, AudioSourceRole
+from sona.audio.ipc import (
     COMMON_HEADER_SIZE,
     MAX_CONTROL_BODY_BYTES,
     PCM_HEADER_SIZE,

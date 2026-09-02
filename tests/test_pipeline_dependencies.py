@@ -5,16 +5,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.echo import EchoState, EchoTextBuffer
-from voice_realtime.interaction.pipeline import (
+from sona.config import InteractionSettings
+from sona.interaction.echo import EchoState, EchoTextBuffer
+from sona.interaction.pipeline import (
     BotTextRecorder,
     EchoSuppressionProcessor,
     SelfEchoFilter,
     TTSStateObserver,
     build_pipeline,
 )
-from voice_realtime.interaction.pipeline_dependencies import default_pipeline_factories
+from sona.interaction.pipeline_dependencies import default_pipeline_factories
 
 
 @pytest.fixture
@@ -27,11 +27,11 @@ def services() -> list[MagicMock]:
     factories = [MagicMock(), MagicMock(), MagicMock()]
     factories[0].return_value.create_processor.return_value = MagicMock(name="stt")
     with (
-        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
+        patch("sona.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
             factories[0]),
-        patch("voice_realtime.interaction.pipeline_dependencies.LmStudioNativeLLMService",
+        patch("sona.interaction.pipeline_dependencies.LmStudioNativeLLMService",
             factories[1]),
-        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService",
+        patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService",
             factories[2]),
     ):
         yield factories
@@ -99,7 +99,7 @@ def test_explicit_transport_stt_and_audio_queue_remain_construction_seams(
 
 def test_default_tts_factory_uses_speechrail_config() -> None:
     settings = InteractionSettings(
-        speechrail_realtime_url="ws://127.0.0.1:8201/v2/realtime",
+        speechrail_realtime_url="ws://127.0.0.1:8201/v1/realtime",
         speechrail_tts_model="speechrail/qwen3-tts",
         tts_voice="warm",
         tts_language="zh",
@@ -107,7 +107,7 @@ def test_default_tts_factory_uses_speechrail_config() -> None:
 
     factories = default_pipeline_factories(settings)
     with patch(
-        "voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService"
+        "sona.interaction.pipeline_dependencies.SpeechRailTTSService"
     ) as tts_service:
         factories.tts_factory(settings=settings)
 

@@ -1,6 +1,6 @@
 # 架构整治验收清单（当前基线：2026-09-01）
 
-已批准并实施“方案 A：`vr-ui` 单一交互所有者，`vr-interact` 为互斥替代入口”；ASR/TTS 已统一迁移到
+已批准并实施“方案 A：`sona-ui` 单一交互所有者，`sona-interact` 为互斥替代入口”；ASR/TTS 已统一迁移到
 独立 SpeechRail Realtime v2，SpeechRail worker/profile 的部署验收另行记录。
 
 ## 已完成

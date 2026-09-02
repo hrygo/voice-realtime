@@ -7,13 +7,13 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.audio.frame import (
+from sona.audio.frame import (
     AudioFrame,
     AudioFrameFlag,
     AudioSourceKind,
     AudioSourceRole,
 )
-from voice_realtime.audio.profile import CaptureProfile
+from sona.audio.profile import CaptureProfile
 
 
 def test_audio_frame_accepts_normalized_pcm() -> None:

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from voice_realtime.audio.hub import AudioHub
+from sona.audio.hub import AudioHub
 
 
 @pytest.fixture()
@@ -25,7 +25,7 @@ def mock_pyaudio() -> MagicMock:
         "name": "mock-mic",
         "maxInputChannels": 1,
     }
-    with patch("voice_realtime.audio.hub.pyaudio", mock_pa):
+    with patch("sona.audio.hub.pyaudio", mock_pa):
         yield mock_pa
 
 
@@ -109,7 +109,7 @@ class TestLifecycle:
     async def test_start_propagates_stream_open_failure(self) -> None:
         mock_pa = MagicMock()
         mock_pa.PyAudio.return_value.open.side_effect = OSError("permission denied")
-        with patch("voice_realtime.audio.hub.pyaudio", mock_pa):
+        with patch("sona.audio.hub.pyaudio", mock_pa):
             hub = AudioHub()
             with pytest.raises(OSError, match="permission denied"):
                 await hub.start()
@@ -140,7 +140,7 @@ class TestLifecycle:
         mock_stream.read.side_effect = failing_read
         mock_pa = MagicMock()
         mock_pa.PyAudio.return_value.open.return_value = mock_stream
-        with patch("voice_realtime.audio.hub.pyaudio", mock_pa):
+        with patch("sona.audio.hub.pyaudio", mock_pa):
             hub = AudioHub(throttle_secs=0.005)
             sink = AsyncMock()
             hub.add_sink("a", sink)

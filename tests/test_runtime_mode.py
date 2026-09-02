@@ -9,20 +9,20 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.models import (
+from sona.meeting.models import (
     MeetingRecord,
     MeetingStatus,
     PCMOwner,
     RuntimeMode,
     StorageHealth,
 )
-from voice_realtime.meeting.runtime_mode import (
+from sona.meeting.runtime_mode import (
     MeetingNotActiveError,
     MeetingUnavailableError,
     ModeConflictError,
     RuntimeModeCoordinator,
 )
-from voice_realtime.meeting.session import MeetingPreparation
+from sona.meeting.session import MeetingPreparation
 
 
 @dataclass(frozen=True, slots=True)

@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - lm-studio
   - stateful-context
@@ -164,10 +164,10 @@ system_prompt → user input → assistant output → user input → ...
 
 ## 修改范围
 
-- `src/voice_realtime/interaction/reasoning.py`
+- `src/sona/interaction/reasoning.py`
   - 新增原生会话状态与严格请求拼装。
   - 完整消费 `chat.end` 并执行原子提交。
-- `src/voice_realtime/interaction/session.py`
+- `src/sona/interaction/session.py`
   - 保存当前管道中的 LLM 服务引用。
   - `clear_context` 时同步调用会话重置。
 - `tests/test_reasoning.py`
@@ -200,7 +200,7 @@ system_prompt → user input → assistant output → user input → ...
 
 - 真实 LM Studio SSE：首轮“收到”，续轮“用户：青竹”，reset 后“未知”；三轮 response ID
   均按新链/续链语义推进。
-- `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`：505 passed，分支覆盖率
+- `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`：505 passed，分支覆盖率
   84.20%。
 - `uv run mypy src/`：43 source files clean；`uv run ruff check src/ tests/`：clean。
 - `npm test -- --run`：52 passed；当前 HEAD 的临时隔离工作区 `npm run build`：通过。

@@ -18,7 +18,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 
-from voice_realtime.audio.audio_injector import AudioInjector
+from sona.audio.audio_injector import AudioInjector
 
 
 def _make_injector(queue: asyncio.Queue[bytes] | None = None, **kwargs) -> AudioInjector:

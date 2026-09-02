@@ -11,23 +11,23 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.audio.frame import AudioFrameFlag
-from voice_realtime.audio.ipc import (
+from sona.audio.frame import AudioFrameFlag
+from sona.audio.ipc import (
     ControlMessage,
     PCMMessage,
     WireDecoder,
     encode_control_message,
     encode_pcm_message,
 )
-from voice_realtime.audio.output_source import (
+from sona.audio.output_source import (
     AudioCaptureClient,
     AudioCaptureError,
     HelperSupervisor,
     PhysicalOutputSource,
     _validated_executable,
 )
-from voice_realtime.audio.source import AudioSourceState
-from voice_realtime.config import AudioCaptureSettings
+from sona.audio.source import AudioSourceState
+from sona.config import AudioCaptureSettings
 
 CAPTURE_ID = UUID("00000000-0000-0000-0000-000000000001")
 SOURCE_ID = UUID("00000000-0000-0000-0000-000000000002")

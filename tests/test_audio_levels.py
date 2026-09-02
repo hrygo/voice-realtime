@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from voice_realtime.audio.frame import AudioSourceKind
-from voice_realtime.audio.levels import AudioLevelMeter, pcm16_level
+from sona.audio.frame import AudioSourceKind
+from sona.audio.levels import AudioLevelMeter, pcm16_level
 
 
 def test_pcm16_level_maps_silence_to_zero() -> None:

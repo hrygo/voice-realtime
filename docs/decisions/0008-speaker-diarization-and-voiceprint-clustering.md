@@ -9,7 +9,7 @@ date: 2026-08-27
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-meeting"
+  - "sona-meeting"
 tags:
   - adr
   - speaker-diarization
@@ -18,8 +18,8 @@ tags:
   - ahc-clustering
   - sortformer
 scope:
-  - "voice_realtime.meeting"
-  - "voice_realtime.asr"
+  - "sona.meeting"
+  - "sona.asr"
   - "ui"
 related_documents:
   - "docs/solutions/会议模式多说话人精准识别与声纹聚类技术方案.md"

@@ -133,7 +133,7 @@ export interface MeetingStoreState {
 
 function readStoredStarredSegments(meetingId: string): Set<string> {
   try {
-    const raw = window.localStorage.getItem(`voice-studio:meeting-stars:${meetingId}`);
+    const raw = window.localStorage.getItem(`sona:meeting-stars:${meetingId}`);
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) return new Set(arr);
@@ -147,7 +147,7 @@ function readStoredStarredSegments(meetingId: string): Set<string> {
 function persistStarredSegments(meetingId: string, starred: Set<string>): void {
   try {
     window.localStorage.setItem(
-      `voice-studio:meeting-stars:${meetingId}`,
+      `sona:meeting-stars:${meetingId}`,
       JSON.stringify(Array.from(starred)),
     );
   } catch {

@@ -24,7 +24,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.observers.base_observer import FramePushed
 
-from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
+from sona.ui.assistant_bridge import StatusBridgeObserver
 
 
 def _upsert_mock_client(observer: StatusBridgeObserver) -> AsyncMock:

@@ -8,7 +8,7 @@ date: 2026-08-31
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - core-audio
@@ -16,10 +16,10 @@ tags:
   - audio-capture
   - meeting-assistant
 scope:
-  - "native/vr-audio-capture"
-  - "voice_realtime.audio"
-  - "voice_realtime.meeting"
-  - "voice_realtime.ui"
+  - "native/sona-audio-capture"
+  - "sona.audio"
+  - "sona.meeting"
+  - "sona.ui"
   - "contracts/meeting-assistant"
 related_documents:
   - "docs/superpowers/specs/2026-08-31-physical-output-audio-capture-design.md"
@@ -63,7 +63,7 @@ Accepted
 
 ### 2. 原生能力由独立签名 Helper 承载
 
-新增 `vr-audio-capture.app`：
+新增 `sona-audio-capture.app`：
 
 - 使用稳定 Bundle ID、代码签名、`NSAudioCaptureUsageDescription` 和发布公证；
 - 负责系统音频权限、设备枚举、Tap / Aggregate Device 生命周期、格式转换与属性监听；
@@ -85,7 +85,7 @@ Accepted
 
 - microphone-only；
 - physical-output-only；
-- dual：near-end 麦克风与 far-end 物理输出先对齐、补静音、混音和限幅，再向 SpeechRail Realtime v2 / ASR 提交一条 PCM 流。
+- dual：near-end 麦克风与 far-end 物理输出先对齐、补静音、混音和限幅，再向 SpeechRail OpenAI Realtime `/v1` / ASR 提交一条 PCM 流。
 
 因此，“单 PCM 所有者”继续约束重型推理链，而不是限制采集源只能有一个。初版双源推荐耳机；外放高质量路径后续以输出流作为 WebRTC AEC 的 far-end reference。
 

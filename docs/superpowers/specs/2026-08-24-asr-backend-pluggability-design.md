@@ -9,7 +9,7 @@ date: 2026-08-24
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - asr
   - pluggability
@@ -201,8 +201,8 @@ class FunASRNanoWSConfig(BaseModel):
 
 兼容期内：
 
-- `VR_SUBTITLE_BACKEND=qwen3-streaming` 映射为 `wlk-qwen3-streaming`。
-- `VR_SUBTITLE_BACKEND=funasr` 映射为 `wlk-sensevoice`，并记录一次弃用警告。
+- `SONA_SUBTITLE_BACKEND=qwen3-streaming` 映射为 `wlk-qwen3-streaming`。
+- `SONA_SUBTITLE_BACKEND=funasr` 映射为 `wlk-sensevoice`，并记录一次弃用警告。
 - 不复用 `funasr` 作为 Fun-ASR-Nano 的 ID。
 - 旧字段至少保留一个发布周期；新增字段只做加法，不改变现有控制 WebSocket 响应结构。
 

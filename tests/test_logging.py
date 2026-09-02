@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from voice_realtime.logging import (
+from sona.logging import (
     NOISY_LOGGERS,
     SanitizingFilter,
     _parse_bool_env,
@@ -51,10 +51,10 @@ def test_resolve_level(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _resolve_level("WARNING") == logging.WARNING
     assert _resolve_level("debug") == logging.DEBUG
 
-    monkeypatch.setenv("VR_LOG_LEVEL", "ERROR")
+    monkeypatch.setenv("SONA_LOG_LEVEL", "ERROR")
     assert _resolve_level(None) == logging.ERROR
 
-    monkeypatch.delenv("VR_LOG_LEVEL", raising=False)
+    monkeypatch.delenv("SONA_LOG_LEVEL", raising=False)
     assert _resolve_level(None) == logging.INFO
 
 

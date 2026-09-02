@@ -1,8 +1,8 @@
-"""SpeechRail transcription event decoder tests.
+"""SpeechRail OpenAI Realtime transcription event decoder tests.
 
-Transport-level envelope concerns (malformed JSON, sequence gaps,
-session/request mismatch) are owned by ``speechrail.transport`` and are
-deliberately NOT tested here.
+Transport-level envelope concerns (malformed JSON, sequence gaps, session
+mismatch) are owned by ``speechrail.transport`` and are deliberately NOT
+tested here.
 """
 
 from __future__ import annotations
@@ -11,97 +11,108 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from voice_realtime.speechrail.transcription_events import (
-    DiarizationCompleted,
-    InputAudioAck,
-    SessionCompleted,
-    SpeechRailSegment,
+from sona.speechrail.transcription_events import (
+    Noop,
     SpeechRailTranscriptionError,
     TranscriptionCompleted,
     TranscriptionDelta,
+    TranscriptionSegment,
     decode_transcription_event,
 )
-from voice_realtime.speechrail.transport import SpeechRailProtocolError
+from sona.speechrail.transport import SpeechRailProtocolError
 
 
 def _event(**fields: object) -> dict[str, object]:
     return dict(fields)
 
 
-def test_decodes_input_audio_ack() -> None:
-    event = decode_transcription_event(_event(type="input_audio_buffer.ack"))
+def test_decodes_session_noop() -> None:
+    event = decode_transcription_event(_event(type="session.created"))
 
-    assert isinstance(event, InputAudioAck)
+    assert isinstance(event, Noop)
+
+
+def test_decodes_completed_commit_noop() -> None:
+    event = decode_transcription_event(_event(type="input_audio_buffer.committed"))
+
+    assert isinstance(event, Noop)
 
 
 def test_decodes_transcription_delta() -> None:
     event = decode_transcription_event(
-        _event(type="transcription.delta", text="你好", item_id="item-1", revision=1)
+        _event(
+            type="conversation.item.input_audio_transcription.delta",
+            item_id="item-1",
+            content_index=0,
+            delta="你好",
+        )
     )
 
     assert isinstance(event, TranscriptionDelta)
     assert event.text == "你好"
 
 
-def test_decodes_transcription_completed_with_segments() -> None:
+def test_decodes_transcription_completed() -> None:
     event = decode_transcription_event(
         _event(
-            type="transcription.completed",
-            text="你好世界",
-            segments=[
-                {"start_ms": 0, "end_ms": 100, "text": "你好世界", "speaker": "spk_01"},
-            ],
+            type="conversation.item.input_audio_transcription.completed",
+            item_id="item-1",
+            content_index=0,
+            transcript="你好世界",
         )
     )
 
     assert isinstance(event, TranscriptionCompleted)
-    assert event.text == "你好世界"
-    assert event.segments == (
-        SpeechRailSegment(text="你好世界", start_ms=0, end_ms=100, speaker="spk_01"),
-    )
+    assert event.transcript == "你好世界"
 
 
-def test_decodes_completed_segment_without_speaker() -> None:
+def test_decodes_transcription_segment_with_speaker() -> None:
     event = decode_transcription_event(
         _event(
-            type="transcription.completed",
+            type="conversation.item.input_audio_transcription.segment",
+            item_id="item-1",
+            content_index=0,
+            id="seg-1",
             text="你好世界",
-            segments=[{"start_ms": 0, "end_ms": 100, "text": "你好世界"}],
+            speaker="spk_01",
+            start=0.0,
+            end=1.234,
         )
     )
 
-    assert event.segments[0].speaker is None
+    assert isinstance(event, TranscriptionSegment)
+    assert event.text == "你好世界"
+    assert event.speaker == "spk_01"
+    assert event.start_ms == 0
+    assert event.end_ms == 1234
+    assert event.start_ms < event.end_ms
 
 
-def test_decodes_empty_segments_list() -> None:
+def test_decodes_transcription_segment_without_speaker() -> None:
     event = decode_transcription_event(
-        _event(type="transcription.completed", text="你好世界", segments=[])
+        _event(
+            type="conversation.item.input_audio_transcription.segment",
+            text="你好世界",
+            start=0.0,
+            end=1.0,
+        )
     )
 
-    assert event.segments == ()
+    assert isinstance(event, TranscriptionSegment)
+    assert event.speaker is None
 
 
-def test_decodes_diarization_completed_mapping() -> None:
+def test_decodes_transcription_failed() -> None:
     event = decode_transcription_event(
-        _event(type="transcription.diarization.completed", mapping={"spk_02": "spk_01"})
+        _event(
+            type="conversation.item.input_audio_transcription.failed",
+            error={"code": "backend_error", "message": "boom"},
+        )
     )
 
-    assert isinstance(event, DiarizationCompleted)
-    assert event.mapping == (("spk_02", "spk_01"),)
-
-
-def test_decodes_empty_diarization_mapping() -> None:
-    event = decode_transcription_event(
-        _event(type="transcription.diarization.completed", mapping={})
-    )
-
-    assert event.mapping == ()
-
-
-def test_decodes_session_completed() -> None:
-    event = decode_transcription_event(_event(type="session.completed"))
-
-    assert isinstance(event, SessionCompleted)
+    assert isinstance(event, SpeechRailTranscriptionError)
+    assert event.code == "backend_error"
+    assert event.message == "boom"
 
 
 def test_decodes_error_with_code_and_message() -> None:
@@ -136,40 +147,40 @@ def test_rejects_unknown_event_type() -> None:
 
 def test_rejects_missing_type() -> None:
     with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(text="你好"))
+        decode_transcription_event(_event(delta="你好"))
 
 
 def test_rejects_delta_without_text() -> None:
     with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="transcription.delta"))
+        decode_transcription_event(
+            _event(type="conversation.item.input_audio_transcription.delta")
+        )
 
 
 def test_rejects_delta_with_non_string_text() -> None:
     with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="transcription.delta", text=123))
-
-
-def test_rejects_completed_without_text() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="transcription.completed", segments=[]))
-
-
-def test_rejects_completed_with_non_string_text() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="transcription.completed", text=True, segments=[]))
-
-
-def test_rejects_segments_when_not_a_list() -> None:
-    with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
-            _event(type="transcription.completed", text="你好世界", segments="not-a-list")
+            _event(
+                type="conversation.item.input_audio_transcription.delta",
+                delta=123,
+            )
         )
 
 
-def test_rejects_segment_when_not_a_mapping() -> None:
+def test_rejects_completed_without_transcript() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
-            _event(type="transcription.completed", text="你好世界", segments=["seg-1"])
+            _event(type="conversation.item.input_audio_transcription.completed")
+        )
+
+
+def test_rejects_completed_with_non_string_transcript() -> None:
+    with pytest.raises(SpeechRailProtocolError):
+        decode_transcription_event(
+            _event(
+                type="conversation.item.input_audio_transcription.completed",
+                transcript=True,
+            )
         )
 
 
@@ -177,9 +188,10 @@ def test_rejects_segment_with_empty_text() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
             _event(
-                type="transcription.completed",
+                type="conversation.item.input_audio_transcription.segment",
                 text="",
-                segments=[{"start_ms": 0, "end_ms": 100, "text": ""}],
+                start=0.0,
+                end=1.0,
             )
         )
 
@@ -188,64 +200,22 @@ def test_rejects_segment_with_whitespace_text() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
             _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0, "end_ms": 100, "text": "   "}],
+                type="conversation.item.input_audio_transcription.segment",
+                text="   ",
+                start=0.0,
+                end=1.0,
             )
         )
 
 
-def test_rejects_segment_with_missing_text() -> None:
+def test_rejects_segment_with_negative_start() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
             _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0, "end_ms": 100}],
-            )
-        )
-
-
-def test_rejects_segment_with_bool_start_ms() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": True, "end_ms": 100, "text": "你好"}],
-            )
-        )
-
-
-def test_rejects_segment_with_bool_end_ms() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0, "end_ms": False, "text": "你好"}],
-            )
-        )
-
-
-def test_rejects_segment_with_float_timestamp() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0.0, "end_ms": 100, "text": "你好"}],
-            )
-        )
-
-
-def test_rejects_segment_with_negative_start_ms() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": -1, "end_ms": 100, "text": "你好"}],
+                type="conversation.item.input_audio_transcription.segment",
+                text="你好",
+                start=-1,
+                end=1.0,
             )
         )
 
@@ -254,9 +224,10 @@ def test_rejects_segment_when_end_before_start() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(
             _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 200, "end_ms": 100, "text": "你好"}],
+                type="conversation.item.input_audio_transcription.segment",
+                text="你好",
+                start=1.0,
+                end=0.5,
             )
         )
 
@@ -265,9 +236,11 @@ def test_rejects_segment_with_non_string_speaker() -> None:
     with pytest.raises(SpeechRailProtocolError) as excinfo:
         decode_transcription_event(
             _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0, "end_ms": 100, "text": "你好", "speaker": 7}],
+                type="conversation.item.input_audio_transcription.segment",
+                text="你好",
+                start=0.0,
+                end=1.0,
+                speaker=7,
             )
         )
 
@@ -278,70 +251,15 @@ def test_rejects_segment_with_bad_speaker_prefix() -> None:
     with pytest.raises(SpeechRailProtocolError) as excinfo:
         decode_transcription_event(
             _event(
-                type="transcription.completed",
-                text="",
-                segments=[{"start_ms": 0, "end_ms": 100, "text": "你好", "speaker": "speaker_1"}],
+                type="conversation.item.input_audio_transcription.segment",
+                text="你好",
+                start=0.0,
+                end=1.0,
+                speaker="speaker_1",
             )
         )
 
     assert excinfo.value.code == "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR"
-
-
-def test_rejects_segment_with_oversized_speaker() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(
-                type="transcription.completed",
-                text="",
-                segments=[
-                    {"start_ms": 0, "end_ms": 100, "text": "你好", "speaker": "spk_" + "x" * 65}
-                ],
-            )
-        )
-
-
-def test_rejects_remap_when_not_a_mapping() -> None:
-    with pytest.raises(SpeechRailProtocolError) as excinfo:
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping=[("spk_02", "spk_01")])
-        )
-
-    assert excinfo.value.code == "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR"
-
-
-def test_rejects_remap_with_non_string_source() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping={7: "spk_01"})
-        )
-
-
-def test_rejects_remap_with_non_string_target() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping={"spk_02": 7})
-        )
-
-
-def test_rejects_remap_with_bad_source_prefix() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping={"speaker_2": "spk_01"})
-        )
-
-
-def test_rejects_remap_with_bad_target_prefix() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping={"spk_02": "speaker_1"})
-        )
-
-
-def test_rejects_remap_identity_pair() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(
-            _event(type="transcription.diarization.completed", mapping={"spk_02": "spk_02"})
-        )
 
 
 def test_rejects_error_without_error_field() -> None:
@@ -357,13 +275,3 @@ def test_rejects_error_with_non_mapping_error_field() -> None:
 def test_rejects_error_without_code() -> None:
     with pytest.raises(SpeechRailProtocolError):
         decode_transcription_event(_event(type="error", error={"message": "boom"}))
-
-
-def test_rejects_error_with_non_string_code() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="error", error={"code": 7}))
-
-
-def test_rejects_error_with_non_string_message() -> None:
-    with pytest.raises(SpeechRailProtocolError):
-        decode_transcription_event(_event(type="error", error={"code": "c", "message": 7}))

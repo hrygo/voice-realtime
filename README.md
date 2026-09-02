@@ -1,4 +1,4 @@
-# voice-realtime (Voice Studio)
+# sona (Sona)
 
 > 🎙️ **全本地、端到端、低延迟的实时语音交互 + 智能会议助手 + 实时语音字幕系统**  
 > 专为 **Apple Silicon / macOS** 打造，**中文优先**，**100% 离线隐私安全**。
@@ -8,7 +8,7 @@
 ## 🌟 核心特性
 
 - 🤖 **全双工实时语音助手 (Voice Assistant)**
-  - **实时语音输入**：基于 SpeechRail Realtime v2 + 本地大语言模型 (LM Studio / Qwen3.6) + SpeechRail TTS。
+  - **实时语音输入**：基于 SpeechRail OpenAI Realtime + 本地大语言模型 (LM Studio / Qwen3.6) + SpeechRail TTS。
   - **双重声学防回声**：L1 自适应峰值包络/EMA 打断抑制 + L2 文本相似度过滤，阻断单机外放播报时的“自我回声死循环”。
   - **双工模式切换**：支持“🔊 外放保护”（播报期间暂停收音，防误触）与“🎧 耳机双工”（佩戴耳机时随时自然插话打断）。
   - **个性化人设与音色**：内置通用助手、程序员、英语教练等丰富人设模板，支持请求级动态切换音色。
@@ -21,7 +21,7 @@
   - **灵活导出与管理**：一键导出 Markdown 纪要与带说话人标签的 SRT 字幕文件，支持历史会议回溯与检索。
 
 - 📝 **实时语音字幕 (Live Subtitles)**
-  - **窗口式流式识别**：通过 SpeechRail Realtime v2 提交与获取最终转录，支持实时低延迟上屏。
+  - **窗口式流式识别**：通过 SpeechRail OpenAI Realtime 提交与获取最终转录，支持实时低延迟上屏。
   - **独立运行与无缝联动**：切换到字幕页面时自动挂起语音助手，保证纯净转录；支持实时同步会议转录流。
 
 - 🔒 **100% 本地与隐私安全**
@@ -31,7 +31,7 @@
 
 ## 🏗️ 系统架构与数据流
 
-`voice-realtime` 采用 **单音频源独占采集 + 有界扇出 + 互斥运行模式协调** 的设计哲学：
+`sona` 采用 **单音频源独占采集 + 有界扇出 + 互斥运行模式协调** 的设计哲学：
 
 ```text
                ┌────────── 麦克风输入 (Microphone) ──────────┐
@@ -47,11 +47,11 @@
 ┌───────────────────────────────┐   ┌────────────────────────┴──────────────┐
 │  Pipecat 管道 (AudioInjector) │   │ SubtitleProxy / WebSocket             │
 ├───────────────────────────────┤   ├───────────────────────────────────────┤
-│ • L1 声学回声抑制 (峰值包络/EMA)│   │ • SpeechRail Realtime v2               │
+│ • L1 声学回声抑制 (峰值包络/EMA)│   │ • SpeechRail OpenAI Realtime               │
 │ • SpeechRail Realtime STT     │   │ • SpeechRail Realtime ASR              │
 │ • L2 文本相似度自激过滤       │   │ • 窗口对账与快照管理                  │
 │ • LM Studio 原生 /api/v1/chat │   └───────────────────┬───────────────────┘
-│ • SpeechRail TTS Realtime v2  │                       │
+│ • SpeechRail TTS OpenAI Realtime  │                       │
 └──────────────┬────────────────┘                       │
                │                                        ▼
                ▼ (扬声器/耳机)             ┌────────────────────────────────┐
@@ -65,18 +65,18 @@
 
 ### 四大核心运行单元
 
-1. **`vr-ui` (端口 `8100`)**：系统默认主进程，集成 Voice Studio Web 控制台、AudioHub 麦克风采集、运行时模式协调（`RuntimeModeCoordinator`）与交互/会议控制网关。
-2. **SpeechRail (端口 `8201`)**：独立 ASR/TTS 服务，提供 OpenAI-compatible REST 与 Realtime v2；`voice-realtime` 只负责客户端适配、播放和模式协调，不管理其进程或模型。
+1. **`sona-ui` (端口 `8100`)**：系统默认主进程，集成 Sona Web 控制台、AudioHub 麦克风采集、运行时模式协调（`RuntimeModeCoordinator`）与交互/会议控制网关。
+2. **SpeechRail (端口 `8201`)**：独立 ASR/TTS 服务，提供 OpenAI-compatible REST 与 OpenAI Realtime；`sona` 只负责客户端适配、播放和模式协调，不管理其进程或模型。
 3. **LM Studio (端口 `1234`)**：本地大模型服务，加载 Qwen3.6 / Qwen3.8 等模型，通过原生 `/api/v1/chat` 提供超低延迟推理与高质量会议纪要生成。
 4. **PostgreSQL**：会议元数据、确认转录、说话人映射与 AI 纪要的唯一事实源；不保存音频。
 
-> 💡 **提示**：`vr-interact` 为 CLI Headless 交互入口，通过文件锁与 `vr-ui` 互斥，适用于无界面的终端交互场景。
+> 💡 **提示**：`sona-interact` 为 CLI Headless 交互入口，通过文件锁与 `sona-ui` 互斥，适用于无界面的终端交互场景。
 
 ### 物理输出采集 Helper（P1 开发组件）
 
 仓库已提供 macOS 14.2+ 的设备绑定 Core Audio Tap Helper，用于后续把本机所选物理输出设备
 （内建扬声器、耳机、USB/HDMI 等）的播放音频作为会议助手远端声源。当前 P1 仅交付原生采集、
-私有 UDS 和 Python 来源适配能力，尚未接入 Voice Studio 页面、会议转录或字幕链路；产品运行态仍为
+私有 UDS 和 Python 来源适配能力，尚未接入 Sona 页面、会议转录或字幕链路；产品运行态仍为
 麦克风-only，不会自动触发系统录音授权。
 
 ```bash
@@ -91,8 +91,8 @@ scripts/test-audio-capture-helper.sh --list-devices
 ```
 
 首次显式执行真实 capture 时，macOS 会请求“系统音频录制”权限。默认 ad-hoc 签名的 `.app` 不是
-发布制品；发布构建需显式设置 `VR_AUDIO_CAPTURE_SIGNING_IDENTITY`，并通过
-`VR_AUDIO_CAPTURE_CODESIGN_TIMESTAMP=auto`（或 HTTPS 时间戳服务地址）启用时间戳，之后另行完成
+发布制品；发布构建需显式设置 `SONA_AUDIO_CAPTURE_SIGNING_IDENTITY`，并通过
+`SONA_AUDIO_CAPTURE_CODESIGN_TIMESTAMP=auto`（或 HTTPS 时间戳服务地址）启用时间戳，之后另行完成
 Developer ID 发布校验与公证。
 
 当前 P1 本机验收环境仅安装 Apple Command Line Tools，尚未执行 Developer ID 签名与公证；脚本提供
@@ -121,8 +121,8 @@ Developer ID 发布校验与公证。
 
 ```bash
 # 1. 克隆代码仓库
-git clone https://github.com/your-username/voice-realtime.git
-cd voice-realtime
+git clone https://github.com/your-username/sona.git
+cd sona
 
 # 2. 一键安装 Python 全量依赖 (含 interaction, dev)
 uv sync --all-extras
@@ -134,7 +134,7 @@ cd ui && npm install && npm run build && cd ..
 ### 步骤 2：准备 SpeechRail 与本地运行数据
 
 本项目坚持离线优先原则。ASR、diarization profile 与 TTS 模型均由 SpeechRail 在项目外独立管理，
-`voice-realtime` 不下载或启动这些模型，Git 工作树只保存代码、配置和运行产物：
+`sona` 不下载或启动这些模型，Git 工作树只保存代码、配置和运行产物：
 
 ```bash
 # 下载 NLTK punkt_tab 分词数据 (TTS 断句必需)
@@ -146,13 +146,13 @@ bash scripts/install-nltk-data.sh
 
 ### 步骤 3：初始化 PostgreSQL 数据库 (会议助手必需)
 
-首次使用时，通过 PostgreSQL 初始化 `voice_realtime` 专用角色与独立 schema：
+首次使用时，通过 PostgreSQL 初始化 `sona` 专用角色与独立 schema：
 
 ```bash
 psql knowledge -f scripts/bootstrap-meeting-db.sql
 ```
 
-*(默认连接 DSN 为 `postgresql://voice_realtime_app@localhost/knowledge`，Schema 为 `voice_realtime`)*
+*(默认连接 DSN 为 `postgresql://sona_app@localhost/knowledge`，Schema 为 `sona`)*
 
 ### 步骤 4：配置并启动 LM Studio
 
@@ -160,7 +160,7 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
    - **推荐统一模型（交互 / 纪要 / 标题）**：`local/kat-coder-2.5`
 2. 在 LM Studio 中启动 Local Server，监听 `localhost:1234`。
 3. 如果 Local Server 开启了 API authentication，将 key 写入项目根目录 `.env` 的
-   `VR_INTERACTION_LLM_API_KEY`；程序会以 `Bearer` header 发送，启动配置表会自动脱敏。
+   `SONA_INTERACTION_LLM_API_KEY`；程序会以 `Bearer` header 发送，启动配置表会自动脱敏。
 
 ### 步骤 5：启动系统服务
 
@@ -171,34 +171,34 @@ psql knowledge -f scripts/bootstrap-meeting-db.sql
 scripts/run-all.sh
 
 # 同时支持 localhost 与局域网访问（监听全部 IPv4 接口）
-VR_BIND_HOST=lan scripts/run-all.sh
+SONA_BIND_HOST=lan scripts/run-all.sh
 
 # 显式绑定全部网络接口（与 lan 的监听效果相同）
-VR_BIND_HOST=0.0.0.0 scripts/run-all.sh
+SONA_BIND_HOST=0.0.0.0 scripts/run-all.sh
 ```
 
-统一脚本只启动 `vr-ui`，并把交互管道连接到外部 SpeechRail 的 Realtime v2 与 REST TTS 地址。
+统一脚本只启动 `sona-ui`，并把交互管道连接到外部 SpeechRail 的 OpenAI Realtime 与 REST TTS 地址。
 SpeechRail 必须独立启动并先通过 `http://127.0.0.1:8201/health` 健康检查。
 
 也可以在不同终端窗口中独立启动应用服务单元（SpeechRail 由其自身服务管理）：
 
 ```bash
 # 启动 Web 控制台与主运行协调服务 (8100)
-export VR_MEETING_DATABASE_URL='postgresql://voice_realtime_app@/knowledge'
-export VR_MEETING_SCHEMA='voice_realtime'
-uv run vr-ui
+export SONA_MEETING_DATABASE_URL='postgresql://sona_app@/knowledge'
+export SONA_MEETING_SCHEMA='sona'
+uv run sona-ui
 ```
 
-### 步骤 6：打开 Voice Studio 控制台
+### 步骤 6：打开 Sona 控制台
 
 在浏览器中访问：  
 👉 **`http://127.0.0.1:8100`**
 
 ---
 
-## 🖥️ Voice Studio 使用指南
+## 🖥️ Sona 使用指南
 
-Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面：
+Sona 提供了精致、现代化、低延迟的多工作区操作界面：
 
 ### 1. 🤖 语音助手面板 (`Cmd + 1`)
 - **自然交谈**：直接对着麦克风说话，系统自动检测停顿并由 LM Studio 生成流式回答，SpeechRail TTS 实时跟读。
@@ -237,25 +237,25 @@ Voice Studio 提供了精致、现代化、低延迟的多工作区操作界面�
 
 | 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `VR_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；`lan` 同时支持 localhost 与局域网，实际监听 `0.0.0.0`；也支持显式 `0.0.0.0` / 自定义 IP） |
-| `VR_UI_HOST` | `127.0.0.1` | Voice Studio Web 服务绑定地址（优先于全局变量） |
-| `VR_UI_PORT` | `8100` | Voice Studio Web 服务端口 |
-| `VR_SUBTITLE_SPEECHRAIL_URL` | `ws://127.0.0.1:8201/v2/realtime` | 字幕与会议使用的 SpeechRail Realtime v2 地址 |
-| `VR_INTERACTION_SPEECHRAIL_REALTIME_URL` | `ws://127.0.0.1:8201/v2/realtime` | 语音助手使用的 SpeechRail Realtime v2 地址 |
-| `VR_INTERACTION_SPEECHRAIL_TTS_REST_URL` | `http://127.0.0.1:8201/v1` | 试听/回放使用的 SpeechRail TTS REST 地址 |
-| `VR_INTERACTION_SPEECHRAIL_TTS_MODEL` | `speechrail/qwen3-tts` | SpeechRail 公共 TTS 逻辑模型 ID |
-| `VR_INTERACTION_TTS_VOICE` | `default` | SpeechRail preset 音色：`default` / `warm` / `bright` / `calm` |
-| `VR_INTERACTION_TTS_LANGUAGE` | `auto` | SpeechRail TTS 语言 |
-| `VR_INTERACTION_SPEECHRAIL_API_KEY` | 空 | SpeechRail 交互 ASR/TTS 的可选 API key；通过 `Authorization: Bearer` 发送 |
-| `VR_SUBTITLE_SPEECHRAIL_API_KEY` | 空 | SpeechRail 字幕/会议 ASR 的可选 API key；通过 `Authorization: Bearer` 发送 |
-| `VR_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
-| `VR_INTERACTION_LLM_MODEL` | `local/kat-coder-2.5` | 语音交互 LLM 模型名称 |
-| `VR_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
-| `VR_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
-| `VR_MEETING_SUMMARY_MODEL` | `local/kat-coder-2.5` | 会议纪要 LLM 模型名称 |
-| `VR_MEETING_DATABASE_URL` | `postgresql://voice_realtime_app@/knowledge` | PostgreSQL 数据库连接串 |
-| `VR_MEETING_SCHEMA` | `voice_realtime` | 会议数据存放 Schema |
-| `VR_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` / `headphone_duplex`) |
+| `SONA_BIND_HOST` | `127.0.0.1` | 全局服务绑定模式（默认 `localhost`；`lan` 同时支持 localhost 与局域网，实际监听 `0.0.0.0`；也支持显式 `0.0.0.0` / 自定义 IP） |
+| `SONA_UI_HOST` | `127.0.0.1` | Sona Web 服务绑定地址（优先于全局变量） |
+| `SONA_UI_PORT` | `8100` | Sona Web 服务端口 |
+| `SONA_SUBTITLE_SPEECHRAIL_URL` | `ws://127.0.0.1:8201/v1/realtime` | 字幕与会议使用的 SpeechRail OpenAI Realtime 地址 |
+| `SONA_INTERACTION_SPEECHRAIL_REALTIME_URL` | `ws://127.0.0.1:8201/v1/realtime` | 语音助手使用的 SpeechRail OpenAI Realtime 地址 |
+| `SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL` | `http://127.0.0.1:8201/v1` | 试听/回放使用的 SpeechRail TTS REST 地址 |
+| `SONA_INTERACTION_SPEECHRAIL_TTS_MODEL` | `speechrail/qwen3-tts` | SpeechRail 公共 TTS 逻辑模型 ID |
+| `SONA_INTERACTION_TTS_VOICE` | `default` | SpeechRail preset 音色：`default` / `warm` / `bright` / `calm` |
+| `SONA_INTERACTION_TTS_LANGUAGE` | `auto` | SpeechRail TTS 语言 |
+| `SONA_INTERACTION_SPEECHRAIL_API_KEY` | 空 | SpeechRail 交互 ASR/TTS 的可选 API key；通过 `Authorization: Bearer` 发送 |
+| `SONA_SUBTITLE_SPEECHRAIL_API_KEY` | 空 | SpeechRail 字幕/会议 ASR 的可选 API key；通过 `Authorization: Bearer` 发送 |
+| `SONA_INTERACTION_LLM_BASE_URL` | `http://localhost:1234/v1` | LM Studio API 服务地址 |
+| `SONA_INTERACTION_LLM_MODEL` | `local/kat-coder-2.5` | 语音交互 LLM 模型名称 |
+| `SONA_INTERACTION_LLM_API_KEY` | `lm-studio` | LM Studio API key；仅保存在本机 `.env`，通过 `Authorization: Bearer` 发送 |
+| `SONA_INTERACTION_INPUT_DEVICE_NAME` | 空（系统默认输入） | 麦克风完整名称或唯一名称片段；找不到或匹配多个设备时停止语音采集，不回退到系统默认设备 |
+| `SONA_MEETING_SUMMARY_MODEL` | `local/kat-coder-2.5` | 会议纪要 LLM 模型名称 |
+| `SONA_MEETING_DATABASE_URL` | `postgresql://sona_app@/knowledge` | PostgreSQL 数据库连接串 |
+| `SONA_MEETING_SCHEMA` | `sona` | 会议数据存放 Schema |
+| `SONA_INTERACTION_DUPLEX_MODE` | `speaker_focus` | 默认双工模式 (`speaker_focus` / `headphone_duplex`) |
 
 ---
 
@@ -275,8 +275,8 @@ uv run python3 scripts/validate-meeting-contract.py
 [`docs/operations/联调记录模板.md`](docs/operations/联调记录模板.md)。
 
 ```bash
-# 1. 后端单元与集成测试（需设置 `VR_TEST_DATABASE_URL` 才会运行 PostgreSQL 临时 schema 测试；分支覆盖率门禁 `fail_under=80`）
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+# 1. 后端单元与集成测试（需设置 `SONA_TEST_DATABASE_URL` 才会运行 PostgreSQL 临时 schema 测试；分支覆盖率门禁 `fail_under=80`）
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 
 # 2. Python 严格静态类型检查 (Strict mode)
 uv run mypy src/
@@ -310,11 +310,11 @@ cd ui && npm run build
 <details>
 <summary><b>Q3: 如何在无图形界面 (Headless) 环境下使用语音助手？</b></summary>
 
-停止 `vr-ui` 主进程后，运行命令行专属交互入口：
+停止 `sona-ui` 主进程后，运行命令行专属交互入口：
 ```bash
-uv run vr-interact
+uv run sona-interact
 ```
-`vr-interact` 与 `vr-ui` 通过跨进程文件锁互斥，保证麦克风采集所有权安全。
+`sona-interact` 与 `sona-ui` 通过跨进程文件锁互斥，保证麦克风采集所有权安全。
 </details>
 
 <details>
@@ -322,7 +322,7 @@ uv run vr-interact
 
 本项目默认开启 `allow_model_downloads=False`（离线优先）。首次部署时，请按 SpeechRail 的运行手册
 准备 ASR/TTS snapshot；ASR/TTS 模型、profile 与运行进程均由 SpeechRail 独立管理，
-`voice-realtime` 不再下载或启动本地 ASR/TTS 模型。之后应用侧即可在完全离线/断网环境中运行，
+`sona` 不再下载或启动本地 ASR/TTS 模型。之后应用侧即可在完全离线/断网环境中运行，
 缺失模型由所属服务明确报错。
 </details>
 
@@ -339,8 +339,8 @@ uv run vr-interact
 - 📖 [声学防回声与全双工交互设计方案](docs/architecture/声学防回声与全双工交互设计方案.md)
 - 📖 [会议模式多说话人精准识别与声纹聚类技术方案](docs/solutions/会议模式多说话人精准识别与声纹聚类技术方案.md)
 - 📖 [会议助手后端运行与前后端联调手册](docs/manuals/会议助手后端运行与前后端联调.md)
-- 📖 [Voice Studio UI 设计方案](docs/manuals/Voice-Studio-UI-设计方案.md)
-- 📖 [SpeechRail Realtime v2 语音转文字开发对接手册](docs/manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md)
+- 📖 [Sona UI 设计方案](docs/manuals/Sona-UI-设计方案.md)
+- 📖 [SpeechRail OpenAI Realtime 语音转文字开发对接手册](docs/manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md)
 - 📖 [物理输出音频采集验收手册](docs/manuals/物理输出音频采集验收手册.md)
 - 📐 [会议助手 OpenAPI / AsyncAPI / JSON Schema 契约规范](contracts/meeting-assistant/v1)
 - 📝 [架构决策记录 (ADR-001 ~ ADR-012)](docs/decisions)

@@ -5,17 +5,17 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.inference.scheduler import LocalInferenceScheduler
-from voice_realtime.lm_studio import (
+from sona.inference.scheduler import LocalInferenceScheduler
+from sona.lm_studio import (
     LMStudioOutputLimitError,
     NativeChatCompletion,
     NativeChatRequest,
 )
-from voice_realtime.meeting.inner_os.context import (
+from sona.meeting.inner_os.context import (
     EvidenceSnapshot,
     InnerOSContextSnapshot,
 )
-from voice_realtime.meeting.inner_os.model_client import (
+from sona.meeting.inner_os.model_client import (
     InnerOSModelClient,
     InnerOSModelError,
 )

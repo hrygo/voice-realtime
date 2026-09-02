@@ -3,7 +3,7 @@ title: "SubtitleProxy 职责拆分实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
   - "docs/decisions/0011-speechrail-only-asr.md"
@@ -23,7 +23,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 前置：完成 `2026-09-01-speechrail-asr-boundary-refactor.md`。
 - 后续：meeting lifecycle 计划依赖 façade 的 typed `last_window` 与 capture methods。
 - 保持 `SubtitleProxy(settings, *, transcriber_factory=None, speechrail_connection_factory=None, backoff_delays=..., clock=...)` constructor。
@@ -36,10 +36,10 @@ related_documents:
 
 ## 目标文件
 
-- Create: `src/voice_realtime/ui/subtitle_clients.py`
-- Create: `src/voice_realtime/ui/subtitle_archive.py`
-- Create: `src/voice_realtime/ui/subtitle_sessions.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/ui/subtitle_clients.py`
+- Create: `src/sona/ui/subtitle_archive.py`
+- Create: `src/sona/ui/subtitle_sessions.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Create: `tests/test_subtitle_components.py`
 - Modify: `tests/asr/test_proxy_contract.py`
 - Modify: `tests/test_ui_server.py`
@@ -77,9 +77,9 @@ uv run --extra dev pytest tests/asr/test_proxy_contract.py tests/test_ui_server.
 
 **Files:**
 
-- Create: `src/voice_realtime/ui/subtitle_clients.py`
-- Create: `src/voice_realtime/ui/subtitle_archive.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/ui/subtitle_clients.py`
+- Create: `src/sona/ui/subtitle_archive.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitle_components.py`
 - Modify: `tests/asr/test_proxy_contract.py`
 
@@ -113,12 +113,12 @@ class SrtArchive:
 
 ```bash
 uv run --extra dev pytest tests/test_subtitle_components.py tests/asr/test_proxy_contract.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/subtitle_clients.py \
-  src/voice_realtime/ui/subtitle_archive.py src/voice_realtime/ui/subtitle_proxy.py \
+uv run --extra dev ruff check src/sona/ui/subtitle_clients.py \
+  src/sona/ui/subtitle_archive.py src/sona/ui/subtitle_proxy.py \
   tests/test_subtitle_components.py
-uv run --extra dev mypy src/voice_realtime/ui
-git add src/voice_realtime/ui/subtitle_clients.py src/voice_realtime/ui/subtitle_archive.py \
-  src/voice_realtime/ui/subtitle_proxy.py tests/test_subtitle_components.py tests/asr/test_proxy_contract.py
+uv run --extra dev mypy src/sona/ui
+git add src/sona/ui/subtitle_clients.py src/sona/ui/subtitle_archive.py \
+  src/sona/ui/subtitle_proxy.py tests/test_subtitle_components.py tests/asr/test_proxy_contract.py
 git commit -m "refactor: extract subtitle clients and archive"
 ```
 
@@ -126,8 +126,8 @@ git commit -m "refactor: extract subtitle clients and archive"
 
 **Files:**
 
-- Create: `src/voice_realtime/ui/subtitle_sessions.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Create: `src/sona/ui/subtitle_sessions.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitle_components.py`
 - Modify: `tests/asr/test_proxy_contract.py`
 
@@ -152,9 +152,9 @@ class StandardSubtitleSession:
 
 ```bash
 uv run --extra dev pytest tests/test_subtitle_components.py tests/asr/test_proxy_contract.py tests/test_ui_server.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/subtitle_sessions.py src/voice_realtime/ui/subtitle_proxy.py
-uv run --extra dev mypy src/voice_realtime/ui
-git add src/voice_realtime/ui/subtitle_sessions.py src/voice_realtime/ui/subtitle_proxy.py \
+uv run --extra dev ruff check src/sona/ui/subtitle_sessions.py src/sona/ui/subtitle_proxy.py
+uv run --extra dev mypy src/sona/ui
+git add src/sona/ui/subtitle_sessions.py src/sona/ui/subtitle_proxy.py \
   tests/test_subtitle_components.py tests/asr/test_proxy_contract.py tests/test_ui_server.py
 git commit -m "refactor: extract standard subtitle session"
 ```
@@ -163,8 +163,8 @@ git commit -m "refactor: extract standard subtitle session"
 
 **Files:**
 
-- Modify: `src/voice_realtime/ui/subtitle_sessions.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Modify: `src/sona/ui/subtitle_sessions.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitle_components.py`
 - Modify: `tests/test_meeting_session.py`
 - Modify: `tests/test_runtime_mode.py`
@@ -204,10 +204,10 @@ capture session 独占 `_capture_stream`、event/send tasks、stream-available/r
 ```bash
 uv run --extra dev pytest tests/test_subtitle_components.py tests/asr/test_proxy_contract.py \
   tests/test_meeting_session.py tests/test_runtime_mode.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/subtitle_sessions.py src/voice_realtime/ui/subtitle_proxy.py \
+uv run --extra dev ruff check src/sona/ui/subtitle_sessions.py src/sona/ui/subtitle_proxy.py \
   tests/test_subtitle_components.py
 uv run --extra dev mypy src
-git add src/voice_realtime/ui/subtitle_sessions.py src/voice_realtime/ui/subtitle_proxy.py \
+git add src/sona/ui/subtitle_sessions.py src/sona/ui/subtitle_proxy.py \
   tests/test_subtitle_components.py tests/test_meeting_session.py tests/test_runtime_mode.py
 git commit -m "refactor: extract meeting capture session"
 ```

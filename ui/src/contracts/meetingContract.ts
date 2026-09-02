@@ -1,5 +1,5 @@
 /**
- * Voice Studio 会议助手 V1 契约定义
+ * Sona 会议助手 V1 契约定义
  * 依据 docs/superpowers/specs/2026-08-21-meeting-assistant-design.md
  */
 

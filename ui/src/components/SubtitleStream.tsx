@@ -626,7 +626,7 @@ export default function SubtitleStream({
             <div className="presentation-title-wrap">
               <div className="presentation-logo-icon">🎙️</div>
               <div className="presentation-title-text">
-                <h2>Voice Studio 舞台提词与大屏</h2>
+                <h2>Sona 舞台提词与大屏</h2>
                 <span className="presentation-subtitle-status">
                   {connected ? "● SpeechRail 实时转写" : "○ 等待 ASR 连接"}
                   {" · "}

@@ -8,17 +8,17 @@ date: 2026-08-27
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - lm-studio
   - local-inference
   - workload-scheduler
 scope:
-  - "voice_realtime.lm_studio"
-  - "voice_realtime.inference"
-  - "voice_realtime.interaction"
-  - "voice_realtime.meeting"
+  - "sona.lm_studio"
+  - "sona.inference"
+  - "sona.interaction"
+  - "sona.meeting"
 related_documents:
   - "docs/decisions/0002-lm-studio-stateful-chat-context.md"
   - "docs/decisions/0005-server-side-runtime-workload-arbitration.md"
@@ -45,7 +45,7 @@ Accepted
 
 ## 决策
 
-1. `voice_realtime.lm_studio` 是 LM Studio 原生协议唯一实现：`NativeChatRequest` 控制可选参数，
+1. `sona.lm_studio` 是 LM Studio 原生协议唯一实现：`NativeChatRequest` 控制可选参数，
    `stream_chat()` 唯一负责 SSE 解码，`complete_chat()` 统一正文、终态、stats、error 和字符熔断。
 2. 业务层不再读取原始 SSE 行。助手直接消费规范化事件以保持低延迟 TTS 和 response chain；纪要、
    Inner OS 和评测使用完成结果 API。
@@ -56,7 +56,7 @@ Accepted
 5. 录音期间暂停新的后台纪要 claim 和模型入场。已进入 LM Studio 的纪要允许完成；等待中的纪要可
    取消并重新排队，防止把会议时长计入纪要总 deadline。
 6. `LMStudioSettings` 持有公共 endpoint 与 API key。旧的
-   `VR_INTERACTION_LLM_BASE_URL/VR_INTERACTION_LLM_API_KEY` 保留兼容别名，配置诊断继续脱敏。
+   `SONA_INTERACTION_LLM_BASE_URL/SONA_INTERACTION_LLM_API_KEY` 保留兼容别名，配置诊断继续脱敏。
 7. Inner OS 拆为查询编排、模型策略和私有连接会话。WebSocket 命令使用严格判别联合校验，模型输出
    必须先验证 schema 与证据别名，不能直接进入数据库、HTML、shell 或日志。
 

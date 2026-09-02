@@ -9,10 +9,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
-from voice_realtime.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
-from voice_realtime.asr.models import ASRSegment, ASRWindow
-from voice_realtime.meeting.asr_mapping import to_transcript_window
-from voice_realtime.meeting.models import TranscriptWindow
+from sona.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
+from sona.asr.models import ASRSegment, ASRWindow
+from sona.meeting.asr_mapping import to_transcript_window
+from sona.meeting.models import TranscriptWindow
 
 
 def _capabilities() -> ASRCapabilities:
@@ -83,12 +83,12 @@ def test_asr_package_imports_without_meeting_models() -> None:
     """ASR port modules must load without importing meeting entities."""
     script = (
         "import sys;"
-        "import voice_realtime.asr.contracts;"
-        "import voice_realtime.asr.models;"
-        "import voice_realtime.asr.presenters;"
-        "import voice_realtime.asr.adapters.speechrail_realtime;"
-        "import voice_realtime.asr.adapters.speechrail_pipecat;"
-        "assert 'voice_realtime.meeting.models' not in sys.modules"
+        "import sona.asr.contracts;"
+        "import sona.asr.models;"
+        "import sona.asr.presenters;"
+        "import sona.asr.adapters.speechrail_realtime;"
+        "import sona.asr.adapters.speechrail_pipecat;"
+        "assert 'sona.meeting.models' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)
 

@@ -3,7 +3,7 @@ title: "交互管道依赖注入与防回声重构实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
   - "docs/decisions/0012-speechrail-realtime-tts.md"
@@ -23,7 +23,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 可在 meeting 计划之后独立执行；不得与其他任务同时修改 `interaction/pipeline.py`、`interaction/session.py` 或 `ui/runtime.py`。
 - 当前层级事实：`EchoSuppressionProcessor`（约 405 行起）是 L1 音频/RMS/物理闭麦与 barge-in；`SelfEchoFilter`（约 352 行起）是 L2 文本相似度兜底。不得反转命名或合并两层。
 - 保持 processor 顺序：input → L1 echo → STT → L2 self-echo → user aggregator → LLM → bot text recorder → TTS → TTS state observer → output → assistant aggregator。
@@ -34,11 +34,11 @@ related_documents:
 
 ## 目标文件
 
-- Create: `src/voice_realtime/interaction/echo.py`
-- Create: `src/voice_realtime/interaction/pipeline_dependencies.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
-- Modify: `src/voice_realtime/interaction/session.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Create: `src/sona/interaction/echo.py`
+- Create: `src/sona/interaction/pipeline_dependencies.py`
+- Modify: `src/sona/interaction/pipeline.py`
+- Modify: `src/sona/interaction/session.py`
+- Modify: `src/sona/ui/runtime.py`
 - Create: `tests/test_pipeline_dependencies.py`
 - Modify: `tests/test_pipeline.py`
 - Modify: `tests/test_interaction_session.py`
@@ -74,8 +74,8 @@ uv run --extra dev pytest tests/test_pipeline.py tests/test_interaction_session.
 
 **Files:**
 
-- Create: `src/voice_realtime/interaction/echo.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
+- Create: `src/sona/interaction/echo.py`
+- Modify: `src/sona/interaction/pipeline.py`
 - Modify: `tests/test_pipeline_dependencies.py`
 - Modify: `tests/test_pipeline.py`
 
@@ -128,10 +128,10 @@ class SelfEchoPolicy:
 
 ```bash
 uv run --extra dev pytest tests/test_pipeline_dependencies.py tests/test_pipeline.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/interaction/echo.py \
-  src/voice_realtime/interaction/pipeline.py tests/test_pipeline_dependencies.py tests/test_pipeline.py
-uv run --extra dev mypy src/voice_realtime/interaction
-git add src/voice_realtime/interaction/echo.py src/voice_realtime/interaction/pipeline.py \
+uv run --extra dev ruff check src/sona/interaction/echo.py \
+  src/sona/interaction/pipeline.py tests/test_pipeline_dependencies.py tests/test_pipeline.py
+uv run --extra dev mypy src/sona/interaction
+git add src/sona/interaction/echo.py src/sona/interaction/pipeline.py \
   tests/test_pipeline_dependencies.py tests/test_pipeline.py
 git commit -m "refactor: separate echo policies"
 ```
@@ -140,8 +140,8 @@ git commit -m "refactor: separate echo policies"
 
 **Files:**
 
-- Create: `src/voice_realtime/interaction/pipeline_dependencies.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
+- Create: `src/sona/interaction/pipeline_dependencies.py`
+- Modify: `src/sona/interaction/pipeline.py`
 - Modify: `tests/test_pipeline_dependencies.py`
 - Modify: `tests/test_pipeline.py`
 
@@ -176,10 +176,10 @@ def default_pipeline_factories(settings: InteractionSettings) -> PipelineFactori
 
 ```bash
 uv run --extra dev pytest tests/test_pipeline_dependencies.py tests/test_pipeline.py tests/test_speechrail_tts_service.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/interaction/pipeline_dependencies.py \
-  src/voice_realtime/interaction/pipeline.py tests/test_pipeline_dependencies.py
-uv run --extra dev mypy src/voice_realtime/interaction
-git add src/voice_realtime/interaction/pipeline_dependencies.py src/voice_realtime/interaction/pipeline.py \
+uv run --extra dev ruff check src/sona/interaction/pipeline_dependencies.py \
+  src/sona/interaction/pipeline.py tests/test_pipeline_dependencies.py
+uv run --extra dev mypy src/sona/interaction
+git add src/sona/interaction/pipeline_dependencies.py src/sona/interaction/pipeline.py \
   tests/test_pipeline_dependencies.py tests/test_pipeline.py tests/test_speechrail_tts_service.py
 git commit -m "refactor: inject interaction pipeline factories"
 ```
@@ -188,8 +188,8 @@ git commit -m "refactor: inject interaction pipeline factories"
 
 **Files:**
 
-- Modify: `src/voice_realtime/interaction/session.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Modify: `src/sona/interaction/session.py`
+- Modify: `src/sona/ui/runtime.py`
 - Modify: `tests/test_interaction_session.py`
 - Modify: `tests/test_pipeline_dependencies.py`
 
@@ -206,10 +206,10 @@ git commit -m "refactor: inject interaction pipeline factories"
 ```bash
 uv run --extra dev pytest tests/test_pipeline_dependencies.py tests/test_pipeline.py \
   tests/test_interaction_session.py tests/test_ui_server.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/interaction/session.py src/voice_realtime/ui/runtime.py \
+uv run --extra dev ruff check src/sona/interaction/session.py src/sona/ui/runtime.py \
   tests/test_interaction_session.py
 uv run --extra dev mypy src
-git add src/voice_realtime/interaction/session.py src/voice_realtime/ui/runtime.py \
+git add src/sona/interaction/session.py src/sona/ui/runtime.py \
   tests/test_interaction_session.py tests/test_pipeline_dependencies.py
 git commit -m "refactor: compose interaction pipeline dependencies"
 ```

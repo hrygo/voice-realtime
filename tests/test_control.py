@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from voice_realtime.ui.control import ControlBridge
-from voice_realtime.ui.protocol import (
+from sona.ui.control import ControlBridge
+from sona.ui.protocol import (
     DuplexMode,
     EndMeetingCommand,
     RuntimeStateEvent,

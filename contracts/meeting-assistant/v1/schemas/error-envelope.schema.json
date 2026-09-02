@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "voice-studio://meeting-assistant/v1/error-envelope.schema.json",
+  "$id": "sona://meeting-assistant/v1/error-envelope.schema.json",
   "title": "ApiErrorEnvelope",
   "type": "object",
   "additionalProperties": false,

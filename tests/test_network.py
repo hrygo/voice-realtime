@@ -5,7 +5,7 @@ from ipaddress import ip_address
 import httpx
 import pytest
 
-from voice_realtime.network import get_lan_ip, local_async_client
+from sona.network import get_lan_ip, local_async_client
 
 
 async def test_local_async_client_ignores_environment_proxies() -> None:

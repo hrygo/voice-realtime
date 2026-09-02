@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键启动 voice-realtime UI；ASR/TTS 都由外部 SpeechRail 提供。
+# 一键启动 sona UI；ASR/TTS 都由外部 SpeechRail 提供。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -7,37 +7,37 @@ source "scripts/common.sh"
 
 LAN_IP=$(get_lan_ip)
 
-export VR_UI_HOST="$(resolve_bind_host "${VR_UI_HOST:-}" "127.0.0.1")"
-export VR_UI_PORT="${VR_UI_PORT:-8100}"
-export VR_SUBTITLE_SPEECHRAIL_URL="${VR_SUBTITLE_SPEECHRAIL_URL:-ws://127.0.0.1:8201/v2/realtime}"
-export VR_INTERACTION_SPEECHRAIL_REALTIME_URL="${VR_INTERACTION_SPEECHRAIL_REALTIME_URL:-$VR_SUBTITLE_SPEECHRAIL_URL}"
-export VR_INTERACTION_SPEECHRAIL_TTS_REST_URL="${VR_INTERACTION_SPEECHRAIL_TTS_REST_URL:-http://127.0.0.1:8201/v1}"
-export VR_MEETING_DATABASE_URL="${VR_MEETING_DATABASE_URL:-postgresql://voice_realtime_app@/knowledge}"
-export VR_MEETING_SCHEMA="${VR_MEETING_SCHEMA:-voice_realtime}"
+export SONA_UI_HOST="$(resolve_bind_host "${SONA_UI_HOST:-}" "127.0.0.1")"
+export SONA_UI_PORT="${SONA_UI_PORT:-8100}"
+export SONA_SUBTITLE_SPEECHRAIL_URL="${SONA_SUBTITLE_SPEECHRAIL_URL:-ws://127.0.0.1:8201/v1/realtime}"
+export SONA_INTERACTION_SPEECHRAIL_REALTIME_URL="${SONA_INTERACTION_SPEECHRAIL_REALTIME_URL:-$SONA_SUBTITLE_SPEECHRAIL_URL}"
+export SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL="${SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL:-http://127.0.0.1:8201/v1}"
+export SONA_MEETING_DATABASE_URL="${SONA_MEETING_DATABASE_URL:-postgresql://sona_app@/knowledge}"
+export SONA_MEETING_SCHEMA="${SONA_MEETING_SCHEMA:-sona}"
 
 
 echo "========================================================"
-echo "🚀  启动 voice-realtime 全套服务"
+echo "🚀  启动 sona 全套服务"
 echo "========================================================"
-if [[ "$VR_UI_HOST" == "127.0.0.1" || "$VR_UI_HOST" == "localhost" ]]; then
+if [[ "$SONA_UI_HOST" == "127.0.0.1" || "$SONA_UI_HOST" == "localhost" ]]; then
     echo "🔒 监听模式: 本机独占 (127.0.0.1，默认)"
-    echo "🎙️   Voice Studio Web 控制台: http://127.0.0.1:${VR_UI_PORT}"
-    echo "🔊  SpeechRail TTS:          ${VR_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
-    echo "📝  SpeechRail ASR:          ${VR_SUBTITLE_SPEECHRAIL_URL}"
-elif [[ "$VR_UI_HOST" == "0.0.0.0" ]]; then
+    echo "🎙️   Sona Web 控制台: http://127.0.0.1:${SONA_UI_PORT}"
+    echo "🔊  SpeechRail TTS:          ${SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
+    echo "📝  SpeechRail ASR:          ${SONA_SUBTITLE_SPEECHRAIL_URL}"
+elif [[ "$SONA_UI_HOST" == "0.0.0.0" ]]; then
     echo "🌐 监听模式: 全部网络接口 (0.0.0.0)"
-    echo "🎙️   Voice Studio Web 控制台:"
-    echo "    👉 本机访问: http://127.0.0.1:${VR_UI_PORT}"
+    echo "🎙️   Sona Web 控制台:"
+    echo "    👉 本机访问: http://127.0.0.1:${SONA_UI_PORT}"
     if [[ "$LAN_IP" != "127.0.0.1" ]]; then
-        echo "    👉 局域网访问: http://${LAN_IP}:${VR_UI_PORT}"
+        echo "    👉 局域网访问: http://${LAN_IP}:${SONA_UI_PORT}"
     fi
-    echo "🔊  SpeechRail TTS:   ${VR_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
-    echo "📝  SpeechRail ASR:   ${VR_SUBTITLE_SPEECHRAIL_URL}"
+    echo "🔊  SpeechRail TTS:   ${SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
+    echo "📝  SpeechRail ASR:   ${SONA_SUBTITLE_SPEECHRAIL_URL}"
 else
-    echo "🏠 监听模式: 局域网/指定地址 (${VR_UI_HOST})"
-    echo "🎙️   Voice Studio Web 控制台: http://${VR_UI_HOST}:${VR_UI_PORT} (本机: http://127.0.0.1:${VR_UI_PORT})"
-    echo "🔊  SpeechRail TTS:          ${VR_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
-    echo "📝  SpeechRail ASR:          ${VR_SUBTITLE_SPEECHRAIL_URL}"
+    echo "🏠 监听模式: 局域网/指定地址 (${SONA_UI_HOST})"
+    echo "🎙️   Sona Web 控制台: http://${SONA_UI_HOST}:${SONA_UI_PORT} (本机: http://127.0.0.1:${SONA_UI_PORT})"
+    echo "🔊  SpeechRail TTS:          ${SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL}"
+    echo "📝  SpeechRail ASR:          ${SONA_SUBTITLE_SPEECHRAIL_URL}"
 fi
 echo "📄  服务日志目录:           runtime/logs/"
 echo "    - UI 控制台日志:        runtime/logs/ui.log"
@@ -114,7 +114,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM EXIT
 
 # 启动 UI 主服务；SpeechRail 由独立 supervisor 管理。
-uv run vr-ui &
+uv run sona-ui &
 pids+=($!)
 
 # 等待任意子进程退出

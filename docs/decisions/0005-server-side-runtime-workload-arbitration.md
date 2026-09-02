@@ -8,7 +8,7 @@ date: 2026-08-25
 last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - runtime-arbitration
@@ -16,9 +16,9 @@ tags:
   - pcm-owner
   - audiohub
 scope:
-  - "voice_realtime.meeting"
-  - "voice_realtime.audio"
-  - "voice_realtime.ui"
+  - "sona.meeting"
+  - "sona.audio"
+  - "sona.ui"
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
@@ -32,7 +32,7 @@ related_documents:
 Accepted
 
 > **当前实现补充（2026-09-01）**：本文的背景与备选方案保留 2026-08-25 的 WLK-era 语境；当前
-> ASR/TTS 服务边界已由 ADR-0011/0012 迁移到 SpeechRail Realtime v2。下文凡涉及“当前服务”或
+> ASR/TTS 服务边界已由 ADR-0011/0012 迁移到 SpeechRail OpenAI Realtime `/v1`。下文凡涉及“当前服务”或
 > “可用连接”的内容，按 SpeechRail 解释；历史 WLK 名称仅用于决策溯源。
 
 ## 日期
@@ -41,7 +41,7 @@ Accepted
 
 ## 背景
 
-在 2026-08-25 的决策背景中，Voice Studio 同时包含三条会消耗本机推理资源的麦克风链路：
+在 2026-08-25 的决策背景中，Sona 同时包含三条会消耗本机推理资源的麦克风链路：
 
 - 语音助手（历史）：SenseVoice → LM Studio → Qwen3-TTS；
 - 实时字幕（历史）：WhisperLiveKit Qwen3-ASR → Sortformer；
@@ -62,7 +62,7 @@ Accepted
 消除的条件，但应用必须避免自身在异常路径中并发运行两条重型麦克风推理链路。
 
 本决策扩展 [ADR-001](./0001-single-owner-interaction-runtime.md) 的单一所有者原则，不取代其
-进程级 `vr-ui / vr-interact` 互斥结论。
+进程级 `sona-ui / sona-interact` 互斥结论。
 
 ## 决策
 
@@ -79,11 +79,11 @@ Accepted
    由服务端主动撤销。
 5. `SubtitleProxy` 增加显式的普通字幕捕获启停：
    - 应用启动只初始化代理，不自动建立永久普通字幕流；
-   - 进入 `subtitles` 前可建立无 PCM 的 prepared SpeechRail Realtime v2 WebSocket，等待 ready 后再停止来源并提交；
+   - 进入 `subtitles` 前可建立无 PCM 的 prepared SpeechRail `/v1/realtime` WebSocket，等待 ready 后再停止来源并提交；
    - 离开 `subtitles` 时停止普通字幕流、清空待发 PCM、归档当前 SRT epoch，并清除旧快照；
    - 会议捕获继续使用独占租约、EOF 冲刷和会议后端数据边界，释放后不得自行恢复普通字幕流。
 6. SpeechRail 服务进程继续由独立服务管理并可常驻预热。模式切换只控制连接和 PCM，不由
-   `voice-realtime` 卸载模型或重启 SpeechRail，避免冷启动进入交互路径。
+   `sona` 卸载模型或重启 SpeechRail，避免冷启动进入交互路径。
 7. 任意时刻最多存在一个 PCM 推理所有者；prepared 连接或已启动但被门控的管道不接收 PCM：
    - `assistant`：只允许交互链路消费 PCM；
    - `subtitles`：只允许普通字幕链路消费 PCM；

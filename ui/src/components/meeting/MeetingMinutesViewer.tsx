@@ -39,7 +39,7 @@ export function MeetingMinutesViewer({
   const [completedItems, setCompletedItems] = useState<Set<number>>(() => {
     if (!minutes?.id) return new Set();
     try {
-      const raw = localStorage.getItem(`voice-studio:action-items:${minutes.id}`);
+      const raw = localStorage.getItem(`sona:action-items:${minutes.id}`);
       return raw ? new Set<number>(JSON.parse(raw)) : new Set<number>();
     } catch {
       return new Set<number>();
@@ -53,7 +53,7 @@ export function MeetingMinutesViewer({
       else next.add(idx);
       if (minutes?.id) {
         try {
-          localStorage.setItem(`voice-studio:action-items:${minutes.id}`, JSON.stringify(Array.from(next)));
+          localStorage.setItem(`sona:action-items:${minutes.id}`, JSON.stringify(Array.from(next)));
         } catch {
           // Ignore
         }

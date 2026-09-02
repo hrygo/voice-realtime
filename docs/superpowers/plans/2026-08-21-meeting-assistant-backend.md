@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - meeting-assistant
@@ -32,10 +32,10 @@ tags:
 
 - Python remains strictly locked to 3.12.
 - Backend implementation only: do not modify meeting UI behavior under `ui/src/`.
-- Keep `vr-ui` and `vr-interact` single-owner semantics; meeting mode belongs to `vr-ui`.
+- Keep `sona-ui` and `sona-interact` single-owner semantics; meeting mode belongs to `sona-ui`.
 - Meeting mode must stop the entire Pipecat interaction pipeline; prompts or TTS mute are not sufficient.
 - Microphone is the only V1 audio source; never persist raw audio.
-- PostgreSQL `knowledge.voice_realtime` is the fact source; recovery journal is transient only.
+- PostgreSQL `knowledge.sona` is the fact source; recovery journal is transient only.
 - All services, PostgreSQL access, CORS, and WebSocket Origins remain loopback-only.
 - WLK/LM/PG model or service absence is fail-fast where required; no implicit model download.
 - Preserve existing public routes while adding canonical `/api/v1` and `/ws/v1` routes.
@@ -48,9 +48,9 @@ tags:
 
 | Workstream | Exclusive ownership |
 |---|---|
-| A — domain/storage | `src/voice_realtime/meeting/models.py`, `repository.py`, `migrations.py`, `recovery.py`, `migrations/`, `src/voice_realtime/config.py`, `pyproject.toml`, `uv.lock`, `tests/test_meeting_models.py`, `tests/test_meeting_repository.py`, `tests/test_meeting_recovery.py` |
-| B — transcription/runtime | `src/voice_realtime/meeting/transcript.py`, `session.py`, `runtime_mode.py`, `src/voice_realtime/ui/subtitle_proxy.py`, `runtime.py`, `protocol.py`, `control.py`, `src/voice_realtime/subtitles/launcher.py`, corresponding owned tests |
-| C — summary/API/contracts | `src/voice_realtime/meeting/summary.py`, `api.py`, `events.py`, `src/voice_realtime/ui/server.py`, `contracts/meeting-assistant/v1/`, corresponding owned tests |
+| A — domain/storage | `src/sona/meeting/models.py`, `repository.py`, `migrations.py`, `recovery.py`, `migrations/`, `src/sona/config.py`, `pyproject.toml`, `uv.lock`, `tests/test_meeting_models.py`, `tests/test_meeting_repository.py`, `tests/test_meeting_recovery.py` |
+| B — transcription/runtime | `src/sona/meeting/transcript.py`, `session.py`, `runtime_mode.py`, `src/sona/ui/subtitle_proxy.py`, `runtime.py`, `protocol.py`, `control.py`, `src/sona/subtitles/launcher.py`, corresponding owned tests |
+| C — summary/API/contracts | `src/sona/meeting/summary.py`, `api.py`, `events.py`, `src/sona/ui/server.py`, `contracts/meeting-assistant/v1/`, corresponding owned tests |
 | Main — integration | package exports, compatibility fixes outside owned files, cross-workstream tests, README/architecture docs, full gates, final review and commits |
 
 Workers may read all files but must write only their owned files. If an interface needs changing, message the main agent instead of editing another workstream's file.
@@ -165,9 +165,9 @@ class MeetingSummaryService:
 ### Task 1: Domain Models, Configuration, and Dependencies
 
 **Files:**
-- Create: `src/voice_realtime/meeting/__init__.py`
-- Create: `src/voice_realtime/meeting/models.py`
-- Modify: `src/voice_realtime/config.py`
+- Create: `src/sona/meeting/__init__.py`
+- Create: `src/sona/meeting/models.py`
+- Modify: `src/sona/config.py`
 - Modify: `pyproject.toml`
 - Modify: `uv.lock`
 - Test: `tests/test_meeting_models.py`
@@ -185,7 +185,7 @@ def test_meeting_settings_are_local_and_bounded(tmp_path: Path) -> None:
         database_url="postgresql:///knowledge",
         recovery_dir=tmp_path / "recovery",
     )
-    assert settings.schema == "voice_realtime"
+    assert settings.schema == "sona"
     assert settings.summary_model == "qwen/qwen3.6-35b-a3b"
     assert settings.summary_reasoning == "off"
     assert settings.finalization_timeout_secs == 30
@@ -209,7 +209,7 @@ def test_normalized_segment_rejects_invalid_time() -> None:
 
 Run: `uv run pytest tests/test_meeting_models.py tests/test_config.py -q`
 
-Expected: collection/import failures for `voice_realtime.meeting.models` and `MeetingSettings`.
+Expected: collection/import failures for `sona.meeting.models` and `MeetingSettings`.
 
 - [ ] **Step 3: Implement focused Pydantic models and settings**
 
@@ -233,8 +233,8 @@ Run:
 
 ```bash
 uv run pytest tests/test_meeting_models.py tests/test_config.py -q
-uv run mypy src/voice_realtime/meeting/models.py src/voice_realtime/config.py
-uv run ruff check src/voice_realtime/meeting/models.py src/voice_realtime/config.py tests/test_meeting_models.py tests/test_config.py
+uv run mypy src/sona/meeting/models.py src/sona/config.py
+uv run ruff check src/sona/meeting/models.py src/sona/config.py tests/test_meeting_models.py tests/test_config.py
 ```
 
 Expected: all pass.
@@ -242,17 +242,17 @@ Expected: all pass.
 - [ ] **Step 5: Commit Workstream A model foundation**
 
 ```bash
-git add pyproject.toml uv.lock src/voice_realtime/config.py src/voice_realtime/meeting tests/test_meeting_models.py tests/test_config.py
+git add pyproject.toml uv.lock src/sona/config.py src/sona/meeting tests/test_meeting_models.py tests/test_config.py
 git commit -m "feat(meeting): 建立会议领域模型与配置"
 ```
 
 ### Task 2: PostgreSQL Migration, Repository, and Recovery Journal
 
 **Files:**
-- Create: `src/voice_realtime/meeting/migrations/0001_initial.sql`
-- Create: `src/voice_realtime/meeting/migrations.py`
-- Create: `src/voice_realtime/meeting/repository.py`
-- Create: `src/voice_realtime/meeting/recovery.py`
+- Create: `src/sona/meeting/migrations/0001_initial.sql`
+- Create: `src/sona/meeting/migrations.py`
+- Create: `src/sona/meeting/repository.py`
+- Create: `src/sona/meeting/recovery.py`
 - Test: `tests/test_meeting_repository.py`
 - Test: `tests/test_meeting_recovery.py`
 
@@ -262,7 +262,7 @@ git commit -m "feat(meeting): 建立会议领域模型与配置"
 
 - [ ] **Step 1: Write failing migration/repository tests**
 
-Use a unique schema name per test session. Tests must skip only when `VR_TEST_DATABASE_URL` is absent; on this machine final verification sets it explicitly.
+Use a unique schema name per test session. Tests must skip only when `SONA_TEST_DATABASE_URL` is absent; on this machine final verification sets it explicitly.
 
 ```python
 async def test_reconcile_replaces_only_overlapping_window(repository: PostgresMeetingRepository) -> None:
@@ -282,7 +282,7 @@ async def test_speaker_rename_marks_minutes_source_stale(repository: PostgresMee
 
 - [ ] **Step 2: Verify tests fail before migration/repository exists**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_meeting_repository.py tests/test_meeting_recovery.py -q`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_meeting_repository.py tests/test_meeting_recovery.py -q`
 
 Expected: imports or missing migration fail; no existing `knowledge` tables are read or changed.
 
@@ -311,9 +311,9 @@ Write newline-delimited Pydantic envelopes with meeting ID, monotonic journal se
 Run:
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_meeting_repository.py tests/test_meeting_recovery.py -q
-uv run mypy src/voice_realtime/meeting/repository.py src/voice_realtime/meeting/recovery.py src/voice_realtime/meeting/migrations.py
-uv run ruff check src/voice_realtime/meeting/repository.py src/voice_realtime/meeting/recovery.py src/voice_realtime/meeting/migrations.py tests/test_meeting_repository.py tests/test_meeting_recovery.py
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_meeting_repository.py tests/test_meeting_recovery.py -q
+uv run mypy src/sona/meeting/repository.py src/sona/meeting/recovery.py src/sona/meeting/migrations.py
+uv run ruff check src/sona/meeting/repository.py src/sona/meeting/recovery.py src/sona/meeting/migrations.py tests/test_meeting_repository.py tests/test_meeting_recovery.py
 ```
 
 Expected: all pass; temporary schemas are removed.
@@ -321,16 +321,16 @@ Expected: all pass; temporary schemas are removed.
 - [ ] **Step 7: Commit Workstream A persistence**
 
 ```bash
-git add src/voice_realtime/meeting tests/test_meeting_repository.py tests/test_meeting_recovery.py
+git add src/sona/meeting tests/test_meeting_repository.py tests/test_meeting_recovery.py
 git commit -m "feat(meeting): 持久化会议转录与恢复日志"
 ```
 
 ### Task 3: Transcript Accumulator and Meeting-Capable WLK Gateway
 
 **Files:**
-- Create: `src/voice_realtime/meeting/transcript.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
-- Modify: `src/voice_realtime/subtitles/launcher.py`
+- Create: `src/sona/meeting/transcript.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
+- Modify: `src/sona/subtitles/launcher.py`
 - Test: `tests/test_meeting_transcript.py`
 - Modify: `tests/test_subtitle_proxy.py`
 - Modify: `tests/test_subtitles.py`
@@ -381,25 +381,25 @@ Run:
 
 ```bash
 uv run pytest tests/test_meeting_transcript.py tests/test_subtitle_proxy.py tests/test_subtitles.py -q
-uv run mypy src/voice_realtime/meeting/transcript.py src/voice_realtime/ui/subtitle_proxy.py src/voice_realtime/subtitles/launcher.py
-uv run ruff check src/voice_realtime/meeting/transcript.py src/voice_realtime/ui/subtitle_proxy.py src/voice_realtime/subtitles/launcher.py tests/test_meeting_transcript.py tests/test_subtitle_proxy.py tests/test_subtitles.py
+uv run mypy src/sona/meeting/transcript.py src/sona/ui/subtitle_proxy.py src/sona/subtitles/launcher.py
+uv run ruff check src/sona/meeting/transcript.py src/sona/ui/subtitle_proxy.py src/sona/subtitles/launcher.py tests/test_meeting_transcript.py tests/test_subtitle_proxy.py tests/test_subtitles.py
 ```
 
 - [ ] **Step 7: Commit Workstream B gateway**
 
 ```bash
-git add src/voice_realtime/meeting/transcript.py src/voice_realtime/ui/subtitle_proxy.py src/voice_realtime/subtitles/launcher.py tests/test_meeting_transcript.py tests/test_subtitle_proxy.py tests/test_subtitles.py
+git add src/sona/meeting/transcript.py src/sona/ui/subtitle_proxy.py src/sona/subtitles/launcher.py tests/test_meeting_transcript.py tests/test_subtitle_proxy.py tests/test_subtitles.py
 git commit -m "feat(meeting): 建立独立会议转录会话"
 ```
 
 ### Task 4: Meeting Session, Runtime Mode, and Control Protocol
 
 **Files:**
-- Create: `src/voice_realtime/meeting/session.py`
-- Create: `src/voice_realtime/meeting/runtime_mode.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
-- Modify: `src/voice_realtime/ui/protocol.py`
-- Modify: `src/voice_realtime/ui/control.py`
+- Create: `src/sona/meeting/session.py`
+- Create: `src/sona/meeting/runtime_mode.py`
+- Modify: `src/sona/ui/runtime.py`
+- Modify: `src/sona/ui/protocol.py`
+- Modify: `src/sona/ui/control.py`
 - Test: `tests/test_meeting_session.py`
 - Test: `tests/test_runtime_mode.py`
 - Modify: `tests/test_runtime.py`
@@ -451,21 +451,21 @@ Run:
 
 ```bash
 uv run pytest tests/test_meeting_session.py tests/test_runtime_mode.py tests/test_runtime.py tests/test_control.py -q
-uv run mypy src/voice_realtime/meeting/session.py src/voice_realtime/meeting/runtime_mode.py src/voice_realtime/ui/runtime.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/control.py
-uv run ruff check src/voice_realtime/meeting/session.py src/voice_realtime/meeting/runtime_mode.py src/voice_realtime/ui/runtime.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/control.py tests/test_meeting_session.py tests/test_runtime_mode.py tests/test_runtime.py tests/test_control.py
+uv run mypy src/sona/meeting/session.py src/sona/meeting/runtime_mode.py src/sona/ui/runtime.py src/sona/ui/protocol.py src/sona/ui/control.py
+uv run ruff check src/sona/meeting/session.py src/sona/meeting/runtime_mode.py src/sona/ui/runtime.py src/sona/ui/protocol.py src/sona/ui/control.py tests/test_meeting_session.py tests/test_runtime_mode.py tests/test_runtime.py tests/test_control.py
 ```
 
 - [ ] **Step 7: Commit Workstream B runtime**
 
 ```bash
-git add src/voice_realtime/meeting/session.py src/voice_realtime/meeting/runtime_mode.py src/voice_realtime/ui tests/test_meeting_session.py tests/test_runtime_mode.py tests/test_runtime.py tests/test_control.py
+git add src/sona/meeting/session.py src/sona/meeting/runtime_mode.py src/sona/ui tests/test_meeting_session.py tests/test_runtime_mode.py tests/test_runtime.py tests/test_control.py
 git commit -m "feat(meeting): 隔离会议与语音助手运行模式"
 ```
 
 ### Task 5: Evidence-Backed AI Minutes Service
 
 **Files:**
-- Create: `src/voice_realtime/meeting/summary.py`
+- Create: `src/sona/meeting/summary.py`
 - Test: `tests/test_meeting_summary.py`
 
 **Interfaces:**
@@ -510,23 +510,23 @@ Run:
 
 ```bash
 uv run pytest tests/test_meeting_summary.py -q
-uv run mypy src/voice_realtime/meeting/summary.py
-uv run ruff check src/voice_realtime/meeting/summary.py tests/test_meeting_summary.py
+uv run mypy src/sona/meeting/summary.py
+uv run ruff check src/sona/meeting/summary.py tests/test_meeting_summary.py
 ```
 
 - [ ] **Step 7: Commit Workstream C summary service**
 
 ```bash
-git add src/voice_realtime/meeting/summary.py tests/test_meeting_summary.py
+git add src/sona/meeting/summary.py tests/test_meeting_summary.py
 git commit -m "feat(meeting): 生成可追溯的结构化会议纪要"
 ```
 
 ### Task 6: V1 HTTP, WebSocket Events, Contracts, and Fixtures
 
 **Files:**
-- Create: `src/voice_realtime/meeting/api.py`
-- Create: `src/voice_realtime/meeting/events.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Create: `src/sona/meeting/api.py`
+- Create: `src/sona/meeting/events.py`
+- Modify: `src/sona/ui/server.py`
 - Create: `contracts/meeting-assistant/v1/openapi.json`
 - Create: `contracts/meeting-assistant/v1/asyncapi.yaml`
 - Create: `contracts/meeting-assistant/v1/schemas/`
@@ -577,22 +577,22 @@ Run:
 
 ```bash
 uv run pytest tests/test_meeting_api.py tests/test_meeting_events.py tests/test_ui_server.py -q
-uv run mypy src/voice_realtime/meeting/api.py src/voice_realtime/meeting/events.py src/voice_realtime/ui/server.py
-uv run ruff check src/voice_realtime/meeting/api.py src/voice_realtime/meeting/events.py src/voice_realtime/ui/server.py tests/test_meeting_api.py tests/test_meeting_events.py tests/test_ui_server.py
+uv run mypy src/sona/meeting/api.py src/sona/meeting/events.py src/sona/ui/server.py
+uv run ruff check src/sona/meeting/api.py src/sona/meeting/events.py src/sona/ui/server.py tests/test_meeting_api.py tests/test_meeting_events.py tests/test_ui_server.py
 git diff --exit-code -- contracts/meeting-assistant/v1
 ```
 
 - [ ] **Step 7: Commit Workstream C contracts/API**
 
 ```bash
-git add src/voice_realtime/meeting/api.py src/voice_realtime/meeting/events.py src/voice_realtime/ui/server.py contracts/meeting-assistant/v1 tests/test_meeting_api.py tests/test_meeting_events.py tests/test_ui_server.py
+git add src/sona/meeting/api.py src/sona/meeting/events.py src/sona/ui/server.py contracts/meeting-assistant/v1 tests/test_meeting_api.py tests/test_meeting_events.py tests/test_ui_server.py
 git commit -m "feat(meeting): 发布会议助手 v1 后端契约"
 ```
 
 ### Task 7: Cross-Workstream Integration and Compatibility
 
 **Files:**
-- Modify: `src/voice_realtime/meeting/__init__.py`
+- Modify: `src/sona/meeting/__init__.py`
 - Modify only as required: package files outside exclusive ownership after workers finish
 - Create: `tests/test_meeting_integration.py`
 - Modify: backend documentation and architecture diagrams
@@ -642,7 +642,7 @@ git commit -m "feat(meeting): 集成会议助手后端运行链路"
 - [ ] **Step 1: Run Python gates**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 ```

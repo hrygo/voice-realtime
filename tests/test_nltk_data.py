@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from voice_realtime.interaction import nltk_data
+from sona.interaction import nltk_data
 
 
 def test_skips_download_when_installed() -> None:
@@ -46,7 +46,7 @@ def test_install_downloads_and_extracts() -> None:
 
     with (
         patch.object(nltk_data, "_download") as mock_download,
-        patch("voice_realtime.interaction.nltk_data.zipfile.ZipFile") as mock_zip,
+        patch("sona.interaction.nltk_data.zipfile.ZipFile") as mock_zip,
     ):
         nltk_data._install()
     mock_download.assert_called_once()

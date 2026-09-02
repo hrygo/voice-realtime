@@ -211,7 +211,7 @@ export function MeetingDetailView({
   const [splitPercent, setSplitPercent] = useState<number>(() => {
     try {
       if (typeof window !== "undefined" && window.localStorage) {
-        const saved = window.localStorage.getItem("voice-studio:meeting-split-percent");
+        const saved = window.localStorage.getItem("sona:meeting-split-percent");
         if (saved) {
           const val = parseFloat(saved);
           if (!isNaN(val) && val >= 25 && val <= 75) return val;
@@ -234,7 +234,7 @@ export function MeetingDetailView({
     setSplitPercent(48);
     try {
       if (typeof window !== "undefined" && window.localStorage) {
-        window.localStorage.setItem("voice-studio:meeting-split-percent", "48");
+        window.localStorage.setItem("sona:meeting-split-percent", "48");
       }
     } catch {
       // Ignore
@@ -258,7 +258,7 @@ export function MeetingDetailView({
       setIsDraggingSplitter(false);
       try {
         if (typeof window !== "undefined" && window.localStorage) {
-          window.localStorage.setItem("voice-studio:meeting-split-percent", splitPercent.toFixed(1));
+          window.localStorage.setItem("sona:meeting-split-percent", splitPercent.toFixed(1));
         }
       } catch {
         // Ignore

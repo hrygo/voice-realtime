@@ -620,12 +620,12 @@ export default function StatusBar({
   return (
     <header className="status-bar">
       <div className="status-left">
-        <div className="status-brand" title="Voice Studio">
-          <span className="status-logo-icon" role="img" aria-label="Voice Studio">
+        <div className="status-brand" title="Sona">
+          <span className="status-logo-icon" role="img" aria-label="Sona">
             🎙️
           </span>
           <h1 className="status-title">
-            <span className="title-full">Voice Studio</span>
+            <span className="title-full">Sona</span>
             <span className="title-short">VS</span>
           </h1>
         </div>

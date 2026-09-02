@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.ownership import (
+from sona.config import InteractionSettings
+from sona.interaction.ownership import (
     InteractionOwnership,
     InteractionOwnershipError,
 )
-from voice_realtime.interaction.session import InteractionSession, InteractionSessionState
-from voice_realtime.ui.protocol import DuplexMode
+from sona.interaction.session import InteractionSession, InteractionSessionState
+from sona.ui.protocol import DuplexMode
 
 
 def test_second_interaction_owner_is_rejected(tmp_path: Path) -> None:

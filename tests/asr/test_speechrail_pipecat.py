@@ -14,8 +14,8 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from voice_realtime.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTProcessor
-from voice_realtime.speechrail.transcription_events import (
+from sona.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTProcessor
+from sona.speechrail.transcription_events import (
     TranscriptionCompleted,
     TranscriptionDelta,
     decode_transcription_event,
@@ -29,12 +29,18 @@ class FakeSpeechRailClient:
         self.closed = False
         self._events = iter(
             (
-                {"type": "input_audio_buffer.ack"},
-                {"type": "transcription.delta", "text": "你好"},
+                {"type": "session.created", "session_id": "sess-1", "sequence": 1},
                 {
-                    "type": "transcription.completed",
-                    "text": "你好世界",
-                    "segments": [],
+                    "type": "conversation.item.input_audio_transcription.delta",
+                    "delta": "你好",
+                    "session_id": "sess-1",
+                    "sequence": 2,
+                },
+                {
+                    "type": "conversation.item.input_audio_transcription.completed",
+                    "transcript": "你好世界",
+                    "session_id": "sess-1",
+                    "sequence": 3,
                 },
             )
         )
@@ -55,7 +61,7 @@ class FakeSpeechRailClient:
         self.closed = True
 
 
-def test_pipecat_processor_commits_one_v2_session_per_vad_turn() -> None:
+def test_pipecat_processor_commits_one_session_per_vad_turn() -> None:
     async def scenario() -> None:
         client = FakeSpeechRailClient()
         processor = SpeechRailConversationSTTProcessor(
@@ -90,7 +96,9 @@ def test_pipecat_processor_fails_and_closes_the_turn_on_speechrail_error() -> No
     class ErrorClient(FakeSpeechRailClient):
         def __init__(self) -> None:
             super().__init__()
-            self._events = iter(({"type": "error", "error": {"code": "speechrail_error"}},))
+            self._events = iter(
+                ({"type": "error", "error": {"code": "speechrail_error"}, "sequence": 1},)
+            )
 
     async def scenario() -> None:
         client = ErrorClient()
@@ -110,15 +118,23 @@ def test_pipecat_processor_fails_and_closes_the_turn_on_speechrail_error() -> No
 
 def test_pipecat_processor_matches_decoder_for_delta_and_completed() -> None:
     async def scenario() -> None:
-        delta_raw = {"type": "transcription.delta", "text": "你好"}
-        completed_raw = {"type": "transcription.completed", "text": "你好世界", "segments": []}
+        delta_raw = {"type": "conversation.item.input_audio_transcription.delta", "delta": "你好"}
+        completed_raw = {
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "你好世界",
+        }
         decoded_delta = decode_transcription_event(delta_raw)
         decoded_completed = decode_transcription_event(completed_raw)
         assert isinstance(decoded_delta, TranscriptionDelta)
         assert isinstance(decoded_completed, TranscriptionCompleted)
 
         client = FakeSpeechRailClient()
-        client._events = iter((delta_raw, completed_raw))
+        client._events = iter(
+            (
+                dict(delta_raw, **{"session_id": "sess-1", "sequence": 1}),
+                dict(completed_raw, **{"session_id": "sess-1", "sequence": 2}),
+            )
+        )
         processor = SpeechRailConversationSTTProcessor(
             language="zh",
             client_factory=lambda: client,
@@ -141,28 +157,67 @@ def test_pipecat_processor_matches_decoder_for_delta_and_completed() -> None:
         interim = next(frame for frame in emitted if isinstance(frame, InterimTranscriptionFrame))
         final = next(frame for frame in emitted if isinstance(frame, TranscriptionFrame))
         assert interim.text == decoded_delta.text
-        assert final.text == decoded_completed.text
+        assert final.text == decoded_completed.transcript
         assert final.finalized is True
 
     asyncio.run(scenario())
 
 
-def test_pipecat_processor_validates_segments_via_shared_decoder() -> None:
-    class BadSegmentsClient(FakeSpeechRailClient):
+def test_pipecat_processor_skips_unexpected_diarization_segment() -> None:
+    class SegmentClient(FakeSpeechRailClient):
         def __init__(self) -> None:
             super().__init__()
             self._events = iter(
                 (
                     {
-                        "type": "transcription.completed",
+                        "type": "conversation.item.input_audio_transcription.segment",
                         "text": "你好世界",
-                        "segments": [{"start_ms": 0, "end_ms": 100, "text": ""}],
+                        "speaker": "spk_01",
+                        "start": 0.0,
+                        "end": 1.0,
+                        "session_id": "sess-1",
+                        "sequence": 1,
+                    },
+                    {
+                        "type": "conversation.item.input_audio_transcription.completed",
+                        "transcript": "你好世界",
+                        "session_id": "sess-1",
+                        "sequence": 2,
                     },
                 )
             )
 
     async def scenario() -> None:
-        client = BadSegmentsClient()
+        client = SegmentClient()
+        processor = SpeechRailConversationSTTProcessor(
+            language="zh",
+            client_factory=lambda: client,
+        )
+
+        await processor._open_turn()
+        await processor._commit_turn()
+
+        assert client.closed is True
+
+    asyncio.run(scenario())
+
+
+def test_pipecat_processor_validates_transcript_via_shared_decoder() -> None:
+    class BadTranscriptClient(FakeSpeechRailClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._events = iter(
+                (
+                    {
+                        "type": "conversation.item.input_audio_transcription.completed",
+                        "session_id": "sess-1",
+                        "sequence": 1,
+                    },
+                )
+            )
+
+    async def scenario() -> None:
+        client = BadTranscriptClient()
         processor = SpeechRailConversationSTTProcessor(
             language="zh",
             client_factory=lambda: client,
@@ -170,28 +225,6 @@ def test_pipecat_processor_validates_segments_via_shared_decoder() -> None:
 
         await processor._open_turn()
         with pytest.raises(RuntimeError, match="SPEECHRAIL_PROTOCOL_ERROR"):
-            await processor._commit_turn()
-
-        assert client.closed is True
-
-    asyncio.run(scenario())
-
-
-def test_pipecat_processor_raises_on_session_completed() -> None:
-    class SessionEndedClient(FakeSpeechRailClient):
-        def __init__(self) -> None:
-            super().__init__()
-            self._events = iter(({"type": "session.completed"},))
-
-    async def scenario() -> None:
-        client = SessionEndedClient()
-        processor = SpeechRailConversationSTTProcessor(
-            language="zh",
-            client_factory=lambda: client,
-        )
-
-        await processor._open_turn()
-        with pytest.raises(RuntimeError, match="SPEECHRAIL_FINAL_MISSING"):
             await processor._commit_turn()
 
         assert client.closed is True
@@ -203,32 +236,12 @@ def test_pipecat_processor_raises_on_unknown_event_type() -> None:
     class UnknownClient(FakeSpeechRailClient):
         def __init__(self) -> None:
             super().__init__()
-            self._events = iter(({"type": "some.future.event"},))
+            self._events = iter(
+                ({"type": "some.future.event", "session_id": "sess-1", "sequence": 1},)
+            )
 
     async def scenario() -> None:
         client = UnknownClient()
-        processor = SpeechRailConversationSTTProcessor(
-            language="zh",
-            client_factory=lambda: client,
-        )
-
-        await processor._open_turn()
-        with pytest.raises(RuntimeError, match="SPEECHRAIL_PROTOCOL_ERROR"):
-            await processor._commit_turn()
-
-        assert client.closed is True
-
-    asyncio.run(scenario())
-
-
-def test_pipecat_processor_raises_on_diarization_event() -> None:
-    class DiarizationClient(FakeSpeechRailClient):
-        def __init__(self) -> None:
-            super().__init__()
-            self._events = iter(({"type": "transcription.diarization.completed", "mapping": {}},))
-
-    async def scenario() -> None:
-        client = DiarizationClient()
         processor = SpeechRailConversationSTTProcessor(
             language="zh",
             client_factory=lambda: client,

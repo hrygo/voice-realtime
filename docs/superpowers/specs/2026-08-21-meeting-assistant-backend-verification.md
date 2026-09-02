@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - meeting-assistant
   - acceptance-testing
@@ -36,7 +36,7 @@ tags:
 ### Python 与真实 PostgreSQL 临时 schema
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 ```
 
 结果：`463 passed`；总分支覆盖率 `83.96%`，高于 `80%` 门槛。真实 PostgreSQL 测试为每个
@@ -71,7 +71,7 @@ npm audit --audit-level=high
 - 定向后端验证：
 
   ```bash
-  VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest --no-cov \
+  SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest --no-cov \
     tests/test_meeting_summary.py tests/test_meeting_repository.py -q
   ```
 
@@ -80,7 +80,7 @@ npm audit --audit-level=high
 ### 数据边界与 bootstrap
 
 - 在 meeting 源码和契约中检查不存在 `bytea`、音频 blob、WAV/PCM 数据列。
-- PostgreSQL bootstrap 已持久创建 `voice_realtime_app` 和 `voice_realtime` schema；应用角色为
+- PostgreSQL bootstrap 已持久创建 `sona_app` 和 `sona` schema；应用角色为
   非 superuser、非 createrole、非 createdb，仅拥有本 schema 的 `USAGE/CREATE`。
 - 临时 schema 清理查询返回空结果。
 - `runtime/sortformer.nemo` 已从 `nvidia/diar_streaming_sortformer_4spk-v2` 固定 revision
@@ -89,7 +89,7 @@ npm audit --audit-level=high
 
 ## 本机正式部署与现场验收
 
-- PostgreSQL：正式 migration `version=1` 已由 `voice_realtime_app` 应用，六张会议表均存在；该角色
+- PostgreSQL：正式 migration `version=1` 已由 `sona_app` 应用，六张会议表均存在；该角色
   对 `ag_catalog`、`workstudio` 无 `USAGE/CREATE`，对数据库无 `CREATE`。本机 `.env` 已设置
   socket DSN 与独立 schema，文件由 Git 忽略且不含密码。
 - WhisperLiveKit：服务以 `qwen3-streaming`、`--pcm-input`、Sortformer、最多 4 speakers、

@@ -4,9 +4,9 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
-from voice_realtime.meeting.inner_os.contracts import InnerOSAnswer
-from voice_realtime.meeting.inner_os.service import InnerOSQueryService
-from voice_realtime.meeting.models import MeetingStatus, NormalizedSegment, TranscriptDocument
+from sona.meeting.inner_os.contracts import InnerOSAnswer
+from sona.meeting.inner_os.service import InnerOSQueryService
+from sona.meeting.models import MeetingStatus, NormalizedSegment, TranscriptDocument
 
 MEETING_ID = UUID("00000000-0000-0000-0000-000000000001")
 QUERY_ID = UUID("00000000-0000-0000-0000-000000000002")

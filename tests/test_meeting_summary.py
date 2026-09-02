@@ -10,9 +10,9 @@ import httpx
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from voice_realtime.inference.scheduler import LocalInferenceScheduler
-from voice_realtime.meeting.repository import _coerce_minutes_result
-from voice_realtime.meeting.summary import (
+from sona.inference.scheduler import LocalInferenceScheduler
+from sona.meeting.repository import _coerce_minutes_result
+from sona.meeting.summary import (
     MeetingSummaryClient,
     MeetingSummaryService,
     MinutesContent,
@@ -24,7 +24,7 @@ from voice_realtime.meeting.summary import (
     render_minutes_markdown,
     validate_evidence,
 )
-from voice_realtime.meeting.summary_contract import ModelMinutesResult, model_schema
+from sona.meeting.summary_contract import ModelMinutesResult, model_schema
 
 
 def _document() -> SimpleNamespace:

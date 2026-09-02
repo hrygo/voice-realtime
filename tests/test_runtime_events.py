@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from voice_realtime.meeting.models import PCMOwner, RuntimeMode
-from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
-from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
+from sona.meeting.models import PCMOwner, RuntimeMode
+from sona.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from sona.ui.runtime_events import RuntimeStateBroadcaster
 
 
 def snapshot(*, revision: int, mode: RuntimeMode) -> RuntimeStateSnapshot:

@@ -5,78 +5,35 @@ import base64
 import json
 from collections.abc import AsyncIterator
 
-from voice_realtime.asr.adapters.speechrail_realtime import (
+from sona.asr.adapters.speechrail_realtime import (
     SpeechRailRealtimeClient,
     SpeechRailStreamingTranscriber,
 )
-from voice_realtime.asr.contracts import ASREvent, ASRSessionContext
-from voice_realtime.speechrail.transcription_events import (
+from sona.asr.contracts import ASREvent, ASRSessionContext
+from sona.speechrail.transcription_events import (
     SpeechRailTranscriptionError,
     TranscriptionCompleted,
     TranscriptionDelta,
     decode_transcription_event,
 )
-from voice_realtime.speechrail.transport import SpeechRailV2Transport
+from sona.speechrail.transport import SpeechRailOpenAITransport
 
 
 class FakeConnection:
-    uri = "ws://speechrail.test/v2/realtime"
+    uri = "ws://speechrail.test/v1/realtime"
 
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
-        self._committed = asyncio.Event()
-        self._messages = [
-            {
-                "type": "session.created",
-                "event_id": "evt-1",
-                "session_id": "sess-1",
-                "request_id": "req-1",
-                "sequence": 1,
-            },
-            {
-                "type": "transcription.delta",
-                "event_id": "evt-2",
-                "session_id": "sess-1",
-                "request_id": "req-1",
-                "sequence": 2,
-                "item_id": "item-1",
-                "revision": 1,
-                "text": "你好",
-                "audio_start_ms": 0,
-                "audio_end_ms": 100,
-            },
-            {
-                "type": "transcription.completed",
-                "event_id": "evt-3",
-                "session_id": "sess-1",
-                "request_id": "req-1",
-                "sequence": 3,
-                "item_id": "item-1",
-                "text": "你好世界",
-                "language": "Chinese",
-                "segments": [
-                    {"id": "seg-1", "start_ms": 0, "end_ms": 100, "text": "你好世界"}
-                ],
-            },
-            {
-                "type": "transcription.diarization.completed",
-                "event_id": "evt-4",
-                "session_id": "sess-1",
-                "request_id": "req-1",
-                "sequence": 4,
-                "mapping": {},
-            },
+        self._messages = [*_session_events(),
+            _transcription_delta("你好", sequence=4),
+            _transcription_completed("你好世界", sequence=5),
         ]
 
     async def send(self, payload: str) -> None:
         event = json.loads(payload)
         self.sent.append(event)
-        if event["type"] == "input_audio_buffer.commit":
-            self._committed.set()
 
     async def recv(self) -> str:
-        if len(self._messages) < 3:
-            await self._committed.wait()
         return json.dumps(self._messages.pop(0))
 
     async def close(self) -> None:
@@ -96,23 +53,75 @@ class Websockets17StyleConnection:
         return None
 
 
+def _session_events() -> list[dict[str, object]]:
+    return [
+        _envelope("session.created", 1, session={"id": "sess-1"}),
+        _envelope("session.updated", 2, session={"id": "sess-1"}),
+        _envelope("conversation.created", 3, conversation={"id": "conv-1"}),
+    ]
+
+
+def _envelope(event_type: str, sequence: int, **payload: object) -> dict[str, object]:
+    return {
+        "type": event_type,
+        "event_id": f"evt-{sequence}",
+        "session_id": "sess-1",
+        "sequence": sequence,
+        **payload,
+    }
+
+
+def _transcription_delta(text: str, *, sequence: int) -> dict[str, object]:
+    return _envelope(
+        "conversation.item.input_audio_transcription.delta",
+        sequence,
+        item_id="item-1",
+        content_index=0,
+        delta=text,
+    )
+
+
+def _transcription_completed(transcript: str, *, sequence: int) -> dict[str, object]:
+    return _envelope(
+        "conversation.item.input_audio_transcription.completed",
+        sequence,
+        item_id="item-1",
+        content_index=0,
+        transcript=transcript,
+    )
+
+
+def _segment(text: str, *, speaker: str | None, sequence: int) -> dict[str, object]:
+    return _envelope(
+        "conversation.item.input_audio_transcription.segment",
+        sequence,
+        item_id="item-1",
+        content_index=0,
+        id=f"seg-{sequence}",
+        text=text,
+        speaker=speaker,
+        start=0.0,
+        end=1.0,
+    )
+
+
 def test_transport_uri_uses_configured_url_when_connection_has_no_uri() -> None:
     async def scenario() -> None:
         connection = Websockets17StyleConnection()
-        transport = SpeechRailV2Transport(
-            url="ws://speechrail.test/v2/realtime",
+        transport = SpeechRailOpenAITransport(
+            url="ws://speechrail.test/v1/realtime",
             connection_factory=lambda _: _immediate(connection),
         )
 
         await transport.connect()
 
-        assert transport.uri == "ws://speechrail.test/v2/realtime"
+        assert transport.uri == "ws://speechrail.test/v1/realtime"
         await transport.close()
 
     asyncio.run(scenario())
 
 
-def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
+def test_streaming_adapter_maps_openai_snapshot_and_pcm_append() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
         client = SpeechRailRealtimeClient(
@@ -138,8 +147,9 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
         assert snapshot.window.partial == "你好"
         assert final.kind == "final"
         assert final.window is not None
-        assert final.window.segments[0].start_ms == 1_000
+        assert final.window.segments[0].text == "你好世界"
         assert final.window.segments[0].speaker_key == "epoch:2:speaker:0"
+        assert "input_audio_transcription" in connection.sent[0]["session"]
         assert connection.sent[1]["audio"] == base64.b64encode(b"\x00\x00").decode()
         assert connection.sent[2]["type"] == "input_audio_buffer.commit"
 
@@ -149,17 +159,11 @@ def test_streaming_adapter_maps_v2_snapshot_and_pcm_append() -> None:
 def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_label() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
-        connection._messages[2]["segments"] = [
-            {
-                "id": "seg-1",
-                "start_ms": 0,
-                "end_ms": 100,
-                "text": "你好世界",
-                "speaker": "spk_02",
-                "speakers": [{"id": "spk_02", "confidence": 0.93}],
-            }
+        connection._messages = [*_session_events(),
+            _transcription_delta("你好", sequence=4),
+            _segment("你好世界", speaker="spk_02", sequence=5),
+            _transcription_completed("你好世界", sequence=6),
         ]
-        connection._messages[3]["mapping"] = {"spk_02": "spk_01"}
         adapter = SpeechRailStreamingTranscriber(
             client=SpeechRailRealtimeClient(
                 url=connection.uri,
@@ -183,17 +187,44 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
         await anext(events)
         final = await anext(events)
 
-        assert connection.sent[0]["session"]["diarization"] == {
+        transcription = connection.sent[0]["session"]["input_audio_transcription"]
+        assert isinstance(transcription, dict)
+        assert transcription["diarization"] == {
             "enabled": True,
             "finalize": True,
             "speaker_count_hint": 2,
             "group_id": "a" * 64,
         }
         assert final.window is not None
-        assert final.window.segments[0].speaker_key == "epoch:2:speaker:spk_02"
-        assert final.window.speaker_remap == (
-            ("epoch:2:speaker:spk_02", f"group:{'a' * 64}:speaker:spk_01"),
+        assert final.window.segments[0].speaker_key == f"group:{'a' * 64}:speaker:spk_02"
+        assert final.window.segments[0].text == "你好世界"
+
+    asyncio.run(scenario())
+
+
+def test_meeting_adapter_defaults_epoch_speaker_when_no_group_id() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [*_session_events(),
+            _segment("你好世界", speaker="spk_01", sequence=4),
+            _transcription_completed("你好世界", sequence=5),
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            language="Chinese",
         )
+
+        await adapter.connect()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+        final = await anext(events)
+
+        assert final.window is not None
+        assert final.window.segments[0].speaker_key == "epoch:2:speaker:spk_01"
 
     asyncio.run(scenario())
 
@@ -201,14 +232,9 @@ def test_meeting_adapter_requests_diarization_and_preserves_anonymous_speaker_la
 def test_finish_waits_for_the_confirmed_transcript_window() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
-        connection._messages[2]["segments"] = [
-            {
-                "id": "seg-1",
-                "start_ms": 0,
-                "end_ms": 100,
-                "text": "你好世界",
-                "speaker": "spk_01",
-            }
+        connection._messages = [*_session_events(),
+            _segment("你好世界", speaker="spk_01", sequence=4),
+            _transcription_completed("你好世界", sequence=5),
         ]
         client = SpeechRailRealtimeClient(
             url=connection.uri,
@@ -255,6 +281,7 @@ def test_client_reconnects_with_a_new_session_sequence() -> None:
 def test_client_rejects_events_from_another_session() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
+        connection._messages = _session_events()
         connection._messages[1]["session_id"] = "sess-other"
         client = SpeechRailRealtimeClient(
             url=connection.uri,
@@ -262,7 +289,7 @@ def test_client_rejects_events_from_another_session() -> None:
         )
 
         await client.connect(language="Chinese")
-        await client.commit()
+        assert (await client.receive())["type"] == "session.created"
 
         try:
             await client.receive()
@@ -277,6 +304,7 @@ def test_client_rejects_events_from_another_session() -> None:
 def test_finish_times_out_when_no_event_reader_receives_a_final_result() -> None:
     async def scenario() -> None:
         connection = FakeConnection()
+        connection._messages = _session_events()
         client = SpeechRailRealtimeClient(
             url=connection.uri,
             connection_factory=lambda _: _immediate(connection),
@@ -299,38 +327,8 @@ def test_finish_times_out_when_no_event_reader_receives_a_final_result() -> None
     asyncio.run(scenario())
 
 
-class FastFakeConnection(FakeConnection):
-    """FakeConnection variant that never waits for a commit before recv."""
-
-    async def recv(self) -> str:
-        return json.dumps(self._messages.pop(0))
-
-
-def _stream_messages(*events: dict[str, object]) -> FastFakeConnection:
-    """Build a connection whose event stream starts with session.created."""
-    connection = FastFakeConnection()
-    messages: list[dict[str, object]] = [
-        {
-            "type": "session.created",
-            "event_id": "evt-0",
-            "session_id": "sess-1",
-            "request_id": "req-1",
-            "sequence": 1,
-        }
-    ]
-    for index, event in enumerate(events, start=2):
-        envelope = dict(event)
-        envelope.setdefault("event_id", f"evt-{index}")
-        envelope.setdefault("session_id", "sess-1")
-        envelope.setdefault("request_id", "req-1")
-        envelope.setdefault("sequence", index)
-        messages.append(envelope)
-    connection._messages = messages
-    return connection
-
-
 def _collect_stream_events(
-    connection: FastFakeConnection,
+    connection: FakeConnection,
     context: ASRSessionContext,
 ) -> list[ASREvent]:
     async def scenario() -> list[ASREvent]:
@@ -355,18 +353,24 @@ def _collect_stream_events(
 
 def test_streaming_adapter_matches_decoder_for_delta_and_completed() -> None:
     async def scenario() -> None:
-        delta_raw = {"type": "transcription.delta", "text": "你好"}
+        delta_raw = {
+            "type": "conversation.item.input_audio_transcription.delta",
+            "delta": "你好",
+        }
         completed_raw = {
-            "type": "transcription.completed",
-            "text": "你好世界",
-            "segments": [{"start_ms": 0, "end_ms": 100, "text": "你好世界"}],
+            "type": "conversation.item.input_audio_transcription.completed",
+            "transcript": "你好世界",
         }
         decoded_delta = decode_transcription_event(delta_raw)
         decoded_completed = decode_transcription_event(completed_raw)
         assert isinstance(decoded_delta, TranscriptionDelta)
         assert isinstance(decoded_completed, TranscriptionCompleted)
 
-        connection = _stream_messages(delta_raw, completed_raw)
+        connection = FakeConnection()
+        connection._messages = [*_session_events(),
+            _transcription_delta(decoded_delta.text, sequence=4),
+            _transcription_completed(decoded_completed.transcript, sequence=5),
+        ]
         adapter = SpeechRailStreamingTranscriber(
             client=SpeechRailRealtimeClient(
                 url=connection.uri,
@@ -386,8 +390,7 @@ def test_streaming_adapter_matches_decoder_for_delta_and_completed() -> None:
         assert snapshot.window.partial == decoded_delta.text
         assert final.kind == "final"
         assert final.window is not None
-        assert final.window.segments[0].text == decoded_completed.segments[0].text
-        assert final.window.segments[0].start_ms == decoded_completed.segments[0].start_ms
+        assert final.window.segments[0].text == decoded_completed.transcript
         assert final.window.segments[0].speaker_key == "epoch:2:speaker:0"
 
     asyncio.run(scenario())
@@ -399,8 +402,12 @@ def test_streaming_adapter_matches_decoder_for_error_event() -> None:
     assert isinstance(decoded, SpeechRailTranscriptionError)
     assert decoded.code == "speechrail_error"
 
+    connection = FakeConnection()
+    connection._messages = [*_session_events(),
+        _envelope("error", 4, error={"code": "speechrail_error", "message": "boom"})
+    ]
     events = _collect_stream_events(
-        _stream_messages(error_raw),
+        connection,
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="subtitles"),
     )
 
@@ -410,8 +417,12 @@ def test_streaming_adapter_matches_decoder_for_error_event() -> None:
 
 
 def test_streaming_adapter_reports_protocol_error_for_delta_without_text() -> None:
+    connection = FakeConnection()
+    connection._messages = [*_session_events(),
+        _envelope("conversation.item.input_audio_transcription.delta", 4)
+    ]
     events = _collect_stream_events(
-        _stream_messages({"type": "transcription.delta"}),
+        connection,
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="subtitles"),
     )
 
@@ -420,79 +431,35 @@ def test_streaming_adapter_reports_protocol_error_for_delta_without_text() -> No
     assert events[-1].error_message == "SpeechRail returned a transcription delta without text"
 
 
-def test_streaming_adapter_reports_invalid_completed_segments() -> None:
+def test_streaming_adapter_reports_invalid_completed_transcript() -> None:
+    connection = FakeConnection()
+    connection._messages = [*_session_events(),
+        _envelope("conversation.item.input_audio_transcription.completed", 4, transcript="")
+    ]
     events = _collect_stream_events(
-        _stream_messages(
-            {
-                "type": "transcription.completed",
-                "text": "",
-                "segments": [{"start_ms": 0, "end_ms": 100, "text": ""}],
-            }
-        ),
-        ASRSessionContext(source_epoch=2, offset_ms=0, purpose="subtitles"),
-    )
-
-    assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail returned invalid completed segments"
-
-
-def test_streaming_adapter_reports_diarization_for_non_diarized_session() -> None:
-    events = _collect_stream_events(
-        _stream_messages({"type": "transcription.diarization.completed", "mapping": {}}),
-        ASRSessionContext(source_epoch=2, offset_ms=0, purpose="subtitles"),
-    )
-
-    assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
-    assert (
-        events[-1].error_message
-        == "SpeechRail returned diarization for a non-diarized session"
-    )
-
-
-def test_streaming_adapter_reports_invalid_diarization_mapping() -> None:
-    events = _collect_stream_events(
-        _stream_messages(
-            {"type": "transcription.diarization.completed", "mapping": {"bad": "spk_01"}}
-        ),
+        connection,
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
     )
 
     assert events[-1].kind == "error"
     assert events[-1].error_code == "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail returned an invalid diarization mapping"
-
-
-def test_streaming_adapter_reports_diarized_session_end_without_final_mapping() -> None:
-    events = _collect_stream_events(
-        _stream_messages({"type": "session.completed"}),
-        ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
-    )
-
-    assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR"
-    assert (
-        events[-1].error_message
-        == "SpeechRail ended a diarized session without a final mapping"
-    )
+    assert events[-1].error_message == "SpeechRail ended a diarized turn without segment events"
 
 
 def test_streaming_adapter_requires_speaker_for_diarized_segments() -> None:
+    connection = FakeConnection()
+    connection._messages = [*_session_events(),
+        _segment("你好", speaker=None, sequence=4),
+        _transcription_completed("你好", sequence=5),
+    ]
     events = _collect_stream_events(
-        _stream_messages(
-            {
-                "type": "transcription.completed",
-                "text": "",
-                "segments": [{"start_ms": 0, "end_ms": 100, "text": "你好"}],
-            }
-        ),
+        connection,
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
     )
 
     assert events[-1].kind == "error"
     assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail returned invalid completed segments"
+    assert events[-1].error_message == "SpeechRail returned an invalid transcription segment"
 
 
 async def _next_final(events: AsyncIterator[ASREvent]) -> ASREvent:

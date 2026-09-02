@@ -20,7 +20,7 @@ from pipecat.frames.frames import EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
-from voice_realtime.interaction.context_memory import (
+from sona.interaction.context_memory import (
     CompactionWindow,
     ContextCompactionConfig,
     ConversationMemoryPacket,
@@ -29,8 +29,8 @@ from voice_realtime.interaction.context_memory import (
     empty_memory_snapshot,
     parse_snapshot,
 )
-from voice_realtime.interaction.pipeline import build_system_prompt
-from voice_realtime.interaction.reasoning import (
+from sona.interaction.pipeline import build_system_prompt
+from sona.interaction.reasoning import (
     LmStudioNativeLLMService,
     NativeChatResult,
     NativeChatStats,

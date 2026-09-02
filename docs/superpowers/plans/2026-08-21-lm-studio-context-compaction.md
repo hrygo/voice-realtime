@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - lm-studio
@@ -48,11 +48,11 @@ tags:
 
 ## File Map
 
-- `src/voice_realtime/interaction/context_memory.py`：记忆 schema、轮次标准化、滚动压缩窗口、策略判断、摘要/预热 prompt 和 packet 序列化。
-- `src/voice_realtime/interaction/reasoning.py`：原生响应解析、usage stats、非流式摘要/预热、后台任务、原子 response chain 切换和断链恢复。
-- `src/voice_realtime/config.py`：用户可配置的压缩水位与跨字段约束。
-- `src/voice_realtime/interaction/pipeline.py`：固定记忆协议 system prompt 与 `ContextCompactionConfig` 注入；不得启用 Pipecat 默认摘要。
-- `src/voice_realtime/interaction/session.py`：clear/stop/cancel 生命周期调用压缩状态清理；合并现有 echo state 改动。
+- `src/sona/interaction/context_memory.py`：记忆 schema、轮次标准化、滚动压缩窗口、策略判断、摘要/预热 prompt 和 packet 序列化。
+- `src/sona/interaction/reasoning.py`：原生响应解析、usage stats、非流式摘要/预热、后台任务、原子 response chain 切换和断链恢复。
+- `src/sona/config.py`：用户可配置的压缩水位与跨字段约束。
+- `src/sona/interaction/pipeline.py`：固定记忆协议 system prompt 与 `ContextCompactionConfig` 注入；不得启用 Pipecat 默认摘要。
+- `src/sona/interaction/session.py`：clear/stop/cancel 生命周期调用压缩状态清理；合并现有 echo state 改动。
 - `tests/test_context_memory.py`：纯 schema、窗口和策略测试。
 - `tests/test_reasoning.py`：原生 payload、stats、摘要、预热、并发、恢复测试。
 - `tests/test_config.py`、`tests/test_pipeline.py`：配置与装配契约。
@@ -63,7 +63,7 @@ tags:
 ### Task 1: Structured Conversation Memory and Compaction Policy
 
 **Files:**
-- Create: `src/voice_realtime/interaction/context_memory.py`
+- Create: `src/sona/interaction/context_memory.py`
 - Create: `tests/test_context_memory.py`
 
 **Interfaces:**
@@ -90,7 +90,7 @@ def valid_snapshot_payload(source_turn_start: int, source_turn_end: int) -> dict
             {
                 "id": "project_voice",
                 "type": "project",
-                "name": "voice-realtime",
+                "name": "sona",
                 "aliases": [],
                 "facts": [
                     {
@@ -163,7 +163,7 @@ def test_fit_packet_drops_oldest_complete_pairs_but_keeps_latest_pair() -> None:
 
 Run: `uv run pytest tests/test_context_memory.py -q`
 
-Expected: collection fails because `voice_realtime.interaction.context_memory` does not exist.
+Expected: collection fails because `sona.interaction.context_memory` does not exist.
 
 - [ ] **Step 3: Implement strict Pydantic models**
 
@@ -293,25 +293,25 @@ Use `json.dumps(value, ensure_ascii=False, separators=(",", ":"))`; reject seria
 
 Run: `uv run pytest tests/test_context_memory.py -q`
 
-Run: `uv run mypy src/voice_realtime/interaction/context_memory.py`
+Run: `uv run mypy src/sona/interaction/context_memory.py`
 
-Run: `uv run ruff check src/voice_realtime/interaction/context_memory.py tests/test_context_memory.py`
+Run: `uv run ruff check src/sona/interaction/context_memory.py tests/test_context_memory.py`
 
 Expected: all commands pass.
 
 - [ ] **Step 8: Commit only Task 1 files**
 
 ```bash
-git add src/voice_realtime/interaction/context_memory.py tests/test_context_memory.py
+git add src/sona/interaction/context_memory.py tests/test_context_memory.py
 git commit --only -m "feat(interaction): 添加结构化对话记忆模型" -- \
-  src/voice_realtime/interaction/context_memory.py tests/test_context_memory.py
+  src/sona/interaction/context_memory.py tests/test_context_memory.py
 ```
 
 ### Task 2: Configuration, Memory Protocol, and Pipeline Wiring
 
 **Files:**
-- Modify: `src/voice_realtime/config.py:81-170`
-- Modify: `src/voice_realtime/interaction/pipeline.py:109-115, 664-670`
+- Modify: `src/sona/config.py:81-170`
+- Modify: `src/sona/interaction/pipeline.py:109-115, 664-670`
 - Modify: `tests/test_config.py`
 - Modify: `tests/test_pipeline.py`
 - Modify: `tests/test_reasoning.py:438-455`
@@ -401,28 +401,28 @@ def test_pipeline_passes_compaction_config(
 
 Run: `uv run pytest tests/test_config.py tests/test_pipeline.py tests/test_reasoning.py::TestSystemPrompt -q`
 
-Run: `uv run mypy src/voice_realtime/config.py src/voice_realtime/interaction/pipeline.py`
+Run: `uv run mypy src/sona/config.py src/sona/interaction/pipeline.py`
 
-Run: `uv run ruff check src/voice_realtime/config.py src/voice_realtime/interaction/pipeline.py tests/test_config.py tests/test_pipeline.py tests/test_reasoning.py`
+Run: `uv run ruff check src/sona/config.py src/sona/interaction/pipeline.py tests/test_config.py tests/test_pipeline.py tests/test_reasoning.py`
 
 Expected: all commands pass.
 
 - [ ] **Step 7: Commit only Task 2 files**
 
-Use `git diff HEAD -- src/voice_realtime/interaction/pipeline.py` first and verify the existing echo-state diff remains present. Then:
+Use `git diff HEAD -- src/sona/interaction/pipeline.py` first and verify the existing echo-state diff remains present. Then:
 
 ```bash
-git add src/voice_realtime/config.py src/voice_realtime/interaction/pipeline.py \
+git add src/sona/config.py src/sona/interaction/pipeline.py \
   tests/test_config.py tests/test_pipeline.py tests/test_reasoning.py
 git commit --only -m "feat(interaction): 配置原生上下文压缩" -- \
-  src/voice_realtime/config.py src/voice_realtime/interaction/pipeline.py \
+  src/sona/config.py src/sona/interaction/pipeline.py \
   tests/test_config.py tests/test_pipeline.py tests/test_reasoning.py
 ```
 
 ### Task 3: Native Usage Stats and Bounded One-Shot Calls
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/reasoning.py:1-330`
+- Modify: `src/sona/interaction/reasoning.py:1-330`
 - Modify: `tests/test_reasoning.py`
 
 **Interfaces:**
@@ -603,25 +603,25 @@ Implement a five-second bounded GET. Match `model.key == self._model`, prefer th
 
 Run: `uv run pytest tests/test_reasoning.py -q`
 
-Run: `uv run mypy src/voice_realtime/interaction/reasoning.py`
+Run: `uv run mypy src/sona/interaction/reasoning.py`
 
-Run: `uv run ruff check src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py`
+Run: `uv run ruff check src/sona/interaction/reasoning.py tests/test_reasoning.py`
 
 Expected: all commands pass.
 
 - [ ] **Step 8: Commit Task 3 files**
 
 ```bash
-git add src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
+git add src/sona/interaction/reasoning.py tests/test_reasoning.py
 git commit --only -m "feat(interaction): 采集 LM Studio 上下文用量" -- \
-  src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
+  src/sona/interaction/reasoning.py tests/test_reasoning.py
 ```
 
 ### Task 4: Background Summarization, Chain Prewarming, and Atomic Swap
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/context_memory.py`
-- Modify: `src/voice_realtime/interaction/reasoning.py`
+- Modify: `src/sona/interaction/context_memory.py`
+- Modify: `src/sona/interaction/reasoning.py`
 - Modify: `tests/test_context_memory.py`
 - Modify: `tests/test_reasoning.py`
 
@@ -791,28 +791,28 @@ Accumulate assistant deltas in `_native_completions`. After valid `chat.end` ato
 
 Run: `uv run pytest tests/test_context_memory.py tests/test_reasoning.py -q`
 
-Run: `uv run mypy src/voice_realtime/interaction/context_memory.py src/voice_realtime/interaction/reasoning.py`
+Run: `uv run mypy src/sona/interaction/context_memory.py src/sona/interaction/reasoning.py`
 
-Run: `uv run ruff check src/voice_realtime/interaction/context_memory.py src/voice_realtime/interaction/reasoning.py tests/test_context_memory.py tests/test_reasoning.py`
+Run: `uv run ruff check src/sona/interaction/context_memory.py src/sona/interaction/reasoning.py tests/test_context_memory.py tests/test_reasoning.py`
 
 Expected: all commands pass.
 
 - [ ] **Step 8: Commit Task 4 files**
 
 ```bash
-git add src/voice_realtime/interaction/context_memory.py \
-  src/voice_realtime/interaction/reasoning.py tests/test_context_memory.py tests/test_reasoning.py
+git add src/sona/interaction/context_memory.py \
+  src/sona/interaction/reasoning.py tests/test_context_memory.py tests/test_reasoning.py
 git commit --only -m "feat(interaction): 原子压缩 LM Studio 对话链" -- \
-  src/voice_realtime/interaction/context_memory.py \
-  src/voice_realtime/interaction/reasoning.py \
+  src/sona/interaction/context_memory.py \
+  src/sona/interaction/reasoning.py \
   tests/test_context_memory.py tests/test_reasoning.py
 ```
 
 ### Task 5: Lossless Chain Recovery and Session Lifecycle
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/reasoning.py`
-- Modify: `src/voice_realtime/interaction/session.py`
+- Modify: `src/sona/interaction/reasoning.py`
+- Modify: `src/sona/interaction/session.py`
 - Modify: `tests/test_reasoning.py`
 - Modify: `tests/test_interaction_context.py`
 - Modify: `tests/test_interaction_session.py`
@@ -954,21 +954,21 @@ Add a private async `_cancel_compaction()` used by close/stop/cancel/cleanup. `r
 
 Run: `uv run pytest tests/test_reasoning.py tests/test_interaction_context.py tests/test_interaction_session.py -q`
 
-Run: `uv run mypy src/voice_realtime/interaction/reasoning.py src/voice_realtime/interaction/session.py`
+Run: `uv run mypy src/sona/interaction/reasoning.py src/sona/interaction/session.py`
 
-Run: `uv run ruff check src/voice_realtime/interaction/reasoning.py src/voice_realtime/interaction/session.py tests/test_reasoning.py tests/test_interaction_context.py tests/test_interaction_session.py`
+Run: `uv run ruff check src/sona/interaction/reasoning.py src/sona/interaction/session.py tests/test_reasoning.py tests/test_interaction_context.py tests/test_interaction_session.py`
 
 Expected: all commands pass.
 
 - [ ] **Step 7: Commit only Task 5 files**
 
-Before commit, compare `git diff HEAD -- src/voice_realtime/interaction/session.py tests/test_interaction_session.py` and verify all pre-existing echo changes remain. Then:
+Before commit, compare `git diff HEAD -- src/sona/interaction/session.py tests/test_interaction_session.py` and verify all pre-existing echo changes remain. Then:
 
 ```bash
-git add src/voice_realtime/interaction/reasoning.py src/voice_realtime/interaction/session.py \
+git add src/sona/interaction/reasoning.py src/sona/interaction/session.py \
   tests/test_reasoning.py tests/test_interaction_context.py tests/test_interaction_session.py
 git commit --only -m "fix(interaction): 从压缩记忆恢复原生会话链" -- \
-  src/voice_realtime/interaction/reasoning.py src/voice_realtime/interaction/session.py \
+  src/sona/interaction/reasoning.py src/sona/interaction/session.py \
   tests/test_reasoning.py tests/test_interaction_context.py tests/test_interaction_session.py
 ```
 
@@ -1001,11 +1001,11 @@ Expected: response ID changes, post-compaction input tokens are at most 2500 unl
 
 - [ ] **Step 3: Add ADR-003 and update authoritative docs**
 
-ADR status `Accepted`; record why native chain prewarming is chosen over LM Studio-only history and Pipecat-only summarization. Update the existing critical native-payload constraint to distinguish invalid `max_tokens` from supported `max_output_tokens`. Document defaults, `VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` rollback, no persistence, and exact invalid-ID recovery semantics.
+ADR status `Accepted`; record why native chain prewarming is chosen over LM Studio-only history and Pipecat-only summarization. Update the existing critical native-payload constraint to distinguish invalid `max_tokens` from supported `max_output_tokens`. Document defaults, `SONA_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` rollback, no persistence, and exact invalid-ID recovery semantics.
 
 - [ ] **Step 4: Run the complete backend quality gate**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Expected: all tests pass and branch coverage remains at least 80%.
 

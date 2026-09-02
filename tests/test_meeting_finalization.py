@@ -13,8 +13,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from voice_realtime.meeting.finalization import MeetingFinalizer
-from voice_realtime.meeting.models import (
+from sona.meeting.finalization import MeetingFinalizer
+from sona.meeting.models import (
     MeetingRecord,
     MeetingStatus,
     MinutesRecord,
@@ -23,8 +23,8 @@ from voice_realtime.meeting.models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
-from voice_realtime.meeting.persistence import TranscriptPersistence
-from voice_realtime.meeting.ports import (
+from sona.meeting.persistence import TranscriptPersistence
+from sona.meeting.ports import (
     CaptureFinalizationTimeoutError,
     RecoveryReplayRepository,
 )

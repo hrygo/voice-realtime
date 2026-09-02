@@ -268,7 +268,7 @@ describe("Meeting React Components DOM Rendering", () => {
       );
     });
 
-    expect(container.textContent).toContain("Voice Studio 会议助手");
+    expect(container.textContent).toContain("Sona 会议助手");
     expect(container.textContent).toContain("PostgreSQL 知识库存储");
     expect(container.textContent).toContain("SpeechRail 实时转录服务");
     expect(container.textContent).toContain("开始会议");
@@ -651,7 +651,7 @@ describe("Meeting React Components DOM Rendering", () => {
   });
 
   it("renders MarkdownRenderer with fenced code blocks and copy button", () => {
-    const markdownSample = "### 代码示例\n\n```python\ndef hello_world():\n    print('Hello Voice Studio')\n```\n\n- [ ] 待办事项";
+    const markdownSample = "### 代码示例\n\n```python\ndef hello_world():\n    print('Hello Sona')\n```\n\n- [ ] 待办事项";
 
     act(() => {
       root.render(<MarkdownRenderer content={markdownSample} />);

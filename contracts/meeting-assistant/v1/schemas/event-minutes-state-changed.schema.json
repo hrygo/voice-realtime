@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "voice-studio://meeting-assistant/v1/event-minutes-state-changed.schema.json",
+  "$id": "sona://meeting-assistant/v1/event-minutes-state-changed.schema.json",
   "title": "MinutesStateChangedEvent",
   "type": "object",
   "additionalProperties": false,

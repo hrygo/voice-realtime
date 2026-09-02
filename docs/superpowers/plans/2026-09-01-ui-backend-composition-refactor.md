@@ -3,7 +3,7 @@ title: "UI 后端组合根重构实施计划"
 status: draft
 type: execution_plan
 date: 2026-09-01
-owners: ["voice-realtime-core"]
+owners: ["sona-core"]
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "contracts/meeting-assistant/v1/README.md"
@@ -23,7 +23,7 @@ related_documents:
 
 ## 执行边界
 
-- 工作目录：`/Users/hrygo/Documents/voice-realtime`
+- 工作目录：`/Users/hrygo/Documents/sona`
 - 前置：完成 `2026-09-01-meeting-lifecycle-ports-refactor.md` 和 `2026-09-01-interaction-pipeline-refactor.md`，使用其中的 typed meeting/runtime dependencies。
 - 保持入口：`create_app(settings: Settings | None = None, *, initialize_meeting: bool = True) -> FastAPI`。
 - 保持 HTTP：`/health`、`/api/services`、`/api/runtime`、`/v1/voices`、`/v1/audio/speech`、meeting v1、inner-OS API。
@@ -36,12 +36,12 @@ related_documents:
 
 ## 目标文件
 
-- Create: `src/voice_realtime/ui/app_context.py`
-- Create: `src/voice_realtime/ui/http_routes.py`
-- Create: `src/voice_realtime/ui/websocket_routes.py`
-- Modify: `src/voice_realtime/ui/server.py`
-- Modify: `src/voice_realtime/meeting/api.py`
-- Modify: `src/voice_realtime/meeting/inner_os/api.py`
+- Create: `src/sona/ui/app_context.py`
+- Create: `src/sona/ui/http_routes.py`
+- Create: `src/sona/ui/websocket_routes.py`
+- Modify: `src/sona/ui/server.py`
+- Modify: `src/sona/meeting/api.py`
+- Modify: `src/sona/meeting/inner_os/api.py`
 - Create: `tests/test_ui_app_context.py`
 - Modify: `tests/test_ui_server.py`
 - Modify: `tests/test_meeting_api.py`
@@ -81,7 +81,7 @@ async def test_context_closes_resources_in_current_order() -> None:
 - [ ] **Step 3: 运行基线**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_ui_server.py tests/test_meeting_api.py tests/test_inner_os_api.py \
   -q --no-cov
 ```
@@ -92,8 +92,8 @@ VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
 
 **Files:**
 
-- Create: `src/voice_realtime/ui/app_context.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Create: `src/sona/ui/app_context.py`
+- Modify: `src/sona/ui/server.py`
 - Create: `tests/test_ui_app_context.py`
 - Modify: `tests/test_ui_server.py`
 
@@ -121,7 +121,7 @@ def attach_app_context(app: FastAPI, context: UIAppContext) -> None: ...
 def get_app_context(app: FastAPI) -> UIAppContext: ...
 ```
 
-实现中使用 meeting 计划的窄 protocol，避免不必要 concrete type；上述 concrete 名称只用于确实由 composition root 创建的 service。accessor 读取单一 `app.state.voice_realtime_context` 并在缺失/类型错误时 fail closed。
+实现中使用 meeting 计划的窄 protocol，避免不必要 concrete type；上述 concrete 名称只用于确实由 composition root 创建的 service。accessor 读取单一 `app.state.sona_context` 并在缺失/类型错误时 fail closed。
 
 - [ ] **Step 2: 迁移 lifespan 与 backend initialization**
 
@@ -135,10 +135,10 @@ def get_app_context(app: FastAPI) -> UIAppContext: ...
 
 ```bash
 uv run --extra dev pytest tests/test_ui_app_context.py tests/test_ui_server.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/app_context.py src/voice_realtime/ui/server.py \
+uv run --extra dev ruff check src/sona/ui/app_context.py src/sona/ui/server.py \
   tests/test_ui_app_context.py tests/test_ui_server.py
-uv run --extra dev mypy src/voice_realtime/ui
-git add src/voice_realtime/ui/app_context.py src/voice_realtime/ui/server.py \
+uv run --extra dev mypy src/sona/ui
+git add src/sona/ui/app_context.py src/sona/ui/server.py \
   tests/test_ui_app_context.py tests/test_ui_server.py
 git commit -m "refactor: add typed ui app context"
 ```
@@ -147,8 +147,8 @@ git commit -m "refactor: add typed ui app context"
 
 **Files:**
 
-- Create: `src/voice_realtime/ui/http_routes.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Create: `src/sona/ui/http_routes.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_ui_server.py`
 
 - [ ] **Step 1: 定义单一 HTTP router factory**
@@ -168,9 +168,9 @@ router 拥有五个现有 path；health/service probes 继续使用 bounded time
 
 ```bash
 uv run --extra dev pytest tests/test_ui_server.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/http_routes.py src/voice_realtime/ui/server.py
-uv run --extra dev mypy src/voice_realtime/ui
-git add src/voice_realtime/ui/http_routes.py src/voice_realtime/ui/server.py tests/test_ui_server.py
+uv run --extra dev ruff check src/sona/ui/http_routes.py src/sona/ui/server.py
+uv run --extra dev mypy src/sona/ui
+git add src/sona/ui/http_routes.py src/sona/ui/server.py tests/test_ui_server.py
 git commit -m "refactor: extract ui http routes"
 ```
 
@@ -178,8 +178,8 @@ git commit -m "refactor: extract ui http routes"
 
 **Files:**
 
-- Create: `src/voice_realtime/ui/websocket_routes.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Create: `src/sona/ui/websocket_routes.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_ui_server.py`
 
 - [ ] **Step 1: 定义 WebSocket router factory**
@@ -199,9 +199,9 @@ def create_websocket_router(context: UIAppContext) -> APIRouter:
 
 ```bash
 uv run --extra dev pytest tests/test_ui_server.py tests/asr/test_proxy_contract.py tests/test_runtime_mode.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/ui/websocket_routes.py src/voice_realtime/ui/server.py
-uv run --extra dev mypy src/voice_realtime/ui
-git add src/voice_realtime/ui/websocket_routes.py src/voice_realtime/ui/server.py \
+uv run --extra dev ruff check src/sona/ui/websocket_routes.py src/sona/ui/server.py
+uv run --extra dev mypy src/sona/ui
+git add src/sona/ui/websocket_routes.py src/sona/ui/server.py \
   tests/test_ui_server.py tests/asr/test_proxy_contract.py tests/test_runtime_mode.py
 git commit -m "refactor: extract ui websocket routes"
 ```
@@ -210,9 +210,9 @@ git commit -m "refactor: extract ui websocket routes"
 
 **Files:**
 
-- Modify: `src/voice_realtime/meeting/api.py`
-- Modify: `src/voice_realtime/meeting/inner_os/api.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Modify: `src/sona/meeting/api.py`
+- Modify: `src/sona/meeting/inner_os/api.py`
+- Modify: `src/sona/ui/server.py`
 - Modify: `tests/test_meeting_api.py`
 - Modify: `tests/test_inner_os_api.py`
 - Modify: `tests/test_ui_server.py`
@@ -237,14 +237,14 @@ class MeetingAPIDependencies:
 - [ ] **Step 3: 运行 API 回归并提交**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_meeting_api.py tests/test_inner_os_api.py tests/test_ui_server.py -q --no-cov
-uv run --extra dev ruff check src/voice_realtime/meeting/api.py \
-  src/voice_realtime/meeting/inner_os/api.py src/voice_realtime/ui/server.py \
+uv run --extra dev ruff check src/sona/meeting/api.py \
+  src/sona/meeting/inner_os/api.py src/sona/ui/server.py \
   tests/test_meeting_api.py tests/test_inner_os_api.py
 uv run --extra dev mypy src
-git add src/voice_realtime/meeting/api.py src/voice_realtime/meeting/inner_os/api.py \
-  src/voice_realtime/ui/server.py tests/test_meeting_api.py tests/test_inner_os_api.py tests/test_ui_server.py
+git add src/sona/meeting/api.py src/sona/meeting/inner_os/api.py \
+  src/sona/ui/server.py tests/test_meeting_api.py tests/test_inner_os_api.py tests/test_ui_server.py
 git commit -m "refactor: inject ui api dependencies"
 ```
 
@@ -253,7 +253,7 @@ git commit -m "refactor: inject ui api dependencies"
 - [ ] **Step 1: 运行 UI/backend 聚焦矩阵**
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run --extra dev pytest \
   tests/test_ui_app_context.py tests/test_ui_server.py tests/test_meeting_api.py \
   tests/test_inner_os_api.py tests/test_runtime_mode.py tests/asr/test_proxy_contract.py \
   -q --no-cov

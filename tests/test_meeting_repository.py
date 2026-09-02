@@ -11,15 +11,15 @@ import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection
 
-from voice_realtime.config import MeetingSettings
-from voice_realtime.meeting.migrations import run_migrations
-from voice_realtime.meeting.models import (
+from sona.config import MeetingSettings
+from sona.meeting.migrations import run_migrations
+from sona.meeting.models import (
     MeetingStatus,
     MinutesResult,
     NormalizedSegment,
     TranscriptWindow,
 )
-from voice_realtime.meeting.repository import (
+from sona.meeting.repository import (
     InvalidCursorError,
     MeetingConflictError,
     MeetingNotFoundError,
@@ -28,9 +28,9 @@ from voice_realtime.meeting.repository import (
 
 
 def _test_database_url() -> str:
-    value = os.environ.get("VR_TEST_DATABASE_URL")
+    value = os.environ.get("SONA_TEST_DATABASE_URL")
     if not value:
-        pytest.skip("VR_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
+        pytest.skip("SONA_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
     return value
 
 

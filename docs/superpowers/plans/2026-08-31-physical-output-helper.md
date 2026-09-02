@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-31-physical-output-audio-capture-design.md`
 
-**Local toolchain fact (2026-08-31):** 本机仅安装 Apple Command Line Tools，无完整 Xcode；可执行 `swift build`、手工组装 `.app` 与 `codesign`，但当前 CLT 不包含 `Testing`/`XCTest` 运行库，`swift test` 无法形成有效门禁。因此本包使用零外部依赖的 `swift run vr-audio-capture-selftest` 执行同等断言；标准 XCTest、Developer ID 签名、公证、Xcode 工程归档及完整设备权限矩阵必须作为独立人工门禁，不能由本计划伪造完成。
+**Local toolchain fact (2026-08-31):** 本机仅安装 Apple Command Line Tools，无完整 Xcode；可执行 `swift build`、手工组装 `.app` 与 `codesign`，但当前 CLT 不包含 `Testing`/`XCTest` 运行库，`swift test` 无法形成有效门禁。因此本包使用零外部依赖的 `swift run sona-audio-capture-selftest` 执行同等断言；标准 XCTest、Developer ID 签名、公证、Xcode 工程归档及完整设备权限矩阵必须作为独立人工门禁，不能由本计划伪造完成。
 
 ## Implementation Status (2026-08-31)
 
@@ -65,7 +65,7 @@ JSON 帧的 `header_length=16`，UTF-8 body 最大 65,536 bytes。PCM 帧的 `he
 - Create: `contracts/audio-capture/v1/control-message.schema.json`
 - Create: `contracts/audio-capture/v1/fixtures/hello.json`
 - Create: `contracts/audio-capture/v1/fixtures/pcm-header.hex`
-- Create: `src/voice_realtime/audio/ipc.py`
+- Create: `src/sona/audio/ipc.py`
 - Create: `tests/test_audio_capture_ipc.py`
 
 - [x] **Step 1: 先写 Python 失败测试**
@@ -88,7 +88,7 @@ def test_decoder_rejects_invalid_boundary(field: str) -> None:
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py -q --no-cov`
 
-Expected: FAIL，提示 `voice_realtime.audio.ipc` 不存在。
+Expected: FAIL，提示 `sona.audio.ipc` 不存在。
 
 - [x] **Step 3: 实现不可变 wire 类型和增量 parser**
 
@@ -98,9 +98,9 @@ Expected: FAIL，提示 `voice_realtime.audio.ipc` 不存在。
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py -q --no-cov`
 
-Run: `uv run mypy src/voice_realtime/audio/ipc.py`
+Run: `uv run mypy src/sona/audio/ipc.py`
 
-Run: `uv run ruff check src/voice_realtime/audio/ipc.py tests/test_audio_capture_ipc.py`
+Run: `uv run ruff check src/sona/audio/ipc.py tests/test_audio_capture_ipc.py`
 
 Commit: `feat(audio): 固化物理输出采集 IPC v1 契约`
 
@@ -109,9 +109,9 @@ Commit: `feat(audio): 固化物理输出采集 IPC v1 契约`
 ## Task 2: Python Helper client、supervisor 与 `PhysicalOutputSource`
 
 **Files:**
-- Create: `src/voice_realtime/audio/output_source.py`
-- Modify: `src/voice_realtime/audio/__init__.py`
-- Modify: `src/voice_realtime/config.py`
+- Create: `src/sona/audio/output_source.py`
+- Modify: `src/sona/audio/__init__.py`
+- Modify: `src/sona/config.py`
 - Create: `tests/test_output_source.py`
 - Modify: `tests/test_config.py`
 
@@ -137,9 +137,9 @@ Expected: FAIL，提示输出来源和配置尚不存在。
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py tests/test_output_source.py tests/test_config.py -q --no-cov`
 
-Run: `uv run mypy src/voice_realtime/audio/ src/voice_realtime/config.py`
+Run: `uv run mypy src/sona/audio/ src/sona/config.py`
 
-Run: `uv run ruff check src/voice_realtime/audio/ src/voice_realtime/config.py tests/test_output_source.py tests/test_config.py`
+Run: `uv run ruff check src/sona/audio/ src/sona/config.py tests/test_output_source.py tests/test_config.py`
 
 Commit: `feat(audio): 增加物理输出 Helper 客户端与来源适配器`
 
@@ -148,14 +148,14 @@ Commit: `feat(audio): 增加物理输出 Helper 客户端与来源适配器`
 ## Task 3: Swift Package、协议 codec 与预分配 SPSC Ring
 
 **Files:**
-- Create: `native/vr-audio-capture/Package.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureRing/include/VRAudioCaptureRing.h`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureRing/VRAudioCaptureRing.c`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/WireProtocol.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/PCMFrame.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureHelper/main.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/WireProtocolTests.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/RingBufferTests.swift`
+- Create: `native/sona-audio-capture/Package.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureRing/include/SonaAudioCaptureRing.h`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureRing/SonaAudioCaptureRing.c`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/WireProtocol.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/PCMFrame.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureHelper/main.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/WireProtocolTests.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/RingBufferTests.swift`
 - Modify: `.gitignore`
 
 - [x] **Step 1: 写 Swift golden fixture 与 ring 失败测试**
@@ -164,7 +164,7 @@ Swift 必须读取与 Python 相同的 hex fixture；ring 测试覆盖固定容�
 
 - [x] **Step 2: 运行红灯**
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
 Expected: FAIL，目标/类型尚不存在。
 
@@ -174,9 +174,9 @@ Ring 初始化时一次性分配固定 slot；push/pop 只执行原子索引、�
 
 - [x] **Step 4: 运行 sanitizer 可用范围内的测试并提交**
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
-Run: `cd native/vr-audio-capture && swift build -c release`
+Run: `cd native/sona-audio-capture && swift build -c release`
 
 Commit: `feat(native): 建立采集协议与无锁音频环形缓冲`
 
@@ -185,11 +185,11 @@ Commit: `feat(native): 建立采集协议与无锁音频环形缓冲`
 ## Task 4: 输出设备目录与严格 device scope
 
 **Files:**
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CoreAudioProperty.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/DeviceCatalog.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/DeviceReference.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/DeviceReferenceStore.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/DeviceCatalogTests.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/CoreAudioProperty.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/DeviceCatalog.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/DeviceReference.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/DeviceReferenceStore.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/DeviceCatalogTests.swift`
 
 - [x] **Step 1: 写纯模型与 HAL adapter 测试**
 
@@ -201,9 +201,9 @@ Commit: `feat(native): 建立采集协议与无锁音频环形缓冲`
 
 - [x] **Step 3: 运行 Swift 测试与真实只读枚举冒烟**
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-helper --list-devices-json`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-helper --list-devices-json`
 
 Expected: 冒烟只输出清洗标签、类别、default 与 opaque ref；不触发系统音频权限。
 
@@ -214,14 +214,14 @@ Commit: `feat(native): 增加输出设备枚举与私密引用`
 ## Task 5: Core Audio Tap、Aggregate Device 与 PCM 归一化
 
 **Files:**
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/TapCaptureEngine.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CoreAudioHAL.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/AudioNormalizer.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/FrameAccumulator.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/HostClock.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/AudioNormalizerTests.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/FrameAccumulatorTests.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/TapLifecycleTests.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/TapCaptureEngine.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/CoreAudioHAL.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/AudioNormalizer.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/FrameAccumulator.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/HostClock.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/AudioNormalizerTests.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/FrameAccumulatorTests.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/TapLifecycleTests.swift`
 
 - [x] **Step 1: 写 converter、32 ms 累积和逆序清理测试**
 
@@ -237,9 +237,9 @@ Commit: `feat(native): 增加输出设备枚举与私密引用`
 
 - [x] **Step 4: 编译与测试并提交**
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
-Run: `cd native/vr-audio-capture && swift build -c release`
+Run: `cd native/sona-audio-capture && swift build -c release`
 
 Commit: `feat(native): 实现设备绑定 Core Audio Tap 采集引擎`
 
@@ -248,12 +248,12 @@ Commit: `feat(native): 实现设备绑定 Core Audio Tap 采集引擎`
 ## Task 6: UDS server 与两阶段 Helper 状态机
 
 **Files:**
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/UnixPeer.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CaptureServer.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CaptureController.swift`
-- Create: `native/vr-audio-capture/Sources/VRAudioCaptureHelper/main.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/CaptureControllerTests.swift`
-- Create: `native/vr-audio-capture/Tests/VRAudioCaptureCoreTests/CaptureServerTests.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/UnixPeer.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/CaptureServer.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/CaptureController.swift`
+- Create: `native/sona-audio-capture/Sources/SonaAudioCaptureHelper/main.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/CaptureControllerTests.swift`
+- Create: `native/sona-audio-capture/Tests/SonaAudioCaptureCoreTests/CaptureServerTests.swift`
 
 - [x] **Step 1: 写权限、token、状态机和背压失败测试**
 
@@ -269,7 +269,7 @@ prepare 创建并启动 Tap 但丢弃业务 PCM，首个有效 callback 后才�
 
 - [x] **Step 4: Swift 全测、Python fake-server 互操作测试并提交**
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
 Run: `uv run pytest tests/test_audio_capture_ipc.py tests/test_output_source.py -q --no-cov`
 
@@ -280,8 +280,8 @@ Commit: `feat(native): 完成采集 Helper 两阶段 UDS 服务`
 ## Task 7: `.app` 打包、签名与本机运行脚本
 
 **Files:**
-- Create: `native/vr-audio-capture/Resources/Info.plist`
-- Create: `native/vr-audio-capture/Resources/VRAudioCapture.entitlements`
+- Create: `native/sona-audio-capture/Resources/Info.plist`
+- Create: `native/sona-audio-capture/Resources/SonaAudioCapture.entitlements`
 - Create: `scripts/build-audio-capture-helper.sh`
 - Create: `scripts/test-audio-capture-helper.sh`
 - Modify: `README.md`
@@ -293,13 +293,13 @@ Commit: `feat(native): 完成采集 Helper 两阶段 UDS 服务`
 
 - [x] **Step 2: 实现可移植构建脚本**
 
-脚本调用 `swift build -c release`，组装 `build/vr-audio-capture/vr-audio-capture.app`。开发默认 ad-hoc 签名并明确标记“不可发布”；提供 `VR_AUDIO_CAPTURE_SIGNING_IDENTITY` 和发布 timestamp 参数，但不在仓库记录证书名。
+脚本调用 `swift build -c release`，组装 `build/sona-audio-capture/sona-audio-capture.app`。开发默认 ad-hoc 签名并明确标记“不可发布”；提供 `SONA_AUDIO_CAPTURE_SIGNING_IDENTITY` 和发布 timestamp 参数，但不在仓库记录证书名。
 
 - [x] **Step 3: 构建、签名校验与无权限枚举冒烟**
 
 Run: `scripts/build-audio-capture-helper.sh`
 
-Run: `codesign --verify --deep --strict --verbose=2 build/vr-audio-capture/vr-audio-capture.app`
+Run: `codesign --verify --deep --strict --verbose=2 build/sona-audio-capture/sona-audio-capture.app`
 
 Run: `scripts/test-audio-capture-helper.sh --list-devices`
 
@@ -317,16 +317,16 @@ Commit: `build(native): 增加采集 Helper 应用打包与签名校验`
 - Create: `tests/test_audio_capture_bundle.py`
 - Create: `scripts/smoke_audio_capture_helper.py`
 - Create: `docs/manuals/物理输出音频采集验收手册.md`
-- Modify: `src/voice_realtime/config.py`
+- Modify: `src/sona/config.py`
 - Modify: `tests/test_output_source.py`
-- Modify: `native/vr-audio-capture/Sources/VRAudioCaptureCore/CaptureServer.swift`
+- Modify: `native/sona-audio-capture/Sources/SonaAudioCaptureCore/CaptureServer.swift`
 - Modify: `README.md`
 - Modify: `docs/README.md`
 - Modify: `docs/superpowers/plans/2026-08-31-physical-output-helper.md`
 
 - [x] **Step 1: 运行完整自动化门禁**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Run: `uv run mypy src/`
 
@@ -336,7 +336,7 @@ Run: `cd ui && npm test -- --run`
 
 Run: `cd ui && npm run build`
 
-Run: `cd native/vr-audio-capture && swift run vr-audio-capture-selftest`
+Run: `cd native/sona-audio-capture && swift run sona-audio-capture-selftest`
 
 Run: `scripts/build-audio-capture-helper.sh && scripts/test-audio-capture-helper.sh --static`
 

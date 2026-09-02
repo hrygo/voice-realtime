@@ -7,8 +7,8 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.audio.hub import AudioHub
-from voice_realtime.audio.source import (
+from sona.audio.hub import AudioHub
+from sona.audio.source import (
     AudioSource,
     AudioSourceState,
     MicrophoneSource,

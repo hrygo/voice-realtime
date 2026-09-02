@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - architecture-remediation
@@ -18,17 +18,17 @@ tags:
 # Voice Realtime Architecture Remediation Implementation Plan
 
 **Status:** 已完成（2026-08-21）。逐项证据见
-`docs/superpowers/specs/2026-08-21-voice-realtime-architecture-remediation-verification.md`。
+`docs/superpowers/specs/2026-08-21-sona-architecture-remediation-verification.md`。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. In this workspace those skills are unavailable, so the root agent must reproduce their TDD, file-ownership, review, and verification gates with the collaboration subagents.
 
 **Goal:** 修复架构审计发现的全部运行拓扑、字幕、交互算法、资源生命周期、控制、安全、配置、测试和文档缺陷。
 
-**Architecture:** `vr-ui` 是带 UI 场景下交互管道的唯一所有者，`vr-interact` 是复用同一 `InteractionSession` 的互斥 headless 入口。AudioHub、InteractionSession、SubtitleProxy、TTS/LLM 客户端和浏览器控制通道分别拥有明确生命周期，并通过严格状态模型协作。
+**Architecture:** `sona-ui` 是带 UI 场景下交互管道的唯一所有者，`sona-interact` 是复用同一 `InteractionSession` 的互斥 headless 入口。AudioHub、InteractionSession、SubtitleProxy、TTS/LLM 客户端和浏览器控制通道分别拥有明确生命周期，并通过严格状态模型协作。
 
 **Tech Stack:** Python 3.12、asyncio、Pipecat 1.7、FastAPI/Pydantic v2、PyAudio、WhisperLiveKit、httpx、React 19、TypeScript 5.8、Zustand、Vitest。
 
-**Spec:** `docs/superpowers/specs/2026-08-20-voice-realtime-architecture-remediation-design.md`
+**Spec:** `docs/superpowers/specs/2026-08-20-sona-architecture-remediation-design.md`
 
 ## Global Constraints
 
@@ -45,8 +45,8 @@ tags:
 ### Task 1: Freeze shared configuration and protocol contracts
 
 **Files:**
-- Modify: `src/voice_realtime/config.py`
-- Create: `src/voice_realtime/ui/protocol.py`
+- Modify: `src/sona/config.py`
+- Create: `src/sona/ui/protocol.py`
 - Test: `tests/test_config.py`
 - Test: `tests/test_control.py`
 
@@ -104,17 +104,17 @@ Run: `uv run pytest tests/test_config.py tests/test_control.py -q`
 - [ ] **Step 6: Commit the shared contract slice**
 
 ```bash
-git add src/voice_realtime/config.py src/voice_realtime/ui/protocol.py tests/test_config.py tests/test_control.py
+git add src/sona/config.py src/sona/ui/protocol.py tests/test_config.py tests/test_control.py
 git commit -m "refactor(config): 收敛运行时配置与控制协议"
 ```
 
 ### Task 2: Repair the WhisperLiveKit subtitle path
 
 **Files:**
-- Modify: `src/voice_realtime/subtitles/events.py`
-- Modify: `src/voice_realtime/subtitles/launcher.py`
-- Modify: `src/voice_realtime/subtitles/consumer.py`
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Modify: `src/sona/subtitles/events.py`
+- Modify: `src/sona/subtitles/launcher.py`
+- Modify: `src/sona/subtitles/consumer.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Modify: `tests/test_subtitles.py`
 - Modify: `tests/test_subtitle_proxy.py`
 - Modify: `tests/test_events_tracker.py`
@@ -169,17 +169,17 @@ Run: `uv run pytest tests/test_subtitles.py tests/test_subtitle_proxy.py tests/t
 - [ ] **Step 8: Commit subtitle repairs**
 
 ```bash
-git add src/voice_realtime/subtitles src/voice_realtime/ui/subtitle_proxy.py tests/test_subtitles.py tests/test_subtitle_proxy.py tests/test_events_tracker.py
+git add src/sona/subtitles src/sona/ui/subtitle_proxy.py tests/test_subtitles.py tests/test_subtitle_proxy.py tests/test_events_tracker.py
 git commit -m "fix(subtitles): 接通 PCM 字幕并恢复断线快照"
 ```
 
 ### Task 3: Make TTS and LM Studio resources deterministic
 
 **Files:**
-- Modify: `src/voice_realtime/tts_bridge/schema.py`
-- Modify: `src/voice_realtime/tts_bridge/engine.py`
-- Modify: `src/voice_realtime/tts_bridge/server.py`
-- Modify: `src/voice_realtime/interaction/reasoning.py`
+- Modify: `src/sona/tts_bridge/schema.py`
+- Modify: `src/sona/tts_bridge/engine.py`
+- Modify: `src/sona/tts_bridge/server.py`
+- Modify: `src/sona/interaction/reasoning.py`
 - Modify: `tests/test_engine.py`
 - Modify: `tests/test_server.py`
 - Modify: `tests/test_reasoning.py`
@@ -223,7 +223,7 @@ Run: `uv run pytest tests/test_engine.py tests/test_server.py tests/test_reasoni
 - [ ] **Step 7: Commit TTS/LLM repairs**
 
 ```bash
-git add src/voice_realtime/tts_bridge src/voice_realtime/interaction/reasoning.py tests/test_engine.py tests/test_server.py tests/test_reasoning.py
+git add src/sona/tts_bridge src/sona/interaction/reasoning.py tests/test_engine.py tests/test_server.py tests/test_reasoning.py
 git commit -m "fix(tts): 收敛音色流式生成与 LLM 资源生命周期"
 ```
 
@@ -296,10 +296,10 @@ git commit -m "fix(ui): 以确认式控制通道同步真实运行状态"
 ### Task 5: Introduce the single-owner InteractionSession
 
 **Files:**
-- Create: `src/voice_realtime/interaction/ownership.py`
-- Create: `src/voice_realtime/interaction/session.py`
-- Modify: `src/voice_realtime/interaction/runner.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Create: `src/sona/interaction/ownership.py`
+- Create: `src/sona/interaction/session.py`
+- Modify: `src/sona/interaction/runner.py`
+- Modify: `src/sona/ui/runtime.py`
 - Create: `tests/test_interaction_session.py`
 - Modify: `tests/test_runtime.py`
 
@@ -334,15 +334,15 @@ Run: `uv run pytest tests/test_interaction_session.py tests/test_runtime.py -q`
 - [ ] **Step 7: Commit session architecture**
 
 ```bash
-git add src/voice_realtime/interaction/ownership.py src/voice_realtime/interaction/session.py src/voice_realtime/interaction/runner.py src/voice_realtime/ui/runtime.py tests/test_interaction_session.py tests/test_runtime.py
+git add src/sona/interaction/ownership.py src/sona/interaction/session.py src/sona/interaction/runner.py src/sona/ui/runtime.py tests/test_interaction_session.py tests/test_runtime.py
 git commit -m "refactor(interaction): 统一 UI 与 headless 会话生命周期"
 ```
 
 ### Task 6: Repair AudioHub backpressure and real microphone mute
 
 **Files:**
-- Modify: `src/voice_realtime/audio/hub.py`
-- Modify: `src/voice_realtime/audio/audio_injector.py`
+- Modify: `src/sona/audio/hub.py`
+- Modify: `src/sona/audio/audio_injector.py`
 - Modify: `tests/test_audio_hub.py`
 - Modify: `tests/test_audio_injector.py`
 
@@ -376,15 +376,15 @@ Run: `uv run pytest tests/test_audio_hub.py tests/test_audio_injector.py -q`
 - [ ] **Step 7: Commit audio lifecycle repairs**
 
 ```bash
-git add src/voice_realtime/audio tests/test_audio_hub.py tests/test_audio_injector.py
+git add src/sona/audio tests/test_audio_hub.py tests/test_audio_injector.py
 git commit -m "fix(audio): 实现有界扇出与真实麦克风静音"
 ```
 
 ### Task 7: Correct echo, interruption, and observer algorithms
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/pipeline.py`
-- Modify: `src/voice_realtime/ui/assistant_bridge.py`
+- Modify: `src/sona/interaction/pipeline.py`
+- Modify: `src/sona/ui/assistant_bridge.py`
 - Modify: `tests/test_pipeline.py`
 - Modify: `tests/test_assistant_bridge.py`
 
@@ -419,16 +419,16 @@ Run: `uv run pytest tests/test_pipeline.py tests/test_assistant_bridge.py -q`
 - [ ] **Step 7: Commit algorithm repairs**
 
 ```bash
-git add src/voice_realtime/interaction/pipeline.py src/voice_realtime/ui/assistant_bridge.py tests/test_pipeline.py tests/test_assistant_bridge.py
+git add src/sona/interaction/pipeline.py src/sona/ui/assistant_bridge.py tests/test_pipeline.py tests/test_assistant_bridge.py
 git commit -m "fix(interaction): 修正回声打断状态与延迟指标"
 ```
 
 ### Task 8: Harden UI control and runtime health
 
 **Files:**
-- Modify: `src/voice_realtime/ui/control.py`
-- Modify: `src/voice_realtime/ui/server.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Modify: `src/sona/ui/control.py`
+- Modify: `src/sona/ui/server.py`
+- Modify: `src/sona/ui/runtime.py`
 - Modify: `tests/test_control.py`
 - Modify: `tests/test_ui_server.py`
 - Modify: `tests/test_runtime.py`
@@ -464,7 +464,7 @@ Run: `uv run pytest tests/test_control.py tests/test_ui_server.py tests/test_run
 - [ ] **Step 7: Commit control hardening**
 
 ```bash
-git add src/voice_realtime/ui tests/test_control.py tests/test_ui_server.py tests/test_runtime.py
+git add src/sona/ui tests/test_control.py tests/test_ui_server.py tests/test_runtime.py
 git commit -m "fix(ui): 加固控制边界并暴露真实运行状态"
 ```
 
@@ -475,7 +475,7 @@ git commit -m "fix(ui): 加固控制边界并暴露真实运行状态"
 - Modify: `README.md`
 - Modify: `AGENTS.md`
 - Modify: `todo.md`
-- Modify: `docs/Voice-Studio-UI-设计方案.md`
+- Modify: `docs/Sona-UI-设计方案.md`
 - Modify: `docs/实时语音交互与字幕-方案与最佳实践.md`
 - Modify: `docs/架构图与流程图.md`
 - Modify: relevant tests for integration gaps found during verification
@@ -494,7 +494,7 @@ Run the full suite with warnings visible, identify every project-owned unawaited
 
 - [ ] **Step 3: Update all operational documentation**
 
-Document `vr-ui` + `vr-subtitles` + `vr-bridge` + LM Studio. State that `vr-interact` is an alternative, never a fifth parallel service. Document PCM, offline, mute, control and health semantics.
+Document `sona-ui` + `vr-subtitles` + `vr-bridge` + LM Studio. State that `sona-interact` is an alternative, never a fifth parallel service. Document PCM, offline, mute, control and health semantics.
 
 - [ ] **Step 4: Run all automated gates**
 
@@ -519,5 +519,5 @@ Create a checklist from the design spec and link each item to a test, command ou
 
 ```bash
 git add pyproject.toml README.md AGENTS.md todo.md docs tests
-git commit -m "docs: 收敛 Voice Studio 单一所有者运行架构"
+git commit -m "docs: 收敛 Sona 单一所有者运行架构"
 ```

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from voice_realtime.meeting.mock_server import create_contract_mock_app
+from sona.meeting.mock_server import create_contract_mock_app
 
 
 def _client() -> TestClient:

@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.config import MeetingSettings
-from voice_realtime.meeting.models import (
+from sona.config import MeetingSettings
+from sona.meeting.models import (
     MeetingStatus,
     NormalizedSegment,
     PCMOwner,
@@ -24,7 +24,7 @@ def test_meeting_settings_are_local_and_bounded(tmp_path: Path) -> None:
         recovery_dir=tmp_path / "recovery",
     )
 
-    assert settings.schema_name == "voice_realtime"
+    assert settings.schema_name == "sona"
     assert settings.summary_model == "local/kat-coder-2.5"
     assert settings.summary_reasoning == "off"
     assert settings.finalization_timeout_secs == 8.0

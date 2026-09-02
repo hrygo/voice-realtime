@@ -9,7 +9,7 @@ date: 2026-08-26
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - meeting-assistant
@@ -117,12 +117,12 @@ tags:
 ### Task 2: 固化后端 producer 行为
 
 **Files:**
-- Modify: `src/voice_realtime/meeting/session.py`
-- Modify: `src/voice_realtime/meeting/events.py`
-- Modify: `src/voice_realtime/meeting/api.py`
-- Modify: `src/voice_realtime/meeting/repository.py`
-- Modify: `src/voice_realtime/ui/server.py`
-- Modify: `src/voice_realtime/ui/control.py`
+- Modify: `src/sona/meeting/session.py`
+- Modify: `src/sona/meeting/events.py`
+- Modify: `src/sona/meeting/api.py`
+- Modify: `src/sona/meeting/repository.py`
+- Modify: `src/sona/ui/server.py`
+- Modify: `src/sona/ui/control.py`
 - Test: `tests/test_meeting_session.py`
 - Test: `tests/test_meeting_events.py`
 - Test: `tests/test_meeting_api.py`
@@ -162,7 +162,7 @@ tags:
 - [ ] **Step 5: Commit the producer boundary**
 
   ```bash
-  git add src/voice_realtime/meeting src/voice_realtime/ui tests/test_meeting_session.py tests/test_meeting_events.py tests/test_meeting_api.py tests/test_ui_server.py
+  git add src/sona/meeting src/sona/ui tests/test_meeting_session.py tests/test_meeting_events.py tests/test_meeting_api.py tests/test_ui_server.py
   git commit -m "fix(meeting): 固化前后端分离的事件生产语义"
   ```
 
@@ -351,7 +351,7 @@ tags:
 
   Run: `uv run python3 scripts/validate-meeting-contract.py`
 
-  Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+  Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
   Run: `uv run mypy src/`
 

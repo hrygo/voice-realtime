@@ -70,7 +70,7 @@
 ### Changed
 
 - 统一升级项目版本号至 `1.2.0`（包含后端 FastAPI、前端控制台与契约层）。
-- 优化 Voice Studio 控制台三大模块响应式布局与设计 Token。
+- 优化 Sona 控制台三大模块响应式布局与设计 Token。
 
 ### Fixed
 
@@ -91,7 +91,7 @@
 - 增加 Qwen3-ASR、SenseVoice 和 Fun-ASR 的统一适配与本地运行入口。
 - 增加 ASR 公共代理语料冻结、metadata-only 预检、阶段执行器、证据链和序贯决策工具。
 - 增加可复现的 ASR benchmark 报告、公共代理 v1/v2 结果与开发语料生成脚本。
-- 增加 Voice Studio 助手、会议、字幕和状态栏相关的控制台交互能力。
+- 增加 Sona 助手、会议、字幕和状态栏相关的控制台交互能力。
 
 ### Changed
 

@@ -6,10 +6,10 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.ownership import InteractionOwnership
-from voice_realtime.interaction.reasoning import LmStudioNativeLLMService
-from voice_realtime.interaction.session import InteractionSession
+from sona.config import InteractionSettings
+from sona.interaction.ownership import InteractionOwnership
+from sona.interaction.reasoning import LmStudioNativeLLMService
+from sona.interaction.session import InteractionSession
 
 
 async def test_clear_context_resets_native_chat_chain(tmp_path: Path) -> None:

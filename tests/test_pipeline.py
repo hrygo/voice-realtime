@@ -25,9 +25,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from voice_realtime.audio.audio_injector import AudioInjector
-from voice_realtime.config import InteractionSettings
-from voice_realtime.interaction.pipeline import (
+from sona.audio.audio_injector import AudioInjector
+from sona.config import InteractionSettings
+from sona.interaction.pipeline import (
     BotTextRecorder,
     EchoState,
     EchoSuppressionProcessor,
@@ -64,11 +64,11 @@ def mock_services() -> list[MagicMock]:
     mocks = [MagicMock(), MagicMock(), MagicMock()]
     mocks[0].return_value.create_processor.return_value = MagicMock(name="speechrail_stt")
     with (
-        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
+        patch("sona.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
             mocks[0]),
-        patch("voice_realtime.interaction.pipeline_dependencies.LmStudioNativeLLMService",
+        patch("sona.interaction.pipeline_dependencies.LmStudioNativeLLMService",
             mocks[1]),
-        patch("voice_realtime.interaction.pipeline_dependencies.SpeechRailTTSService", mocks[2]),
+        patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService", mocks[2]),
     ):
         yield mocks
 
@@ -85,11 +85,11 @@ class TestBuildPipeline:
         transport_mock = MagicMock()
         with (
             patch(
-                "voice_realtime.interaction.pipeline_dependencies.resolve_input_device_index",
+                "sona.interaction.pipeline_dependencies.resolve_input_device_index",
                 return_value=7,
             ) as resolve_device,
             patch(
-                "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+                "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=transport_mock,
             ) as transport_class,
         ):
@@ -112,7 +112,7 @@ class TestBuildPipeline:
         stt_factory = MagicMock(name="stt_factory")
         stt_factory.create_processor.return_value = stt_processor
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(
@@ -137,7 +137,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -154,7 +154,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
@@ -175,7 +175,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
@@ -197,10 +197,10 @@ class TestBuildPipeline:
         mock_transport: MagicMock,
         mock_services: list[MagicMock],
     ) -> None:
-        from voice_realtime.interaction.pipeline import build_pipeline as bp
+        from sona.interaction.pipeline import build_pipeline as bp
 
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             bp(settings, transport=mock_transport)
@@ -221,7 +221,7 @@ class TestBuildPipeline:
     ) -> None:
         settings = InteractionSettings(stt_language="EN", sample_rate=16000)
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
@@ -243,13 +243,13 @@ class TestBuildPipeline:
         mock_transport: MagicMock,
         mock_services: list[MagicMock],
     ) -> None:
-        from voice_realtime.interaction.pipeline import EchoSuppressionProcessor
+        from sona.interaction.pipeline import EchoSuppressionProcessor
 
         settings = InteractionSettings(
             sample_rate=16000, echo_barge_in_gain=3.0, echo_barge_in_frames=4
         )
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -265,7 +265,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -289,7 +289,7 @@ class TestBuildPipeline:
         """L2 链：SelfEchoFilter 挂在 STT 与 user aggregator 之间，
         BotTextRecorder 挂在 LLM 与 TTS 之间，二者共享同一文本缓冲。"""
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(
@@ -309,7 +309,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -327,7 +327,7 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -900,7 +900,7 @@ class TestInjectorMode:
     ) -> None:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport, audio_queue=queue)
@@ -922,7 +922,7 @@ class TestInjectorMode:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
@@ -939,7 +939,7 @@ class TestInjectorMode:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         transport_mock = MagicMock()
         with patch(
-            "voice_realtime.interaction.pipeline_dependencies.LocalAudioTransport",
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=transport_mock
         ) as mock_cls:
             build_pipeline(settings, audio_queue=queue)

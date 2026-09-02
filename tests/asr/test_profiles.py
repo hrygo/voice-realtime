@@ -3,21 +3,21 @@
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.asr.profiles import SpeechRailRealtimeProfile
-from voice_realtime.config import InteractionSettings, SubtitleSettings
+from sona.asr.profiles import SpeechRailRealtimeProfile
+from sona.config import InteractionSettings, SubtitleSettings
 
 
 def test_subtitle_settings_always_constructs_speechrail_profile() -> None:
     settings = SubtitleSettings(
         language="Chinese",
-        speechrail_url="ws://127.0.0.1:8201/v2/realtime",
+        speechrail_url="ws://127.0.0.1:8201/v1/realtime",
         speechrail_finish_timeout_secs=12.0,
     )
 
     profile = settings.asr_profile
 
-    assert profile.kind == "speechrail-realtime-v2"
-    assert profile.url == "ws://127.0.0.1:8201/v2/realtime"
+    assert profile.kind == "speechrail-openai-realtime"
+    assert profile.url == "ws://127.0.0.1:8201/v1/realtime"
     assert profile.final_timeout_secs == 12.0
     assert settings.speechrail_health_url == "http://127.0.0.1:8201/health"
 
@@ -25,8 +25,8 @@ def test_subtitle_settings_always_constructs_speechrail_profile() -> None:
 @pytest.mark.parametrize(
     "url",
     [
-        "http://127.0.0.1:8201/v2/realtime",
-        "ws://token@127.0.0.1:8201/v2/realtime",
+        "http://127.0.0.1:8201/v1/realtime",
+        "ws://token@127.0.0.1:8201/v1/realtime",
         "ws://127.0.0.1:8201/asr",
     ],
 )

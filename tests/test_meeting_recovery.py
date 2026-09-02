@@ -12,21 +12,21 @@ import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection
 
-from voice_realtime.config import MeetingSettings
-from voice_realtime.meeting.migrations import run_migrations
-from voice_realtime.meeting.models import MeetingStatus, NormalizedSegment, TranscriptWindow
-from voice_realtime.meeting.recovery import (
+from sona.config import MeetingSettings
+from sona.meeting.migrations import run_migrations
+from sona.meeting.models import MeetingStatus, NormalizedSegment, TranscriptWindow
+from sona.meeting.recovery import (
     RecoveryEnvelope,
     RecoveryJournal,
     RecoveryJournalError,
 )
-from voice_realtime.meeting.repository import PostgresMeetingRepository
+from sona.meeting.repository import PostgresMeetingRepository
 
 
 def _test_database_url() -> str:
-    value = os.environ.get("VR_TEST_DATABASE_URL")
+    value = os.environ.get("SONA_TEST_DATABASE_URL")
     if not value:
-        pytest.skip("VR_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
+        pytest.skip("SONA_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
     return value
 
 
@@ -356,7 +356,7 @@ async def test_replay_ignores_blank_lines(tmp_path: Path) -> None:
 
 
 async def test_append_reports_filesystem_write_error(tmp_path: Path, monkeypatch) -> None:
-    import voice_realtime.meeting.recovery as recovery_module
+    import sona.meeting.recovery as recovery_module
 
     def fail_open(*_args, **_kwargs):
         raise OSError("read-only filesystem")
@@ -368,7 +368,7 @@ async def test_append_reports_filesystem_write_error(tmp_path: Path, monkeypatch
 
 
 async def test_append_closes_file_when_fsync_setup_fails(tmp_path: Path, monkeypatch) -> None:
-    import voice_realtime.meeting.recovery as recovery_module
+    import sona.meeting.recovery as recovery_module
 
     def fail_fchmod(*_args, **_kwargs):
         raise OSError("cannot change mode")

@@ -9,13 +9,13 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.audio.frame import AudioFrame, AudioSourceKind, AudioSourceRole
-from voice_realtime.audio.profile import CaptureProfile
-from voice_realtime.audio.router import (
+from sona.audio.frame import AudioFrame, AudioSourceKind, AudioSourceRole
+from sona.audio.profile import CaptureProfile
+from sona.audio.router import (
     AudioSourceRouter,
     UnsupportedCaptureProfileError,
 )
-from voice_realtime.audio.source import AudioSourceHealth, AudioSourceState
+from sona.audio.source import AudioSourceHealth, AudioSourceState
 
 VALID_DUAL = {
     "mode": "dual",

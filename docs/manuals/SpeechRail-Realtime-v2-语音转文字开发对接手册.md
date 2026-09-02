@@ -1,15 +1,15 @@
 ---
 title: "SpeechRail Realtime v2 语音转文字开发对接手册"
 description: "指导客户端通过 SpeechRail Realtime v2 接入本地 ASR 与可选 diarization，并对接 REST 文件转写能力"
-status: active
+status: archived
 type: manual
 category: asr
 version: "v2.0.0"
 date: 2026-09-01
-last_updated: 2026-09-01
+last_updated: 2026-09-02
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-subtitles"
+  - "sona-subtitles"
 tags:
   - speechrail
   - realtime-v2
@@ -18,8 +18,8 @@ tags:
   - streaming-transcription
   - developer-guide
 scope:
-  - "voice_realtime.subtitles"
-  - "voice_realtime.asr"
+  - "sona.subtitles"
+  - "sona.asr"
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "docs/architecture/实时语音交互与字幕-方案与最佳实践.md"
@@ -28,14 +28,20 @@ related_documents:
 
 # SpeechRail Realtime v2 语音转文字开发对接手册
 
-> 本手册是当前 ASR 对接基线。原 `Qwen3-ASR-实时语音转文字开发对接手册.md` 文件名保留为兼容入口，
-> 但其中的旧直连地址和二进制 WebSocket 协议已废弃。
+> ⚠️ **本文档已归档（`archived`）**：sona 已迁移到 SpeechRail OpenAI 兼容 `WS /v1/realtime`，
+> 流式 ASR、实时说话人分离（`conversation.item.input_audio_transcription.segment.speaker`）、流式 TTS
+> 与取消/EOF 全部由 OpenAI 标准事件承载。**当前对接基线见**
+> [`SpeechRail-OpenAI标准协议功能需求交割单`](../operations/SpeechRail-OpenAI标准协议功能需求交割单.md)
+> 与 SpeechRail 最终实现的 `/v1/realtime` 契约；本 v2 手册仅供参考，不再作为实现依据。
+>
+> 原 `Qwen3-ASR-实时语音转文字开发对接手册.md` 文件名保留为兼容入口，但其中的旧直连地址和
+> 二进制 WebSocket 协议已废弃。
 
 ## 1. 服务基础信息
 
 | 配置项 | 当前约定 |
 |---|---|
-| WebSocket | `ws://127.0.0.1:8201/v2/realtime` |
+| WebSocket | `ws://127.0.0.1:8201/v1/realtime` |
 | 健康检查 | `GET http://127.0.0.1:8201/health`；就绪检查使用 `/readyz` |
 | ASR model | `speechrail/qwen3-asr-1.7b` |
 | 音频 | 16kHz、mono、signed 16-bit PCM（`s16le`） |
@@ -127,7 +133,7 @@ import json
 
 import websockets
 
-WS_URL = "ws://127.0.0.1:8201/v2/realtime"
+WS_URL = "ws://127.0.0.1:8201/v1/realtime"
 
 
 async def transcribe(pcm_chunks: list[bytes], api_key: str | None = None) -> None:
@@ -175,7 +181,7 @@ if __name__ == "__main__":
     asyncio.run(transcribe([]))
 ```
 
-`voice-realtime` 内部使用 `SpeechRailV2Transport` 统一校验 envelope、session、request 和 sequence；
+`sona` 内部使用 `SpeechRailV2Transport` 统一校验 envelope、session、request 和 sequence；
 优先复用对应 adapter，而不是在业务模块中重复实现协议解析。
 
 ## 4. REST 文件转写（非实时）
@@ -190,7 +196,7 @@ curl --fail --silent http://127.0.0.1:8201/v1/audio/transcriptions \
   -F "response_format=json"
 ```
 
-文件转写不是 `voice-realtime` 当前字幕/会议实时主链路；实时场景必须使用 `/v2/realtime`。
+文件转写不是 `sona` 当前字幕/会议实时主链路；实时场景必须使用 `/v1/realtime`。
 
 ## 5. 排查清单
 
