@@ -275,6 +275,83 @@ describe("meetingStore", () => {
       expect(state.partialSpeaker).toBe("说话人 2");
     });
 
+    it("lands on the new-meeting home when a terminal snapshot comes from a past session", () => {
+      useMeetingStore.getState().applySnapshot({
+        meeting: {
+          id: "m-past-completed",
+          title: "历史已完成会议",
+          status: "completed",
+          language: "Chinese",
+          started_at: "2026-08-21T10:00:00Z",
+          ended_at: "2026-08-21T11:00:00Z",
+          transcript_revision: 8,
+          content_revision: 8,
+          created_at: "2026-08-21T10:00:00Z",
+        },
+        transcript_revision: 8,
+        content_revision: 8,
+        partial: {
+          text: "残留的旧预览",
+          speaker_key: "e1:s1",
+          speaker_name: "说话人 1",
+        },
+      });
+
+      const state = useMeetingStore.getState();
+      expect(state.status).toBe("idle");
+      expect(state.activeMeetingId).toBeNull();
+      expect(state.activeMeeting).toBeNull();
+      expect(state.sessionStartedAt).toBeNull();
+      expect(state.sessionEndedAt).toBeNull();
+      expect(state.partialText).toBeNull();
+      expect(state.segments).toHaveLength(0);
+    });
+
+    it("keeps the just-ended meeting view when a terminal snapshot matches the in-session meeting", () => {
+      useMeetingStore.setState({
+        activeMeetingId: "m-just-ended",
+        status: "completed",
+        sessionStartedAt: "2026-08-21T10:00:00Z",
+        sessionEndedAt: "2026-08-21T11:00:00Z",
+        segments: [
+          {
+            id: "seg-just-ended",
+            order: 1,
+            speaker_key: "spk_0",
+            speaker_name: "说话人 1",
+            start_ms: 0,
+            end_ms: 5000,
+            text: "刚刚结束的会议发言",
+          },
+        ],
+        transcriptRevision: 5,
+        contentRevision: 5,
+      });
+
+      useMeetingStore.getState().applySnapshot({
+        meeting: {
+          id: "m-just-ended",
+          title: "刚刚结束的会议",
+          status: "completed",
+          language: "Chinese",
+          started_at: "2026-08-21T10:00:00Z",
+          ended_at: "2026-08-21T11:00:00Z",
+          transcript_revision: 5,
+          content_revision: 5,
+          created_at: "2026-08-21T10:00:00Z",
+        },
+        transcript_revision: 5,
+        content_revision: 5,
+        partial: null,
+      });
+
+      const state = useMeetingStore.getState();
+      expect(state.status).toBe("completed");
+      expect(state.activeMeetingId).toBe("m-just-ended");
+      expect(state.sessionEndedAt).toBe("2026-08-21T11:00:00Z");
+      expect(state.segments).toHaveLength(1);
+    });
+
     it("does not let a stale baseline response overwrite a newer active meeting", async () => {
       vi.spyOn(meetingApi, "fetchTranscript").mockResolvedValueOnce({
         meeting_id: "m-old",

@@ -292,33 +292,45 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
 
   applySnapshot: (snapshot) => {
     const meeting = snapshot.meeting;
-    const isFinalizing = meeting.status === "finalizing";
+    const snapshotStatus = meeting.status || "idle";
+    const isFinalizing = snapshotStatus === "finalizing";
+    const isTerminalStatus =
+      snapshotStatus === "completed" ||
+      snapshotStatus === "interrupted" ||
+      snapshotStatus === "storage_error";
     const currentActiveId = get().activeMeetingId;
+    // 本会话内刚结束、用户可能正在查看纪要的同一会议：重连快照保留其活动槽位与详情视图；
+    // 其余终态快照（页面刷新 / 重连恢复的历史会议）不再占用活动槽位，
+    // 使会议助手首页回落为新建会议页，历史会议统一经侧边栏进入。
+    const keepTerminalActive =
+      isTerminalStatus && currentActiveId !== null && currentActiveId === meeting.id;
+    const occupiesActiveSession = !isTerminalStatus || keepTerminalActive;
     const isDifferentMeeting = meeting.id !== currentActiveId;
+    const clearsActive = isDifferentMeeting || !occupiesActiveSession;
 
     set((state) => ({
-      activeMeetingId: meeting.id || null,
-      activeMeeting: isDifferentMeeting ? null : state.activeMeeting,
-      status: meeting.status || "idle",
-      sessionStartedAt: meeting.started_at || null,
-      sessionEndedAt: meeting.ended_at || null,
-      interruptionReason: meeting.interruption_reason || null,
-      // 换会时原子重置旧会议的数据，避免残留
-      segments: isDifferentMeeting ? [] : state.segments,
-      speakers: isDifferentMeeting ? {} : state.speakers,
-      minutes: isDifferentMeeting ? null : state.minutes,
-      minutesHistory: isDifferentMeeting ? [] : state.minutesHistory,
-      activeMinutesVersion: isDifferentMeeting ? null : state.activeMinutesVersion,
-      gaps: isDifferentMeeting ? [] : state.gaps,
-      partialSpeaker: snapshot.partial?.speaker_name || null,
-      transcriptRevision: isDifferentMeeting
+      activeMeetingId: occupiesActiveSession ? meeting.id || null : null,
+      activeMeeting: clearsActive ? null : state.activeMeeting,
+      status: occupiesActiveSession ? snapshotStatus : "idle",
+      sessionStartedAt: occupiesActiveSession ? meeting.started_at || null : null,
+      sessionEndedAt: occupiesActiveSession ? meeting.ended_at || null : null,
+      interruptionReason: occupiesActiveSession ? meeting.interruption_reason || null : null,
+      // 换会或终态回落时原子重置旧会议的数据，避免残留
+      segments: clearsActive ? [] : state.segments,
+      speakers: clearsActive ? {} : state.speakers,
+      minutes: clearsActive ? null : state.minutes,
+      minutesHistory: clearsActive ? [] : state.minutesHistory,
+      activeMinutesVersion: clearsActive ? null : state.activeMinutesVersion,
+      gaps: clearsActive ? [] : state.gaps,
+      partialSpeaker: occupiesActiveSession ? snapshot.partial?.speaker_name || null : null,
+      transcriptRevision: clearsActive
         ? snapshot.transcript_revision
         : Math.max(state.transcriptRevision, snapshot.transcript_revision),
-      contentRevision: isDifferentMeeting
+      contentRevision: clearsActive
         ? snapshot.content_revision
         : Math.max(state.contentRevision, snapshot.content_revision),
-      partialText: snapshot.partial?.text || null,
-      isFinalizing,
+      partialText: occupiesActiveSession ? snapshot.partial?.text || null : null,
+      isFinalizing: occupiesActiveSession && isFinalizing,
       isCalibrating: false,
       health: snapshot.health
         ? {
