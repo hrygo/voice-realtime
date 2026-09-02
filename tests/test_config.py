@@ -16,7 +16,7 @@ from sona.config import (
 
 
 def test_interaction_session_has_no_default_runtime_expiry() -> None:
-    assert InteractionSettings().max_session_seconds == 0
+    assert InteractionSettings(_env_file=None).max_session_seconds == 0
 
 
 def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
@@ -86,7 +86,7 @@ def test_settings_dump_table_redacts_llm_api_key() -> None:
 
 
 def test_interaction_vad_defaults() -> None:
-    settings = InteractionSettings()
+    settings = InteractionSettings(_env_file=None)
     assert settings.vad_confidence == 0.7
     assert settings.vad_start_secs == 0.2
     assert settings.vad_min_volume == 0.65
@@ -103,7 +103,7 @@ def test_interaction_rejects_input_device_name_and_index_together() -> None:
 
 
 def test_interaction_context_compaction_defaults() -> None:
-    settings = InteractionSettings()
+    settings = InteractionSettings(_env_file=None)
     config = settings.context_compaction_config()
 
     assert config.enabled is True
@@ -185,10 +185,10 @@ def test_speechrail_tts_configuration_is_explicit_and_uses_public_model() -> Non
 
 
 def test_subtitle_speechrail_api_key_is_trimmed_and_optional() -> None:
-    assert SubtitleSettings(speechrail_api_key="  subtitle-key  ").speechrail_api_key == (
-        "subtitle-key"
-    )
-    assert SubtitleSettings().speechrail_api_key is None
+    assert SubtitleSettings(
+        _env_file=None, speechrail_api_key="  subtitle-key  "
+    ).speechrail_api_key == "subtitle-key"
+    assert SubtitleSettings(_env_file=None).speechrail_api_key is None
 
 
 
@@ -245,14 +245,14 @@ def test_interaction_smart_turn_and_tts_fast_clause_defaults() -> None:
 
 
 def test_meeting_diarization_smoothing_defaults() -> None:
-    settings = MeetingSettings()
+    settings = MeetingSettings(_env_file=None)
     assert settings.diarization_smoothing_enabled is True
     assert settings.diarization_min_duration_ms == 350
     assert settings.diarization_hangover_gap_ms == 800
 
 
 def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> None:
-    settings = MeetingSettings()
+    settings = MeetingSettings(_env_file=None)
     assert settings.summary_map_max_output_tokens == 2048
     assert settings.summary_reduce_max_output_tokens == 10240
     assert settings.summary_max_output_chars == 65536

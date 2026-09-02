@@ -18,7 +18,13 @@ async def run() -> None:
     settings = get_settings()
     setup_logging("interact")
     ensure_punkt_tab()
-    logger.info("交互管道配置:\n%s", settings.interaction.model_dump())
+    logger.info(
+        "交互管道配置:\n%s",
+        {
+            key: ("<redacted>" if key == "database_url" or key.endswith("api_key") else value)
+            for key, value in settings.interaction.model_dump(by_alias=True).items()
+        },
+    )
     session = InteractionSession(settings.interaction, handle_signals=True)
     try:
         await session.start()

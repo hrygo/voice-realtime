@@ -45,6 +45,7 @@ def settings() -> InteractionSettings:
         llm_base_url="http://localhost:1234/v1",
         llm_model="local/kat-coder-2.5",
         llm_api_key="test-lm-key",
+        speechrail_api_key=None,
         silence_secs=0.8,
         sample_rate=16000,
     )
