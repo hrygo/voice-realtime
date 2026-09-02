@@ -698,6 +698,12 @@
   background: color-mix(in srgb, var(--color-yellow) 15%, transparent);
 }
 
+.health-row-status.status-required-inactive {
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+}
+
 .health-row-status.status-not-required {
   color: var(--text-muted);
   background: var(--bg-secondary);
@@ -787,6 +793,12 @@
 .light-dot.health-state-dot.state-required-degraded {
   background: var(--color-yellow);
   box-shadow: 0 0 6px var(--color-yellow-glow);
+}
+
+.light-dot.health-state-dot.state-required-inactive {
+  background: transparent;
+  border: 1px solid var(--text-muted);
+  box-shadow: none;
 }
 
 .light-dot.health-state-dot.state-checking {

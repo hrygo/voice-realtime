@@ -6,7 +6,11 @@ import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeStateSnapshot } from "../protocol";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useMeetingStore } from "../stores/meetingStore";
-import StatusBar, { getStatusModePresentation, sessionElapsedSeconds } from "./StatusBar";
+import StatusBar, {
+  getStatusModePresentation,
+  pipelineStatusToServiceStatus,
+  sessionElapsedSeconds,
+} from "./StatusBar";
 
 
 declare global {
@@ -41,6 +45,20 @@ describe("sessionElapsedSeconds", () => {
   it("resets when the session is stopped or the timestamp is invalid", () => {
     expect(sessionElapsedSeconds(null)).toBe(0);
     expect(sessionElapsedSeconds("invalid")).toBe(0);
+  });
+});
+
+describe("pipelineStatusToServiceStatus", () => {
+  it.each([
+    ["stopped", "inactive"],
+    ["running", "ok"],
+    ["starting", "checking"],
+    ["stopping", "checking"],
+    ["error", "error"],
+    ["ownership_conflict", "error"],
+    ["unknown", "inactive"],
+  ] as const)("maps session state %s to health status %s", (state, expected) => {
+    expect(pipelineStatusToServiceStatus(state)).toBe(expected);
   });
 });
 
@@ -344,19 +362,20 @@ describe("StatusBar service diagnostics", () => {
     expect(footer?.textContent).not.toContain("数据不出本机");
   });
 
-  it("keeps rendering the legacy three-service response", async () => {
+  it("merges the separate TTS probe into the SpeechRail service row", async () => {
     await renderServices([
       { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
       { name: "tts", status: "timeout", url: "http://127.0.0.1:8201/health" },
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
-    expect(findServiceRow("SpeechRail 服务")?.textContent).toContain("运行正常");
-    expect(findServiceRow("SpeechRail TTS")?.textContent).toContain("必须组件异常");
+    const speechrailRow = findServiceRow("SpeechRail 服务");
+    expect(speechrailRow?.textContent).toContain("必须组件异常");
+    expect(speechrailRow?.textContent).not.toContain("SpeechRail TTS");
+    expect(speechrailRow?.getAttribute("title")).toContain("TTS 探活：连接超时");
     expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
-    expect(findServiceRow("SpeechRail TTS")?.getAttribute("title")).toContain("连接超时");
     expect(findServiceRow("LM Studio")?.getAttribute("title")).toContain("服务未启动");
-    expect(container.querySelectorAll(".health-popover-row")).toHaveLength(7);
+    expect(container.querySelectorAll(".health-popover-row")).toHaveLength(6);
   });
 
   it("renders null and unknown workload states defensively", async () => {
@@ -405,7 +424,13 @@ describe("StatusBar aggregate health", () => {
       json: async () => ({
         services: [
           { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
-          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
+          {
+            name: "tts",
+            status: "ok",
+            url: "http://127.0.0.1:8201/health",
+            target_model: "speechrail/qwen3-tts",
+            model_present: true,
+          },
           { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
         ],
       }),
@@ -461,7 +486,7 @@ describe("StatusBar aggregate health", () => {
     const healthButton = await renderHealth("assistant", "running", "paused", "subtitles");
 
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(healthButton.textContent).toContain("系统正常 (5/5)");
+    expect(healthButton.textContent).toContain("系统正常 (4/4)");
   });
 
   it.each(["subtitles", "meeting"] as const)(
@@ -475,7 +500,7 @@ describe("StatusBar aggregate health", () => {
   );
 
   it.each([
-    ["assistant", "error", "paused", "核心组件异常 (4/5)"],
+    ["assistant", "error", "paused", "核心组件异常 (3/4)"],
     ["subtitles", "stopped", "error", "核心组件异常 (2/3)"],
   ] as const)("marks required %s workload errors in aggregate health", async (
     mode,
@@ -494,10 +519,26 @@ describe("StatusBar aggregate health", () => {
 
     expect(healthButton.classList.contains("checking")).toBe(true);
     expect(healthButton.classList.contains("has-error")).toBe(false);
-    expect(healthButton.textContent).toContain("核心组件探活中 (4/5)");
+    expect(healthButton.textContent).toContain("核心组件探活中 (3/4)");
   });
 
-  it("treats a reachable service with a missing required model as unhealthy", async () => {
+  it("treats a stopped interaction pipeline as inactive rather than a failed probe", async () => {
+    const healthButton = await renderHealth("assistant", "stopped", "paused", "assistant");
+
+    expect(healthButton.classList.contains("all-ok")).toBe(true);
+    expect(healthButton.classList.contains("checking")).toBe(false);
+    expect(healthButton.textContent).toContain("系统正常 (4/4)");
+
+    act(() => {
+      healthButton.click();
+    });
+    const pipelineRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("交互管道"));
+    expect(pipelineRow?.textContent).toContain("未运行（按需启动）");
+    expect(pipelineRow?.classList.contains("state-required-inactive")).toBe(true);
+  });
+
+  it("treats a missing TTS model as a required SpeechRail failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -523,15 +564,15 @@ describe("StatusBar aggregate health", () => {
 
     const healthButton = await renderHealth("assistant", "running", "paused", "assistant");
     expect(healthButton.classList.contains("has-error")).toBe(true);
-    expect(healthButton.textContent).toContain("核心组件异常 (4/5)");
+    expect(healthButton.textContent).toContain("核心组件异常 (3/4)");
 
     act(() => {
       healthButton.click();
     });
-    const ttsRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
-      .find((row) => row.textContent?.includes("SpeechRail TTS"));
-    expect(ttsRow?.textContent).toContain("必须组件异常");
-    expect(ttsRow?.getAttribute("title")).toContain("目标模型未加载");
+    const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail 服务"));
+    expect(speechrailRow?.textContent).toContain("必须组件异常");
+    expect(speechrailRow?.getAttribute("title")).toContain("TTS 引擎未就绪");
   });
 
   it("surfaces a required SpeechRail workload degradation in the aggregate health", async () => {
@@ -593,7 +634,7 @@ describe("StatusBar aggregate health", () => {
       json: async () => ({
         services: [
           { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
-          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
+          { name: "tts", status: "ok", url: "http://127.0.0.1:8201/health" },
           { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
         ],
       }),

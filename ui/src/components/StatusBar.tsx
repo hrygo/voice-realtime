@@ -16,11 +16,22 @@ import {
 } from "../protocol";
 import "./StatusBar.css";
 
-type ServiceStatus = ServiceProbeStatus | "checking" | "degraded";
+type ServiceStatus = ServiceProbeStatus | "checking" | "degraded" | "inactive";
 type NetworkScope = "local" | "network";
 type HealthRequirement = "required" | "not-required";
-type HealthDisplayState = "normal" | "required-error" | "required-degraded" | "not-required";
-type ServiceViewInfo = Omit<ServiceInfo, "status"> & { status: ServiceStatus };
+type HealthDisplayState =
+  | "normal"
+  | "required-error"
+  | "required-degraded"
+  | "required-inactive"
+  | "not-required";
+type ServiceViewInfo = Omit<ServiceInfo, "status"> & {
+  status: ServiceStatus;
+  /** 后端 /api/services 仍返回独立 tts 探活；前端合入 SpeechRail 行展示。 */
+  tts_probe_status?: ServiceProbeStatus | null;
+  tts_model?: string | null;
+  tts_ready?: boolean | null;
+};
 
 interface HealthItem {
   id: string;
@@ -32,7 +43,7 @@ interface HealthItem {
 }
 
 const REQUIRED_HEALTH_ITEMS = {
-  assistant: ["ws", "pipeline", "speechrail", "tts", "lm"],
+  assistant: ["ws", "pipeline", "speechrail", "lm"],
   subtitles: ["ws", "subtitle", "speechrail"],
   meeting: ["ws", "subtitle", "speechrail", "storage", "lm"],
   idle: ["ws"],
@@ -40,7 +51,6 @@ const REQUIRED_HEALTH_ITEMS = {
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
   speechrail: "SpeechRail 服务 (:8201)",
-  tts: "SpeechRail TTS 能力",
   lm: "LM Studio (:1234)",
 };
 
@@ -51,11 +61,11 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
   error: "服务异常",
   degraded: "服务降级",
   checking: "检测中",
+  inactive: "未运行（按需启动）",
 };
 
 const SERVICE_DIAGNOSTIC_COMMANDS: Record<string, string> = {
   speechrail: "curl --fail http://127.0.0.1:8201/health",
-  tts: "curl --fail http://127.0.0.1:8201/health",
   storage: "psql knowledge -f scripts/bootstrap-meeting-db.sql",
 };
 
@@ -83,12 +93,43 @@ function normalizeNetworkScope(value: unknown): NetworkScope {
   return value === "network" || value === "local" ? value : browserNetworkScope();
 }
 
+function mergeTtsIntoSpeechrail(services: ServiceInfo[]): ServiceViewInfo[] {
+  const tts = services.find((service) => service.name === "tts");
+  return services
+    .filter((service) => service.name !== "tts")
+    .map((service) => {
+      if (service.name !== "speechrail" || !tts) return service;
+      return {
+        ...service,
+        tts_probe_status: tts.status,
+        tts_model: tts.target_model ?? null,
+        tts_ready: tts.model_present ?? null,
+      };
+    });
+}
+
+export function pipelineStatusToServiceStatus(pipelineStatus: string): ServiceStatus {
+  switch (pipelineStatus) {
+    case "running":
+      return "ok";
+    case "starting":
+    case "stopping":
+      return "checking";
+    case "error":
+    case "ownership_conflict":
+      return "error";
+    default:
+      return "inactive";
+  }
+}
+
 export function classifyHealthState(
   status: ServiceStatus,
   requirement: HealthRequirement,
 ): HealthDisplayState {
   if (requirement === "not-required") return "not-required";
   if (status === "degraded") return "required-degraded";
+  if (status === "inactive") return "required-inactive";
   return status === "ok" ? "normal" : "required-error";
 }
 
@@ -107,6 +148,17 @@ function formatDiagnosticNumber(value: unknown): string {
 
 function serviceDiagnosticDetails(service: ServiceViewInfo): string[] {
   const details: string[] = [`HTTP 状态：${STATUS_LABELS[service.status] || service.status}`];
+  if (service.name === "speechrail") {
+    if (service.tts_probe_status !== undefined && service.tts_probe_status !== null) {
+      details.push(`TTS 探活：${STATUS_LABELS[service.tts_probe_status] || service.tts_probe_status}`);
+    }
+    if (service.tts_model !== undefined && service.tts_model !== null) {
+      details.push(`TTS 目标模型：${formatDiagnosticText(service.tts_model)}`);
+    }
+    if (service.tts_ready !== undefined && service.tts_ready !== null) {
+      details.push(service.tts_ready ? "TTS 引擎已就绪" : "TTS 引擎未就绪");
+    }
+  }
   if (service.target_model !== undefined && service.target_model !== null) {
     details.push(`目标模型：${formatDiagnosticText(service.target_model)}`);
   }
@@ -140,12 +192,23 @@ function serviceHealthStatus(
 ): ServiceStatus {
   if (service.status !== "ok") return service.status;
   if (service.model_present === false) return "error";
-  if (service.name !== "speechrail" || (mode !== "subtitles" && mode !== "meeting")) {
+  if (service.name !== "speechrail") return "ok";
+  if (mode === "assistant") {
+    if (
+      service.tts_probe_status !== undefined
+      && service.tts_probe_status !== null
+      && service.tts_probe_status !== "ok"
+    ) {
+      return "error";
+    }
+    if (service.tts_ready === false) return "error";
     return "ok";
   }
-  if (service.workload === "error") return "error";
-  if (service.workload === "degraded") return "degraded";
-  if (service.workload === "starting") return "checking";
+  if (mode === "subtitles" || mode === "meeting") {
+    if (service.workload === "error") return "error";
+    if (service.workload === "degraded") return "degraded";
+    if (service.workload === "starting") return "checking";
+  }
   return "ok";
 }
 
@@ -379,7 +442,6 @@ export default function StatusBar({
 }: StatusBarProps) {
   const [services, setServices] = useState<ServiceViewInfo[]>([
     { name: "speechrail", status: "checking", url: "http://127.0.0.1:8201/health" },
-    { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);
   const [networkScope, setNetworkScope] = useState<NetworkScope>(browserNetworkScope);
@@ -482,7 +544,7 @@ export default function StatusBar({
       const data: ServicesResponse = value;
       setNetworkScope(normalizeNetworkScope(data.network_scope));
       if (Array.isArray(data.services) && data.services.length > 0) {
-        setServices(data.services);
+        setServices(mergeTtsIntoSpeechrail(data.services));
         if (isManual) showToast("服务健康状态已刷新", "info");
       }
     } catch {
@@ -560,7 +622,7 @@ export default function StatusBar({
     createHealthItem(
       "pipeline",
       "交互管道 (Pipecat)",
-      pipelineStatus === "running" ? "ok" : pipelineStatus === "error" ? "error" : "checking",
+      pipelineStatusToServiceStatus(pipelineStatus),
     ),
     createHealthItem(
       "subtitle",
@@ -594,11 +656,17 @@ export default function StatusBar({
     return priority(a) - priority(b);
   });
   const requiredHealthItems = healthItems.filter((item) => item.requirement === "required");
-  const requiredOkCount = requiredHealthItems.filter((item) => item.status === "ok").length;
+  const requiredOkCount = requiredHealthItems.filter(
+    (item) => item.status === "ok" || item.status === "inactive",
+  ).length;
   const requiredCount = requiredHealthItems.length;
   const nonRequiredCount = healthItems.length - requiredCount;
   const hasRequiredHardError = requiredHealthItems.some(
-    (item) => item.status !== "ok" && item.status !== "checking" && item.status !== "degraded",
+    (item) =>
+      item.status !== "ok"
+      && item.status !== "checking"
+      && item.status !== "degraded"
+      && item.status !== "inactive",
   );
   const hasRequiredDegraded = requiredHealthItems.some(
     (item) => item.displayState === "required-degraded",
@@ -826,7 +894,9 @@ export default function StatusBar({
                         ? "检测中"
                         : item.status === "degraded"
                           ? "必须组件降级"
-                          : "必须组件异常";
+                          : item.status === "inactive"
+                            ? "未运行（按需启动）"
+                            : "必须组件异常";
                   const diagnosticTitle = item.details?.join(" · ");
                   const title = item.requirement === "not-required"
                     ? diagnosticTitle

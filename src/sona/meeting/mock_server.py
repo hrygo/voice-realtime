@@ -311,9 +311,26 @@ def create_contract_mock_app(fixture_dir: Path | None = None) -> FastAPI:
         return {
             "network_scope": "local",
             "services": [
-                {"name": "speechrail", "status": "ok", "url": "http://127.0.0.1:8201"},
-                {"name": "tts", "status": "ok", "url": "http://127.0.0.1:8765"},
-                {"name": "lm", "status": "ok", "url": "http://127.0.0.1:1234"},
+                {
+                    "name": "speechrail",
+                    "status": "ok",
+                    "url": "http://127.0.0.1:8201/health",
+                    "workload": "ok",
+                },
+                {
+                    "name": "tts",
+                    "status": "ok",
+                    "url": "http://127.0.0.1:8201/health",
+                    "target_model": "speechrail/qwen3-tts",
+                    "model_present": True,
+                },
+                {
+                    "name": "lm",
+                    "status": "ok",
+                    "url": "http://127.0.0.1:1234/v1/models",
+                    "target_model": "local/kat-coder-2.5",
+                    "model_present": True,
+                },
             ],
             "diagnostics": {"mode": "contract-mock"},
         }
