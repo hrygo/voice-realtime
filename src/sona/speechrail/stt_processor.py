@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
@@ -28,6 +30,8 @@ from sona.speechrail.transcription_events import (
     decode_transcription_event,
 )
 from sona.speechrail.transport import SpeechRailProtocolError, SpeechRailRealtimeClient
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ClientFactory",
@@ -76,35 +80,64 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
     async def _open_turn(self) -> None:
         if self._client is not None:
             return
-        self._client = self._client_factory()
-        await self._client.connect(language=self._language)
+        client = self._client_factory()
+        try:
+            await client.connect(language=self._language)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await client.close()
+            self._client = None
+            logger.warning(
+                "交互 STT: SpeechRail 实时会话连接失败 (language=%s): %s",
+                self._language,
+                exc,
+            )
+            raise
+        self._client = client
+        logger.debug("交互 STT: SpeechRail 实时会话已建立 (language=%s)", self._language)
 
     async def _append_audio(self, frame: InputAudioRawFrame) -> None:
         if frame.sample_rate != 16_000 or frame.num_channels != 1 or len(frame.audio) % 2:
             raise ValueError("SpeechRail conversation STT requires 16 kHz mono PCM16")
-        if self._client is not None:
+        if self._client is None:
+            return
+        try:
             await self._client.append_pcm(frame.audio)
+        except Exception as exc:
+            logger.warning("交互 STT: SpeechRail 发送音频失败，重置本回合会话: %s", exc)
+            with contextlib.suppress(Exception):
+                await self._client.close()
+            self._client = None
+            raise
 
     async def _commit_turn(self) -> None:
         if self._client is None:
             return
         client = self._client
-        await client.commit()
         try:
+            await client.commit()
             while True:
                 event = await client.receive()
                 try:
                     decoded = decode_transcription_event(event)
                 except SpeechRailProtocolError:
+                    logger.warning(
+                        "交互 STT: SpeechRail 事件解析失败 (type=%s)",
+                        event.get("type"),
+                    )
                     raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR") from None
                 if isinstance(decoded, Noop):
                     continue
                 if isinstance(decoded, TranscriptionDelta):
+                    if decoded.text.strip():
+                        logger.debug("交互 STT: 中间转写: %s", decoded.text)
                     await self.push_frame(
                         InterimTranscriptionFrame(decoded.text, "user", _timestamp()),
                         FrameDirection.DOWNSTREAM,
                     )
                 elif isinstance(decoded, TranscriptionCompleted):
+                    if decoded.transcript.strip():
+                        logger.info("交互 STT: 转写完成: %s", decoded.transcript)
                     await self.push_frame(
                         TranscriptionFrame(
                             decoded.transcript,
@@ -118,15 +151,26 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
                 elif isinstance(decoded, TranscriptionSegment):
                     continue
                 elif isinstance(decoded, SpeechRailTranscriptionError):
-                    raise RuntimeError("SPEECHRAIL_REQUEST_FAILED") from None
+                    logger.error(
+                        "交互 STT: SpeechRail 转写失败 code=%s message=%s",
+                        decoded.code,
+                        decoded.message or "(no message)",
+                    )
+                    raise RuntimeError(
+                        f"SPEECHRAIL_REQUEST_FAILED code={decoded.code} "
+                        f"message={decoded.message}"
+                    ) from None
                 else:
+                    logger.error("交互 STT: 未知转写事件 %r", type(decoded).__name__)
                     raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
         finally:
             await client.close()
             self._client = None
+            logger.debug("交互 STT: SpeechRail 实时会话已关闭 (语言 %s)", self._language)
 
     async def _close_turn(self) -> None:
         if self._client is not None:
+            logger.debug("交互 STT: SpeechRail 会话未完成即关闭")
             await self._client.close()
             self._client = None
 

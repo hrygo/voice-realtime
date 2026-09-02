@@ -116,6 +116,85 @@ def test_pipecat_processor_fails_and_closes_the_turn_on_speechrail_error() -> No
     asyncio.run(scenario())
 
 
+def test_pipecat_processor_recovers_after_connect_failure() -> None:
+    class FailingClient(FakeSpeechRailClient):
+        async def connect(self, *, language: str) -> None:
+            raise ConnectionError("speechrail down")
+
+    async def scenario() -> None:
+        attempts = {"count": 0}
+
+        def factory() -> FakeSpeechRailClient:
+            attempts["count"] += 1
+            return FailingClient() if attempts["count"] == 1 else FakeSpeechRailClient()
+
+        processor = SpeechRailConversationSTTProcessor(language="zh", client_factory=factory)
+
+        with pytest.raises(ConnectionError):
+            await processor._open_turn()
+        assert processor._client is None
+
+        # 连接失败后下一轮从工厂拿到新 client 重试，不残留半开会话。
+        await processor._open_turn()
+        assert processor._client is not None
+        assert attempts["count"] == 2
+
+    asyncio.run(scenario())
+
+
+def test_pipecat_processor_closes_client_when_commit_fails() -> None:
+    class CommitFailingClient(FakeSpeechRailClient):
+        async def commit(self) -> None:
+            raise ConnectionError("dropped during commit")
+
+    async def scenario() -> None:
+        client = CommitFailingClient()
+        processor = SpeechRailConversationSTTProcessor(
+            language="zh",
+            client_factory=lambda: client,
+        )
+
+        await processor._open_turn()
+        with pytest.raises(ConnectionError):
+            await processor._commit_turn()
+
+        # commit 阶段掉线也必须关闭并重置，否则下一轮 _open_turn 提前返回导致 STT 永久失效。
+        assert client.closed is True
+        assert processor._client is None
+
+    asyncio.run(scenario())
+
+
+def test_pipecat_processor_resets_client_when_append_fails() -> None:
+    class AppendFailingClient(FakeSpeechRailClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail_next = True
+
+        async def append_pcm(self, chunk: bytes) -> None:
+            if self.fail_next:
+                self.fail_next = False
+                raise ConnectionError("dropped during append")
+            self.appended.append(chunk)
+
+    async def scenario() -> None:
+        client = AppendFailingClient()
+        processor = SpeechRailConversationSTTProcessor(
+            language="zh",
+            client_factory=lambda: client,
+        )
+
+        await processor._open_turn()
+        with pytest.raises(ConnectionError):
+            await processor.process_frame(
+                InputAudioRawFrame(b"\x00\x00", sample_rate=16_000, num_channels=1),
+                FrameDirection.DOWNSTREAM,
+            )
+
+        assert client.closed is True
+        assert processor._client is None
+
+
 def test_pipecat_processor_matches_decoder_for_delta_and_completed() -> None:
     async def scenario() -> None:
         delta_raw = {"type": "conversation.item.input_audio_transcription.delta", "delta": "你好"}
