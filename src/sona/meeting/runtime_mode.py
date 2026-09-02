@@ -8,7 +8,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
 from sona.meeting.models import (
@@ -105,7 +105,7 @@ class RuntimeModeCoordinator:
     def __init__(
         self,
         interaction: InteractionWorkload,
-        subtitles: SubtitleWorkload | MeetingWorkload | None = None,
+        subtitles: SubtitleWorkload | None = None,
         meeting: MeetingWorkload | None = None,
         *,
         meeting_session: MeetingWorkload | None = None,
@@ -115,19 +115,10 @@ class RuntimeModeCoordinator:
         subtitle_prepare_timeout_secs: float = 5.0,
     ) -> None:
         explicit_meeting = meeting_session if meeting_session is not None else meeting
-        subtitle_workload: SubtitleWorkload | None
-        if subtitles is not None and not self._declares_subtitle_interface(subtitles):
-            if explicit_meeting is not None:
-                raise TypeError("meeting session 被重复提供")
-            explicit_meeting = cast(MeetingWorkload, subtitles)
-            subtitle_workload = None
-        else:
-            subtitle_workload = cast(SubtitleWorkload | None, subtitles)
-
         if subtitle_prepare_timeout_secs <= 0:
             raise ValueError("subtitle_prepare_timeout_secs 必须大于 0")
         self.interaction = interaction
-        self.subtitles = subtitle_workload
+        self.subtitles = subtitles
         self.meeting = explicit_meeting
         if initial_mode is None:
             initial_mode = (
@@ -150,17 +141,6 @@ class RuntimeModeCoordinator:
         self._last_transition: dict[str, TransitionValue] | None = None
         self._rollback_result: str | None = None
         self._rollback_error_type: str | None = None
-
-    @staticmethod
-    def _declares_subtitle_interface(workload: object) -> bool:
-        """区分新 subtitle positional 参数与旧 positional meeting 调用。"""
-        method_names = (
-            "prepare_browser_capture",
-            "commit_browser_capture",
-            "abort_browser_capture",
-            "deactivate_browser_capture",
-        )
-        return all(callable(getattr(workload, name, None)) for name in method_names)
 
     @staticmethod
     def _owner_for_mode(mode: RuntimeMode) -> PCMOwner:

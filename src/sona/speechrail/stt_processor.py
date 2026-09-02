@@ -18,7 +18,6 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from sona.asr.adapters.speechrail_realtime import SpeechRailRealtimeClient
 from sona.asr.contracts import ASRCapabilities
 from sona.speechrail.transcription_events import (
     Noop,
@@ -28,7 +27,13 @@ from sona.speechrail.transcription_events import (
     TranscriptionSegment,
     decode_transcription_event,
 )
-from sona.speechrail.transport import SpeechRailProtocolError
+from sona.speechrail.transport import SpeechRailProtocolError, SpeechRailRealtimeClient
+
+__all__ = [
+    "ClientFactory",
+    "SpeechRailConversationSTTFactory",
+    "SpeechRailConversationSTTProcessor",
+]
 
 
 class _SpeechRailClient(Protocol):

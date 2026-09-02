@@ -22,6 +22,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from sona.config import InteractionSettings, Settings, SubtitleSettings
 from sona.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
+from sona.subtitles import SubtitleProxy, SubtitleProxyState
 from sona.ui import http_routes as http_routes_module
 from sona.ui import websocket_routes as websocket_routes_module
 from sona.ui.app_context import (
@@ -32,7 +33,6 @@ from sona.ui.assistant_bridge import StatusBridgeObserver
 from sona.ui.protocol import DuplexMode, RuntimeStateSnapshot
 from sona.ui.runtime_events import RuntimeStateBroadcaster
 from sona.ui.server import create_app
-from sona.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
 
 
 class _FakeRuntime:

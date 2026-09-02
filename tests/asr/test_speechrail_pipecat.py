@@ -14,7 +14,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from sona.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTProcessor
+from sona.speechrail import SpeechRailConversationSTTProcessor
 from sona.speechrail.transcription_events import (
     TranscriptionCompleted,
     TranscriptionDelta,

@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from sona.config import (
-    BridgeSettings,
     InteractionSettings,
     LMStudioSettings,
     MeetingSettings,
@@ -142,16 +141,9 @@ def test_interaction_rejects_non_16k_sample_rate(sample_rate: int) -> None:
         InteractionSettings(sample_rate=sample_rate)
 
 
-@pytest.mark.parametrize("sample_rate", [8000, 16000, 44100, 48000])
-def test_bridge_rejects_non_native_sample_rate(sample_rate: int) -> None:
+def test_server_settings_reject_invalid_host() -> None:
     with pytest.raises(ValidationError):
-        BridgeSettings(sample_rate=sample_rate)
-
-
-@pytest.mark.parametrize("settings_type", [BridgeSettings, UISettings])
-def test_server_settings_reject_invalid_host(settings_type: type[object]) -> None:
-    with pytest.raises(ValidationError):
-        settings_type(host="invalid host name with spaces")
+        UISettings(host="invalid host name with spaces")
 
 
 @pytest.mark.parametrize(
@@ -159,18 +151,15 @@ def test_server_settings_reject_invalid_host(settings_type: type[object]) -> Non
 )
 def test_server_settings_accept_loopback_and_lan_hosts(host: str) -> None:
     assert UISettings(host=host).host == host
-    assert BridgeSettings(host=host).host == host
 
 
 def test_server_settings_default_to_localhost() -> None:
     assert UISettings().host == "127.0.0.1"
-    assert BridgeSettings().host == "127.0.0.1"
 
 
 def test_server_settings_resolve_lan_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sona.network.get_lan_ip", lambda: "192.168.1.123")
     assert UISettings(host="lan").host == "192.168.1.123"
-    assert BridgeSettings(host="LAN").host == "192.168.1.123"
 
 
 def test_removed_configuration_knobs_are_not_model_fields() -> None:
@@ -201,9 +190,6 @@ def test_subtitle_speechrail_api_key_is_trimmed_and_optional() -> None:
     )
     assert SubtitleSettings().speechrail_api_key is None
 
-
-def test_tts_downloads_are_disabled_by_default() -> None:
-    assert BridgeSettings().allow_model_downloads is False
 
 
 def test_meeting_settings_reject_invalid_database_url() -> None:
@@ -271,26 +257,3 @@ def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> No
     assert settings.summary_reduce_max_output_tokens == 10240
     assert settings.summary_max_output_chars == 65536
     assert settings.summary_job_timeout_secs == 600.0
-
-
-def test_bridge_anti_repetition_and_sampling_defaults() -> None:
-    settings = BridgeSettings()
-    assert settings.repetition_penalty == 1.25
-    assert settings.temperature == 0.85
-    assert settings.top_p == 0.95
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("repetition_penalty", 0.9),
-        ("repetition_penalty", 2.1),
-        ("temperature", 0.0),
-        ("temperature", 2.1),
-        ("top_p", 0.0),
-        ("top_p", 1.1),
-    ],
-)
-def test_bridge_rejects_invalid_sampling_ranges(field: str, value: object) -> None:
-    with pytest.raises(ValidationError):
-        BridgeSettings(**{field: value})

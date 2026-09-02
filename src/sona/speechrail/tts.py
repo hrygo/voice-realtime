@@ -1,7 +1,7 @@
 """SpeechRail OpenAI Realtime outbound adapter for text-to-speech.
 
 Each ``synthesize`` call opens one OpenAI-standard ``/v1/realtime`` session and
-produces its 24 kHz base64 PCM16 ``response.output_audio.delta`` stream.  The
+produces its 24 kHz base64 PCM16 ``response.audio.delta`` stream.  The
 caller owns playback and interruption (``cancel``); SpeechRail only supports a
 single in-flight TTS response per session.
 """
@@ -30,9 +30,9 @@ _TTS_NOOPS = frozenset(
         "conversation.item.created",
         "response.output_item.added",
         "response.content_part.added",
-        "response.output_audio.done",
-        "response.output_audio_transcript.delta",
-        "response.output_audio_transcript.done",
+        "response.audio.done",
+        "response.audio_transcript.delta",
+        "response.audio_transcript.done",
         "response.content_part.done",
         "response.output_item.done",
     }
@@ -117,7 +117,7 @@ class SpeechRailTTSClient:
                     if self._active_response_id is not None:
                         raise SpeechRailProtocolError("SPEECHRAIL_RESPONSE_ERROR")
                     self._active_response_id = response_id
-                elif event_type == "response.output_audio.delta":
+                elif event_type == "response.audio.delta":
                     self._ensure_active(event.get("response_id"))
                     yield decode_pcm16(event.get("delta"))
                 elif event_type == "response.done":

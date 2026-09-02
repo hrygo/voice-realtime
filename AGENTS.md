@@ -45,14 +45,14 @@
 
 | 模块 | 职责与功能 | 关键文件 |
 |---|---|---|
-| `sona.asr` | SpeechRail ASR 契约与适配层：Realtime v2 流式适配器、Pipecat 轮次适配与结果呈现 | `contracts.py`<br>`profiles.py`<br>`adapters/`<br>`presenters.py` |
-| `sona.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、SpeechRail diarization 接入与应用侧平滑/remap、异步 AI 纪要生成、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`diarization_smoother.py`<br>`summary.py`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
-| `sona.ui` | 默认运行时主入口：`RuntimeModeCoordinator` 模式协调、`SubtitleProxy`（带 PCM 重连快照与 `session.completed` 优雅停机）、严格控制协议网关（`request_id` ack）、助手桥接 | `server.py`<br>`runtime.py`<br>`control.py`<br>`assistant_bridge.py`<br>`subtitle_proxy.py`<br>`protocol.py` |
+| `sona.asr` | ASR 领域契约与呈现模型：厂商无关协议定义、音频窗口模型与结果呈现 | `contracts.py`<br>`models.py`<br>`profiles.py`<br>`presenters.py` |
+| `sona.meeting` | 会议助手核心：会话状态机、窗口对账、PostgreSQL 持久化、SpeechRail diarization 接入与应用侧平滑/remap、异步 AI 纪要生成（`summary/` 子包模块化架构）、崩溃恢复 journal、REST API 与 WebSocket 实时网关 | `session.py`<br>`repository.py`<br>`diarization_smoother.py`<br>`summary/`<br>`recovery.py`<br>`runtime_mode.py`<br>`api.py`<br>`events.py`<br>`models.py`<br>`migrations.py` |
+| `sona.ui` | 默认运行时主入口：`RuntimeModeCoordinator` 模式协调、严格控制协议网关（`request_id` ack）、助手桥接、FastAPI 与 WebSocket 传输端点 | `server.py`<br>`runtime.py`<br>`control.py`<br>`assistant_bridge.py`<br>`http_routes.py`<br>`websocket_routes.py`<br>`protocol.py` |
 | `sona.interaction` | 共享交互会话/所有权 + Pipecat 管道 + LM Studio 原生服务 + 双层回声防线 + 滚动记忆压缩与 NLTK 依赖自愈 | `session.py`<br>`ownership.py`<br>`pipeline.py`<br>`reasoning.py`<br>`context_memory.py`<br>`runner.py`<br>`nltk_data.py` |
-| `sona.subtitles` | 保留的包命名空间；当前字幕 workload 由 `sona.ui.subtitle_proxy` 通过 SpeechRail 适配 | `__init__.py` |
+| `sona.subtitles` | 实时字幕与流式转录核心领域：`SubtitleProxy`（带 PCM 重连快照与 `session.completed` 优雅停机）、`SrtArchive`、会话状态机与客户端广播池 | `proxy.py`<br>`archive.py`<br>`sessions.py`<br>`clients.py` |
 | `sona.audio` | 单源麦克风采集、有界 sink 扇出、真实静音（零音频吞吐）、Pipecat 音频注入器 | `hub.py`<br>`audio_injector.py` |
-| `sona.speechrail` | SpeechRail Realtime v2 的 ASR/TTS 客户端、事件顺序校验、PCM 解码与取消回收 | `transport.py`<br>`tts.py`<br>`__init__.py` |
-| `sona.config` | 集中配置层（pydantic-settings，含 Bridge / Interaction / Subtitles / Meeting / UI / ASR） | `config.py` |
+| `sona.speechrail` | SpeechRail 基础设施客户端与统一适配层：Realtime 流式 ASR 转录器、Pipecat STT 处理器、TTS 客户端与传输协议 | `transcriber.py`<br>`stt_processor.py`<br>`transport.py`<br>`tts.py`<br>`transcription_events.py` |
+| `sona.config` | 集中配置层（pydantic-settings 模块化子包，含 Audio / Interaction / Subtitles / Meeting / UI / LM Studio） | `config/` |
 | `ui/` (前端控制台) | React 19 + TypeScript + Vite 7 + Zustand 前端控制台：交互助手面板、会议助手（录制/总结/历史/说话人命名）、实时字幕流、声学波形、状态栏与快捷键 | `App.tsx`<br>`components/`<br>`stores/`<br>`hooks/`<br>`services/`<br>`contracts/` |
 | `ui/src/features/innerOS` | 会中内心 OS 伴侣前端：会前底牌抽屉、Prompt 快捷矩阵、流式多意图研判卡片、会后即焚瞬态管理与历史归档 | `InnerOSPanel.tsx`<br>`InnerOSEphemeralContext.tsx`<br>`InnerOSAnswerCard.tsx`<br>`InnerOSArchive.tsx`<br>`innerOSStore.ts` |
 

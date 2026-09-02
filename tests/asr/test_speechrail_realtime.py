@@ -5,11 +5,11 @@ import base64
 import json
 from collections.abc import AsyncIterator
 
-from sona.asr.adapters.speechrail_realtime import (
+from sona.asr.contracts import ASREvent, ASRSessionContext
+from sona.speechrail import (
     SpeechRailRealtimeClient,
     SpeechRailStreamingTranscriber,
 )
-from sona.asr.contracts import ASREvent, ASRSessionContext
 from sona.speechrail.transcription_events import (
     SpeechRailTranscriptionError,
     TranscriptionCompleted,

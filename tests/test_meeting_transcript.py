@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import UUID
 
-from sona.asr.adapters.speechrail_realtime import _segment
 from sona.asr.contracts import ASRSessionContext
 from sona.asr.models import ASRWindow
 from sona.meeting import transcript as transcript_module
 from sona.meeting.asr_mapping import to_transcript_window
 from sona.meeting.models import TranscriptWindow
 from sona.meeting.transcript import TranscriptAccumulator
+from sona.speechrail.transcriber import _segment
 from sona.speechrail.transcription_events import (
     TranscriptionSegment,
     decode_transcription_event,

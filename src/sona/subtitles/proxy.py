@@ -11,19 +11,20 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from sona.asr.adapters.speechrail_realtime import (
-    ConnectionFactory,
-    SpeechRailRealtimeClient,
-    SpeechRailStreamingTranscriber,
-)
 from sona.asr.contracts import ASRSessionContext, StreamingTranscriber
 from sona.config import SubtitleSettings
 from sona.meeting.asr_mapping import to_transcript_window
 from sona.meeting.models import PCMOwner, TranscriptWindow
-from sona.ui.subtitle_archive import SrtArchive
-from sona.ui.subtitle_clients import ClientSender, SubtitleClientHub
-from sona.ui.subtitle_sessions import (
+from sona.speechrail import (
+    ConnectionFactory,
+    SpeechRailRealtimeClient,
+    SpeechRailStreamingTranscriber,
+)
+from sona.subtitles.archive import SrtArchive
+from sona.subtitles.clients import ClientSender, SubtitleClientHub
+from sona.subtitles.sessions import (
     CapturePreparation,
+    FinalizationTimeout,
     FinalizationTimeoutError,
     MeetingCaptureSession,
     StandardSubtitleSession,
@@ -543,3 +544,20 @@ class SubtitleProxy:
                 if self._subtitle_session.committed
                 else SubtitleProxyState.PAUSED
             )
+
+
+__all__ = [
+    "AudioListener",
+    "CaptureListener",
+    "CapturePreparation",
+    "FinalizationTimeout",
+    "FinalizationTimeoutError",
+    "GapListener",
+    "SubtitlePreparation",
+    "SubtitleProxy",
+    "SubtitleProxyDiagnostics",
+    "SubtitleProxyState",
+    "SubtitleSessionState",
+    "TranscriberFactory",
+    "TranscriptionGap",
+]

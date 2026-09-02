@@ -86,8 +86,7 @@ def test_asr_package_imports_without_meeting_models() -> None:
         "import sona.asr.contracts;"
         "import sona.asr.models;"
         "import sona.asr.presenters;"
-        "import sona.asr.adapters.speechrail_realtime;"
-        "import sona.asr.adapters.speechrail_pipecat;"
+        "import sona.speechrail;"
         "assert 'sona.meeting.models' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", script], check=True, capture_output=True, text=True)

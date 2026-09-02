@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -650,52 +649,6 @@ async def test_meeting_can_be_configured_once_after_construction() -> None:
     with pytest.raises(RuntimeError, match="已配置"):
         harness.coordinator.configure_meeting(FakeMeeting(harness.calls))
 
-
-def test_constructor_keeps_legacy_positional_meeting_call_compatible() -> None:
-    calls: list[str] = []
-    interaction = FakeInteraction(calls, active=False)
-    meeting = FakeMeeting(calls)
-
-    coordinator = RuntimeModeCoordinator(interaction, meeting)
-
-    assert coordinator.meeting is meeting
-    assert coordinator.mode is RuntimeMode.IDLE
-    assert coordinator.pcm_owner is PCMOwner.NONE
-    assert coordinator.storage is StorageHealth.OK
-
-
-def test_constructor_detects_delegated_subtitle_callables_without_false_positive() -> None:
-    calls: list[str] = []
-    interaction = FakeInteraction(calls, active=False)
-
-    async def prepare_browser_capture(*, timeout_secs: float):
-        del timeout_secs
-        return object()
-
-    async def async_noop(*_args, **_kwargs) -> None:
-        return None
-
-    delegated = SimpleNamespace(
-        browser_capture_active=False,
-        prepare_browser_capture=prepare_browser_capture,
-        commit_browser_capture=lambda _preparation: None,
-        abort_browser_capture=async_noop,
-        deactivate_browser_capture=async_noop,
-    )
-    non_callable = SimpleNamespace(
-        prepare_browser_capture=True,
-        commit_browser_capture=True,
-        abort_browser_capture=True,
-        deactivate_browser_capture=True,
-    )
-
-    coordinator = RuntimeModeCoordinator(interaction, delegated)
-    legacy = RuntimeModeCoordinator(interaction, non_callable)
-
-    assert coordinator.subtitles is delegated
-    assert coordinator.meeting is None
-    assert legacy.subtitles is None
-    assert legacy.meeting is non_callable
 
 
 async def test_direct_transition_cancellation_restores_assistant_source() -> None:

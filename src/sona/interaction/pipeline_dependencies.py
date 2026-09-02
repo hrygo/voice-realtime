@@ -16,12 +16,12 @@ from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
-from sona.asr.adapters.speechrail_pipecat import SpeechRailConversationSTTFactory
 from sona.asr.contracts import ConversationSTTFactory
 from sona.audio.devices import resolve_input_device_index
 from sona.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
 from sona.interaction.reasoning import LmStudioNativeLLMService
 from sona.interaction.tts import SpeechRailTTSService
+from sona.speechrail import SpeechRailConversationSTTFactory
 
 
 class TransportFactory(Protocol):

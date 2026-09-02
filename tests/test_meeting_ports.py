@@ -38,7 +38,7 @@ from sona.meeting.ports import (
     SpeakerStore,
     TranscriptStore,
 )
-from sona.ui.subtitle_proxy import SubtitleProxy
+from sona.subtitles.proxy import SubtitleProxy
 
 
 def _window() -> TranscriptWindow:
@@ -346,13 +346,13 @@ def test_capture_value_types_are_aliased_by_proxy() -> None:
     assert ports.CaptureGap is CaptureGap
     assert ports.CaptureFinalizationTimeout is CaptureFinalizationTimeout
     assert CaptureFinalizationTimeout is CaptureFinalizationTimeoutError
-    # proxy 兼容别名指向同一对象定义
-    assert SubtitleProxy.__module__ == "sona.ui.subtitle_proxy"
+    # SubtitleProxy 归位属于 sona.subtitles 领域模块
+    assert SubtitleProxy.__module__ == "sona.subtitles.proxy"
 
 
 def test_proxy_capture_types_alias_ports() -> None:
-    from sona.ui import subtitle_proxy as proxy_module
-    from sona.ui import subtitle_sessions as sessions_module
+    from sona.subtitles import proxy as proxy_module
+    from sona.subtitles import sessions as sessions_module
 
     assert proxy_module.CapturePreparation is ports.CaptureLease
     assert proxy_module.TranscriptionGap is ports.CaptureGap

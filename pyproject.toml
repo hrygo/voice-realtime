@@ -1,7 +1,7 @@
 [project]
 name = "sona"
 version = "1.4.0"
-description = "全本地实时语音交互 + 实时语音字幕系统 (Apple Silicon / MLX / 中文优先)"
+description = "全本地实时语音交互 + 智能会议助手 + 实时语音字幕系统 (Apple Silicon / 中文优先 / 离线)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
@@ -26,6 +26,7 @@ dependencies = [
     "huggingface-hub>=0.27",
     "psycopg[binary]>=3.2,<4",
     "psycopg-pool>=3.2,<4",
+    "pypinyin>=0.53",
 ]
 
 [project.optional-dependencies]

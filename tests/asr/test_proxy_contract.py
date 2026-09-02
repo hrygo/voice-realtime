@@ -15,7 +15,7 @@ from sona.asr.contracts import (
 )
 from sona.asr.models import ASRSegment, ASRWindow
 from sona.config import SubtitleSettings
-from sona.ui.subtitle_proxy import SubtitleProxy
+from sona.subtitles.proxy import SubtitleProxy
 
 
 class FakeTranscriber:

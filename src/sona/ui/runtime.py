@@ -22,6 +22,7 @@ from sona.meeting.runtime_mode import (
     ModeConflictError,
     RuntimeModeCoordinator,
 )
+from sona.subtitles.proxy import SubtitleProxy
 from sona.ui.assistant_bridge import StatusBridgeObserver
 from sona.ui.protocol import (
     AudioLevelsSnapshot,
@@ -30,7 +31,6 @@ from sona.ui.protocol import (
     RuntimeStateSnapshot,
 )
 from sona.ui.runtime_events import RuntimeStateBroadcaster
-from sona.ui.subtitle_proxy import SubtitleProxy
 
 logger = logging.getLogger(__name__)
 

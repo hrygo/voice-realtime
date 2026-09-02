@@ -16,7 +16,7 @@ from sona.asr.contracts import ASRCapabilities, ASREvent, ASRSessionContext
 from sona.asr.models import ASRSegment, ASRWindow
 from sona.asr.presenters import legacy_subtitle_payload
 from sona.config import SubtitleSettings
-from sona.ui.subtitle_proxy import (
+from sona.subtitles import (
     FinalizationTimeoutError,
     SubtitleProxy,
     TranscriptionGap,

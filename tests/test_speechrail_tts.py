@@ -26,12 +26,12 @@ class FakeSpeechConnection:
             self._event("conversation.item.created", 4),
             self._event("response.created", 5, response={"id": "resp-1", "status": "in_progress"}),
             self._event(
-                "response.output_audio.delta",
+                "response.audio.delta",
                 6,
                 response_id="resp-1",
                 delta=base64.b64encode(b"\x00\x00").decode("ascii"),
             ),
-            self._event("response.output_audio.done", 7, response_id="resp-1"),
+            self._event("response.audio.done", 7, response_id="resp-1"),
             self._event("response.done", 8, response={"id": "resp-1", "status": "completed"}),
         ]
 
