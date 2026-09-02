@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - meeting-assistant
   - diarization
@@ -17,7 +17,7 @@ tags:
   - postgresql
 ---
 
-# Voice Studio 会议助手模式设计规格
+# Sona 会议助手模式设计规格
 
 ## 1. 文档状态
 
@@ -31,7 +31,7 @@ tags:
 
 ### 2.1 目标
 
-在现有 Voice Studio 中新增显式的会议助手模式：
+在现有 Sona 中新增显式的会议助手模式：
 
 1. 会议开始后持续采集麦克风音频，实时展示 partial 与 confirmed 转录。
 2. 会议期间完全停止交互 LLM 与 TTS，不产生任何回复。
@@ -47,7 +47,7 @@ tags:
 - 不做声纹注册、自动实名或生物特征识别。
 - 不做跨会议 RAG、向量检索、实时滚动摘要或外部协作平台同步。
 - 不把会议纪要送入 TTS，也不写入语音助手对话上下文。
-- 不改变 `vr-interact` 与 `vr-ui` 的单一所有者约束。
+- 不改变 `sona-interact` 与 `sona-ui` 的单一所有者约束。
 
 ## 3. 已确认的产品决策
 
@@ -55,7 +55,7 @@ tags:
 - 持久化内容：结构化转录、会议元数据、说话人映射和纪要；不保存音频。
 - 纪要触发：结束会议后自动生成一次；支持手动创建新版本。
 - 历史策略：应用内可回看；默认不自动删除，删除必须由用户显式确认。
-- 数据事实源：本机 PostgreSQL `knowledge` 数据库中的独立 `voice_realtime` schema。
+- 数据事实源：本机 PostgreSQL `knowledge` 数据库中的独立 `sona` schema。
 - 说话人：首版匿名 diarization，显示“说话人 1”等；允许会后改名。
 - 模式互斥：会议期间交互 STT、LLM、TTS 全部停止。
 - 会议结束后进入 `idle`，不自动恢复语音助手。
@@ -191,7 +191,7 @@ finalizing 超时使用最后一份 confirmed 数据封存，会议状态为 `in
 ### 7.1 隔离与权限
 
 - 数据库：现有本机 `knowledge`。
-- schema：`voice_realtime`，不得复用其他业务表。
+- schema：`sona`，不得复用其他业务表。
 - 角色：独立应用角色，仅拥有该 schema 的连接、读写和序列权限。
 - 应用不得使用当前 PostgreSQL 超级用户运行。
 - 首版不创建向量列、全文索引或 AGE 图。
@@ -621,12 +621,12 @@ pipeline, subtitle, storage, mic_muted, runtime_revision
 
 ## 16. 配置
 
-新增 `MeetingSettings`，环境变量前缀 `VR_MEETING_`：
+新增 `MeetingSettings`，环境变量前缀 `SONA_MEETING_`：
 
 | 配置 | 默认与语义 |
 |---|---|
 | `database_url` | 本机 `knowledge`，不得包含写入日志的明文凭据 |
-| `schema` | `voice_realtime` |
+| `schema` | `sona` |
 | `summary_model` | `qwen/qwen3.6-35b-a3b` |
 | `summary_temperature` | 非 thinking 精确抽取预设 |
 | `summary_reasoning` | `off` |

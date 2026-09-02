@@ -10,27 +10,36 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_run_all_starts_only_ui_and_never_derives_legacy_bridge_url() -> None:
+    source = (PROJECT_ROOT / "scripts" / "run-all.sh").read_text(encoding="utf-8")
+
+    assert "uv run vr-bridge" not in source
+    assert "SONA_INTERACTION_TTS_BRIDGE_URL" not in source
+    assert "SONA_BRIDGE_PORT" not in source
+    assert "uv run sona-ui" in source
+
+
 def _run_all_with_stubbed_services(
     tmp_path: Path,
     *,
     bind_host: str,
-    tts_bridge_url: str | None = None,
+    speechrail_tts_rest_url: str | None = None,
 ) -> dict[str, str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    capture_path = tmp_path / "vr-ui.env"
+    capture_path = tmp_path / "sona-ui.env"
 
     uv_stub = bin_dir / "uv"
     uv_stub.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == "vr-ui" ]]; then
+if [[ "${2:-}" == "sona-ui" ]]; then
     printf '%s\\n' \
-        "VR_UI_HOST=${VR_UI_HOST:-}" \
-        "VR_BRIDGE_HOST=${VR_BRIDGE_HOST:-}" \
-        "VR_SUBTITLE_HOST=${VR_SUBTITLE_HOST:-}" \
-        "VR_INTERACTION_TTS_BRIDGE_URL=${VR_INTERACTION_TTS_BRIDGE_URL:-}" \
-        > "${VR_TEST_CAPTURE_PATH}"
+        "SONA_UI_HOST=${SONA_UI_HOST:-}" \
+        "SONA_SUBTITLE_SPEECHRAIL_URL=${SONA_SUBTITLE_SPEECHRAIL_URL:-}" \
+        "SONA_INTERACTION_SPEECHRAIL_REALTIME_URL=${SONA_INTERACTION_SPEECHRAIL_REALTIME_URL:-}" \
+        "SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL=${SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL:-}" \
+        > "${SONA_TEST_CAPTURE_PATH}"
 else
     exec sleep 0.2
 fi
@@ -51,24 +60,24 @@ fi
 
     env = os.environ.copy()
     for name in (
-        "VR_HOST",
+        "SONA_HOST",
         "BIND_HOST",
         "HOST",
-        "VR_UI_HOST",
-        "VR_BRIDGE_HOST",
-        "VR_SUBTITLE_HOST",
-        "VR_INTERACTION_TTS_BRIDGE_URL",
+        "SONA_UI_HOST",
+        "SONA_SUBTITLE_SPEECHRAIL_URL",
+        "SONA_INTERACTION_SPEECHRAIL_REALTIME_URL",
+        "SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL",
     ):
         env.pop(name, None)
     env.update(
         {
             "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
-            "VR_BIND_HOST": bind_host,
-            "VR_TEST_CAPTURE_PATH": str(capture_path),
+            "SONA_BIND_HOST": bind_host,
+            "SONA_TEST_CAPTURE_PATH": str(capture_path),
         }
     )
-    if tts_bridge_url is not None:
-        env["VR_INTERACTION_TTS_BRIDGE_URL"] = tts_bridge_url
+    if speechrail_tts_rest_url is not None:
+        env["SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL"] = speechrail_tts_rest_url
 
     result = subprocess.run(
         ["bash", "scripts/run-all.sh"],
@@ -89,9 +98,9 @@ fi
 @pytest.mark.parametrize(
     ("bind_host", "expected_bind_host", "expected_tts_url"),
     [
-        ("localhost", "127.0.0.1", "http://127.0.0.1:8765/v1"),
-        ("lan", "0.0.0.0", "http://127.0.0.1:8765/v1"),
-        ("0.0.0.0", "0.0.0.0", "http://127.0.0.1:8765/v1"),
+        ("localhost", "127.0.0.1", "http://127.0.0.1:8201/v1"),
+        ("lan", "0.0.0.0", "http://127.0.0.1:8201/v1"),
+        ("0.0.0.0", "0.0.0.0", "http://127.0.0.1:8201/v1"),
     ],
 )
 def test_run_all_derives_reachable_internal_tts_url_for_bind_mode(
@@ -102,22 +111,24 @@ def test_run_all_derives_reachable_internal_tts_url_for_bind_mode(
 ) -> None:
     captured = _run_all_with_stubbed_services(tmp_path, bind_host=bind_host)
 
-    assert captured["VR_UI_HOST"] == expected_bind_host
-    assert captured["VR_BRIDGE_HOST"] == expected_bind_host
-    assert captured["VR_SUBTITLE_HOST"] == expected_bind_host
-    assert captured["VR_INTERACTION_TTS_BRIDGE_URL"] == expected_tts_url
+    assert captured["SONA_UI_HOST"] == expected_bind_host
+    assert captured["SONA_SUBTITLE_SPEECHRAIL_URL"] == "ws://127.0.0.1:8201/v1/realtime"
+    assert captured["SONA_INTERACTION_SPEECHRAIL_REALTIME_URL"] == (
+        "ws://127.0.0.1:8201/v1/realtime"
+    )
+    assert captured["SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL"] == expected_tts_url
 
 
-def test_run_all_preserves_explicit_tts_bridge_url(tmp_path: Path) -> None:
-    explicit_url = "https://tts.internal.example/v1"
+def test_run_all_preserves_explicit_speechrail_tts_rest_url(tmp_path: Path) -> None:
+    explicit_url = "https://speechrail.internal.example/v1"
 
     captured = _run_all_with_stubbed_services(
         tmp_path,
         bind_host="lan",
-        tts_bridge_url=explicit_url,
+        speechrail_tts_rest_url=explicit_url,
     )
 
-    assert captured["VR_INTERACTION_TTS_BRIDGE_URL"] == explicit_url
+    assert captured["SONA_INTERACTION_SPEECHRAIL_TTS_REST_URL"] == explicit_url
 
 
 def test_run_all_lan_mode_advertises_localhost_and_lan_urls(tmp_path: Path) -> None:
@@ -130,15 +141,15 @@ def test_run_all_lan_mode_advertises_localhost_and_lan_urls(tmp_path: Path) -> N
 def test_run_all_shutdown_terminates_service_descendants(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    descendant_pid_path = tmp_path / "subtitle-descendant.pid"
+    descendant_pid_path = tmp_path / "ui-descendant.pid"
     uv_stub = bin_dir / "uv"
     uv_stub.write_text(
         """#!/usr/bin/env bash
 set -euo pipefail
-if [[ "${2:-}" == "vr-subtitles" ]]; then
+        if [[ "${2:-}" == "sona-ui" ]]; then
     sleep 30 &
     descendant_pid=$!
-    printf '%s\n' "$descendant_pid" > "${VR_TEST_DESCENDANT_PID_PATH}"
+    printf '%s\n' "$descendant_pid" > "${SONA_TEST_DESCENDANT_PID_PATH}"
     trap 'exit 0' TERM
     wait "$descendant_pid"
 else
@@ -153,8 +164,8 @@ fi
     env.update(
         {
             "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
-            "VR_BIND_HOST": "localhost",
-            "VR_TEST_DESCENDANT_PID_PATH": str(descendant_pid_path),
+            "SONA_BIND_HOST": "localhost",
+            "SONA_TEST_DESCENDANT_PID_PATH": str(descendant_pid_path),
         }
     )
     process = subprocess.Popen(

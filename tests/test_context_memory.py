@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.interaction.context_memory import (
+from sona.interaction.context_memory import (
     CompactionDecision,
     ContextCompactionConfig,
     ConversationMemoryPacket,
@@ -32,7 +32,7 @@ def valid_snapshot_payload(source_turn_start: int, source_turn_end: int) -> dict
             {
                 "id": "project_voice",
                 "type": "project",
-                "name": "voice-realtime",
+                "name": "sona",
                 "aliases": ["声流"],
                 "facts": [
                     {

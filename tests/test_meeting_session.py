@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.models import (
+from sona.meeting.models import (
     MeetingRecord,
     MeetingStatus,
     NormalizedSegment,
@@ -18,11 +18,11 @@ from voice_realtime.meeting.models import (
     TranscriptReconcileResult,
     TranscriptWindow,
 )
-from voice_realtime.meeting.session import (
+from sona.meeting.ports import CaptureFinalizationTimeoutError
+from sona.meeting.session import (
     MeetingSession,
     MeetingStorageUnavailableError,
 )
-from voice_realtime.meeting.voiceprint import MeetingVoiceprintManager
 
 
 class FakeRepository:
@@ -105,6 +105,7 @@ class FakeGateway:
         self.listeners: list[Callable[[TranscriptWindow], Awaitable[None]]] = []
         self.gap_listeners: list[Callable[[object], Awaitable[None]]] = []
         self.capture = object()
+        self.last_window: TranscriptWindow | None = None
         self.prepare_capture = AsyncMock(return_value=self.capture)
         self.commit_capture = Mock()
         self.abort_prepared_capture = AsyncMock()
@@ -162,20 +163,22 @@ async def test_prepare_creates_record_and_listeners_without_activating_or_publis
     assert len(gateway.listeners) == 1
     assert len(gateway.gap_listeners) == 1
     gateway.prepare_capture.assert_awaited_once_with(
-        f"meeting:{preparation.record.id}", timeout_secs=5.0
+        f"meeting:{preparation.record.id}", timeout_secs=5.0, speaker_count_hint=None
     )
     gateway.commit_capture.assert_not_called()
     publish.assert_not_awaited()
 
 
-async def test_prepare_passes_max_speakers_to_gateway(
+async def test_prepare_passes_max_speakers_as_a_speechrail_hint(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway, event_publisher=AsyncMock())
     preparation = await session.prepare_start("1v1", max_speakers=2)
 
     gateway.prepare_capture.assert_awaited_once_with(
-        f"meeting:{preparation.record.id}", timeout_secs=5.0, max_speakers=2
+        f"meeting:{preparation.record.id}",
+        timeout_secs=5.0,
+        speaker_count_hint=2,
     )
 
 
@@ -296,26 +299,21 @@ async def test_stop_flushes_transcript_and_returns_completed(
     assert "minutes" in repository.calls
 
 
-async def test_stop_invokes_voiceprint_clustering_and_applies_remapping(
+async def test_stop_applies_speechrail_final_speaker_remapping(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    voiceprint_manager = MagicMock(spec=MeetingVoiceprintManager)
-    voiceprint_manager.compute_global_remapping.return_value = {"epoch1:s1": "epoch0:s0"}
+    gateway.finish_capture.return_value = TranscriptWindow(
+        source_epoch=1, speaker_remap=(("epoch:1:speaker:spk_02", "epoch:1:speaker:spk_01"),)
+    )
     repository.apply_speaker_remapping = AsyncMock(return_value=MeetingRecord(title="聚类后"))
 
-    session = MeetingSession(
-        repository,
-        gateway,
-        voiceprint_manager=voiceprint_manager,
-    )
+    session = MeetingSession(repository, gateway)
     await _start_session(session)
     result = await session.stop()
 
-    voiceprint_manager.compute_global_remapping.assert_called_once_with(max_speakers=4)
     repository.apply_speaker_remapping.assert_awaited_once_with(
-        result.id, {"epoch1:s1": "epoch0:s0"}
+        result.id, {"epoch:1:speaker:spk_02": "epoch:1:speaker:spk_01"}
     )
-    voiceprint_manager.clear.assert_called()
 
 
 
@@ -628,12 +626,10 @@ async def test_start_requeues_summary_and_swallows_requeue_failure(
     requeue.assert_awaited_once_with()
 
 
-async def test_start_supports_sync_summary_requeue_and_gateway_without_gap_hooks(
+async def test_start_supports_sync_summary_requeue(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    gateway.add_gap_listener = None
-    gateway.remove_gap_listener = None
-    summary = SimpleNamespace(requeue_for_recording=lambda: None)
+    summary = SimpleNamespace(requeue_for_recording=AsyncMock())
     session = MeetingSession(repository, gateway, summary_service=summary)
 
     preparation = await session.prepare_start("周会")
@@ -702,8 +698,7 @@ async def test_stop_timeout_persists_last_window_and_marks_interrupted(
         text="超时前的最后一句",
     )
     last_window = TranscriptWindow(source_epoch=1, segments=(segment,))
-    timeout = TimeoutError("capture did not finish")
-    timeout.last_window = last_window
+    timeout = CaptureFinalizationTimeoutError(last_window)
     gateway.finish_capture.side_effect = timeout
 
     result = await session.stop()
@@ -1067,18 +1062,12 @@ async def test_interrupt_cleanup_failure_chains_body_cancellation(
     assert exc_info.value.__cause__.args == ("first",)
 
 
-async def test_recover_stale_delegates_and_defaults_without_method(
+async def test_recover_stale_delegates_to_repository(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     session = MeetingSession(repository, gateway)
     repository.stale_count = 3
     assert await session.recover_stale() == 3
-
-    class RepositoryWithoutRecovery:
-        pass
-
-    no_recovery = MeetingSession(RepositoryWithoutRecovery(), gateway)
-    assert await no_recovery.recover_stale() == 0
 
 
 async def test_window_without_segments_only_emits_partial(
@@ -1126,8 +1115,11 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
         def __init__(self) -> None:
             self.calls: list[tuple[UUID, TranscriptWindow]] = []
 
-        def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
             self.calls.append((meeting_id, window))
+
+        async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
+            return 0
 
     journal = SyncJournal()
     repository.reconcile_error = RuntimeError("database unavailable")
@@ -1144,7 +1136,7 @@ async def test_window_persistence_failure_uses_sync_journal_and_degrades_storage
         ),
     ))
 
-    assert await session._persist_window(session.active_meeting_id, window) is None
+    await session._on_window(window)
     assert session.storage_health is StorageHealth.DEGRADED
     assert journal.calls == [(session.active_meeting_id, window)]
     gateway.abort_capture.assert_not_awaited()
@@ -1158,7 +1150,7 @@ async def test_window_recovery_replays_journal_before_next_window_and_stop(
             self.pending: list[tuple[UUID, TranscriptWindow]] = []
             self.replay_calls = 0
 
-        def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
             self.pending.append((meeting_id, window))
 
         async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
@@ -1201,9 +1193,9 @@ async def test_window_recovery_replays_journal_before_next_window_and_stop(
         }
     )
 
-    assert await session._persist_window(session.active_meeting_id, first_window) is None
+    await session._on_window(first_window)
     repository.reconcile_error = None
-    await session._persist_window(session.active_meeting_id, second_window)
+    await session._on_window(second_window)
 
     assert journal.replay_calls == 2
     assert journal.pending == []
@@ -1232,7 +1224,7 @@ async def test_window_persistence_failure_without_journal_aborts_capture(
     ))
 
     with pytest.raises(RuntimeError, match="unavailable"):
-        await session._persist_window(session.active_meeting_id, window)
+        await session._on_window(window)
 
     assert session.storage_health is StorageHealth.DEGRADED
     gateway.abort_capture.assert_awaited_once_with()
@@ -1267,7 +1259,7 @@ async def test_stop_resumes_summary_worker_and_swallows_resume_failure(
 async def test_interrupt_supports_sync_summary_resume_callback(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    summary = SimpleNamespace(resume_after_recording=lambda: None)
+    summary = SimpleNamespace(resume_after_recording=AsyncMock())
     session = MeetingSession(repository, gateway, summary_service=summary)
     await _start_session(session)
 
@@ -1276,30 +1268,35 @@ async def test_interrupt_supports_sync_summary_resume_callback(
     assert result is not None
 
 
-@pytest.mark.parametrize("journal", [SimpleNamespace(), SimpleNamespace(append=AsyncMock(
-    side_effect=RuntimeError("journal failed")
-))])
+class FailingJournal:
+    async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
+        raise RuntimeError("journal failed")
+
+    async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
+        return 0
+
+
 async def test_window_persistence_failure_with_unusable_journal_aborts_capture(
-    repository: FakeRepository, gateway: FakeGateway, journal: object
+    repository: FakeRepository, gateway: FakeGateway
 ) -> None:
-    repository.reconcile_error = RuntimeError("database unavailable")
-    session = MeetingSession(repository, gateway, recovery_journal=journal)
-    await _start_session(session)
-    window = TranscriptWindow(source_epoch=1, segments=(
-        NormalizedSegment(
-            order=0,
-            source_epoch=1,
-            speaker_key="epoch:1:speaker:1",
-            start_ms=0,
-            end_ms=10,
-            text="journal 错误",
-        ),
-    ))
+        repository.reconcile_error = RuntimeError("database unavailable")
+        session = MeetingSession(repository, gateway, recovery_journal=FailingJournal())
+        await _start_session(session)
+        window = TranscriptWindow(source_epoch=1, segments=(
+            NormalizedSegment(
+                order=0,
+                source_epoch=1,
+                speaker_key="epoch:1:speaker:1",
+                start_ms=0,
+                end_ms=10,
+                text="journal 错误",
+            ),
+        ))
 
-    with pytest.raises(RuntimeError):
-        await session._persist_window(session.active_meeting_id, window)
+        with pytest.raises(RuntimeError, match="journal failed"):
+            await session._on_window(window)
 
-    gateway.abort_capture.assert_awaited_once_with()
+        gateway.abort_capture.assert_awaited_once_with()
 
 
 async def test_gap_emits_reconnect_event_and_ignores_inactive_session(
@@ -1314,7 +1311,7 @@ async def test_gap_emits_reconnect_event_and_ignores_inactive_session(
     await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
     assert events == []
     await _start_session(session)
-    await session._on_gap(SimpleNamespace(start_ms="10", end_ms="25"))
+    await session._on_gap(SimpleNamespace(start_ms=10, end_ms=25))
 
     assert events[-1][0] == "transcription_gap"
     assert events[-1][2] == {"start_ms": 10, "end_ms": 25, "reason": "asr_reconnect"}
@@ -1337,7 +1334,7 @@ async def test_last_window_property_reads_gateway_snapshot(
     repository: FakeRepository, gateway: FakeGateway
 ) -> None:
     window = TranscriptWindow(source_epoch=1, partial="last")
-    gateway._capture_last_window = window
+    gateway.last_window = window
     session = MeetingSession(repository, gateway)
 
     assert session.last_window == window

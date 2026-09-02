@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from voice_realtime.lm_studio import (
+from sona.lm_studio import (
     DEFAULT_LM_STUDIO_API_KEY,
     LMStudioClient,
     LMStudioOutputLimitError,

@@ -8,14 +8,15 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
-from voice_realtime.config import Settings
-from voice_realtime.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
-from voice_realtime.meeting.runtime_mode import (
+from sona.audio.levels import AudioLevelMeter
+from sona.config import Settings
+from sona.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
+from sona.meeting.runtime_mode import (
     MeetingUnavailableError,
     ModeConflictError,
     RuntimeModeCoordinator,
 )
-from voice_realtime.ui.runtime import AUDIO_QUEUE_MAXSIZE, UIRuntime
+from sona.ui.runtime import AUDIO_QUEUE_MAXSIZE, UIRuntime
 
 
 class _FakeSubtitleProxy:
@@ -75,7 +76,7 @@ class _FakeSubtitleProxy:
 
 @pytest.fixture()
 def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
+    monkeypatch.delenv("SONA_MEETING_INNER_OS_ENABLED", raising=False)
     return Settings(
         bridge={"host": "127.0.0.1", "port": 9999},
         subtitles={"host": "127.0.0.1", "port": 9998},
@@ -92,18 +93,18 @@ def _patched(stack: ExitStack) -> tuple:
             proxy_cls, hub_cls, *_ = _patched(stack)
             runtime = UIRuntime(settings)   # 必须在 with 内构造（__init__ 即 new 组件）
     """
-    stack.enter_context(patch("voice_realtime.ui.runtime.InteractionOwnership"))
-    stack.enter_context(patch("voice_realtime.ui.runtime.ensure_punkt_tab", return_value=True))
+    stack.enter_context(patch("sona.ui.runtime.InteractionOwnership"))
+    stack.enter_context(patch("sona.ui.runtime.ensure_punkt_tab", return_value=True))
     proxy_cls = stack.enter_context(
-        patch("voice_realtime.ui.runtime.SubtitleProxy", side_effect=_FakeSubtitleProxy)
+        patch("sona.ui.runtime.SubtitleProxy", side_effect=_FakeSubtitleProxy)
     )
     others = tuple(
         stack.enter_context(patch(path))
         for path in (
-            "voice_realtime.ui.runtime.AudioHub",
-            "voice_realtime.ui.runtime.build_pipeline",
-            "voice_realtime.interaction.session.PipelineWorker",
-            "voice_realtime.interaction.session.WorkerRunner",
+            "sona.ui.runtime.AudioHub",
+            "sona.ui.runtime.build_pipeline",
+            "sona.interaction.session.PipelineWorker",
+            "sona.interaction.session.WorkerRunner",
         )
     )
     return (proxy_cls, *others)
@@ -131,14 +132,13 @@ def _mock_async_components(_proxy, hub, runner) -> None:
     runner.end = AsyncMock(side_effect=end)
 
 
-def test_runtime_passes_asr_registry_to_subtitle_proxy(settings: Settings) -> None:
-    registry = MagicMock(name="asr_registry")
+def test_runtime_constructs_speechrail_subtitle_proxy(settings: Settings) -> None:
     with ExitStack() as stack:
         proxy_cls, *_ = _patched(stack)
 
-        UIRuntime(settings, asr_registry=registry)
+        UIRuntime(settings)
 
-    proxy_cls.assert_called_once_with(settings.subtitles, registry=registry)
+    proxy_cls.assert_called_once_with(settings.subtitles)
 
 
 def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) -> None:
@@ -148,7 +148,7 @@ def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) 
 
         runtime = UIRuntime(settings, conversation_stt_factory=stt_factory)
 
-    assert runtime.session._stt_factory is stt_factory  # type: ignore[attr-defined]
+    assert runtime.session._pipeline_factories.stt_factory is stt_factory  # type: ignore[attr-defined]
 
 
 def test_runtime_constructs_one_idle_coordinator_and_broadcaster(
@@ -170,7 +170,7 @@ def test_runtime_constructs_one_idle_coordinator_and_broadcaster(
 
 class TestStart:
     async def test_start_assembles_all_components(self, settings: Settings) -> None:
-        """start 应依次：启动字幕代理 → 接两个 sink → 开麦 → 装配并运行管道。"""
+        """start 应依次：启动字幕代理 → 接三个 sink → 开麦 → 装配并运行管道。"""
         with ExitStack() as stack:
             _proxy_cls, hub_cls, build, worker_cls, runner_cls = _patched(stack)
             runtime = UIRuntime(settings)
@@ -187,6 +187,7 @@ class TestStart:
         proxy.prepare_browser_capture.assert_not_awaited()
         hub.add_sink.assert_any_call("pipecat", runtime._enqueue_audio)
         hub.add_sink.assert_any_call("subtitle", runtime._push_subtitle_audio)
+        hub.add_sink.assert_any_call("levels", runtime._observe_mic_audio)
         hub.start.assert_awaited_once()
         build.assert_called_once()
         _, kwargs = worker_cls.call_args
@@ -197,7 +198,6 @@ class TestStart:
         assert transition is not None
         assert transition["target"] == "assistant"
         assert transition["result"] == "success"
-
     async def test_push_subtitle_audio_keeps_mic_and_echo_gates(
         self, settings: Settings
     ) -> None:
@@ -272,9 +272,64 @@ class TestStart:
         proxy.stop.assert_awaited_once()
 
 
+class TestAudioLevels:
+    async def test_pcm_level_sink_updates_snapshot_and_publishes(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime._audio_levels = AudioLevelMeter(publish_interval_ns=0)
+            client = runtime.runtime_events.add_client()
+            client.latest_nowait()
+
+            await runtime._observe_mic_audio(b"\xff\x7f" * 512)
+            state = client.latest_nowait()
+
+        assert state.audio_levels.microphone > 0.0
+        assert state.audio_levels.mixed == state.audio_levels.microphone
+        assert state.audio_levels.physical_output == 0.0
+        assert runtime.diagnostics()["audio_levels"]["microphone"] > 0.0
+
+    async def test_mute_clears_level_and_publishes(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            runtime.hub.set_muted.side_effect = lambda muted: setattr(
+                runtime.hub, "muted", muted
+            )
+            runtime._audio_levels = AudioLevelMeter(publish_interval_ns=0)
+            await runtime._observe_mic_audio(b"\xff\x7f" * 512)
+            client = runtime.runtime_events.add_client()
+            client.latest_nowait()
+
+            await runtime.set_mic_muted(True)
+            state = client.latest_nowait()
+
+        runtime.hub.set_muted.assert_called_once_with(True)
+        assert state.audio_levels.microphone == 0.0
+        assert state.audio_levels.mixed == 0.0
+        assert state.mic_muted is True
+
+    def test_snapshot_defaults_to_zero_levels(self, settings: Settings) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            runtime.hub.muted = False
+            state = runtime.snapshot()
+
+        assert state.audio_levels.microphone == 0.0
+        assert state.audio_levels.physical_output == 0.0
+        assert state.audio_levels.mixed == 0.0
+
+
 class TestSubtitleProxyFailure:
     async def test_proxy_failure_nonfatal(self, settings: Settings) -> None:
-        """wlk 不在线时 SubtitleProxy.start 抛错不阻断其余启动。"""
+        """SpeechRail 不在线时 SubtitleProxy.start 抛错不阻断其余启动。"""
         with ExitStack() as stack:
             _proxy_cls, hub_cls, _build, _worker_cls, runner_cls = _patched(stack)
             runtime = UIRuntime(settings)
@@ -282,7 +337,7 @@ class TestSubtitleProxyFailure:
             hub = hub_cls.return_value
             runner = runner_cls.return_value
             _mock_async_components(proxy, hub, runner)
-            proxy.start = AsyncMock(side_effect=ConnectionRefusedError("wlk down"))
+            proxy.start = AsyncMock(side_effect=ConnectionRefusedError("speechrail down"))
 
             await runtime.start()  # 不应抛
             assert runtime._started
@@ -504,9 +559,9 @@ class TestRuntimeStateBroadcasts:
             await asyncio.sleep(0)
             client = runtime.runtime_events.add_client()
             before = client.latest_nowait()
-            proxy.prepare_browser_capture.side_effect = OSError("wlk unavailable")
+            proxy.prepare_browser_capture.side_effect = OSError("speechrail unavailable")
 
-            with pytest.raises(OSError, match="wlk unavailable"):
+            with pytest.raises(OSError, match="speechrail unavailable"):
                 await runtime.start_subtitles()
 
             assert runtime.snapshot().runtime_revision == before.runtime_revision

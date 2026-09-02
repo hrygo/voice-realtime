@@ -25,10 +25,9 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from voice_realtime.audio.audio_injector import AudioInjector
-from voice_realtime.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
-from voice_realtime.interaction.pipeline import (
-    DEFAULT_SENSEVOICE_REPO,
+from sona.audio.audio_injector import AudioInjector
+from sona.config import InteractionSettings
+from sona.interaction.pipeline import (
     BotTextRecorder,
     EchoState,
     EchoSuppressionProcessor,
@@ -36,52 +35,16 @@ from voice_realtime.interaction.pipeline import (
     HangoverUserMuteStrategy,
     SelfEchoFilter,
     TTSStateObserver,
-    _resolve_stt_model,
-    _to_pipecat_language,
     build_pipeline,
 )
-
-
-class TestResolveSttModel:
-    def test_local_path_passthrough(self, tmp_path) -> None:
-        model_dir = tmp_path / "sensevoice"
-        model_dir.mkdir()
-        with patch("voice_realtime.model_cache.snapshot_download") as mock_dl:
-            assert _resolve_stt_model(str(model_dir)) == str(model_dir)
-        mock_dl.assert_not_called()
-
-    def test_empty_uses_default_repo(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot",
-        ) as mock_dl:
-            assert _resolve_stt_model("") == "/mnt/snapshot"
-        mock_dl.assert_called_once_with(DEFAULT_SENSEVOICE_REPO, local_files_only=True)
-
-    def test_custom_repo_resolved(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot2",
-        ) as mock_dl:
-            assert _resolve_stt_model("some/other-stt") == "/mnt/snapshot2"
-        mock_dl.assert_called_once_with("some/other-stt", local_files_only=True)
-
-    def test_explicit_download_mode_allows_network_fallback(self) -> None:
-        with patch(
-            "voice_realtime.model_cache.snapshot_download",
-            return_value="/mnt/snapshot",
-        ) as mock_dl:
-            assert _resolve_stt_model("repo/model", allow_downloads=True) == "/mnt/snapshot"
-        mock_dl.assert_called_once_with("repo/model", local_files_only=False)
 
 
 @pytest.fixture
 def settings() -> InteractionSettings:
     return InteractionSettings(
         llm_base_url="http://localhost:1234/v1",
-        llm_model="qwen/qwen3.6-35b-a3b",
+        llm_model="local/kat-coder-2.5",
         llm_api_key="test-lm-key",
-        tts_bridge_url="http://127.0.0.1:8765/v1",
         silence_secs=0.8,
         sample_rate=16000,
     )
@@ -97,13 +60,15 @@ def mock_transport() -> MagicMock:
 
 @pytest.fixture
 def mock_services() -> list[MagicMock]:
-    """Mock 重型服务类：FunASRSTTService 构造会立即下载模型（网络阻塞）。"""
+    """Mock STT、LLM 和 TTS 的外部边界。"""
     mocks = [MagicMock(), MagicMock(), MagicMock()]
+    mocks[0].return_value.create_processor.return_value = MagicMock(name="speechrail_stt")
     with (
-        patch("voice_realtime.model_cache.snapshot_download", return_value="/mnt/stt"),
-        patch("voice_realtime.asr.adapters.pipecat_sensevoice.FunASRSTTService", mocks[0]),
-        patch("voice_realtime.interaction.pipeline.LmStudioNativeLLMService", mocks[1]),
-        patch("voice_realtime.interaction.pipeline.LocalBridgeTTSService", mocks[2]),
+        patch("sona.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
+            mocks[0]),
+        patch("sona.interaction.pipeline_dependencies.LmStudioNativeLLMService",
+            mocks[1]),
+        patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService", mocks[2]),
     ):
         yield mocks
 
@@ -120,11 +85,11 @@ class TestBuildPipeline:
         transport_mock = MagicMock()
         with (
             patch(
-                "voice_realtime.interaction.pipeline.resolve_input_device_index",
+                "sona.interaction.pipeline_dependencies.resolve_input_device_index",
                 return_value=7,
             ) as resolve_device,
             patch(
-                "voice_realtime.interaction.pipeline.LocalAudioTransport",
+                "sona.interaction.pipeline_dependencies.LocalAudioTransport",
                 return_value=transport_mock,
             ) as transport_class,
         ):
@@ -147,7 +112,8 @@ class TestBuildPipeline:
         stt_factory = MagicMock(name="stt_factory")
         stt_factory.create_processor.return_value = stt_processor
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(
                 settings,
@@ -171,7 +137,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         assert pipeline is not None
@@ -187,12 +154,13 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
         llm_mock = mock_services[1]
         llm_mock.assert_called_once_with(
-            model="qwen/qwen3.6-35b-a3b",
+            model="local/kat-coder-2.5",
             base_url="http://localhost:1234/v1",
             api_key="test-lm-key",
             temperature=0.7,
@@ -200,27 +168,28 @@ class TestBuildPipeline:
             compaction_config=settings.context_compaction_config(),
         )
 
-    def test_tts_points_at_bridge(
+    def test_tts_points_at_speechrail_realtime(
         self,
         settings: InteractionSettings,
         mock_transport: MagicMock,
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
         tts_mock = mock_services[2]
         tts_mock.assert_called_once()
-        assert tts_mock.call_args.kwargs["base_url"] == "http://127.0.0.1:8765/v1"
-        # 内部哨兵要求桥使用当前权威音色，避免 OpenAI 的 alloy 占位覆盖热切换。
-        from pipecat.services.openai.tts import VALID_VOICES
-
-        from voice_realtime.config import TTS_ENGINE_DEFAULT_VOICE
-
-        tts_mock.Settings.assert_called_with(voice=TTS_ENGINE_DEFAULT_VOICE)
-        assert TTS_ENGINE_DEFAULT_VOICE in VALID_VOICES
-        assert tts_mock.call_args.kwargs["sample_rate"] == TTS_OUTPUT_SAMPLE_RATE
+        assert tts_mock.call_args.kwargs["url"] == settings.speechrail_realtime_url
+        assert tts_mock.call_args.kwargs["api_key"] is None
+        tts_mock.Settings.assert_called_with(
+            model=settings.speechrail_tts_model,
+            voice=settings.tts_voice,
+            language=settings.tts_language,
+        )
+        assert tts_mock.call_args.kwargs["fast_first_clause"] is True
+        assert tts_mock.call_args.kwargs["first_clause_min_chars"] == 8
 
     def test_stt_language_is_chinese(
         self,
@@ -228,18 +197,22 @@ class TestBuildPipeline:
         mock_transport: MagicMock,
         mock_services: list[MagicMock],
     ) -> None:
-        from voice_realtime.interaction.pipeline import build_pipeline as bp
+        from sona.interaction.pipeline import build_pipeline as bp
 
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             bp(settings, transport=mock_transport)
-        stt_mock = mock_services[0]
-        stt_mock.assert_called_once()
-        assert stt_mock.call_args.kwargs["device"] == "cpu"
-        stt_settings = stt_mock.call_args.kwargs["settings"]
-        assert stt_settings.language == "zh"
-        assert stt_settings.use_itn is True
+        factory = mock_services[0]
+        factory.assert_called_once_with(
+            url=settings.speechrail_realtime_url,
+            api_key=None,
+        )
+        factory.return_value.create_processor.assert_called_once_with(
+            sample_rate=16000,
+            language="zh",
+        )
 
     def test_stt_language_uses_configured_language(
         self,
@@ -248,11 +221,14 @@ class TestBuildPipeline:
     ) -> None:
         settings = InteractionSettings(stt_language="EN", sample_rate=16000)
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             build_pipeline(settings, transport=mock_transport)
-        stt_settings = mock_services[0].call_args.kwargs["settings"]
-        assert stt_settings.language == "en"
+        mock_services[0].return_value.create_processor.assert_called_once_with(
+            sample_rate=16000,
+            language="en",
+        )
 
     def test_stt_language_normalizes_case(self) -> None:
         assert InteractionSettings(stt_language="YUE").stt_language == "yue"
@@ -261,32 +237,20 @@ class TestBuildPipeline:
         with pytest.raises(ValueError, match="en"):
             InteractionSettings(stt_language="fr")
 
-    def test_stt_ttfs_p99_latency(
-        self,
-        settings: InteractionSettings,
-        mock_transport: MagicMock,
-        mock_services: list[MagicMock],
-    ) -> None:
-        with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
-        ):
-            build_pipeline(settings, transport=mock_transport)
-        # ttfs_p99 实测 STT 交付 ~0.5s，且需 > silence_secs 以保留转写等待窗口
-        assert mock_services[0].call_args.kwargs["ttfs_p99_latency"] == 0.5
-
     def test_echo_suppression_processor_installed(
         self,
         settings: InteractionSettings,
         mock_transport: MagicMock,
         mock_services: list[MagicMock],
     ) -> None:
-        from voice_realtime.interaction.pipeline import EchoSuppressionProcessor
+        from sona.interaction.pipeline import EchoSuppressionProcessor
 
         settings = InteractionSettings(
             sample_rate=16000, echo_barge_in_gain=3.0, echo_barge_in_frames=4
         )
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         echo = pipeline.processors[2]
@@ -301,7 +265,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
 
@@ -324,7 +289,8 @@ class TestBuildPipeline:
         """L2 链：SelfEchoFilter 挂在 STT 与 user aggregator 之间，
         BotTextRecorder 挂在 LLM 与 TTS 之间，二者共享同一文本缓冲。"""
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(
                 settings, transport=mock_transport, audio_queue=asyncio.Queue()
@@ -336,10 +302,6 @@ class TestBuildPipeline:
         assert isinstance(recorder, BotTextRecorder)
         assert echo_filter._buffer is recorder._buffer  # type: ignore[attr-defined]
 
-    @pytest.mark.parametrize("lang_code", ["zh", "en", "yue", "ja", "ko"])
-    def test_language_mapping_accepts_supported_codes(self, lang_code: str) -> None:
-        assert _to_pipecat_language(lang_code).value == lang_code
-
     def test_vad_silence_matches_settings(
         self,
         settings: InteractionSettings,
@@ -347,7 +309,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         # 1.7：VAD 集成进 LLMUserAggregatorParams，不在独立节点
@@ -364,7 +327,8 @@ class TestBuildPipeline:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
         # 1.7：user aggregator 在 stt 与 self-echo 过滤之后（index 5），
@@ -936,7 +900,8 @@ class TestInjectorMode:
     ) -> None:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport, audio_queue=queue)
 
@@ -957,7 +922,8 @@ class TestInjectorMode:
         mock_services: list[MagicMock],
     ) -> None:
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=mock_transport
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=mock_transport
         ):
             pipeline = build_pipeline(settings, transport=mock_transport)
 
@@ -973,7 +939,8 @@ class TestInjectorMode:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         transport_mock = MagicMock()
         with patch(
-            "voice_realtime.interaction.pipeline.LocalAudioTransport", return_value=transport_mock
+            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                return_value=transport_mock
         ) as mock_cls:
             build_pipeline(settings, audio_queue=queue)
 

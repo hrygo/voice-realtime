@@ -133,7 +133,7 @@ export interface MeetingStoreState {
 
 function readStoredStarredSegments(meetingId: string): Set<string> {
   try {
-    const raw = window.localStorage.getItem(`voice-studio:meeting-stars:${meetingId}`);
+    const raw = window.localStorage.getItem(`sona:meeting-stars:${meetingId}`);
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) return new Set(arr);
@@ -147,7 +147,7 @@ function readStoredStarredSegments(meetingId: string): Set<string> {
 function persistStarredSegments(meetingId: string, starred: Set<string>): void {
   try {
     window.localStorage.setItem(
-      `voice-studio:meeting-stars:${meetingId}`,
+      `sona:meeting-stars:${meetingId}`,
       JSON.stringify(Array.from(starred)),
     );
   } catch {
@@ -466,7 +466,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
           version,
           status,
           source_content_revision: existing?.source_content_revision ?? state.contentRevision,
-          model: existing?.model || "qwen/qwen3.6-35b-a3b",
+          model: existing?.model || "local/kat-coder-2.5",
           prompt_version: existing?.prompt_version || "v4-map-domain-10240",
           content_json: null,
           content_markdown: null,

@@ -3,7 +3,7 @@
 import pytest
 from pipecat.utils.text.base_text_aggregator import AggregationType
 
-from voice_realtime.interaction.fast_clause_aggregator import ChineseClauseTextAggregator
+from sona.interaction.fast_clause_aggregator import ChineseClauseTextAggregator
 
 
 @pytest.mark.asyncio

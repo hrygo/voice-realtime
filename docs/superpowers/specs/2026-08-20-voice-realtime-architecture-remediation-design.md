@@ -9,19 +9,19 @@ date: 2026-08-20
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - architecture-remediation
   - audiohub
   - pipecat
-  - vr-ui
+  - sona-ui
 ---
 
 # Voice Realtime 架构缺陷修复设计
 
 ## 状态
 
-已批准。2026-08-20 采用方案 A：`vr-ui` 拥有内嵌交互管道，`vr-interact` 是互斥的
+已批准。2026-08-20 采用方案 A：`sona-ui` 拥有内嵌交互管道，`sona-interact` 是互斥的
 headless 入口。实现遵循 Clean Architecture、DRY、SOLID、TDD 与最小外部依赖原则。
 
 ## 目标
@@ -67,8 +67,8 @@ AudioHub (16kHz/s16le/mono)
     ├──► InteractionSession ─► SenseVoice ─► LM Studio ─► TTS Bridge ─► 扬声器
     └──► SubtitleProxy ─► WhisperLiveKit --pcm-input ─► 浏览器字幕
 
-vr-ui：拥有 AudioHub、InteractionSession、SubtitleProxy、状态桥与控制桥
-vr-interact：headless 替代入口，复用 InteractionSession，不与 vr-ui 同时运行
+sona-ui：拥有 AudioHub、InteractionSession、SubtitleProxy、状态桥与控制桥
+sona-interact：headless 替代入口，复用 InteractionSession，不与 sona-ui 同时运行
 ```
 
 两个入口通过 `InteractionOwnership` 本机锁互斥。UI 启动失败应区分：
@@ -97,7 +97,7 @@ def state(self) -> InteractionSessionState
 
 - `interaction/session.py`：`InteractionSession`、状态枚举与会话生命周期；
 - `interaction/ownership.py`：基于 `fcntl.flock` 的 macOS 本机所有权锁，锁文件为
-  `~/Library/Caches/voice-realtime/interaction.lock`，不受当前工作目录影响；
+  `~/Library/Caches/sona/interaction.lock`，不受当前工作目录影响；
 - `ui/runtime.py`：组合 AudioHub、InteractionSession 与 SubtitleProxy，不复制会话逻辑；
 - `ui/protocol.py`：控制命令、响应与状态快照的严格 Pydantic 模型。
 
@@ -296,7 +296,7 @@ npm run build
 
 另外执行本机运行级验收：
 
-1. `vr-ui` 与 `vr-interact` 互斥；
+1. `sona-ui` 与 `sona-interact` 互斥；
 2. WLK 进程参数包含 `--pcm-input` 且日志无 FFmpeg PCM 解析错误；
 3. 首个 confirmed 后 partial 继续刷新；
 4. stop 后等待十秒再 restart，不产生旧音频转写；

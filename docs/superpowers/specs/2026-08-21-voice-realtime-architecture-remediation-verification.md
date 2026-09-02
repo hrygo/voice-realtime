@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - verification
   - quality-gate
@@ -20,8 +20,8 @@ tags:
 
 ## 结论
 
-2026-08-21，方案 A 的自研代码范围已完成：`vr-ui` 成为默认且唯一的交互所有者，
-`vr-interact` 复用同一 `InteractionSession` 并通过稳定文件锁互斥。字幕、交互、TTS、
+2026-08-21，方案 A 的自研代码范围已完成：`sona-ui` 成为默认且唯一的交互所有者，
+`sona-interact` 复用同一 `InteractionSession` 并通过稳定文件锁互斥。字幕、交互、TTS、
 LLM、控制面、前端状态、安全边界、配置与文档均已接线并通过自动化与本机运行级验证。
 
 ## 自动化门禁
@@ -62,8 +62,8 @@ LLM、控制面、前端状态、安全边界、配置与文档均已接线并�
 - TTS 桥使用真实 4.2GB 本地模型完成健康检查、音色切换与 PCM 合成，并可干净退出。
 - WhisperLiveKit 使用本地 Qwen3-ASR 目录及 `--pcm-input` 启动，客户端收到 config 事件并发送
   20,480 bytes PCM；日志无 FFmpeg PCM 写入错误、Traceback 或 ERROR。
-- `vr-ui` 使用真实麦克风启动；`/api/runtime`、控制握手、静音/取消静音、重启均成功；
-  同时启动 `vr-interact` 被所有权锁拒绝；恶意 Origin 握手被拒绝；关闭过程干净。
+- `sona-ui` 使用真实麦克风启动；`/api/runtime`、控制握手、静音/取消静音、重启均成功；
+  同时启动 `sona-interact` 被所有权锁拒绝；恶意 Origin 握手被拒绝；关闭过程干净。
 - 真实重启额外发现并修复了两项集成缺陷：离线 STT 仍尝试联网，以及 Pipecat 修改观察器列表后
   污染下一次重启。复测确认无 HuggingFace HTTP 请求，且重启使用干净观察器集合。
 

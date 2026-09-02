@@ -8,14 +8,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from voice_realtime.asr.contracts import (
+from sona.asr.contracts import (
     ASRCapabilities,
     ASREvent,
     ASRSessionContext,
 )
-from voice_realtime.config import SubtitleSettings
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy
+from sona.asr.models import ASRSegment, ASRWindow
+from sona.config import SubtitleSettings
+from sona.subtitles.proxy import SubtitleProxy
 
 
 class FakeTranscriber:
@@ -31,7 +31,7 @@ class FakeTranscriber:
         supports_eof_flush=True,
     )
 
-    def __init__(self, window: TranscriptWindow) -> None:
+    def __init__(self, window: ASRWindow) -> None:
         self.window = window
         self.closed = False
         self._events: asyncio.Queue[ASREvent] = asyncio.Queue()
@@ -51,7 +51,7 @@ class FakeTranscriber:
         while not self.closed:
             yield await self._events.get()
 
-    async def finish(self) -> TranscriptWindow:
+    async def finish(self) -> ASRWindow:
         self._events.put_nowait(ASREvent(kind="final", window=self.window))
         return self.window
 
@@ -66,11 +66,11 @@ async def test_proxy_broadcasts_domain_snapshot_through_legacy_presenter(
         model_dir=tmp_path,
         output_dir=tmp_path / "subtitles",
     )
-    window = TranscriptWindow(
+    window = ASRWindow(
         source_epoch=1,
         partial="下一句",
         segments=(
-            NormalizedSegment(
+            ASRSegment(
                 order=0,
                 source_epoch=1,
                 speaker_key="epoch:1:speaker:2",

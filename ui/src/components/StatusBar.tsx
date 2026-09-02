@@ -5,32 +5,22 @@ import { useMeetingStore } from "../stores/meetingStore";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
-import type { RuntimeMode } from "../contracts/meetingContract";
+import type { MeetingStatus, RuntimeMode } from "../contracts/meetingContract";
+import type { AssistantPhase } from "../stores/assistantStore";
 import { apiUrl } from "../config/runtimeConfig";
+import {
+  isServicesResponse,
+  type ServiceInfo,
+  type ServicesResponse,
+  type ServiceProbeStatus,
+} from "../protocol";
 import "./StatusBar.css";
 
-type ServiceStatus = "ok" | "unreachable" | "timeout" | "error" | "checking";
+type ServiceStatus = ServiceProbeStatus | "checking" | "degraded";
 type NetworkScope = "local" | "network";
 type HealthRequirement = "required" | "not-required";
-type HealthDisplayState = "normal" | "required-error" | "not-required";
-
-interface ServiceInfo {
-  name: string;
-  status: ServiceStatus;
-  url: string;
-  workload?: string | null;
-  ws_state?: string | null;
-  reconnect_count?: number | null;
-  last_event_age_ms?: number | null;
-  dropped_chunks?: number | null;
-  gap_count?: number | null;
-}
-
-interface ServicesResponse {
-  services: ServiceInfo[];
-  diagnostics?: unknown;
-  network_scope?: NetworkScope;
-}
+type HealthDisplayState = "normal" | "required-error" | "required-degraded" | "not-required";
+type ServiceViewInfo = Omit<ServiceInfo, "status"> & { status: ServiceStatus };
 
 interface HealthItem {
   id: string;
@@ -42,15 +32,15 @@ interface HealthItem {
 }
 
 const REQUIRED_HEALTH_ITEMS = {
-  assistant: ["ws", "pipeline", "tts", "lm"],
-  subtitles: ["ws", "subtitle", "wlk"],
-  meeting: ["ws", "subtitle", "wlk", "storage", "lm"],
+  assistant: ["ws", "pipeline", "speechrail", "tts", "lm"],
+  subtitles: ["ws", "subtitle", "speechrail"],
+  meeting: ["ws", "subtitle", "speechrail", "storage", "lm"],
   idle: ["ws"],
 } as const satisfies Record<RuntimeMode, readonly string[]>;
 
 const SERVICE_DISPLAY_NAMES: Record<string, string> = {
-  wlk: "WhisperLiveKit (:8001)",
-  tts: "Qwen3-TTS 桥 (:8765)",
+  speechrail: "SpeechRail 服务 (:8201)",
+  tts: "SpeechRail TTS 能力",
   lm: "LM Studio (:1234)",
 };
 
@@ -59,12 +49,13 @@ const STATUS_LABELS: Record<ServiceStatus, string> = {
   unreachable: "服务未启动",
   timeout: "连接超时",
   error: "服务异常",
+  degraded: "服务降级",
   checking: "检测中",
 };
 
 const SERVICE_DIAGNOSTIC_COMMANDS: Record<string, string> = {
-  wlk: "uv run vr-subtitles",
-  tts: "scripts/run-bridge.sh",
+  speechrail: "curl --fail http://127.0.0.1:8201/health",
+  tts: "curl --fail http://127.0.0.1:8201/health",
   storage: "psql knowledge -f scripts/bootstrap-meeting-db.sql",
 };
 
@@ -97,6 +88,7 @@ export function classifyHealthState(
   requirement: HealthRequirement,
 ): HealthDisplayState {
   if (requirement === "not-required") return "not-required";
+  if (status === "degraded") return "required-degraded";
   return status === "ok" ? "normal" : "required-error";
 }
 
@@ -113,8 +105,14 @@ function formatDiagnosticNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : "未知";
 }
 
-function serviceDiagnosticDetails(service: ServiceInfo): string[] {
-  const details: string[] = [];
+function serviceDiagnosticDetails(service: ServiceViewInfo): string[] {
+  const details: string[] = [`HTTP 状态：${STATUS_LABELS[service.status] || service.status}`];
+  if (service.target_model !== undefined && service.target_model !== null) {
+    details.push(`目标模型：${formatDiagnosticText(service.target_model)}`);
+  }
+  if (service.model_present !== undefined && service.model_present !== null) {
+    details.push(service.model_present ? "目标模型已加载" : "目标模型未加载");
+  }
   if (service.workload !== undefined) {
     details.push(`语音工作负载：${formatDiagnosticText(service.workload)}`);
   }
@@ -136,6 +134,21 @@ function serviceDiagnosticDetails(service: ServiceInfo): string[] {
   return details;
 }
 
+function serviceHealthStatus(
+  service: ServiceViewInfo,
+  mode: RuntimeMode | undefined,
+): ServiceStatus {
+  if (service.status !== "ok") return service.status;
+  if (service.model_present === false) return "error";
+  if (service.name !== "speechrail" || (mode !== "subtitles" && mode !== "meeting")) {
+    return "ok";
+  }
+  if (service.workload === "error") return "error";
+  if (service.workload === "degraded") return "degraded";
+  if (service.workload === "starting") return "checking";
+  return "ok";
+}
+
 export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now()): number {
   if (!startedAt) return 0;
   const started = Date.parse(startedAt);
@@ -143,6 +156,184 @@ export function sessionElapsedSeconds(startedAt: string | null, nowMs = Date.now
 }
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
+
+export interface StatusModePresentation {
+  readonly className: string;
+  readonly icon: string;
+  readonly label: string;
+  readonly title: string;
+}
+
+interface StatusModePresentationInput {
+  readonly activeTab: WorkspaceTab | null;
+  readonly meetingStatus: MeetingStatus | "idle";
+  readonly subtitleStatus: string;
+  readonly phase: AssistantPhase;
+}
+
+function getAssistantStatusPresentation(phase: AssistantPhase): StatusModePresentation {
+  switch (phase) {
+    case "speaking":
+      return {
+        className: "mode-speaking",
+        icon: "🗣️",
+        label: "语音助手播报中",
+        title: "当前工作区：语音助手；正在进行语音播报。",
+      };
+    case "listening":
+      return {
+        className: "mode-listening",
+        icon: "👂",
+        label: "语音助手聆听中",
+        title: "当前工作区：语音助手；正在接收麦克风语音。",
+      };
+    case "thinking":
+      return {
+        className: "mode-thinking",
+        icon: "🧠",
+        label: "语音助手思考中",
+        title: "当前工作区：语音助手；LM Studio 正在生成回复。",
+      };
+    case "degraded":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "语音助手服务受限",
+        title: "当前工作区：语音助手；交互服务处于降级或受限状态。",
+      };
+    case "stopped":
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "语音助手已停止",
+        title: "当前工作区：语音助手；语音交互会话已停止。",
+      };
+    case "idle":
+      return {
+        className: "mode-idle",
+        icon: "💤",
+        label: "语音助手待命",
+        title: "当前工作区：语音助手；当前没有进行中的语音交互。",
+      };
+  }
+}
+
+function getMeetingStatusPresentation(status: MeetingStatus | "idle"): StatusModePresentation {
+  switch (status) {
+    case "recording":
+      return {
+        className: "mode-meeting",
+        icon: "recording-dot",
+        label: "会议录制中",
+        title: "当前工作区：会议助手；正在录制并实时转录会议。",
+      };
+    case "finalizing":
+      return {
+        className: "mode-meeting",
+        icon: "⏳",
+        label: "会议封存中",
+        title: "当前工作区：会议助手；正在冲刷最后的转录并封存会议记录。",
+      };
+    case "completed":
+      return {
+        className: "mode-meeting",
+        icon: "✅",
+        label: "会议已完成",
+        title: "当前工作区：会议助手；会议录制已完成，正在查看已保存记录。",
+      };
+    case "interrupted":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "会议已中断",
+        title: "当前工作区：会议助手；本次会议录制已中断。",
+      };
+    case "storage_error":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "会议存储异常",
+        title: "当前工作区：会议助手；会议记录保存遇到异常。",
+      };
+    case "idle":
+      return {
+        className: "mode-meeting",
+        icon: "🗂️",
+        label: "会议助手待命",
+        title: "当前工作区：会议助手；尚未开始会议录制。",
+      };
+  }
+}
+
+function getSubtitleStatusPresentation(subtitleStatus: string): StatusModePresentation {
+  switch (subtitleStatus) {
+    case "connected":
+      return {
+        className: "mode-subtitles",
+        icon: "📝",
+        label: "实时字幕运行中",
+        title: "当前工作区：实时字幕；字幕代理已连接，正在接收音频并输出转录。",
+      };
+    case "connecting":
+    case "backoff":
+      return {
+        className: "mode-subtitles",
+        icon: "🔄",
+        label: "实时字幕连接中",
+        title: "当前工作区：实时字幕；正在连接字幕代理。",
+      };
+    case "paused":
+      return {
+        className: "mode-stopped",
+        icon: "⏸️",
+        label: "实时字幕已暂停",
+        title: "当前工作区：实时字幕；字幕代理已暂停接收音频。",
+      };
+    case "error":
+      return {
+        className: "mode-degraded",
+        icon: "⚠️",
+        label: "实时字幕服务异常",
+        title: "当前工作区：实时字幕；字幕代理服务异常，请检查服务状态。",
+      };
+    case "idle":
+    case "stopped":
+    case "unknown":
+    default:
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "实时字幕已停止",
+        title: "当前工作区：实时字幕；字幕代理当前未运行。",
+      };
+  }
+}
+
+export function getStatusModePresentation({
+  activeTab,
+  meetingStatus,
+  subtitleStatus,
+  phase,
+}: StatusModePresentationInput): StatusModePresentation {
+  if (meetingStatus === "recording" || meetingStatus === "finalizing") {
+    return getMeetingStatusPresentation(meetingStatus);
+  }
+  if (activeTab === "meeting") {
+    return getMeetingStatusPresentation(meetingStatus);
+  }
+  if (activeTab === "subtitles") {
+    return getSubtitleStatusPresentation(subtitleStatus);
+  }
+  if (activeTab === "assistant") {
+    return getAssistantStatusPresentation(phase);
+  }
+  return {
+    className: "mode-idle",
+    icon: "💤",
+    label: "系统待命",
+    title: "当前工作区尚未就绪，系统处于待命状态。",
+  };
+}
 
 interface StatusBarProps {
   commandSocket: CommandSocketApi;
@@ -186,8 +377,8 @@ export default function StatusBar({
   switchError = null,
   onTabChange,
 }: StatusBarProps) {
-  const [services, setServices] = useState<ServiceInfo[]>([
-    { name: "wlk", status: "checking", url: "http://127.0.0.1:8001" },
+  const [services, setServices] = useState<ServiceViewInfo[]>([
+    { name: "speechrail", status: "checking", url: "http://127.0.0.1:8201/health" },
     { name: "tts", status: "checking", url: "http://127.0.0.1:8765" },
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);
@@ -283,7 +474,12 @@ export default function StatusBar({
     try {
       const resp = await fetch(apiUrl("/api/services"));
       if (!resp.ok) return;
-      const data: ServicesResponse = await resp.json();
+      const value: unknown = await resp.json();
+      if (!isServicesResponse(value)) {
+        if (isManual) showToast("服务健康响应格式无效", "warning");
+        return;
+      }
+      const data: ServicesResponse = value;
       setNetworkScope(normalizeNetworkScope(data.network_scope));
       if (Array.isArray(data.services) && data.services.length > 0) {
         setServices(data.services);
@@ -329,10 +525,16 @@ export default function StatusBar({
 
   const meetingStatus = useMeetingStore((s) => s.status);
   const isMeetingRecording = meetingStatus === "recording" || meetingStatus === "finalizing";
+  const modeStatus = getStatusModePresentation({
+    activeTab,
+    meetingStatus,
+    subtitleStatus,
+    phase,
+  });
 
   // Compute aggregate system health
   const storageStatus: ServiceStatus =
-    storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "checking" : "error";
+    storageHealth === "ok" ? "ok" : storageHealth === "degraded" ? "degraded" : "error";
   const authoritativeMode = commandSocket.snapshot?.mode;
   const createHealthItem = (
     id: string,
@@ -365,17 +567,29 @@ export default function StatusBar({
       "字幕代理 (SubtitleProxy)",
       subtitleStatus === "connected" ? "ok" : subtitleStatus === "error" ? "error" : "checking",
     ),
-    createHealthItem("storage", "PostgreSQL 知识库", storageStatus),
+    createHealthItem(
+      "storage",
+      "PostgreSQL 知识库",
+      storageStatus,
+      storageHealth === "degraded" ? ["RecoveryJournal 已接管暂存写入"] : undefined,
+    ),
     ...services.map((s): HealthItem => {
       const details = serviceDiagnosticDetails(s);
-      return createHealthItem(s.name, SERVICE_DISPLAY_NAMES[s.name] || s.name, s.status, details);
+      return createHealthItem(
+        s.name,
+        SERVICE_DISPLAY_NAMES[s.name] || s.name,
+        serviceHealthStatus(s, authoritativeMode),
+        details,
+      );
     }),
   ];
 
   const orderedHealthItems = [...healthItems].sort((a, b) => {
     const priority = (item: HealthItem): number => {
       if (item.status === "checking") return 1;
-      return item.displayState === "required-error" ? 0 : item.displayState === "normal" ? 1 : 2;
+      return item.displayState === "required-error" || item.displayState === "required-degraded"
+        ? 0
+        : item.displayState === "normal" ? 1 : 2;
     };
     return priority(a) - priority(b);
   });
@@ -383,11 +597,17 @@ export default function StatusBar({
   const requiredOkCount = requiredHealthItems.filter((item) => item.status === "ok").length;
   const requiredCount = requiredHealthItems.length;
   const nonRequiredCount = healthItems.length - requiredCount;
-  const hasRequiredError = requiredHealthItems.some(
-    (item) => item.status !== "ok" && item.status !== "checking",
+  const hasRequiredHardError = requiredHealthItems.some(
+    (item) => item.status !== "ok" && item.status !== "checking" && item.status !== "degraded",
+  );
+  const hasRequiredDegraded = requiredHealthItems.some(
+    (item) => item.displayState === "required-degraded",
   );
   const hasRequiredChecking = requiredHealthItems.some((item) => item.status === "checking");
-  const isAllOk = !hasRequiredError && !hasRequiredChecking && requiredOkCount === requiredCount;
+  const isAllOk = !hasRequiredHardError
+    && !hasRequiredDegraded
+    && !hasRequiredChecking
+    && requiredOkCount === requiredCount;
   const switchTarget = pendingTab ?? (switchError ? activeTab : null);
   const switchTargetLabel = switchTarget === "subtitles"
     ? "实时字幕"
@@ -400,12 +620,12 @@ export default function StatusBar({
   return (
     <header className="status-bar">
       <div className="status-left">
-        <div className="status-brand" title="Voice Studio">
-          <span className="status-logo-icon" role="img" aria-label="Voice Studio">
+        <div className="status-brand" title="Sona">
+          <span className="status-logo-icon" role="img" aria-label="Sona">
             🎙️
           </span>
           <h1 className="status-title">
-            <span className="title-full">Voice Studio</span>
+            <span className="title-full">Sona</span>
             <span className="title-short">VS</span>
           </h1>
         </div>
@@ -530,72 +750,39 @@ export default function StatusBar({
       )}
 
       <div className="status-right">
-        {/* 全局互斥模式指示器 (防抖固定尺寸胶囊) */}
-        {(() => {
-          let className = "mode-idle";
-          let icon: React.ReactNode = "💤";
-          let label = "系统待命";
-          let title = "当前系统处于待命就绪状态";
-
-          if (isMeetingRecording) {
-            className = "mode-meeting";
-            icon = <span className="mode-pill-dot recording" aria-hidden="true" />;
-            label = "会议录制中";
-            title = "当前活跃模式：会议助手录制中（语音交互已自动挂起）";
-          } else if (phase === "speaking") {
-            className = "mode-speaking";
-            icon = "🗣️";
-            label = "助手播报中";
-            title = "当前活跃模式：语音助手播报中";
-          } else if (phase === "listening") {
-            className = "mode-listening";
-            icon = "👂";
-            label = "助手聆听中";
-            title = "当前活跃模式：语音助手聆听中（可直接对麦克风说话）";
-          } else if (phase === "thinking") {
-            className = "mode-thinking";
-            icon = "🧠";
-            label = "助手思考中";
-            title = "当前活跃模式：助手思考中（LM Studio 推理中）";
-          } else if (phase === "degraded") {
-            className = "mode-degraded";
-            icon = "⚠️";
-            label = "系统受限";
-            title = "当前语音服务处于降级或受限状态";
-          } else if (phase === "stopped") {
-            className = "mode-stopped";
-            icon = "⏹️";
-            label = "助手已停止";
-            title = "当前语音交互会话已停止";
-          }
-
-          return (
-            <span className={`status-mode-pill ${className}`} title={title}>
-              <span className="mode-pill-indicator">{icon}</span>
-              <span className="mode-pill-label">{label}</span>
-            </span>
-          );
-        })()}
+        {/* 当前工作区状态指示器 (防抖固定尺寸胶囊) */}
+        <span className={`status-mode-pill ${modeStatus.className}`} title={modeStatus.title}>
+          <span className="mode-pill-indicator">
+            {modeStatus.icon === "recording-dot" ? (
+              <span className="mode-pill-dot recording" aria-hidden="true" />
+            ) : (
+              modeStatus.icon
+            )}
+          </span>
+          <span className="mode-pill-label">{modeStatus.label}</span>
+        </span>
 
         {/* 系统健康中心 Popover 触发器 (右侧自然流) */}
         <div className="status-health-container" ref={popoverRef}>
           <button
             type="button"
-            className={`health-master-pill ${isAllOk ? "all-ok" : hasRequiredError ? "has-error" : "checking"}`}
+            className={`health-master-pill ${isAllOk ? "all-ok" : hasRequiredHardError ? "has-error" : hasRequiredDegraded ? "has-degraded" : "checking"}`}
             onClick={() => setHealthPopoverOpen((prev) => !prev)}
             title="点击查看当前模式的服务健康状态与探活"
           >
             <span
-              className={`light-dot ${isAllOk ? "dot-ok" : hasRequiredError ? "dot-error" : "dot-checking"}`}
+              className={`light-dot ${isAllOk ? "dot-ok" : hasRequiredHardError ? "dot-error" : hasRequiredDegraded ? "dot-degraded" : "dot-checking"}`}
               aria-hidden="true"
             />
             <span className="health-master-label">
               <span className="health-label-full">
                 {isAllOk
                   ? `系统正常 (${requiredOkCount}/${requiredCount})`
-                  : hasRequiredError
+                  : hasRequiredHardError
                     ? `核心组件异常 (${requiredOkCount}/${requiredCount})`
-                    : `核心组件探活中 (${requiredOkCount}/${requiredCount})`}
+                    : hasRequiredChecking
+                      ? `核心组件探活中 (${requiredOkCount}/${requiredCount})`
+                      : `核心组件降级 (${requiredOkCount}/${requiredCount})`}
               </span>
               <span className="health-label-short">
                 {requiredOkCount}/{requiredCount}
@@ -637,7 +824,9 @@ export default function StatusBar({
                       ? "运行正常"
                       : item.status === "checking"
                         ? "检测中"
-                        : "必须组件异常";
+                        : item.status === "degraded"
+                          ? "必须组件降级"
+                          : "必须组件异常";
                   const diagnosticTitle = item.details?.join(" · ");
                   const title = item.requirement === "not-required"
                     ? diagnosticTitle
@@ -669,11 +858,11 @@ export default function StatusBar({
                             e.stopPropagation();
                             const cmd = SERVICE_DIAGNOSTIC_COMMANDS[item.id];
                             void copyTextToClipboard(cmd).then(
-                              () => showToast(`已复制启动命令: ${cmd}`, "success"),
+                              () => showToast(`已复制诊断命令: ${cmd}`, "success"),
                               () => showToast("复制失败", "error"),
                             );
                           }}
-                          title={`复制终端启动命令: ${SERVICE_DIAGNOSTIC_COMMANDS[item.id]}`}
+                          title={`复制终端诊断命令: ${SERVICE_DIAGNOSTIC_COMMANDS[item.id]}`}
                         >
                           📋 复制命令
                         </button>

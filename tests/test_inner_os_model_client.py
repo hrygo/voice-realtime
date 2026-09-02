@@ -5,17 +5,17 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.inference.scheduler import LocalInferenceScheduler
-from voice_realtime.lm_studio import (
+from sona.inference.scheduler import LocalInferenceScheduler
+from sona.lm_studio import (
     LMStudioOutputLimitError,
     NativeChatCompletion,
     NativeChatRequest,
 )
-from voice_realtime.meeting.inner_os.context import (
+from sona.meeting.inner_os.context import (
     EvidenceSnapshot,
     InnerOSContextSnapshot,
 )
-from voice_realtime.meeting.inner_os.model_client import (
+from sona.meeting.inner_os.model_client import (
     InnerOSModelClient,
     InnerOSModelError,
 )
@@ -88,7 +88,7 @@ async def test_model_client_builds_native_request_and_maps_aliases() -> None:
     client = InnerOSModelClient(
         native,
         LocalInferenceScheduler(),
-        model="qwen/qwen3.6-35b-a3b",
+        model="local/kat-coder-2.5",
     )
 
     answer = await client.generate(
@@ -99,7 +99,7 @@ async def test_model_client_builds_native_request_and_maps_aliases() -> None:
 
     request = native.requests[0]
     payload = request.to_payload()
-    assert payload["model"] == "qwen/qwen3.6-35b-a3b"
+    assert payload["model"] == "local/kat-coder-2.5"
     assert payload["reasoning"] == "off"
     assert payload["stream"] is True
     assert payload["store"] is False

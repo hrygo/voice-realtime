@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - lm-studio
@@ -42,7 +42,7 @@ tags:
 ### Task 1: 原生角色上下文与会话状态
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/reasoning.py`
+- Modify: `src/sona/interaction/reasoning.py`
 - Test: `tests/test_reasoning.py`
 
 **Interfaces:**
@@ -132,14 +132,14 @@ Expected: PASS。
 - [x] **Step 7: 提交原生上下文切片**
 
 ```bash
-git add src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
+git add src/sona/interaction/reasoning.py tests/test_reasoning.py
 git commit -m "fix(interaction): 保留 LM Studio 原生对话角色"
 ```
 
 ### Task 2: SSE 原子提交、竞态与断链恢复
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/reasoning.py`
+- Modify: `src/sona/interaction/reasoning.py`
 - Test: `tests/test_reasoning.py`
 
 **Interfaces:**
@@ -201,14 +201,14 @@ Expected: PASS。
 - [x] **Step 6: 提交流式状态切片**
 
 ```bash
-git add src/voice_realtime/interaction/reasoning.py tests/test_reasoning.py
+git add src/sona/interaction/reasoning.py tests/test_reasoning.py
 git commit -m "fix(interaction): 原子提交 LM Studio 会话状态"
 ```
 
 ### Task 3: clear/persona 生命周期同步重置
 
 **Files:**
-- Modify: `src/voice_realtime/interaction/session.py`
+- Modify: `src/sona/interaction/session.py`
 - Create: `tests/test_interaction_context.py`
 - Test: `tests/test_runtime.py`
 
@@ -257,7 +257,7 @@ Expected: PASS。
 - [x] **Step 5: 提交生命周期切片**
 
 ```bash
-git add src/voice_realtime/interaction/session.py tests/test_interaction_context.py tests/test_runtime.py
+git add src/sona/interaction/session.py tests/test_interaction_context.py tests/test_runtime.py
 git commit -m "fix(interaction): 清空上下文时重置原生会话"
 ```
 
@@ -296,7 +296,7 @@ Expected: 全部退出码 0。
 
 - [x] **Step 4: 运行完整项目门禁**
 
-Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
 Run: `uv run mypy src/`
 

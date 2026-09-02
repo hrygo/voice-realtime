@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from voice_realtime.meeting.inner_os.cache import BoundedTTLCache
+from sona.meeting.inner_os.cache import BoundedTTLCache
 
 
 def test_cache_expires_entries_and_evicts_oldest_when_bounded() -> None:

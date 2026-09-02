@@ -9,7 +9,7 @@ date: 2026-08-27
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - meeting-assistant
@@ -17,9 +17,9 @@ tags:
   - local-ai
   - privacy
 scope:
-  - "voice_realtime.meeting.inner_os"
-  - "voice_realtime.meeting.summary"
-  - "voice_realtime.ui"
+  - "sona.meeting.inner_os"
+  - "sona.meeting.summary"
+  - "sona.ui"
   - "ui.features.innerOS"
 related_documents:
   - "docs/superpowers/specs/2026-08-27-meeting-inner-os-design.md"
@@ -44,7 +44,7 @@ contracts:
 ## Global Constraints
 
 - P0 是 P1 的进入门：完成三类会议、40 个问题的盲评并形成 `Go / Revise / Stop` 结论前，不得把 P1 功能开关默认值改为 `true`。
-- `VR_MEETING_INNER_OS_ENABLED=false` 与 `VR_MEETING_INNER_OS_ANALYSIS_ENABLED=false` 是发布默认值；P1 默认只开放 `fact`、`draft`。
+- `SONA_MEETING_INNER_OS_ENABLED=false` 与 `SONA_MEETING_INNER_OS_ANALYSIS_ENABLED=false` 是发布默认值；P1 默认只开放 `fact`、`draft`。
 - 仅处理当前会议的 confirmed transcript；不得读取 partial、其他会议、历史问答、会议音频、全局助手上下文或 `previous_response_id`。
 - 临时目标、议程、背景只存在 `InnerOSPanel` 组件内存，禁止进入 `localStorage`、Zustand 持久化、服务端缓存字段、日志和 PostgreSQL。
 - 专用 `/ws/v1/meetings/{meeting_id}/inner-os` 连接必须 fail-closed 校验 loopback；Inner OS 事件不得进入 `MeetingEventBroadcaster`。
@@ -68,7 +68,7 @@ contracts:
 ## Planned File Structure
 
 ```text
-src/voice_realtime/
+src/sona/
 ├── benchmarks/inner_os/
 │   ├── __init__.py
 │   ├── dataset.py              # P0 数据集加载、脱敏与完整性校验
@@ -108,9 +108,9 @@ ui/src/features/innerOS/
 - Create: `tests/fixtures/inner_os/technical-review.json`
 - Create: `tests/fixtures/inner_os/requirements-clarification.json`
 - Create: `tests/fixtures/inner_os/questions.json`
-- Create: `src/voice_realtime/benchmarks/inner_os/__init__.py`
-- Create: `src/voice_realtime/benchmarks/inner_os/dataset.py`
-- Create: `src/voice_realtime/benchmarks/inner_os/metrics.py`
+- Create: `src/sona/benchmarks/inner_os/__init__.py`
+- Create: `src/sona/benchmarks/inner_os/dataset.py`
+- Create: `src/sona/benchmarks/inner_os/metrics.py`
 - Create: `tests/benchmarks/test_inner_os_dataset.py`
 - Create: `tests/benchmarks/test_inner_os_metrics.py`
 - Create: `docs/benchmarks/inner-os/p0/README.md`
@@ -167,15 +167,15 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交 P0 数据基线**
 
   ```bash
-  git add src/voice_realtime/benchmarks/inner_os tests/fixtures/inner_os tests/benchmarks docs/benchmarks/inner-os/p0/README.md
+  git add src/sona/benchmarks/inner_os tests/fixtures/inner_os tests/benchmarks docs/benchmarks/inner-os/p0/README.md
   git commit -m "test(meeting): 建立内心 OS P0 价值评测基线"
   ```
 
 ### Task 2（P0-B）: 实现本地评测运行器并形成 Go/Revise/Stop 结论
 
 **Files:**
-- Create: `src/voice_realtime/benchmarks/inner_os/runner.py`
-- Modify: `src/voice_realtime/benchmarks/inner_os/metrics.py`
+- Create: `src/sona/benchmarks/inner_os/runner.py`
+- Modify: `src/sona/benchmarks/inner_os/metrics.py`
 - Create: `tests/benchmarks/test_inner_os_runner.py`
 - Create: `docs/benchmarks/inner-os/p0/report.md`
 - Create: `docs/benchmarks/inner-os/p0/summary.json`
@@ -191,7 +191,7 @@ ui/src/features/innerOS/
 - [ ] **Step 2: 实现 dry-run 与真实运行两种模式**
 
   ```bash
-  uv run python3 -m voice_realtime.benchmarks.inner_os.runner \
+  uv run python3 -m sona.benchmarks.inner_os.runner \
     --dataset tests/fixtures/inner_os \
     --output runtime/benchmarks/inner-os-p0 \
     --dry-run
@@ -209,7 +209,7 @@ ui/src/features/innerOS/
 
   Run: `uv run pytest tests/benchmarks/test_inner_os_runner.py tests/benchmarks/test_inner_os_metrics.py -q`
 
-  Run: `uv run python3 -m voice_realtime.benchmarks.inner_os.runner --dataset tests/fixtures/inner_os --output runtime/benchmarks/inner-os-p0 --dry-run`
+  Run: `uv run python3 -m sona.benchmarks.inner_os.runner --dataset tests/fixtures/inner_os --output runtime/benchmarks/inner-os-p0 --dry-run`
 
   Expected: 测试通过；dry-run 输出 3 类会议、40 问、0 条敏感内容写入报告。
 
@@ -224,7 +224,7 @@ ui/src/features/innerOS/
 - [ ] **Step 7: 提交 P0 结论**
 
   ```bash
-  git add src/voice_realtime/benchmarks/inner_os tests/benchmarks docs/benchmarks/inner-os/p0
+  git add src/sona/benchmarks/inner_os tests/benchmarks docs/benchmarks/inner-os/p0
   git commit -m "docs(meeting): 归档内心 OS P0 价值验证结论"
   ```
 
@@ -243,9 +243,9 @@ ui/src/features/innerOS/
 - Create: `contracts/meeting-assistant/v1/fixtures/inner-os-insufficient.json`
 - Create: `contracts/meeting-assistant/v1/fixtures/inner-os-invalid-focus.json`
 - Modify: `contracts/meeting-assistant/v1/schemas/runtime-state.schema.json`
-- Modify: `src/voice_realtime/config.py`
-- Modify: `src/voice_realtime/ui/protocol.py`
-- Modify: `src/voice_realtime/ui/runtime.py`
+- Modify: `src/sona/config.py`
+- Modify: `src/sona/ui/protocol.py`
+- Modify: `src/sona/ui/runtime.py`
 - Modify: `ui/src/protocol.ts`
 - Modify: `tests/test_config.py`
 - Modify: `tests/test_runtime.py`
@@ -253,7 +253,7 @@ ui/src/features/innerOS/
 
 **Interfaces:**
 - Consumes: 已有 `contract_version: "1"` envelope 和统一 REST error envelope。
-- Produces: P1 Query/Cancel 命令、五阶段事件、canonical answer、exchange REST 契约和 `VR_MEETING_INNER_OS_*` 设置。
+- Produces: P1 Query/Cancel 命令、五阶段事件、canonical answer、exchange REST 契约和 `SONA_MEETING_INNER_OS_*` 设置。
 
 - [ ] **Step 1: 先写契约与配置失败测试**
 
@@ -275,7 +275,7 @@ ui/src/features/innerOS/
 
 - [ ] **Step 3: 增加 MeetingSettings**
 
-  使用以下确定默认值：缓存 TTL `1800s`、最大 `128` 条/`8MiB`、取消硬上限 `2s`、fact/draft 硬超时 `15s`、analysis/mixed `35s`、输出字符熔断 `65536`、上下文最大 `48000` 字符、最近窗口 `16000` 字符。环境变量由 `VR_MEETING_` 前缀映射为 `VR_MEETING_INNER_OS_*`。
+  使用以下确定默认值：缓存 TTL `1800s`、最大 `128` 条/`8MiB`、取消硬上限 `2s`、fact/draft 硬超时 `15s`、analysis/mixed `35s`、输出字符熔断 `65536`、上下文最大 `48000` 字符、最近窗口 `16000` 字符。环境变量由 `SONA_MEETING_` 前缀映射为 `SONA_MEETING_INNER_OS_*`。
 
 - [ ] **Step 4: 暴露只读 runtime capability**
 
@@ -302,16 +302,16 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交契约基线**
 
   ```bash
-  git add contracts/meeting-assistant src/voice_realtime/config.py src/voice_realtime/ui/protocol.py src/voice_realtime/ui/runtime.py ui/src/protocol.ts tests/test_config.py tests/test_runtime.py tests/test_meeting_contracts.py
+  git add contracts/meeting-assistant src/sona/config.py src/sona/ui/protocol.py src/sona/ui/runtime.py ui/src/protocol.ts tests/test_config.py tests/test_runtime.py tests/test_meeting_contracts.py
   git commit -m "docs(contract): 固化内心 OS P1 私有问答契约"
   ```
 
 ### Task 4（P1-A）: 实现领域模型、confirmed 快照和确定性证据裁剪
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/__init__.py`
-- Create: `src/voice_realtime/meeting/inner_os/contracts.py`
-- Create: `src/voice_realtime/meeting/inner_os/context.py`
+- Create: `src/sona/meeting/inner_os/__init__.py`
+- Create: `src/sona/meeting/inner_os/contracts.py`
+- Create: `src/sona/meeting/inner_os/context.py`
 - Create: `tests/test_inner_os_contracts.py`
 - Create: `tests/test_inner_os_context.py`
 
@@ -351,15 +351,15 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交上下文边界**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os tests/test_inner_os_contracts.py tests/test_inner_os_context.py
+  git add src/sona/meeting/inner_os tests/test_inner_os_contracts.py tests/test_inner_os_context.py
   git commit -m "feat(meeting): 建立内心 OS 快照与证据边界"
   ```
 
 ### Task 5（P1-A）: 建立共享 LocalLLMWorkloadGate 并接入后台纪要
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/workload.py`
-- Modify: `src/voice_realtime/meeting/summary.py`
+- Create: `src/sona/meeting/inner_os/workload.py`
+- Modify: `src/sona/meeting/summary.py`
 - Create: `tests/test_inner_os_workload.py`
 - Modify: `tests/test_meeting_summary.py`
 
@@ -397,14 +397,14 @@ ui/src/features/innerOS/
 - [ ] **Step 5: 提交工作负载仲裁**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os/workload.py src/voice_realtime/meeting/summary.py tests/test_inner_os_workload.py tests/test_meeting_summary.py
+  git add src/sona/meeting/inner_os/workload.py src/sona/meeting/summary.py tests/test_inner_os_workload.py tests/test_meeting_summary.py
   git commit -m "feat(meeting): 统一仲裁内心 OS 与后台纪要负载"
   ```
 
 ### Task 6（P1-A）: 实现 LM Studio 原生客户端、严格输出校验和一次修复
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/model_client.py`
+- Create: `src/sona/meeting/inner_os/model_client.py`
 - Create: `tests/test_inner_os_model_client.py`
 
 **Interfaces:**
@@ -439,15 +439,15 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交模型客户端**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os/model_client.py tests/test_inner_os_model_client.py
+  git add src/sona/meeting/inner_os/model_client.py tests/test_inner_os_model_client.py
   git commit -m "feat(meeting): 实现内心 OS 本地模型安全调用"
   ```
 
 ### Task 7（P1-A）: 实现查询状态机、有界瞬时缓存和会议生命周期取消
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/cache.py`
-- Create: `src/voice_realtime/meeting/inner_os/service.py`
+- Create: `src/sona/meeting/inner_os/cache.py`
+- Create: `src/sona/meeting/inner_os/service.py`
 - Create: `tests/test_inner_os_cache.py`
 - Create: `tests/test_inner_os_service.py`
 
@@ -480,15 +480,15 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交查询服务**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os/cache.py src/voice_realtime/meeting/inner_os/service.py tests/test_inner_os_cache.py tests/test_inner_os_service.py
+  git add src/sona/meeting/inner_os/cache.py src/sona/meeting/inner_os/service.py tests/test_inner_os_cache.py tests/test_inner_os_service.py
   git commit -m "feat(meeting): 实现内心 OS 查询生命周期与瞬时缓存"
   ```
 
 ### Task 8（P1-B）: 增加已保存 exchange 迁移与独立仓储
 
 **Files:**
-- Create: `src/voice_realtime/meeting/migrations/0002_inner_os.sql`
-- Create: `src/voice_realtime/meeting/inner_os/repository.py`
+- Create: `src/sona/meeting/migrations/0002_inner_os.sql`
+- Create: `src/sona/meeting/inner_os/repository.py`
 - Create: `tests/test_inner_os_repository.py`
 - Modify: `tests/test_meeting_repository.py`
 
@@ -516,22 +516,22 @@ ui/src/features/innerOS/
 
 - [ ] **Step 5: 运行 PostgreSQL 聚焦测试**
 
-  Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_inner_os_repository.py tests/test_meeting_repository.py -q`
+  Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_inner_os_repository.py tests/test_meeting_repository.py -q`
 
   Expected: 临时 schema 自动 `DROP ... CASCADE`；迁移、隔离、幂等、keyset、动态证据状态全部通过。
 
 - [ ] **Step 6: 提交迁移与仓储**
 
   ```bash
-  git add src/voice_realtime/meeting/migrations/0002_inner_os.sql src/voice_realtime/meeting/inner_os/repository.py tests/test_inner_os_repository.py tests/test_meeting_repository.py
+  git add src/sona/meeting/migrations/0002_inner_os.sql src/sona/meeting/inner_os/repository.py tests/test_inner_os_repository.py tests/test_meeting_repository.py
   git commit -m "feat(meeting): 持久化用户保存的内心 OS 问答"
   ```
 
 ### Task 9（P1-B）: 实现保存/列表/详情/删除 REST API
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/api.py`
-- Modify: `src/voice_realtime/meeting/api.py`
+- Create: `src/sona/meeting/inner_os/api.py`
+- Modify: `src/sona/meeting/api.py`
 - Create: `tests/test_inner_os_api.py`
 - Modify: `tests/test_meeting_api.py`
 
@@ -563,15 +563,15 @@ ui/src/features/innerOS/
 - [ ] **Step 5: 提交 REST API**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os/api.py src/voice_realtime/meeting/api.py tests/test_inner_os_api.py tests/test_meeting_api.py
+  git add src/sona/meeting/inner_os/api.py src/sona/meeting/api.py tests/test_inner_os_api.py tests/test_meeting_api.py
   git commit -m "feat(meeting): 提供内心 OS 已保存问答接口"
   ```
 
 ### Task 10（P1-B）: 实现 loopback-only 连接私有 WebSocket
 
 **Files:**
-- Create: `src/voice_realtime/meeting/inner_os/private_channel.py`
-- Modify: `src/voice_realtime/ui/server.py`
+- Create: `src/sona/meeting/inner_os/private_channel.py`
+- Modify: `src/sona/ui/server.py`
 - Create: `tests/test_inner_os_websocket.py`
 - Modify: `tests/test_ui_server.py`
 
@@ -604,15 +604,15 @@ ui/src/features/innerOS/
 - [ ] **Step 6: 提交私有通道**
 
   ```bash
-  git add src/voice_realtime/meeting/inner_os/private_channel.py src/voice_realtime/ui/server.py tests/test_inner_os_websocket.py tests/test_ui_server.py
+  git add src/sona/meeting/inner_os/private_channel.py src/sona/ui/server.py tests/test_inner_os_websocket.py tests/test_ui_server.py
   git commit -m "feat(meeting): 增加内心 OS 本机私有查询通道"
   ```
 
 ### Task 11（P1-B）: 完成服务装配、finalizing 联动和资源关闭
 
 **Files:**
-- Modify: `src/voice_realtime/ui/server.py`
-- Modify: `src/voice_realtime/meeting/summary.py`
+- Modify: `src/sona/ui/server.py`
+- Modify: `src/sona/meeting/summary.py`
 - Create: `tests/test_inner_os_integration.py`
 - Modify: `tests/test_ui_server.py`
 - Modify: `tests/test_meeting_session.py`
@@ -642,7 +642,7 @@ ui/src/features/innerOS/
 - [ ] **Step 5: 提交后端装配**
 
   ```bash
-  git add src/voice_realtime/ui/server.py src/voice_realtime/meeting/summary.py tests/test_inner_os_integration.py tests/test_ui_server.py tests/test_meeting_session.py
+  git add src/sona/ui/server.py src/sona/meeting/summary.py tests/test_inner_os_integration.py tests/test_ui_server.py tests/test_meeting_session.py
   git commit -m "feat(meeting): 装配内心 OS 生命周期与资源边界"
   ```
 
@@ -754,7 +754,7 @@ ui/src/features/innerOS/
 - Create: `tests/test_inner_os_e2e.py`
 - Create: `docs/operations/内心OS-P1-候选发布验收记录.md`
 - Modify: `docs/manuals/会议助手后端运行与前后端联调.md`
-- Modify: `docs/manuals/Voice-Studio-UI-设计方案.md`
+- Modify: `docs/manuals/Sona-UI-设计方案.md`
 - Modify: `docs/README.md`
 - Modify: `README.md`
 
@@ -781,7 +781,7 @@ ui/src/features/innerOS/
 
 - [ ] **Step 4: 执行聚焦门禁**
 
-  Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_inner_os_*.py -q`
+  Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/test_inner_os_*.py -q`
 
   Run: `cd ui && npm test -- --run src/features/innerOS`
 
@@ -789,7 +789,7 @@ ui/src/features/innerOS/
 
 - [ ] **Step 5: 执行项目全量质量门禁**
 
-  Run: `VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
+  Run: `SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/`
 
   Run: `uv run mypy src/`
 
@@ -844,8 +844,8 @@ Task 1 P0 数据集
 
 ## Rollback Plan
 
-1. 运行时首选回滚：设置 `VR_MEETING_INNER_OS_ENABLED=false` 并重启 `vr-ui`；不影响转录、会议历史和已有纪要。
-2. 分析意图单独回滚：设置 `VR_MEETING_INNER_OS_ANALYSIS_ENABLED=false`；保留 fact/draft。
+1. 运行时首选回滚：设置 `SONA_MEETING_INNER_OS_ENABLED=false` 并重启 `sona-ui`；不影响转录、会议历史和已有纪要。
+2. 分析意图单独回滚：设置 `SONA_MEETING_INNER_OS_ANALYSIS_ENABLED=false`；保留 fact/draft。
 3. 前端回滚：隐藏 runtime capability 后不建立专用 WS，不删除已有保存记录。
 4. 数据回滚：`0002_inner_os.sql` 只新增表和索引；正常回滚不降迁移、不自动删表。确需删除已保存问答时，必须由用户明确授权并先导出/备份。
 5. 事故处置：取消所有活动 query、清空进程内 transient cache、关闭模型 stream；不得影响 `MeetingSession` EOF 冲刷和 PostgreSQL confirmed transcript。

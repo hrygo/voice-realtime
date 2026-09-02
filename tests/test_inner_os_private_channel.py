@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from voice_realtime.meeting.inner_os.private_channel import (
+from sona.meeting.inner_os.private_channel import (
     InnerOSChannelError,
     InnerOSConnectionSession,
     InnerOSQueryCommand,

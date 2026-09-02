@@ -8,7 +8,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-interaction"
+  - "sona-interaction"
 tags:
   - adr
   - lm-studio
@@ -16,7 +16,7 @@ tags:
   - memory-management
   - long-session
 scope:
-  - "voice_realtime.interaction"
+  - "sona.interaction"
 related_documents:
   - "docs/decisions/0002-lm-studio-stateful-chat-context.md"
   - "docs/superpowers/specs/2026-08-21-lm-studio-context-compaction-design.md"
@@ -59,7 +59,7 @@ Pipecat 摘要会形成“本地历史已变短、模型侧历史仍增长”的
   明确报错，禁止静默降级为空链。
 - 默认 soft/hard/target 水位分别为 16384/32768/8192 tokens，保留十六组近期问答；短消息
   兜底提高到 128 条，连续 TTFT 触发提高到 3 秒。可用
-  `VR_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 整体回滚。
+  `SONA_INTERACTION_CONTEXT_COMPACTION_ENABLED=false` 整体回滚。
 
 ## 备选方案
 

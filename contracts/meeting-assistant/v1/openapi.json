@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Voice Studio Meeting Assistant API",
+    "title": "Sona Meeting Assistant API",
     "version": "1.2.0",
     "description": "前后端分离的会议记录、转录、证据可追溯纪要与内心 OS 问答 API。"
   },

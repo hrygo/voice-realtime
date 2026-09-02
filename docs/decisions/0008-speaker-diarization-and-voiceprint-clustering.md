@@ -6,10 +6,10 @@ type: decision_record
 category: meeting
 version: "v1.0.0"
 date: 2026-08-27
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-meeting"
+  - "sona-meeting"
 tags:
   - adr
   - speaker-diarization
@@ -18,12 +18,13 @@ tags:
   - ahc-clustering
   - sortformer
 scope:
-  - "voice_realtime.meeting"
-  - "voice_realtime.asr"
+  - "sona.meeting"
+  - "sona.asr"
   - "ui"
 related_documents:
   - "docs/solutions/会议模式多说话人精准识别与声纹聚类技术方案.md"
   - "docs/architecture/系统总体架构与详细设计方案.md"
+  - "docs/decisions/0011-speechrail-only-asr.md"
 contracts:
   - "contracts/meeting-assistant/v1/"
 ---
@@ -33,6 +34,10 @@ contracts:
 ## 状态
 
 Accepted
+
+> **当前实现说明（2026-09-01）**：本 ADR 记录的是 2026-08-27 的本地 CAM++/AHC 方案，
+> 已被 ADR-0011 的 SpeechRail diarization 路径取代。当前代码不运行本文中的
+> `SortformerDiarizationOnline`、CAM++、AHC、`VoiceprintProfileMatcher` 或本地声纹库；保留本文仅用于历史决策溯源。
 
 ## 日期
 

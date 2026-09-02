@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-/** 对照 wlk FrontData.to_dict() 的字段子集（结构等价官方 UI 渲染所需）。 */
+/** SpeechRail 字幕快照的前端消费字段。 */
 export interface SubtitleLine {
   speaker: number;
   text: string;
@@ -42,7 +42,7 @@ export function reduceSubtitleSnapshot(
   const rawLines = snap.lines ?? state.rawLines ?? state.lines;
   const rawCount = rawLines.length;
   const currentCleared = state.clearedOffset ?? 0;
-  // 如果后端 WLK 重启导致 rawLines 变短，重置 offset
+  // 如果 SpeechRail 新 session 导致 rawLines 变短，重置 offset
   const clearedOffset = currentCleared > rawCount ? 0 : currentCleared;
   const visibleLines = rawLines.slice(clearedOffset);
 
@@ -111,7 +111,7 @@ export function formatSpeaker(speaker: number): string {
   return `说话人 ${normalized}`;
 }
 
-/** 说话人配色：对齐 wlk 官方 UI（按 speaker 取色，超过 8 轮换）。 */
+/** 说话人配色：按 speaker 取色，超过 8 轮换。 */
 export function speakerColor(speaker: number): string {
   const palette = [
     "#2563eb",
@@ -159,8 +159,8 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
       ? `${lines[0]?.start ?? "00:00:00"} ~ ${lines.at(-1)?.end ?? lines.at(-1)?.start ?? "00:00:00"}`
       : "00:00:00";
 
-  let md = `# Voice Studio 会议与语音对话纪要\n\n`;
-  md += `> 自动生成于：${dateStr} ${timeStr} | 引擎：WhisperLiveKit (Qwen3-ASR) / Apple Silicon\n\n`;
+  let md = `# Sona 会议与语音对话纪要\n\n`;
+  md += `> 自动生成于：${dateStr} ${timeStr} | 引擎：SpeechRail / Apple Silicon\n\n`;
 
   md += `## 📋 会议概要\n\n`;
   md += `- **记录时间**：${dateStr} ${timeStr}\n`;
@@ -204,7 +204,7 @@ export function toMarkdownNotes(lines: SubtitleLine[], starred: Set<number>): st
     }
   });
 
-  md += `\n\n---\n*由 Voice Studio 本地离线工作台导出*\n`;
+  md += `\n\n---\n*由 Sona 本地离线工作台导出*\n`;
   return md;
 }
 

@@ -1,5 +1,5 @@
 /**
- * Voice Studio 会议助手『内心 OS』前端契约与运行时校验定义
+ * Sona 会议助手『内心 OS』前端契约与运行时校验定义
  * 依据 contracts/meeting-assistant/v1/schemas/
  */
 

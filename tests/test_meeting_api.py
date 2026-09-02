@@ -12,8 +12,8 @@ import pytest
 from fastapi import FastAPI
 from jsonschema import Draft202012Validator, FormatChecker
 
-from voice_realtime.meeting.api import MeetingAPIError, install_meeting_api
-from voice_realtime.meeting.models import MinutesResult
+from sona.meeting.api import MeetingAPIError, install_meeting_api
+from sona.meeting.models import MinutesResult
 
 MEETING_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SEGMENT_ID = UUID("11111111-1111-4111-8111-111111111111")

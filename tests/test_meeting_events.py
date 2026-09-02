@@ -7,7 +7,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from voice_realtime.meeting.events import DURABLE_EVENT_TYPES, MeetingEventBroadcaster, make_event
+from sona.meeting.events import DURABLE_EVENT_TYPES, MeetingEventBroadcaster, make_event
 
 
 def test_meeting_title_updated_is_a_durable_event() -> None:

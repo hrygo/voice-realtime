@@ -12,21 +12,21 @@ import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection
 
-from voice_realtime.config import MeetingSettings
-from voice_realtime.meeting.migrations import run_migrations
-from voice_realtime.meeting.models import MeetingStatus, NormalizedSegment, TranscriptWindow
-from voice_realtime.meeting.recovery import (
+from sona.config import MeetingSettings
+from sona.meeting.migrations import run_migrations
+from sona.meeting.models import MeetingStatus, NormalizedSegment, TranscriptWindow
+from sona.meeting.recovery import (
     RecoveryEnvelope,
     RecoveryJournal,
     RecoveryJournalError,
 )
-from voice_realtime.meeting.repository import PostgresMeetingRepository
+from sona.meeting.repository import PostgresMeetingRepository
 
 
 def _test_database_url() -> str:
-    value = os.environ.get("VR_TEST_DATABASE_URL")
+    value = os.environ.get("SONA_TEST_DATABASE_URL")
     if not value:
-        pytest.skip("VR_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
+        pytest.skip("SONA_TEST_DATABASE_URL 未设置；跳过真实 PostgreSQL 集成测试")
     return value
 
 
@@ -34,6 +34,11 @@ class FakeRecoveryRepository:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
         self.error: Exception | None = None
+
+    async def get_meeting(self, meeting_id) -> None:
+        if self.error is not None:
+            raise self.error
+        self.calls.append(("get_meeting", meeting_id))
 
     async def reconcile_window(self, meeting_id, window) -> None:
         if self.error is not None:
@@ -212,15 +217,16 @@ async def test_replay_dispatches_every_supported_operation_and_deletes_file(
 
     assert await journal.replay(repository) == 4
     assert [call[0] for call in repository.calls] == [
+        "get_meeting",
         "reconcile_window",
         "set_status",
         "finalize_transcript",
         "create_minutes",
     ]
-    assert repository.calls[0][1][1] == window
-    assert repository.calls[1][1][1].value == "interrupted"
-    assert repository.calls[1][1][2] == "ASR reconnect"
-    assert repository.calls[3][1][1] == "meeting:v1"
+    assert repository.calls[1][1][1] == window
+    assert repository.calls[2][1][1].value == "interrupted"
+    assert repository.calls[2][1][2] == "ASR reconnect"
+    assert repository.calls[4][1][1] == "meeting:v1"
     assert list((tmp_path / "journal").glob("*.jsonl")) == []
 
 
@@ -350,7 +356,7 @@ async def test_replay_ignores_blank_lines(tmp_path: Path) -> None:
 
 
 async def test_append_reports_filesystem_write_error(tmp_path: Path, monkeypatch) -> None:
-    import voice_realtime.meeting.recovery as recovery_module
+    import sona.meeting.recovery as recovery_module
 
     def fail_open(*_args, **_kwargs):
         raise OSError("read-only filesystem")
@@ -362,7 +368,7 @@ async def test_append_reports_filesystem_write_error(tmp_path: Path, monkeypatch
 
 
 async def test_append_closes_file_when_fsync_setup_fails(tmp_path: Path, monkeypatch) -> None:
-    import voice_realtime.meeting.recovery as recovery_module
+    import sona.meeting.recovery as recovery_module
 
     def fail_fchmod(*_args, **_kwargs):
         raise OSError("cannot change mode")

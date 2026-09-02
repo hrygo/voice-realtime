@@ -5,10 +5,10 @@ status: accepted
 type: decision_record
 category: asr
 date: 2026-08-24
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - adr
   - asr
@@ -16,13 +16,15 @@ tags:
   - sequential-evaluation
   - futility-stopping
 scope:
-  - "voice_realtime.asr"
+  - "sona.asr"
 related_documents:
   - "docs/solutions/Fun-ASR与现有ASR后端科学对比测试方案.md"
   - "docs/superpowers/plans/2026-08-24-asr-scientific-comparison-completion.md"
 ---
 
 # ADR-004：ASR 选型采用两阶段序贯盲测与 Finalist-Only 验收
+
+> **适用性说明（2026-09-01）**：本文记录 SpeechRail 迁移前的 ASR 评测流程决策；当前 ASR 运行时与服务边界以 [ADR-011](./0011-speechrail-only-asr.md) 和 [SpeechRail Realtime v2 对接手册](../manuals/SpeechRail-Realtime-v2-语音转文字开发对接手册.md) 为准。本文的序贯评测方法仍可作为未来外部服务/profile 变更的评估参考。
 
 ## 状态
 

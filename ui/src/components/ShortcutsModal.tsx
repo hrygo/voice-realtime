@@ -35,7 +35,7 @@ export default function ShortcutsModal({ isOpen, onClose }: ShortcutsModalProps)
         <div className="modal-header">
           <div className="modal-title-wrap">
             <span className="modal-title-icon">⌨️</span>
-            <h3 id="shortcuts-title">Voice Studio 快捷键速查</h3>
+            <h3 id="shortcuts-title">Sona 快捷键速查</h3>
           </div>
           <button
             type="button"

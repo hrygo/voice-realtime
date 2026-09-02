@@ -10,6 +10,7 @@ import {
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
+import { audioEnergyService } from "../services/audioEnergyService";
 import { apiUrl } from "../config/runtimeConfig";
 import { runtimeConfig } from "../config/runtimeConfig";
 import { ReconnectingSocket, type ConnectionState } from "./useEventSocket";
@@ -195,7 +196,7 @@ export class CommandChannel {
     }
 
     const requestId = makeRequestId();
-    // 会议冲刷/结束涉及 WhisperLiveKit 声纹对账与数据库事务，给予充足的 30s 超时时间
+    // 会议冲刷/结束涉及 SpeechRail 最终转写与数据库事务，给予充足的 30s 超时时间
     const isMeetingOrModeCmd =
       command.cmd === "end_meeting" ||
       command.cmd === "stop_active_mode" ||
@@ -301,6 +302,7 @@ export function useCommandSocket(url = runtimeConfig.controlWsUrl): CommandSocke
   if (channelRef.current === null) {
     channelRef.current = new CommandChannel({
       applyState: (snapshot) => {
+        audioEnergyService.updateFromRuntimeState(snapshot);
         setSnapshot(snapshot);
         setHighestRuntimeRevision(snapshot.runtime_revision);
         useUISettingsStore.getState().applyRuntimeState(snapshot);

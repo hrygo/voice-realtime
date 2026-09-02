@@ -38,7 +38,7 @@ export function MeetingIdleView({
   return (
     <div className="idle-view">
       <div className="idle-icon-hero">🎙️</div>
-      <h2 className="idle-title">Voice Studio 会议助手</h2>
+      <h2 className="idle-title">Sona 会议助手</h2>
       <p className="idle-subtitle">
         全本地会议转录与 AI 纪要。会议期间完全停用语音助手对话与 TTS 播报，所有发言持续持久化至 PostgreSQL。
       </p>
@@ -89,7 +89,7 @@ export function MeetingIdleView({
 
         <div className="checklist-group">
           <div className="check-item">
-            <span>🗄️ PostgreSQL 知识库存储 (voice_realtime)</span>
+            <span>🗄️ PostgreSQL 知识库存储 (sona)</span>
             <span
               className={`check-status-tag ${
                 health.storage === "ok"
@@ -108,7 +108,7 @@ export function MeetingIdleView({
           </div>
 
           <div className="check-item">
-            <span>🎙️ WhisperLiveKit 实时转录服务</span>
+            <span>🎙️ SpeechRail 实时转录服务</span>
             <span
               className={`check-status-tag ${
                 health.transcription === "ok" ? "ok" : "error"

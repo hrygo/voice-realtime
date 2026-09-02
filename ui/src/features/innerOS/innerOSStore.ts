@@ -287,7 +287,7 @@ export const useInnerOSStore = create<InnerOSState>((set, get) => ({
 
   exportNotesAsMarkdown: (meetingTitle?: string) => {
     const { unsavedExchanges, historyList } = get();
-    const title = meetingTitle || "Voice Studio 会议";
+    const title = meetingTitle || "Sona 会议";
     const dateStr = new Date().toLocaleString("zh-CN", { hour12: false });
 
     const allMap = new Map<string, { question: string; answer: InnerOSAnswer; createdAt: string }>();

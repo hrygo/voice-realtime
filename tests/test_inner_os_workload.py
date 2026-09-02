@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from voice_realtime.inference.scheduler import WorkloadKind
-from voice_realtime.meeting.inner_os.workload import LocalLLMWorkloadGate
+from sona.inference.scheduler import WorkloadKind
+from sona.meeting.inner_os.workload import LocalLLMWorkloadGate
 
 
 async def test_gate_allows_one_active_job_and_releases_after_cancel() -> None:

@@ -316,7 +316,7 @@ export const selectAssistantConnected = (state: AssistantStore): boolean => stat
 export const selectLastInterruptionTime = (state: AssistantStore): number | null => state.lastInterruptionTime;
 export const selectAssistantLatestMetrics = (state: AssistantStore): TurnMetrics | null => state.latestMetrics;
 
-/** 字幕面板只消费 Agent 文本；用户语音继续以 WhisperLiveKit 为权威来源。 */
+/** 字幕面板只消费 Agent 文本；用户语音继续以 SpeechRail 为权威来源。 */
 export function selectAgentReplies(
   transcript: readonly AssistantBubble[],
   query = "",

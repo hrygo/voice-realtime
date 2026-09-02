@@ -2,8 +2,8 @@
 
 from uuid import uuid4
 
-from voice_realtime.meeting.diarization_smoother import DiarizationSmoother
-from voice_realtime.meeting.models import NormalizedSegment, TranscriptWindow
+from sona.meeting.diarization_smoother import DiarizationSmoother
+from sona.meeting.models import NormalizedSegment, TranscriptWindow
 
 
 def _make_segment(

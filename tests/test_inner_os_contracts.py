@@ -3,7 +3,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.meeting.inner_os.contracts import InnerOSAnswer
+from sona.meeting.inner_os.contracts import InnerOSAnswer
 
 
 def test_answer_requires_evidence_for_each_fact_and_basis_for_judgement() -> None:

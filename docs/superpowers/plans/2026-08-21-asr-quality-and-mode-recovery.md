@@ -9,7 +9,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - execution-plan
   - qwen3-asr
@@ -42,7 +42,7 @@ tags:
 ### Task 1: 恢复会议后的普通字幕 supervisor
 
 **Files:**
-- Modify: `src/voice_realtime/ui/subtitle_proxy.py`
+- Modify: `src/sona/ui/subtitle_proxy.py`
 - Test: `tests/test_subtitle_proxy.py`
 
 **Interfaces:**
@@ -73,10 +73,10 @@ Expected: PASS。
 ### Task 2: 收敛严格离线模型解析
 
 **Files:**
-- Create: `src/voice_realtime/model_cache.py`
-- Modify: `src/voice_realtime/interaction/pipeline.py`
-- Modify: `src/voice_realtime/tts_bridge/engine.py`
-- Modify: `src/voice_realtime/config.py`
+- Create: `src/sona/model_cache.py`
+- Modify: `src/sona/interaction/pipeline.py`
+- Modify: `src/sona/tts_bridge/engine.py`
+- Modify: `src/sona/config.py`
 - Create: `tests/test_model_cache.py`
 - Modify: `tests/test_pipeline.py`
 - Modify: `tests/test_engine.py`
@@ -110,8 +110,8 @@ Expected: PASS。
 ### Task 3: 启用 Qwen3-ASR 1.7B 质量配置
 
 **Files:**
-- Modify: `src/voice_realtime/config.py`
-- Modify: `src/voice_realtime/subtitles/launcher.py`
+- Modify: `src/sona/config.py`
+- Modify: `src/sona/subtitles/launcher.py`
 - Modify: `tests/test_config.py`
 - Modify: `tests/test_subtitles.py`
 
@@ -186,7 +186,7 @@ Run: `uv run python -c "from modelscope import snapshot_download; print(snapshot
 Run:
 
 ```bash
-VR_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
+SONA_TEST_DATABASE_URL=postgresql:///knowledge uv run pytest tests/
 uv run mypy src/
 uv run ruff check src/ tests/
 cd ui && npm test -- --run
@@ -197,5 +197,5 @@ Expected: 全部退出码为 0，分支覆盖率不低于 80%。
 
 - [x] **Step 4: 执行真实闭环**
 
-依次启动 `vr-subtitles`、`vr-bridge`、临时 schema 下的 `vr-ui`；验证健康检查、EOF、
+依次启动 `vr-subtitles`、`vr-bridge`、临时 schema 下的 `sona-ui`；验证健康检查、EOF、
 `assistant -> meeting -> idle -> assistant`、冲突拒绝、字幕重新 connected、数据库无音频载荷。

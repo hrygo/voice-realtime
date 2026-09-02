@@ -77,7 +77,7 @@ describe("meetingApi", () => {
       version: 2,
       status: "queued" as const,
       source_content_revision: 5,
-      model: "qwen/qwen3.6-35b-a3b",
+      model: "local/kat-coder-2.5",
       content_json: null,
       content_markdown: null,
       created_at: "2026-08-21T10:00:00Z",

@@ -6,7 +6,7 @@ import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import type { RuntimeStateSnapshot } from "../protocol";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import { useMeetingStore } from "../stores/meetingStore";
-import StatusBar, { sessionElapsedSeconds } from "./StatusBar";
+import StatusBar, { getStatusModePresentation, sessionElapsedSeconds } from "./StatusBar";
 
 
 declare global {
@@ -41,6 +41,84 @@ describe("sessionElapsedSeconds", () => {
   it("resets when the session is stopped or the timestamp is invalid", () => {
     expect(sessionElapsedSeconds(null)).toBe(0);
     expect(sessionElapsedSeconds("invalid")).toBe(0);
+  });
+});
+
+describe("getStatusModePresentation", () => {
+  it("keeps voice assistant phase labels explicit", () => {
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-listening",
+      label: "语音助手聆听中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-stopped",
+      label: "语音助手已停止",
+    });
+  });
+
+  it("uses meeting status instead of a stale assistant phase", () => {
+    expect(getStatusModePresentation({
+      activeTab: "meeting",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议助手待命",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "meeting",
+      meetingStatus: "recording",
+      subtitleStatus: "connected",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议录制中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "finalizing",
+      subtitleStatus: "connected",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-meeting",
+      label: "会议封存中",
+    });
+  });
+
+  it("uses subtitle status instead of a stale assistant phase", () => {
+    expect(getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "stopped",
+    })).toMatchObject({
+      className: "mode-subtitles",
+      label: "实时字幕运行中",
+    });
+
+    expect(getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+    })).toMatchObject({
+      className: "mode-stopped",
+      label: "实时字幕已停止",
+    });
   });
 });
 
@@ -210,12 +288,12 @@ describe("StatusBar service diagnostics", () => {
       .find((row) => row.textContent?.includes(name));
   }
 
-  it("keeps WLK diagnostics in a compact tooltip without changing the process light", async () => {
+  it("keeps SpeechRail diagnostics in a compact tooltip without changing the process light", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: "degraded",
         ws_state: "reconnecting",
         reconnect_count: 3,
@@ -225,29 +303,30 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const row = findServiceRow("WhisperLiveKit");
-    expect(row?.textContent).toContain("运行正常");
+    const row = findServiceRow("SpeechRail 服务");
+    expect(row?.textContent).toContain("必须组件降级");
     expect(row?.textContent).not.toContain("语音工作负载：degraded");
     expect(row?.textContent).not.toContain("WebSocket 状态：reconnecting");
     expect(row?.textContent).not.toContain("重连次数：3");
+    expect(row?.getAttribute("title")).toContain("HTTP 状态：运行正常");
     expect(row?.getAttribute("title")).toContain("语音工作负载：degraded");
     expect(row?.getAttribute("title")).toContain("WebSocket 状态：reconnecting");
     expect(row?.getAttribute("title")).toContain("重连次数：3");
-    expect(row?.querySelector(".light-dot")?.classList.contains("state-normal")).toBe(true);
+    expect(row?.querySelector(".light-dot")?.classList.contains("state-required-degraded")).toBe(true);
   });
 
   it("shows a long last-event age as an unclassified raw value", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: "degraded",
         last_event_age_ms: 987654,
       },
     ], "subtitles");
 
-    const row = findServiceRow("WhisperLiveKit");
+    const row = findServiceRow("SpeechRail 服务");
     expect(row?.getAttribute("title")).toContain("距最近事件：987654 ms");
     expect(row?.textContent).not.toContain("关闭游戏");
     expect(row?.textContent).not.toContain("CPU");
@@ -256,7 +335,7 @@ describe("StatusBar service diagnostics", () => {
 
   it("uses network-aware footer copy when services are LAN-accessible", async () => {
     await renderServices([
-      { name: "wlk", status: "ok", url: "http://192.168.1.20:8001" },
+      { name: "speechrail", status: "ok", url: "http://192.168.1.20:8201/health" },
     ], "subtitles", "network");
 
     const footer = container.querySelector<HTMLElement>(".health-footer-tip");
@@ -267,15 +346,15 @@ describe("StatusBar service diagnostics", () => {
 
   it("keeps rendering the legacy three-service response", async () => {
     await renderServices([
-      { name: "wlk", status: "ok", url: "http://127.0.0.1:8001" },
-      { name: "tts", status: "timeout", url: "http://127.0.0.1:8765" },
+      { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
+      { name: "tts", status: "timeout", url: "http://127.0.0.1:8201/health" },
       { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
     ]);
 
-    expect(findServiceRow("WhisperLiveKit")?.textContent).toContain("当前模式非必需");
-    expect(findServiceRow("Qwen3-TTS 桥")?.textContent).toContain("必须组件异常");
+    expect(findServiceRow("SpeechRail 服务")?.textContent).toContain("运行正常");
+    expect(findServiceRow("SpeechRail TTS")?.textContent).toContain("必须组件异常");
     expect(findServiceRow("LM Studio")?.textContent).toContain("必须组件异常");
-    expect(findServiceRow("Qwen3-TTS 桥")?.getAttribute("title")).toContain("连接超时");
+    expect(findServiceRow("SpeechRail TTS")?.getAttribute("title")).toContain("连接超时");
     expect(findServiceRow("LM Studio")?.getAttribute("title")).toContain("服务未启动");
     expect(container.querySelectorAll(".health-popover-row")).toHaveLength(7);
   });
@@ -283,14 +362,14 @@ describe("StatusBar service diagnostics", () => {
   it("renders null and unknown workload states defensively", async () => {
     await renderServices([
       {
-        name: "wlk",
+        name: "speechrail",
         status: "ok",
-        url: "http://127.0.0.1:8001",
+        url: "http://127.0.0.1:8201/health",
         workload: null,
         ws_state: null,
       },
       {
-        name: "wlk-future",
+        name: "speechrail-future",
         status: "ok",
         url: "http://127.0.0.1:8002",
         workload: "future-workload",
@@ -298,11 +377,11 @@ describe("StatusBar service diagnostics", () => {
       },
     ], "subtitles");
 
-    const wlkRow = findServiceRow("WhisperLiveKit");
-    expect(wlkRow?.getAttribute("title")).toContain("语音工作负载：未知");
-    expect(wlkRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
+    const speechrailRow = findServiceRow("SpeechRail 服务");
+    expect(speechrailRow?.getAttribute("title")).toContain("语音工作负载：未知");
+    expect(speechrailRow?.getAttribute("title")).toContain("WebSocket 状态：未知");
 
-    const futureRow = findServiceRow("wlk-future");
+    const futureRow = findServiceRow("speechrail-future");
     expect(futureRow?.getAttribute("title")).toContain("语音工作负载：future-workload");
     expect(futureRow?.getAttribute("title")).toContain("WebSocket 状态：future-ws-state");
   });
@@ -325,7 +404,7 @@ describe("StatusBar aggregate health", () => {
       ok: true,
       json: async () => ({
         services: [
-          { name: "wlk", status: "ok", url: "http://127.0.0.1:8001" },
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
           { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
           { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
         ],
@@ -373,11 +452,16 @@ describe("StatusBar aggregate health", () => {
     return healthButton as HTMLButtonElement;
   }
 
+  function findHealthRow(name: string): HTMLDivElement | undefined {
+    return Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes(name));
+  }
+
   it("excludes paused subtitles from assistant aggregate health using authoritative mode", async () => {
     const healthButton = await renderHealth("assistant", "running", "paused", "subtitles");
 
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(healthButton.textContent).toContain("系统正常 (4/4)");
+    expect(healthButton.textContent).toContain("系统正常 (5/5)");
   });
 
   it.each(["subtitles", "meeting"] as const)(
@@ -391,7 +475,7 @@ describe("StatusBar aggregate health", () => {
   );
 
   it.each([
-    ["assistant", "error", "paused", "核心组件异常 (3/4)"],
+    ["assistant", "error", "paused", "核心组件异常 (4/5)"],
     ["subtitles", "stopped", "error", "核心组件异常 (2/3)"],
   ] as const)("marks required %s workload errors in aggregate health", async (
     mode,
@@ -405,28 +489,126 @@ describe("StatusBar aggregate health", () => {
     expect(healthButton.textContent).toContain(expectedLabel);
   });
 
-  it("renders non-required services as neutral even when they are unavailable", async () => {
+  it("keeps required checking states distinct from hard failures", async () => {
+    const healthButton = await renderHealth("assistant", "starting", "paused", "assistant");
+
+    expect(healthButton.classList.contains("checking")).toBe(true);
+    expect(healthButton.classList.contains("has-error")).toBe(false);
+    expect(healthButton.textContent).toContain("核心组件探活中 (4/5)");
+  });
+
+  it("treats a reachable service with a missing required model as unhealthy", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
         services: [
-          { name: "wlk", status: "unreachable", url: "http://127.0.0.1:8001" },
-          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
-          { name: "lm", status: "ok", url: "http://127.0.0.1:1234" },
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
+          {
+            name: "tts",
+            status: "ok",
+            url: "http://127.0.0.1:8201/health",
+            target_model: "speechrail/qwen3-tts",
+            model_present: false,
+          },
+          {
+            name: "lm",
+            status: "ok",
+            url: "http://127.0.0.1:1234/v1/models",
+            target_model: "local/kat-coder-2.5",
+            model_present: true,
+          },
         ],
       }),
     }));
 
     const healthButton = await renderHealth("assistant", "running", "paused", "assistant");
+    expect(healthButton.classList.contains("has-error")).toBe(true);
+    expect(healthButton.textContent).toContain("核心组件异常 (4/5)");
+
+    act(() => {
+      healthButton.click();
+    });
+    const ttsRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail TTS"));
+    expect(ttsRow?.textContent).toContain("必须组件异常");
+    expect(ttsRow?.getAttribute("title")).toContain("目标模型未加载");
+  });
+
+  it("surfaces a required SpeechRail workload degradation in the aggregate health", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        services: [
+          {
+            name: "speechrail",
+            status: "ok",
+            url: "http://127.0.0.1:8201/health",
+            workload: "degraded",
+            ws_state: "reconnecting",
+          },
+        ],
+      }),
+    }));
+
+    const healthButton = await renderHealth("subtitles", "stopped", "connected", "subtitles");
+    expect(healthButton.classList.contains("has-degraded")).toBe(true);
+    expect(healthButton.textContent).toContain("核心组件降级 (2/3)");
+
+    act(() => {
+      healthButton.click();
+    });
+    const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("SpeechRail 服务"));
+    expect(speechrailRow?.textContent).toContain("必须组件降级");
+  });
+
+  it("shows PostgreSQL journal takeover as an explicit storage degradation", async () => {
+    useUISettingsStore.setState({ storageHealth: "degraded" });
+
+    await act(async () => {
+      root.render(createElement(StatusBar, {
+        commandSocket: {
+          ...commandSocket,
+          snapshot: { ...assistantSnapshot, mode: "meeting", pcm_owner: "meeting" },
+        },
+        activeTab: "meeting",
+      }));
+    });
+
+    const updatedHealthButton = container.querySelector<HTMLButtonElement>(".health-master-pill");
+    expect(updatedHealthButton?.classList.contains("has-degraded")).toBe(true);
+    expect(updatedHealthButton?.textContent).toContain("核心组件降级 (4/5)");
+    act(() => {
+      updatedHealthButton?.click();
+    });
+    const storageRow = findHealthRow("PostgreSQL 知识库");
+    expect(storageRow?.textContent).toContain("必须组件降级");
+    expect(storageRow?.getAttribute("title")).toContain("RecoveryJournal");
+
+  });
+
+  it("renders non-required services as neutral even when they are unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        services: [
+          { name: "speechrail", status: "ok", url: "http://127.0.0.1:8201/health" },
+          { name: "tts", status: "ok", url: "http://127.0.0.1:8765" },
+          { name: "lm", status: "unreachable", url: "http://127.0.0.1:1234" },
+        ],
+      }),
+    }));
+
+    const healthButton = await renderHealth("subtitles", "stopped", "connected", "subtitles");
     act(() => {
       healthButton.click();
     });
 
-    const wlkRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
-      .find((row) => row.textContent?.includes("WhisperLiveKit"));
+    const speechrailRow = Array.from(container.querySelectorAll<HTMLDivElement>(".health-popover-row"))
+      .find((row) => row.textContent?.includes("LM Studio"));
     expect(healthButton.classList.contains("all-ok")).toBe(true);
-    expect(wlkRow?.textContent).toContain("当前模式非必需");
-    expect(wlkRow?.classList.contains("state-not-required")).toBe(true);
+    expect(speechrailRow?.textContent).toContain("当前模式非必需");
+    expect(speechrailRow?.classList.contains("state-not-required")).toBe(true);
   });
 
   it("marks required rows and keeps optional rows visually separate", async () => {

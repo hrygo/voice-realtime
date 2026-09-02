@@ -283,7 +283,7 @@ export default function AssistantPanel({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "VoiceDesign",
+            model: "speechrail/qwen3-tts",
             input: previewText,
             voice: v,
             response_format: "wav",
@@ -293,7 +293,7 @@ export default function AssistantPanel({
         blob = await res.blob();
       } catch (err) {
         setIsPreviewPlaying(false);
-        showToast("试听请求失败，请确保 TTS 桥已启动", "error");
+        showToast("试听请求失败，请确保 SpeechRail 已启动", "error");
         return;
       }
 
@@ -334,7 +334,7 @@ export default function AssistantPanel({
     }
     let content = "";
     if (format === "md") {
-      content = `# Voice Studio 语音交互记录\n\n- 日期: ${new Date().toLocaleString()}\n- 提示词人格: ${persona}\n- 音色: ${voice}\n\n---\n\n` +
+      content = `# Sona 语音交互记录\n\n- 日期: ${new Date().toLocaleString()}\n- 提示词人格: ${persona}\n- 音色: ${voice}\n\n---\n\n` +
         transcript.map((b) => `### ${b.role === "user" ? "👤 用户" : "🤖 助手"} (${b.timestamp || ""})\n\n${b.text}\n`).join("\n");
     } else {
       content = transcript.map((b) => `[${b.role === "user" ? "用户" : "助手"}] ${b.text}`).join("\n\n");
@@ -375,7 +375,7 @@ export default function AssistantPanel({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "VoiceDesign",
+            model: "speechrail/qwen3-tts",
             input: text.slice(0, 500),
             voice,
             response_format: "wav",
@@ -385,7 +385,7 @@ export default function AssistantPanel({
         const blob = await res.blob();
         await playAudioBlob(blob);
       } catch {
-        showToast("语音朗读请求失败，请确保 TTS 桥已启动", "error");
+        showToast("语音朗读请求失败，请确保 SpeechRail 已启动", "error");
       } finally {
         setPlayingBubbleKey(null);
       }
@@ -453,12 +453,24 @@ export default function AssistantPanel({
     fetch(apiUrl("/v1/voices"))
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json() as Promise<{ voice: string; available: string[] }>;
+        return res.json() as Promise<{
+          data?: Array<{ id?: unknown; available?: unknown }>;
+          available?: unknown;
+        }>;
       })
       .then((data) => {
         if (cancelled) return;
-        if (data.available && data.available.length > 0) {
-          setAvailableVoices(data.available);
+        const catalogVoices = Array.isArray(data.data)
+          ? data.data
+              .filter((item) => item.available !== false && typeof item.id === "string")
+              .map((item) => item.id as string)
+          : [];
+        const legacyVoices = Array.isArray(data.available)
+          ? data.available.filter((item): item is string => typeof item === "string")
+          : [];
+        const voices = catalogVoices.length > 0 ? catalogVoices : legacyVoices;
+        if (voices.length > 0) {
+          setAvailableVoices(voices);
         }
       })
       .catch(() => {

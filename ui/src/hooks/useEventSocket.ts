@@ -106,7 +106,7 @@ export class ReconnectingSocket {
 }
 
 /**
- * WebSocket 生命周期管理：指数退避重连（移植 wlk 官方 UI 语义）。
+ * WebSocket 生命周期管理：指数退避重连。
  * 连接打开后启动心跳；断线后按 1s, 2s, 4s… 上限 30s 重连。
  */
 export function useEventSocket(url: string, onMessage: (evt: MessageEvent) => void) {

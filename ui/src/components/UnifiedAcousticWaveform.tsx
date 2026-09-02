@@ -27,8 +27,8 @@ interface WaveParticle {
 
 /**
  * 统一多谐波拟真声学波形引擎：
- * 采用【Silero VAD 毫秒级拾音即时声浪 + 麦克风频域时域双通道能量 + 流式共振】多维声学生态驱动，
- * 实现开口即波动（10ms 零延迟）、音量大小精准映射、停嘴自然平息的高保真视觉交互体验。
+ * 采用【服务端实际送入推理链的 PCM 能量 + 流式文本共振】驱动，
+ * 映射当前输入强弱，并在停止输入后自然平息。
  */
 export function UnifiedAcousticWaveform({
 
@@ -70,7 +70,7 @@ export function UnifiedAcousticWaveform({
   }, [isMuted]);
 
   useEffect(() => {
-    // 订阅全局麦克风真实声音大小
+    // 订阅服务端权威输入能量，不在浏览器重复打开采音设备
     const unsubscribe = audioEnergyService.subscribe((realAudioEnergy) => {
       energyRef.current = realAudioEnergy;
     });
@@ -98,7 +98,7 @@ export function UnifiedAcousticWaveform({
     let isRunning = true;
     let smoothedEnergy = 0.08;
 
-    // 动态能量微粒子（随真实声音大小扩散）
+    // 动态能量微粒子（随实际输入能量扩散）
     const particleCount = 20;
     const particles: WaveParticle[] = Array.from({ length: particleCount }, () => ({
       x: Math.random(),
@@ -135,7 +135,7 @@ export function UnifiedAcousticWaveform({
         textEnergy = (remaining / 1400) * 0.75;
       }
 
-      // 计算当前真实综合能量目标
+      // 计算当前综合能量目标
       let targetEnergy = 0.08;
 
       if (muted) {
@@ -145,7 +145,7 @@ export function UnifiedAcousticWaveform({
         const speakingCadence = 0.38 + Math.sin(tick * 1.5) * 0.12;
         targetEnergy = Math.max(realAudioEnergy, textEnergy, speakingCadence);
       } else if (currentState === "listening") {
-        // 聆听麦克风：以真实麦克风能量为主导，静默待命时维持温润微波，有声时敏锐激荡
+        // 聆听输入：以服务端输入能量为主导，静默待命时维持温润微波
         const listeningBaseline = 0.08 + Math.sin(tick * 0.8) * 0.02;
         targetEnergy = Math.max(realAudioEnergy, textEnergy, listeningBaseline);
       } else if (currentState === "thinking") {
@@ -153,7 +153,7 @@ export function UnifiedAcousticWaveform({
         const thinkingPulse = 0.32 + Math.sin(tick * 2.0) * 0.10;
         targetEnergy = Math.max(realAudioEnergy, textEnergy, thinkingPulse);
       } else {
-        // 待命静息（idle / stopped / degraded / recording）：跟随真实麦克风输入，无声时维持平稳温润基线
+        // 待命静息（idle / stopped / degraded / recording）：跟随实际输入，无声时保持基线
         targetEnergy = Math.max(realAudioEnergy, textEnergy, 0.08);
       }
 

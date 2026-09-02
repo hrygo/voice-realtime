@@ -1,4 +1,4 @@
-"""Voice Studio UI 服务基础测试。"""
+"""Sona UI 服务基础测试。"""
 
 from __future__ import annotations
 
@@ -20,14 +20,19 @@ from fastapi import WebSocket
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from voice_realtime.config import InteractionSettings, Settings, SubtitleSettings
-from voice_realtime.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
-from voice_realtime.ui import server as server_module
-from voice_realtime.ui.assistant_bridge import StatusBridgeObserver
-from voice_realtime.ui.protocol import DuplexMode, RuntimeStateSnapshot
-from voice_realtime.ui.runtime_events import RuntimeStateBroadcaster
-from voice_realtime.ui.server import _initialize_meeting_backend, create_app
-from voice_realtime.ui.subtitle_proxy import SubtitleProxy, SubtitleProxyState
+from sona.config import InteractionSettings, Settings, SubtitleSettings
+from sona.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
+from sona.subtitles import SubtitleProxy, SubtitleProxyState
+from sona.ui import http_routes as http_routes_module
+from sona.ui import websocket_routes as websocket_routes_module
+from sona.ui.app_context import (
+    get_app_context,
+    initialize_meeting_backend,
+)
+from sona.ui.assistant_bridge import StatusBridgeObserver
+from sona.ui.protocol import DuplexMode, RuntimeStateSnapshot
+from sona.ui.runtime_events import RuntimeStateBroadcaster
+from sona.ui.server import create_app
 
 
 class _FakeRuntime:
@@ -35,9 +40,7 @@ class _FakeRuntime:
 
     def __init__(self, *, mode: RuntimeMode = RuntimeMode.ASSISTANT) -> None:
         self.observer = StatusBridgeObserver()
-        self.subtitle_proxy = SubtitleProxy(
-            SubtitleSettings(host="127.0.0.1", port=9998)
-        )
+        self.subtitle_proxy = SubtitleProxy(SubtitleSettings())
         self.start = AsyncMock()
         self.stop = AsyncMock()
         self.clear_context = AsyncMock()
@@ -162,7 +165,7 @@ def _settings() -> Settings:
 def _running_client(runtime: _FakeRuntime) -> Iterator[TestClient]:
     application = create_app(_settings(), initialize_meeting=False)
     with (
-        patch("voice_realtime.ui.server.UIRuntime", return_value=runtime),
+        patch("sona.ui.server.UIRuntime", return_value=runtime),
         TestClient(
             application,
             raise_server_exceptions=False,
@@ -186,7 +189,7 @@ def app() -> TestClient:
     """构造一个注入 mock 服务的测试客户端。"""
     mock_settings = Settings(
         bridge={"host": "127.0.0.1", "port": 9999},  # unreachable
-        subtitles={"host": "127.0.0.1", "port": 9998},  # unreachable
+        subtitles={"speechrail_url": "ws://127.0.0.1:9998/v1/realtime"},  # unreachable
         interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},  # unreachable
         ui={"static_dir": Path("/nonexistent/dist")},  # 无 dist 时走 placeholder
     )
@@ -222,7 +225,7 @@ class TestHealth:
 
     def test_runtime_snapshot(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         resp = client.get("/api/runtime")
         assert resp.status_code == 200
@@ -250,21 +253,23 @@ class TestHealth:
         meeting_session = Mock()
 
         with patch(
-            "voice_realtime.ui.server.run_migrations", new_callable=AsyncMock
+            "sona.ui.app_context.run_migrations", new_callable=AsyncMock
         ) as migrations, patch(
-            "voice_realtime.ui.server.PostgresMeetingRepository",
+            "sona.ui.app_context.PostgresMeetingRepository",
             return_value=repository,
         ), patch(
-            "voice_realtime.ui.server.RecoveryJournal", return_value=journal
+            "sona.ui.app_context.RecoveryJournal", return_value=journal
         ), patch(
-            "voice_realtime.ui.server.MeetingSummaryClient", return_value=summary_client
+            "sona.ui.app_context.MeetingSummaryClient", return_value=summary_client
         ) as summary_client_factory, patch(
-            "voice_realtime.ui.server.MeetingSummaryService",
+            "sona.ui.app_context.MeetingSummaryService",
             return_value=summary_service,
         ), patch(
-            "voice_realtime.ui.server.MeetingSession", return_value=meeting_session
+            "sona.ui.app_context.MeetingSession", return_value=meeting_session
         ):
-            ready = await _initialize_meeting_backend(app, settings, runtime)
+            context = get_app_context(app)
+            context.runtime = runtime
+            ready = await initialize_meeting_backend(context)
 
         assert ready
         migrations.assert_awaited_once_with(
@@ -280,9 +285,9 @@ class TestHealth:
             settings.meeting,
             base_url=settings.interaction.llm_base_url,
             api_key=settings.interaction.llm_api_key,
-            scheduler=app.state.inference_scheduler,
+            scheduler=context.inference_scheduler,
         )
-        assert app.state.meeting_repository is repository
+        assert context.meeting_repository is repository
 
 
 class TestServices:
@@ -294,9 +299,9 @@ class TestServices:
         assert data["network_scope"] == "local"
         assert "services" in data
         names = {s["name"] for s in data["services"]}
-        assert names == {"wlk", "tts", "lm"}
+        assert names == {"speechrail", "tts", "lm"}
         for svc in data["services"]:
-            assert svc["status"] in ("unreachable", "timeout", "error")
+            assert svc["status"] in ("ok", "unreachable", "timeout", "error")
             assert svc["name"] in names
         assert data["diagnostics"] == {
             "audio_hub": {},
@@ -320,7 +325,7 @@ class TestServices:
         host: str,
         expected_scope: str,
     ) -> None:
-        assert server_module._network_scope(host) == expected_scope
+        assert http_routes_module._network_scope(host) == expected_scope
 
     def test_services_adds_runtime_workload_diagnostics(self) -> None:
         """HTTP 探活与 paused workload 独立，并复制五类运行时诊断。"""
@@ -360,7 +365,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -371,11 +376,11 @@ class TestServices:
         assert response.status_code == 200
         payload = response.json()
         services = {item["name"]: item for item in payload["services"]}
-        assert set(services) == {"wlk", "tts", "lm"}
-        assert services["wlk"] == {
-            "name": "wlk",
+        assert set(services) == {"speechrail", "tts", "lm"}
+        assert services["speechrail"] == {
+            "name": "speechrail",
             "status": "ok",
-            "url": "http://127.0.0.1:9998/health",
+            "url": "http://127.0.0.1:8201/health",
             "workload": "paused",
             "ws_state": "paused",
             "reconnect_count": 0,
@@ -384,7 +389,9 @@ class TestServices:
         assert services["tts"] == {
             "name": "tts",
             "status": "ok",
-            "url": "http://127.0.0.1:9999/health",
+            "url": "http://127.0.0.1:8201/health",
+            "target_model": "speechrail/qwen3-tts",
+            "model_present": False,
         }
         assert services["lm"]["status"] == "ok"
         assert services["lm"]["target_model"] == _settings().interaction.llm_model
@@ -411,13 +418,18 @@ class TestServices:
         }
         assert "must-not-leak" not in response.text
 
-    def test_services_probe_authenticates_only_lm_models_request(self) -> None:
+    def test_services_authenticates_configured_upstreams(self) -> None:
         settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
-            subtitles={"host": "127.0.0.1", "port": 9998},
+            subtitles={
+                "speechrail_url": "ws://127.0.0.1:9998/v1/realtime",
+                "speechrail_api_key": "subtitle-key",
+            },
             interaction={
                 "llm_base_url": "http://127.0.0.1:9997/v1",
                 "llm_api_key": "test-key",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9996/v1",
+                "speechrail_api_key": "tts-key",
             },
         )
         app = create_app(settings, initialize_meeting=False)
@@ -425,9 +437,9 @@ class TestServices:
         mock_resp.json.return_value = {"data": [{"id": settings.interaction.llm_model}]}
 
         with (
-            patch("voice_realtime.ui.server.UIRuntime") as fake_cls,
+            patch("sona.ui.server.UIRuntime") as fake_cls,
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ) as get,
@@ -442,11 +454,14 @@ class TestServices:
             call for call in get.call_args_list if call.args[0].endswith("/v1/models")
         )
         assert lm_call.kwargs["headers"] == {"Authorization": "Bearer test-key"}
-        non_lm_calls = [
-            call for call in get.call_args_list if not call.args[0].endswith("/v1/models")
-        ]
-        assert len(non_lm_calls) == 2
-        assert all(call.kwargs["headers"] is None for call in non_lm_calls)
+        speechrail_call = next(
+            call for call in get.call_args_list if call.args[0].endswith(":9998/health")
+        )
+        assert speechrail_call.kwargs["headers"] == {"Authorization": "Bearer subtitle-key"}
+        tts_call = next(
+            call for call in get.call_args_list if call.args[0].endswith(":9996/health")
+        )
+        assert tts_call.kwargs["headers"] == {"Authorization": "Bearer tts-key"}
 
     def test_services_http_ok_reports_backoff_workload_as_degraded(self) -> None:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
@@ -455,7 +470,7 @@ class TestServices:
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -463,25 +478,25 @@ class TestServices:
         ):
             response = client.get("/api/services")
 
-        wlk = next(
-            item for item in response.json()["services"] if item["name"] == "wlk"
+        speechrail = next(
+            item for item in response.json()["services"] if item["name"] == "speechrail"
         )
-        assert wlk["status"] == "ok"
-        assert wlk["workload"] == "degraded"
-        assert wlk["ws_state"] == "backoff"
+        assert speechrail["status"] == "ok"
+        assert speechrail["workload"] == "degraded"
+        assert speechrail["ws_state"] == "backoff"
 
     def test_services_ready_workload_ignores_long_event_silence(self) -> None:
         runtime = _FakeRuntime(mode=RuntimeMode.SUBTITLES)
         proxy = runtime.subtitle_proxy
         proxy._state = SubtitleProxyState.CONNECTED
-        proxy._browser_stream = object()
-        proxy._browser_ready.set()
+        proxy._subtitle_session._stream = object()
+        proxy._subtitle_session.ready.set()
         proxy._last_event_at = proxy._clock() - 120.0
         mock_resp = Mock(status_code=200)
 
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -489,13 +504,13 @@ class TestServices:
         ):
             response = client.get("/api/services")
 
-        wlk = next(
-            item for item in response.json()["services"] if item["name"] == "wlk"
+        speechrail = next(
+            item for item in response.json()["services"] if item["name"] == "speechrail"
         )
-        assert wlk["status"] == "ok"
-        assert wlk["workload"] == "ready"
-        assert wlk["ws_state"] == "connected"
-        assert wlk["last_event_age_ms"] >= 120_000
+        assert speechrail["status"] == "ok"
+        assert speechrail["workload"] == "ready"
+        assert speechrail["ws_state"] == "connected"
+        assert speechrail["last_event_age_ms"] >= 120_000
 
     def test_services_runtime_diagnostics_failure_is_redacted(
         self,
@@ -513,7 +528,7 @@ class TestServices:
         with (
             caplog.at_level(logging.WARNING),
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 return_value=mock_resp,
             ),
@@ -523,12 +538,14 @@ class TestServices:
 
         payload = response.json()
         assert {item["name"] for item in payload["services"]} == {
-            "wlk",
+            "speechrail",
             "tts",
             "lm",
         }
-        wlk = next(item for item in payload["services"] if item["name"] == "wlk")
-        assert set(wlk) == {"name", "status", "url"}
+        speechrail = next(
+            item for item in payload["services"] if item["name"] == "speechrail"
+        )
+        assert set(speechrail) == {"name", "status", "url"}
         assert payload["diagnostics"] == {
             "audio_hub": {},
             "interaction": {},
@@ -559,7 +576,7 @@ class TestServices:
         application = create_app(_settings(), initialize_meeting=False)
         with (
             patch(
-                "voice_realtime.ui.server.httpx.AsyncClient.get",
+                "sona.ui.http_routes.httpx.AsyncClient.get",
                 new_callable=AsyncMock,
                 side_effect=concurrent_get,
             ),
@@ -583,9 +600,9 @@ class TestServices:
         mock_resp.status_code = 200
 
         with patch(
-            "voice_realtime.ui.server.UIRuntime"
+            "sona.ui.server.UIRuntime"
         ) as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
         ):
@@ -608,33 +625,84 @@ class TestServices:
 
 
 class TestVoices:
-    def test_voices_proxies_from_bridge(self) -> None:
-        """/v1/voices 代理 TTS 桥；桥返回音色列表时原样透传。"""
+    def test_voices_proxies_from_speechrail(self) -> None:
+        """/v1/voices 代理 SpeechRail 预置音色目录。"""
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9999},
-            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+            },
         )
         app = create_app(mock_settings, initialize_meeting=False)
 
         mock_resp = Mock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"voice": "default", "available": ["default", "warm"]}
+        mock_resp.json.return_value = {
+            "object": "list",
+            "data": [
+                {"id": "default", "available": True},
+                {"id": "warm", "available": True},
+            ],
+        }
 
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             return_value=mock_resp,
-        ):
+        ) as get:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
             with TestClient(app) as client:
                 resp = client.get("/v1/voices")
                 assert resp.status_code == 200
-                assert resp.json()["available"] == ["default", "warm"]
+                assert resp.json()["data"][0]["id"] == "default"
+                assert get.call_args.kwargs["headers"] is None
 
-    def test_voices_bridge_down_returns_502(self) -> None:
-        """桥不可达时返回 502，不抛未处理异常。"""
+    def test_speech_proxy_uses_speechrail_rest_endpoint_and_authenticates(self) -> None:
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+                "speechrail_api_key": "tts-key",
+            },
+        )
+        app = create_app(mock_settings, initialize_meeting=False)
+        mock_resp = Mock(status_code=200)
+        mock_resp.content = b"RIFF-audio"
+        mock_resp.headers = {"content-type": "audio/wav"}
+
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as post:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                response = client.post(
+                    "/v1/audio/speech",
+                    json={
+                        "model": "speechrail/qwen3-tts",
+                        "input": "你好",
+                        "voice": "warm",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.content == b"RIFF-audio"
+        post.assert_awaited_once()
+        assert post.call_args.args[0] == "http://127.0.0.1:9998/v1/audio/speech"
+        assert post.call_args.kwargs["headers"] == {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer tts-key",
+        }
+
+    def test_voices_speechrail_down_returns_502(self) -> None:
+        """SpeechRail 不可达时返回 502，不抛未处理异常。"""
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
             subtitles={"host": "127.0.0.1", "port": 9999},
@@ -642,8 +710,8 @@ class TestVoices:
         )
         app = create_app(mock_settings, initialize_meeting=False)
 
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls, patch(
-            "voice_realtime.ui.server.httpx.AsyncClient.get",
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.get",
             new_callable=AsyncMock,
             side_effect=httpx.ConnectError("refused"),
         ):
@@ -668,7 +736,7 @@ class TestStaticMount:
         """有 ui/dist/index.html 时返回 HTML 内容。"""
         dist = tmp_path / "ui" / "dist"
         dist.mkdir(parents=True)
-        (dist / "index.html").write_text("<html><body>Voice Studio</body></html>")
+        (dist / "index.html").write_text("<html><body>Sona</body></html>")
 
         mock_settings = Settings(
             bridge={"host": "127.0.0.1", "port": 9999},
@@ -677,13 +745,13 @@ class TestStaticMount:
             ui={"static_dir": dist},
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        with patch("voice_realtime.ui.server.UIRuntime") as fake_cls:
+        with patch("sona.ui.server.UIRuntime") as fake_cls:
             fake_cls.return_value.start = AsyncMock()
             fake_cls.return_value.stop = AsyncMock()
             with TestClient(app) as client:
                 resp = client.get("/")
                 assert resp.status_code == 200
-                assert "Voice Studio" in resp.text
+                assert "Sona" in resp.text
 
 
 class TestWebSocketGateways:
@@ -706,27 +774,27 @@ class TestWebSocketGateways:
             meeting=meeting,
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
     def test_assistant_connection_registers_and_unregisters(self) -> None:
         """/ws/assistant：连接加入 observer 广播，断开移除。"""
         client = self._app_with_runtime()
         with client.websocket_connect("/ws/assistant"):
-            assert client.app.state.runtime.observer.has_clients
-        assert not client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
+        assert not get_app_context(client.app).runtime.observer.has_clients
 
     def test_subtitles_connection_registers_and_unregisters(self) -> None:
         """/ws/subtitles：连接加入 proxy 广播，断开移除。"""
         client = self._app_with_runtime()
-        client.app.state.runtime.force_state(
+        get_app_context(client.app).runtime.force_state(
             RuntimeMode.SUBTITLES,
             PCMOwner.SUBTITLES,
             2,
         )
         with client.websocket_connect("/ws/subtitles"):
-            assert client.app.state.runtime.subtitle_proxy.has_clients
-        assert not client.app.state.runtime.subtitle_proxy.has_clients
+            assert get_app_context(client.app).runtime.subtitle_proxy.has_clients
+        assert not get_app_context(client.app).runtime.subtitle_proxy.has_clients
 
     def test_ws_closed_when_runtime_unavailable(self) -> None:
         """runtime 未装配（测试直连/lifespan 未跑）时拒绝连接。"""
@@ -755,7 +823,7 @@ class TestWebSocketGateways:
                 "origin": "http://localhost:5173",
             },
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     @pytest.mark.parametrize(
         "origin",
@@ -820,7 +888,7 @@ class TestWebSocketGateways:
             "/ws/assistant",
             headers={"host": request_host, "origin": origin},
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     @pytest.mark.parametrize(
         "origin",
@@ -834,7 +902,7 @@ class TestWebSocketGateways:
             "/ws/assistant",
             headers={"host": "192.168.1.10:8100", "origin": origin},
         ):
-            assert client.app.state.runtime.observer.has_clients
+            assert get_app_context(client.app).runtime.observer.has_clients
 
     def test_forwarded_host_does_not_override_request_host(self) -> None:
         client = self._app_with_runtime(
@@ -863,7 +931,7 @@ class TestCommandGateway:
             interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
         )
         app = create_app(mock_settings, initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         return TestClient(app, raise_server_exceptions=False)
 
     def test_clear_context_command_executed(self) -> None:
@@ -877,7 +945,7 @@ class TestCommandGateway:
         assert resp["ok"] is True
         assert resp["request_id"] == "1"
         assert resp["state"]["pipeline"] == "running"
-        client.app.state.runtime.clear_context.assert_awaited_once()
+        get_app_context(client.app).runtime.clear_context.assert_awaited_once()
 
     def test_unknown_command_returns_error(self) -> None:
         client = self._app_with_runtime()
@@ -911,7 +979,7 @@ class TestCommandGateway:
 class TestMeetingV1Gateway:
     def test_meeting_socket_sends_contract_snapshot(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/meetings") as ws:
             event = ws.receive_json()
@@ -921,7 +989,7 @@ class TestMeetingV1Gateway:
 
     def test_idle_meeting_snapshot_uses_nil_meeting_and_null_partial(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime(mode=RuntimeMode.IDLE)
+        get_app_context(app).runtime = _FakeRuntime(mode=RuntimeMode.IDLE)
         client = TestClient(app, raise_server_exceptions=False)
 
         with client.websocket_connect("/ws/v1/meetings") as ws:
@@ -932,14 +1000,14 @@ class TestMeetingV1Gateway:
         assert event["payload"]["partial"] is None
 
     def test_snapshot_partial_serializes_known_speaker_without_guessing_unknown(self) -> None:
-        known = server_module._partial_snapshot_json(
+        known = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(
                 source_epoch=1,
                 partial="正在说",
                 partial_speaker_key="epoch:1:speaker:2",
             )
         )
-        unknown = server_module._partial_snapshot_json(
+        unknown = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(source_epoch=1, partial="尚未分人")
         )
 
@@ -949,7 +1017,7 @@ class TestMeetingV1Gateway:
             "speaker_name": "说话人 2",
         }
         assert unknown == {"text": "尚未分人", "speaker_key": None, "speaker_name": None}
-        opaque = server_module._partial_snapshot_json(
+        opaque = websocket_routes_module._partial_snapshot_json(
             TranscriptWindow(
                 source_epoch=1,
                 partial="尚未命名",
@@ -965,7 +1033,7 @@ class TestMeetingV1Gateway:
 
     def test_control_socket_uses_v1_envelope(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/control") as ws:
             handshake = ws.receive_json()
@@ -978,7 +1046,7 @@ class TestMeetingV1Gateway:
 
     def test_control_socket_rejects_unknown_fields(self) -> None:
         app = create_app(Settings(), initialize_meeting=False)
-        app.state.runtime = _FakeRuntime()
+        get_app_context(app).runtime = _FakeRuntime()
         client = TestClient(app, raise_server_exceptions=False)
         with client.websocket_connect("/ws/v1/control") as ws:
             ws.receive_json()
@@ -997,14 +1065,14 @@ class TestMeetingV1Gateway:
 
 class TestRuntimeControlBroadcast:
     def test_control_routes_share_only_control_bridge_dispatch(self) -> None:
-        route_source = inspect.getsource(server_module._mount_websocket_routes)
-        handler_source = inspect.getsource(server_module._serve_control_websocket)
+        route_source = inspect.getsource(websocket_routes_module.create_websocket_router)
+        handler_source = inspect.getsource(websocket_routes_module._serve_control_websocket)
 
         assert route_source.count(
-            "await _serve_control_websocket(websocket, runtime, cfg)"
+            "await _serve_control_websocket(websocket, runtime, context)"
         ) == 2
-        assert handler_source.count("ControlBridge(runtime, cfg.bridge)") == 1
-        assert not hasattr(server_module, "_handle_v1_control")
+        assert handler_source.count("ControlBridge(runtime)") == 1
+        assert not hasattr(websocket_routes_module, "_handle_v1_control")
 
     def test_v1_control_broadcasts_to_all_and_acks_only_requester(self) -> None:
         runtime = _FakeRuntime()
@@ -1085,9 +1153,9 @@ class TestRuntimeControlBroadcast:
                     }
                 )
                 assert runtime.command_accepted.wait(timeout=1.0)
-                if not hasattr(client.app.state, "accepted_control_tasks"):
+                if not get_app_context(client.app).accepted_control_tasks:
                     runtime.release_command.set()
-                assert client.app.state.accepted_control_tasks
+                assert get_app_context(client.app).accepted_control_tasks
 
                 requesting.close()
                 runtime.release_command.set()
@@ -1099,7 +1167,7 @@ class TestRuntimeControlBroadcast:
         assert committed["state"]["mode"] == "subtitles"
         assert committed["state"]["runtime_revision"] == 2
         assert not runtime.runtime_events._clients
-        assert not client.app.state.accepted_control_tasks
+        assert not get_app_context(client.app).accepted_control_tasks
 
     async def test_control_sender_is_single_writer_and_cleans_pending_gets(self) -> None:
         runtime = _FakeRuntime()
@@ -1107,7 +1175,7 @@ class TestRuntimeControlBroadcast:
         responses: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=8)
         websocket = _RecordingWebSocket()
         sender = asyncio.create_task(
-            server_module._send_control_messages(websocket, responses, runtime_client)
+            websocket_routes_module._send_control_messages(websocket, responses, runtime_client)
         )
         await asyncio.wait_for(websocket.wait_for_messages(1), timeout=1.0)
 
@@ -1179,9 +1247,9 @@ class TestRuntimeControlBroadcast:
         runtime = _FakeRuntime()
         secret = "external-payload-must-not-leak"
         with (
-            caplog.at_level(logging.ERROR, logger="voice_realtime.ui.server"),
+            caplog.at_level(logging.ERROR, logger="sona.ui.server"),
             patch(
-                "voice_realtime.ui.server.ControlBridge.handle",
+                "sona.ui.websocket_routes.ControlBridge.handle",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError(secret),
             ),
@@ -1203,7 +1271,7 @@ class TestSubtitleEligibility:
         runtime = _FakeRuntime(mode=RuntimeMode.ASSISTANT)
         websocket = _HandshakeRecordingWebSocket()
 
-        await server_module._serve_subtitle_websocket(websocket, runtime)  # type: ignore[arg-type]
+        await websocket_routes_module._serve_subtitle_websocket(websocket, runtime)  # type: ignore[arg-type]
 
         assert websocket.events == [("accept", None), ("close", 4409)]
         assert not runtime.runtime_events._clients

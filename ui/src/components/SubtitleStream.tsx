@@ -319,7 +319,7 @@ export default function SubtitleStream({
 
               <span className={`subtitle-status-pill ${connected ? "connected" : ""}`}>
                 <span className="subtitle-status-dot" />
-                {connected ? "WhisperLiveKit 已连接" : "等待连接"}
+                {connected ? "SpeechRail 已连接" : "等待连接"}
               </span>
               <span
                 className="subtitle-mode-pill"
@@ -581,7 +581,7 @@ export default function SubtitleStream({
                 <span className="subtitle-empty-icon">🎙️</span>
                 <p className="subtitle-empty-title">等待语音字幕...</p>
                 <p className="subtitle-empty-desc">
-                  WhisperLiveKit 流式 ASR 正在监听，系统检测到发言后将实时输出带说话人分离的字幕。
+                  SpeechRail 流式 ASR 正在监听，系统检测到发言后将实时输出字幕。
                 </p>
               </div>
             )}
@@ -626,9 +626,9 @@ export default function SubtitleStream({
             <div className="presentation-title-wrap">
               <div className="presentation-logo-icon">🎙️</div>
               <div className="presentation-title-text">
-                <h2>Voice Studio 舞台提词与大屏</h2>
+                <h2>Sona 舞台提词与大屏</h2>
                 <span className="presentation-subtitle-status">
-                  {connected ? "● WhisperLiveKit 实时转写" : "○ 等待 ASR 连接"}
+                  {connected ? "● SpeechRail 实时转写" : "○ 等待 ASR 连接"}
                   {" · "}
                   <span>已转录 {lines.length} 条字幕</span>
                 </span>
@@ -731,7 +731,7 @@ export default function SubtitleStream({
                 <div className="presentation-empty">
                   <span className="presentation-empty-icon">🎙️</span>
                   <h3>舞台提词与字幕大屏已就绪</h3>
-                  <p>WhisperLiveKit 正在实时监听中，发言将实时以大字投屏呈现</p>
+                  <p>SpeechRail 正在实时监听中，发言将实时以大字投屏呈现</p>
                 </div>
               )}
 

@@ -37,9 +37,9 @@ get_lan_ip() {
     echo "$ip"
 }
 
-# 获取全局绑定的目标变量（优先级：VR_BIND_HOST > VR_HOST > BIND_HOST > HOST）
+# 获取全局绑定的目标变量（优先级：SONA_BIND_HOST > SONA_HOST > BIND_HOST > HOST）
 get_global_bind_target() {
-    local global_target="${VR_BIND_HOST:-${VR_HOST:-${BIND_HOST:-${HOST:-}}}}"
+    local global_target="${SONA_BIND_HOST:-${SONA_HOST:-${BIND_HOST:-${HOST:-}}}}"
     echo "$global_target"
 }
 

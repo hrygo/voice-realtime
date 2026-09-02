@@ -1,6 +1,6 @@
 asyncapi: 3.0.0
 info:
-  title: Voice Studio Meeting Assistant WebSocket API
+  title: Sona Meeting Assistant WebSocket API
   version: 1.2.0
   description: Versioned control, meeting-event, and private Inner OS channels for the separated frontend.
 servers:

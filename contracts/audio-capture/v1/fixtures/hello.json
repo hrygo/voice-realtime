@@ -1,0 +1,8 @@
+{
+  "type": "hello",
+  "request_id": "hello-fixture",
+  "protocol_major": 1,
+  "protocol_minor": 0,
+  "capture_token": "0000000000000000000000000000000000000000000000000000000000000000",
+  "client_pid": 12345
+}

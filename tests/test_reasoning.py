@@ -20,7 +20,7 @@ from pipecat.frames.frames import EndFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.openai.llm import OpenAILLMService
 
-from voice_realtime.interaction.context_memory import (
+from sona.interaction.context_memory import (
     CompactionWindow,
     ContextCompactionConfig,
     ConversationMemoryPacket,
@@ -29,8 +29,8 @@ from voice_realtime.interaction.context_memory import (
     empty_memory_snapshot,
     parse_snapshot,
 )
-from voice_realtime.interaction.pipeline import build_system_prompt
-from voice_realtime.interaction.reasoning import (
+from sona.interaction.pipeline import build_system_prompt
+from sona.interaction.reasoning import (
     LmStudioNativeLLMService,
     NativeChatResult,
     NativeChatStats,
@@ -262,7 +262,7 @@ class TestLmStudioNativeLLMService:
 
     async def test_native_request_payload_and_sse_conversion(self) -> None:
         svc = LmStudioNativeLLMService(
-            model="qwen/qwen3.6-35b-a3b",
+            model="local/kat-coder-2.5",
             base_url="http://localhost:1234/v1",
             temperature=0.9,
         )
@@ -286,7 +286,7 @@ class TestLmStudioNativeLLMService:
         payload = captured["body"]
         assert captured["method"] == "POST"
         assert captured["url"].endswith("/api/v1/chat")
-        assert payload["model"] == "qwen/qwen3.6-35b-a3b"
+        assert payload["model"] == "local/kat-coder-2.5"
         assert payload["reasoning"] == "off"
         assert payload["temperature"] == 0.9
         assert payload["stream"] is True

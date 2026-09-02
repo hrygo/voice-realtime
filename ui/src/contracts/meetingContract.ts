@@ -1,5 +1,5 @@
 /**
- * Voice Studio 会议助手 V1 契约定义
+ * Sona 会议助手 V1 契约定义
  * 依据 docs/superpowers/specs/2026-08-21-meeting-assistant-design.md
  */
 
@@ -184,7 +184,7 @@ export const ERROR_CODE_MESSAGES: Record<string, string> = {
   not_found: "会议或资源不存在",
   conflict: "操作冲突（如会议正在录制中）",
   storage_unavailable: "PostgreSQL 会议存储暂不可用",
-  transcription_unavailable: "WhisperLiveKit 语音转录服务不可用",
+  transcription_unavailable: "SpeechRail 语音转录服务不可用",
   mode_conflict: "运行模式冲突，请先结束当前活动模式",
   meeting_not_active: "目标会议未处于活动状态",
   finalization_timeout: "会议转录冲刷超时，已封存当前数据",

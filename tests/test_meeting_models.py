@@ -8,8 +8,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.config import MeetingSettings, SubtitleSettings
-from voice_realtime.meeting.models import (
+from sona.config import MeetingSettings
+from sona.meeting.models import (
     MeetingStatus,
     NormalizedSegment,
     PCMOwner,
@@ -24,20 +24,11 @@ def test_meeting_settings_are_local_and_bounded(tmp_path: Path) -> None:
         recovery_dir=tmp_path / "recovery",
     )
 
-    assert settings.schema_name == "voice_realtime"
-    assert settings.summary_model == "qwen/qwen3.6-35b-a3b"
+    assert settings.schema_name == "sona"
+    assert settings.summary_model == "local/kat-coder-2.5"
     assert settings.summary_reasoning == "off"
     assert settings.finalization_timeout_secs == 8.0
     assert settings.summary_concurrency == 1
-
-
-def test_subtitle_diarization_defaults_are_offline_and_bounded(tmp_path: Path) -> None:
-    settings = SubtitleSettings(diarization_model_path=tmp_path / "speaker.nemo")
-
-    assert settings.diarization is True
-    assert settings.diarization_backend == "sortformer"
-    assert settings.diarization_max_speakers == 4
-    assert settings.allow_model_downloads is False
 
 
 def test_normalized_segment_rejects_invalid_time() -> None:

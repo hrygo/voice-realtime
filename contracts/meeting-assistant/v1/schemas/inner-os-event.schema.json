@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "voice-studio://meeting-assistant/v1/inner-os-event.schema.json",
+  "$id": "sona://meeting-assistant/v1/inner-os-event.schema.json",
   "title": "InnerOSEventEnvelope",
   "type": "object",
   "additionalProperties": false,

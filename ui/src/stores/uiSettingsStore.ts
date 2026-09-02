@@ -100,7 +100,7 @@ function systemPrefersDark(): boolean {
 
 /** 初始主题：已有存储读存储，否则按系统偏好决定。 */
 export function initialTheme(): Theme {
-  const stored = readStorage<string | null>("voice-studio:theme", null);
+  const stored = readStorage<string | null>("sona:theme", null);
   if (stored === "light" || stored === "dark" || stored === "system") return stored;
   return systemPrefersDark() ? "dark" : "light";
 }
@@ -146,18 +146,18 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
   activeMeetingId: null,
   storageHealth: "ok",
   persona: readStorage<string>(
-    "voice-studio:persona",
+    "sona:persona",
     BUILTIN_PERSONAS[0]?.prompt || "",
   ),
-  voice: readStorage<string>("voice-studio:voice", "default"),
-  duplexMode: readStorage<DuplexMode>("voice-studio:duplex-mode", "speaker_focus"),
-  customPersonas: readStorage<PersonaTemplate[]>("voice-studio:custom-personas", []),
-  micMuted: readStorage<boolean>("voice-studio:mic-muted", false),
+  voice: readStorage<string>("sona:voice", "default"),
+  duplexMode: readStorage<DuplexMode>("sona:duplex-mode", "speaker_focus"),
+  customPersonas: readStorage<PersonaTemplate[]>("sona:custom-personas", []),
+  micMuted: readStorage<boolean>("sona:mic-muted", false),
   pipelineStatus: "unknown",
   subtitleStatus: "unknown",
   sessionStartedAt: null,
   serverSynchronized: false,
-  teleprompterSettings: readStorage<TeleprompterSettings>("voice-studio:teleprompter", {
+  teleprompterSettings: readStorage<TeleprompterSettings>("sona:teleprompter", {
     mirror: false,
     fontSize: 2.2,
     textAlign: "left",
@@ -165,7 +165,7 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
 
   setTheme: (theme) => {
     set({ theme });
-    writeStorage("voice-studio:theme", theme);
+    writeStorage("sona:theme", theme);
     applyTheme(theme);
   },
   setMode: (mode) => {
@@ -186,15 +186,15 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
       sessionStartedAt: state.session_started_at,
       serverSynchronized: true,
     });
-    writeStorage("voice-studio:persona", persona);
-    if (state.voice) writeStorage("voice-studio:voice", state.voice);
-    if (state.duplex_mode) writeStorage("voice-studio:duplex-mode", state.duplex_mode);
-    writeStorage("voice-studio:mic-muted", state.mic_muted);
+    writeStorage("sona:persona", persona);
+    if (state.voice) writeStorage("sona:voice", state.voice);
+    if (state.duplex_mode) writeStorage("sona:duplex-mode", state.duplex_mode);
+    writeStorage("sona:mic-muted", state.mic_muted);
   },
   setTeleprompterSettings: (partial) => {
     const next = { ...get().teleprompterSettings, ...partial };
     set({ teleprompterSettings: next });
-    writeStorage("voice-studio:teleprompter", next);
+    writeStorage("sona:teleprompter", next);
   },
   addCustomPersona: (name, prompt) => {
     const newItem: PersonaTemplate = {
@@ -204,18 +204,18 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
     };
     const updated = [...get().customPersonas, newItem];
     set({ customPersonas: updated });
-    writeStorage("voice-studio:custom-personas", updated);
+    writeStorage("sona:custom-personas", updated);
   },
   updateCustomPersona: (id, name, prompt) => {
     const updated = get().customPersonas.map((p) =>
       p.id === id ? { ...p, name: name.trim(), prompt: prompt.trim() } : p,
     );
     set({ customPersonas: updated });
-    writeStorage("voice-studio:custom-personas", updated);
+    writeStorage("sona:custom-personas", updated);
   },
   removeCustomPersona: (id) => {
     const updated = get().customPersonas.filter((p) => p.id !== id);
     set({ customPersonas: updated });
-    writeStorage("voice-studio:custom-personas", updated);
+    writeStorage("sona:custom-personas", updated);
   },
 }));

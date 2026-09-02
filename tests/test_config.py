@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from voice_realtime.config import (
-    BridgeSettings,
+from sona.config import (
     InteractionSettings,
     LMStudioSettings,
     MeetingSettings,
@@ -23,7 +22,7 @@ def test_interaction_session_has_no_default_runtime_expiry() -> None:
 def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("VR_MEETING_INNER_OS_ENABLED", raising=False)
+    monkeypatch.delenv("SONA_MEETING_INNER_OS_ENABLED", raising=False)
     settings = Settings(_env_file=None, meeting=MeetingSettings(_env_file=None))
     assert settings.meeting.inner_os_enabled is False
     assert settings.meeting.inner_os_analysis_enabled is False
@@ -40,7 +39,7 @@ def test_inner_os_is_disabled_by_default_and_has_bounded_limits(
 def test_interaction_llm_api_key_defaults_to_compatible_value_without_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("VR_INTERACTION_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("SONA_INTERACTION_LLM_API_KEY", raising=False)
     assert InteractionSettings(_env_file=None).llm_api_key == "lm-studio"
 
 
@@ -142,16 +141,9 @@ def test_interaction_rejects_non_16k_sample_rate(sample_rate: int) -> None:
         InteractionSettings(sample_rate=sample_rate)
 
 
-@pytest.mark.parametrize("sample_rate", [8000, 16000, 44100, 48000])
-def test_bridge_rejects_non_native_sample_rate(sample_rate: int) -> None:
+def test_server_settings_reject_invalid_host() -> None:
     with pytest.raises(ValidationError):
-        BridgeSettings(sample_rate=sample_rate)
-
-
-@pytest.mark.parametrize("settings_type", [BridgeSettings, UISettings, SubtitleSettings])
-def test_server_settings_reject_invalid_host(settings_type: type[object]) -> None:
-    with pytest.raises(ValidationError):
-        settings_type(host="invalid host name with spaces")
+        UISettings(host="invalid host name with spaces")
 
 
 @pytest.mark.parametrize(
@@ -159,74 +151,45 @@ def test_server_settings_reject_invalid_host(settings_type: type[object]) -> Non
 )
 def test_server_settings_accept_loopback_and_lan_hosts(host: str) -> None:
     assert UISettings(host=host).host == host
-    assert BridgeSettings(host=host).host == host
-    assert SubtitleSettings(host=host).host == host
 
 
 def test_server_settings_default_to_localhost() -> None:
     assert UISettings().host == "127.0.0.1"
-    assert BridgeSettings().host == "127.0.0.1"
-    assert SubtitleSettings().host == "127.0.0.1"
 
 
 def test_server_settings_resolve_lan_host(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("voice_realtime.network.get_lan_ip", lambda: "192.168.1.123")
+    monkeypatch.setattr("sona.network.get_lan_ip", lambda: "192.168.1.123")
     assert UISettings(host="lan").host == "192.168.1.123"
-    assert BridgeSettings(host="LAN").host == "192.168.1.123"
-    assert SubtitleSettings(host="lan_ip").host == "192.168.1.123"
 
 
 def test_removed_configuration_knobs_are_not_model_fields() -> None:
-    assert "tts_voice" not in InteractionSettings.model_fields
     assert "interrupt_echo_suppression_ms" not in InteractionSettings.model_fields
     assert "device" not in SubtitleSettings.model_fields
+    assert "stt_backend" not in InteractionSettings.model_fields
+    assert "stt_model" not in InteractionSettings.model_fields
+    assert "backend" not in SubtitleSettings.model_fields
+    assert "model_dir" not in SubtitleSettings.model_fields
 
 
-def test_subtitle_downloads_are_disabled_by_default() -> None:
-    assert BridgeSettings().allow_model_downloads is False
-    assert SubtitleSettings().allow_model_downloads is False
-    assert InteractionSettings().allow_model_downloads is False
+def test_speechrail_tts_configuration_is_explicit_and_uses_public_model() -> None:
+    settings = InteractionSettings(
+        tts_voice="warm",
+        tts_language="ZH",
+        speechrail_api_key="  speechrail-test-key  ",
+    )
+
+    assert settings.speechrail_tts_model == "speechrail/qwen3-tts"
+    assert settings.tts_voice == "warm"
+    assert settings.tts_language == "zh"
+    assert settings.speechrail_api_key == "speechrail-test-key"
 
 
-def test_subtitle_defaults_to_qwen3_asr_1_7b_quality_profile() -> None:
-    settings = SubtitleSettings()
+def test_subtitle_speechrail_api_key_is_trimmed_and_optional() -> None:
+    assert SubtitleSettings(speechrail_api_key="  subtitle-key  ").speechrail_api_key == (
+        "subtitle-key"
+    )
+    assert SubtitleSettings().speechrail_api_key is None
 
-    assert settings.model_dir.is_absolute()
-    assert "Qwen--Qwen3-ASR-1.7B/snapshots/master" in settings.model_dir.as_posix()
-    assert settings.qwen3_streaming_chunk_sec == 2.0
-    assert settings.qwen3_streaming_left_context_sec == 12.0
-    assert settings.qwen3_streaming_right_context_ms == 640
-    assert settings.qwen3_streaming_hold_back_words == 6
-    assert settings.qwen3_streaming_stable_iterations == 2
-    assert settings.qwen3_streaming_max_new_tokens == 256
-    assert settings.qwen3_streaming_device == "mps"
-    assert settings.diarization_model_path.name == "diar_streaming_sortformer_4spk-v2.nemo"
-    assert settings.punctuation_split is True
-    assert "Qwen3-ASR" in settings.context
-    assert "保留英文、数字、连字符和大小写" in settings.context
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("qwen3_streaming_chunk_sec", 0.1),
-        ("qwen3_streaming_left_context_sec", 0.5),
-        ("qwen3_streaming_right_context_ms", -1),
-        ("qwen3_streaming_hold_back_words", -1),
-        ("qwen3_streaming_stable_iterations", 0),
-        ("qwen3_streaming_max_new_tokens", 8),
-        ("qwen3_streaming_device", "cuda"),
-    ],
-)
-def test_subtitle_quality_profile_rejects_invalid_values(field: str, value: object) -> None:
-    with pytest.raises(ValidationError):
-        SubtitleSettings(**{field: value})
-
-
-def test_subtitle_context_is_bounded_and_stripped() -> None:
-    assert SubtitleSettings(context="  专有名词  ").context == "专有名词"
-    with pytest.raises(ValidationError):
-        SubtitleSettings(context="词" * 2001)
 
 
 def test_meeting_settings_reject_invalid_database_url() -> None:
@@ -236,14 +199,13 @@ def test_meeting_settings_reject_invalid_database_url() -> None:
 
 def test_meeting_settings_rejects_unsafe_schema_name() -> None:
     with pytest.raises(ValidationError):
-        MeetingSettings(schema="voice-realtime")
+        MeetingSettings(schema="123-schema")
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
         ("llm_base_url", "http://192.168.1.20:1234/v1"),
-        ("tts_bridge_url", "http://192.168.1.20:8765/v1"),
     ],
 )
 def test_interaction_accepts_lan_service_urls(field: str, value: str) -> None:
@@ -254,12 +216,24 @@ def test_interaction_accepts_lan_service_urls(field: str, value: str) -> None:
     ("field", "value"),
     [
         ("llm_base_url", "ftp://127.0.0.1:1234/v1"),
-        ("tts_bridge_url", "http://[invalid host]:8765/v1"),
     ],
 )
 def test_interaction_rejects_invalid_service_urls(field: str, value: str) -> None:
     with pytest.raises(ValidationError):
         InteractionSettings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8201/v1/realtime",
+        "ws://token@127.0.0.1:8201/v1/realtime",
+        "ws://127.0.0.1:8201/asr",
+    ],
+)
+def test_interaction_rejects_non_v2_or_credentialed_speechrail_url(url: str) -> None:
+    with pytest.raises(ValidationError):
+        InteractionSettings(speechrail_realtime_url=url)
 
 
 def test_interaction_smart_turn_and_tts_fast_clause_defaults() -> None:
@@ -283,26 +257,3 @@ def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> No
     assert settings.summary_reduce_max_output_tokens == 10240
     assert settings.summary_max_output_chars == 65536
     assert settings.summary_job_timeout_secs == 600.0
-
-
-def test_bridge_anti_repetition_and_sampling_defaults() -> None:
-    settings = BridgeSettings()
-    assert settings.repetition_penalty == 1.25
-    assert settings.temperature == 0.85
-    assert settings.top_p == 0.95
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("repetition_penalty", 0.9),
-        ("repetition_penalty", 2.1),
-        ("temperature", 0.0),
-        ("temperature", 2.1),
-        ("top_p", 0.0),
-        ("top_p", 1.1),
-    ],
-)
-def test_bridge_rejects_invalid_sampling_ranges(field: str, value: object) -> None:
-    with pytest.raises(ValidationError):
-        BridgeSettings(**{field: value})

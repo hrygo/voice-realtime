@@ -16,7 +16,7 @@ import "./App.css";
 
 export type WorkspaceTab = "assistant" | "meeting" | "subtitles";
 
-const WORKSPACE_TAB_STORAGE_KEY = "voice-studio:workspace-tab";
+const WORKSPACE_TAB_STORAGE_KEY = "sona:workspace-tab";
 
 function readStoredWorkspaceTab(): WorkspaceTab {
   try {

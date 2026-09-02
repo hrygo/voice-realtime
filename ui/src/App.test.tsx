@@ -189,7 +189,7 @@ describe("App authoritative workspace state", () => {
   }
 
   it("does not mount subtitles or send commands before the first authoritative snapshot", () => {
-    window.localStorage.setItem("voice-studio:workspace-tab", "subtitles");
+    window.localStorage.setItem("sona:workspace-tab", "subtitles");
 
     renderApp();
 
@@ -209,7 +209,7 @@ describe("App authoritative workspace state", () => {
   ] as const)(
     "resolves mode %s with stored %s to %s",
     (mode, storedTab, panelTestId) => {
-      window.localStorage.setItem("voice-studio:workspace-tab", storedTab);
+      window.localStorage.setItem("sona:workspace-tab", storedTab);
 
       setAuthoritativeState(mode, 1);
 
@@ -224,7 +224,7 @@ describe("App authoritative workspace state", () => {
     clickTab("会议助手");
 
     expect(container.querySelector("[data-testid='meeting-panel']")).not.toBeNull();
-    expect(window.localStorage.getItem("voice-studio:workspace-tab")).toBe("meeting");
+    expect(window.localStorage.getItem("sona:workspace-tab")).toBe("meeting");
     expect(commandSocket.sendCommand).not.toHaveBeenCalled();
   });
 
@@ -248,7 +248,7 @@ describe("App authoritative workspace state", () => {
     });
 
     expect(container.querySelector("[data-testid='subtitles-panel']")).not.toBeNull();
-    expect(window.localStorage.getItem("voice-studio:workspace-tab")).toBe("subtitles");
+    expect(window.localStorage.getItem("sona:workspace-tab")).toBe("subtitles");
   });
 
   it("keeps subtitles mounted until a matching assistant ack", async () => {

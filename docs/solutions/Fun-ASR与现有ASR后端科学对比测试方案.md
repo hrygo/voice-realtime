@@ -1,15 +1,15 @@
 ---
 title: "Fun-ASR 与现有 ASR 后端科学对比测试方案"
-description: "Qwen3-ASR vs Fun-ASR vs SenseVoiceSmall 的序贯盲测与科学选型评测方案（60 min Core + 45 min Reserve 序贯盲测与决策结论）"
+description: "历史 Qwen3-ASR / Fun-ASR / SenseVoiceSmall 序贯盲测与科学选型记录；不作为当前 SpeechRail 运行基线"
 status: completed
 type: benchmark_report
 category: asr
 version: "v1.3.0"
 date: 2026-08-25
-last_updated: 2026-08-27
+last_updated: 2026-09-01
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-core"
+  - "sona-core"
 tags:
   - asr
   - fun-asr
@@ -17,10 +17,11 @@ tags:
   - sensevoice
   - benchmark
   - sequential-evaluation
+  - historical
 scope:
-  - "voice_realtime.asr"
-  - "voice_realtime.subtitles"
-  - "voice_realtime.interaction"
+  - "sona.asr"
+  - "sona.subtitles"
+  - "sona.interaction"
 related_documents:
   - "docs/decisions/0004-asr-sequential-evaluation.md"
   - "docs/benchmarks/asr/stage0-v12-20260825/report.md"
@@ -32,7 +33,12 @@ related_documents:
 > **环境基准**：Apple M5 Max / 128GB 统一内存 / macOS 26.6.2 / Python 3.12.14 / PyTorch 2.13.0 (MPS)
 > **核心决策**：(1) 字幕/会议 ASR 选型 (`Qwen3-ASR` vs `Fun-ASR-Nano`)；(2) 交互 STT 选型 (`SenseVoiceSmall` vs `Fun-ASR-Nano`)
 > **方案版本**：v1.3（`60 min Core + 45 min Reserve` 序贯盲测；允许明确降级的公共运营代理证据）
-> **状态**：**Core 已完成（2026-08-25）；Fun-ASR 两个 family 均触发 futility，Reserve 不启封；生产默认不变**
+> **状态**：**历史评测已完成（2026-08-25）；Fun-ASR 两个 family 均触发 futility，Reserve 不启封；该结果不代表当前 SpeechRail 部署验收**
+
+> ⚠️ **当前边界（2026-09-01）**：本文记录的是 SpeechRail 迁移前的本地模型/WS 实验。当前代码不再
+> 运行本文中的 WLK、SenseVoice、Fun-ASR 或本地 Qwen3-ASR worker；当前 ASR/TTS 运行时与真实服务验收
+> 以 [ADR-0011](../decisions/0011-speechrail-only-asr.md)、[SpeechRail OpenAI Realtime 交割单](../operations/SpeechRail-OpenAI标准协议功能需求交割单.md)
+> 和当前代码为准。
 
 > **v1.2 修订摘要**：v1.1 的 105 分钟完整 Blind Set 保留为最大证据集，但拆为预冻结的 60 分钟
 > Core 与 45 分钟 Reserve，只在两个固定 look 做决策；完整 Public 移出选型关键路径；三个 primary
@@ -123,7 +129,7 @@ related_documents:
 
 ---
 
-### 1.1 当前落地状态（2026-08-25）
+### 1.1 历史落地状态（2026-08-25）
 
 - **统一契约与接入边界**：ASR 契约、WLK 适配器、profile/registry、字幕注入边界和交互 STT factory 已合入 `main`。
 - **可复现实验 Runner**：已在 `feature/asr-benchmark-runner` 分支实现 `run`、`score`、`compare`，并完成
@@ -192,7 +198,7 @@ flowchart TD
 
 ## 2. 已知事实、假设与待检验项
 
-### 2.1 当前实测与源码事实（2026-08-24）
+### 2.1 历史实测与源码事实（2026-08-24）
 
 - **硬件环境**：Apple M5 Max、128GB 统一内存、macOS 26.6.2。
 - **软件基础**：Python 3.12.14；PyTorch 2.13.0；MPS `built/available` 均为 `true`。
@@ -310,7 +316,7 @@ SHA-256、文件清单和运行时识别结果。GGUF 在 v1.2 不下载、不�
 
 ### 3.5 Stage 0 runner 门禁结果（2026-08-24 22:47-22:48 CST）
 
-在 commit `379ad7e6124db46f549504422b7e60dc3b9a6bb6` 上，以项目外 `~/.cache/voice-realtime/benchmarks/asr/stage0-funasr-20260824/` 作为语料、manifest 和产物根目录，完成独立 MPS/CPU run。语料共 10 条：模型自带中/英/日公开样例 3 条、本机 macOS voice 合成中英短句 6 条、纯静音 1 条。它们只用于功能门禁，不能进入正式模型准确率排名。
+在 commit `379ad7e6124db46f549504422b7e60dc3b9a6bb6` 上，以项目外 `~/.cache/sona/benchmarks/asr/stage0-funasr-20260824/` 作为语料、manifest 和产物根目录，完成独立 MPS/CPU run。语料共 10 条：模型自带中/英/日公开样例 3 条、本机 macOS voice 合成中英短句 6 条、纯静音 1 条。它们只用于功能门禁，不能进入正式模型准确率排名。
 
 | 门禁指标 | `FA-PT-MPS` (MPS) | `FA-PT-CPU` (CPU) |
 |:---|---:|---:|
@@ -895,7 +901,7 @@ Confirm，形成同 schedule 的正式延迟对比；全程固定 20ms PCM 帧�
 ### 9.4 汇总产物
 
 ```text
-<external-root>/voice-realtime/asr/<corpus-version>/runs/<run_id>/
+<external-root>/sona/asr/<corpus-version>/runs/<run_id>/
 ├── manifest.json              # 运行元数据、环境与 SHA-256 指纹
 ├── hypotheses.jsonl           # 不含 reference/CER 的不可变盲转写
 ├── scored-hypotheses.jsonl    # 显式开盲后另写；运行阶段不存在
@@ -1029,79 +1035,79 @@ scorer 开盲。
 #### CLI 执行命令
 
 ```bash
-VR_ASR_EXTERNAL_ROOT=/path/to/external/voice-realtime/asr/<corpus-version>
+SONA_ASR_EXTERNAL_ROOT=/path/to/external/sona/asr/<corpus-version>
 ASR_BENCH_ROOT=/path/to/external/asr-benchmark
 
 # 0. 不读取音频的目标域 metadata 预检
 uv run vr-asr-benchmark preflight-corpus \
-  --metadata "$VR_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
-  --output-report "$VR_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
+  --metadata "$SONA_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
+  --output-report "$SONA_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
   --repo-root .
 
 # 0.1 Core/Reserve 与 reference 同时封存后，冻结正式分析计划
 uv run vr-asr-benchmark freeze-analysis \
   --design manifests/analysis-design.json \
-  --core-manifest "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
-  --reserve-manifest "$VR_ASR_EXTERNAL_ROOT/blind-reserve.json" \
-  --core-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-core.references.json" \
-  --reserve-references "$VR_ASR_EXTERNAL_ROOT/sealed/blind-reserve.references.json" \
-  --preflight-metadata "$VR_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
-  --preflight-report "$VR_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
-  --corpus-root "$VR_ASR_EXTERNAL_ROOT" \
-  --power-simulation "$VR_ASR_EXTERNAL_ROOT/pilot/power-simulation.json" \
+  --core-manifest "$SONA_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --reserve-manifest "$SONA_ASR_EXTERNAL_ROOT/blind-reserve.json" \
+  --core-references "$SONA_ASR_EXTERNAL_ROOT/sealed/blind-core.references.json" \
+  --reserve-references "$SONA_ASR_EXTERNAL_ROOT/sealed/blind-reserve.references.json" \
+  --preflight-metadata "$SONA_ASR_EXTERNAL_ROOT/preflight/blind-preflight.json" \
+  --preflight-report "$SONA_ASR_EXTERNAL_ROOT/preflight/preflight-report.json" \
+  --corpus-root "$SONA_ASR_EXTERNAL_ROOT" \
+  --power-simulation "$SONA_ASR_EXTERNAL_ROOT/pilot/power-simulation.json" \
   --profile qwen=manifests/qwen.profile.json \
   --profile sense=manifests/sense.profile.json \
   --profile fun=manifests/fun.profile.json \
-  --output "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json"
+  --output "$SONA_ASR_EXTERNAL_ROOT/analysis-plan.json"
 
 # 1. 运行基准评测
 uv run vr-asr-benchmark run \
   --manifest manifests/run.json \
-  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
-  --corpus-root "$VR_ASR_EXTERNAL_ROOT" \
+  --corpus "$SONA_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --corpus-root "$SONA_ASR_EXTERNAL_ROOT" \
   --profile manifests/profile.json \
-  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --analysis-plan "$SONA_ASR_EXTERNAL_ROOT/analysis-plan.json" \
   --repo-root . \
-  --output-dir "$VR_ASR_EXTERNAL_ROOT/runs/<run_id>" \
+  --output-dir "$SONA_ASR_EXTERNAL_ROOT/runs/<run_id>" \
   --mode realtime-1x
 
 # 2. 生成计分统计
 uv run vr-asr-benchmark score \
-  --run-dir "$VR_ASR_EXTERNAL_ROOT/runs/<run_id>" \
-  --references "$VR_ASR_EXTERNAL_ROOT/sealed/<split>.references.json"
+  --run-dir "$SONA_ASR_EXTERNAL_ROOT/runs/<run_id>" \
+  --references "$SONA_ASR_EXTERNAL_ROOT/sealed/<split>.references.json"
 
 # 3. 配对横向对比与 Bootstrap 检验
 uv run vr-asr-benchmark compare \
-  --baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-run-id>" \
-  --candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-run-id>" \
-  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
-  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
-  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/<comparison-id>.json" \
+  --baseline "$SONA_ASR_EXTERNAL_ROOT/runs/<baseline-run-id>" \
+  --candidate "$SONA_ASR_EXTERNAL_ROOT/runs/<candidate-run-id>" \
+  --corpus "$SONA_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --analysis-plan "$SONA_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --output "$SONA_ASR_EXTERNAL_ROOT/comparisons/<comparison-id>.json" \
   --bootstrap-iterations 10000 \
   --seed <analysis-plan-core-seed>
 
 # 4. Final look 必须合并 Core+Reserve，禁止只比较 Reserve
 uv run vr-asr-benchmark compare \
-  --baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-core-run-id>" \
-  --additional-baseline "$VR_ASR_EXTERNAL_ROOT/runs/<baseline-reserve-run-id>" \
-  --candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-core-run-id>" \
-  --additional-candidate "$VR_ASR_EXTERNAL_ROOT/runs/<candidate-reserve-run-id>" \
-  --corpus "$VR_ASR_EXTERNAL_ROOT/blind-core.json" \
-  --additional-corpus "$VR_ASR_EXTERNAL_ROOT/blind-reserve.json" \
-  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
-  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/<final-comparison-id>.json"
+  --baseline "$SONA_ASR_EXTERNAL_ROOT/runs/<baseline-core-run-id>" \
+  --additional-baseline "$SONA_ASR_EXTERNAL_ROOT/runs/<baseline-reserve-run-id>" \
+  --candidate "$SONA_ASR_EXTERNAL_ROOT/runs/<candidate-core-run-id>" \
+  --additional-candidate "$SONA_ASR_EXTERNAL_ROOT/runs/<candidate-reserve-run-id>" \
+  --corpus "$SONA_ASR_EXTERNAL_ROOT/blind-core.json" \
+  --additional-corpus "$SONA_ASR_EXTERNAL_ROOT/blind-reserve.json" \
+  --analysis-plan "$SONA_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --output "$SONA_ASR_EXTERNAL_ROOT/comparisons/<final-comparison-id>.json"
 
 # 5. 汇齐每个 family 的质量比较与预注册非劣门禁后，程序化决策
 uv run vr-asr-benchmark decide \
-  --analysis-plan "$VR_ASR_EXTERNAL_ROOT/analysis-plan.json" \
+  --analysis-plan "$SONA_ASR_EXTERNAL_ROOT/analysis-plan.json" \
   --look core \
-  --evidence "$VR_ASR_EXTERNAL_ROOT/comparisons/core-family-evidence.json" \
-  --comparison "$VR_ASR_EXTERNAL_ROOT/comparisons/<meeting-comparison-id>.json" \
-  --comparison "$VR_ASR_EXTERNAL_ROOT/comparisons/<interaction-comparison-id>.json" \
-  --gate-metrics "$VR_ASR_EXTERNAL_ROOT/comparisons/<meeting-gates-id>.json" \
-  --gate-metrics "$VR_ASR_EXTERNAL_ROOT/comparisons/<interaction-gates-id>.json" \
-  --gate-source <opaque-artifact-name>="$VR_ASR_EXTERNAL_ROOT/<metrics-artifact>" \
-  --output "$VR_ASR_EXTERNAL_ROOT/comparisons/core-decision.json"
+  --evidence "$SONA_ASR_EXTERNAL_ROOT/comparisons/core-family-evidence.json" \
+  --comparison "$SONA_ASR_EXTERNAL_ROOT/comparisons/<meeting-comparison-id>.json" \
+  --comparison "$SONA_ASR_EXTERNAL_ROOT/comparisons/<interaction-comparison-id>.json" \
+  --gate-metrics "$SONA_ASR_EXTERNAL_ROOT/comparisons/<meeting-gates-id>.json" \
+  --gate-metrics "$SONA_ASR_EXTERNAL_ROOT/comparisons/<interaction-gates-id>.json" \
+  --gate-source <opaque-artifact-name>="$SONA_ASR_EXTERNAL_ROOT/<metrics-artifact>" \
+  --output "$SONA_ASR_EXTERNAL_ROOT/comparisons/core-decision.json"
 
 # 6. Stage 1 唯一 finalist 与真实 executor 均已就绪后，串行执行冻结的 Stage 2–5 request
 uv run vr-asr-benchmark run-stage \

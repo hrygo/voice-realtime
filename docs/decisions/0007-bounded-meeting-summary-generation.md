@@ -8,7 +8,7 @@ date: 2026-08-26
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-meeting"
+  - "sona-meeting"
 tags:
   - adr
   - meeting-summary
@@ -17,7 +17,7 @@ tags:
   - timeout-budget
   - title-generation
 scope:
-  - "voice_realtime.meeting"
+  - "sona.meeting"
 related_documents:
   - "docs/manuals/会议助手后端运行与前后端联调.md"
   - "docs/decisions/0002-lm-studio-stateful-chat-context.md"

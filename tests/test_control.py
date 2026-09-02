@@ -1,14 +1,13 @@
-"""ControlBridge 单元测试：命令分发、参数校验、TTS 桥调用。"""
+"""ControlBridge 单元测试：命令分发、参数校验、SpeechRail TTS 状态更新。"""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from voice_realtime.config import BridgeSettings
-from voice_realtime.ui.control import ControlBridge
-from voice_realtime.ui.protocol import (
+from sona.ui.control import ControlBridge
+from sona.ui.protocol import (
     DuplexMode,
     EndMeetingCommand,
     RuntimeStateEvent,
@@ -36,7 +35,7 @@ def runtime() -> MagicMock:
     rt.send_text = AsyncMock()
     rt.set_persona = MagicMock()
     rt.set_duplex_mode = MagicMock()
-    rt.set_voice = MagicMock()
+    rt.set_voice = AsyncMock()
     rt.snapshot.return_value = RuntimeStateSnapshot(
         pipeline="running",
         subtitle="connected",
@@ -51,7 +50,7 @@ def runtime() -> MagicMock:
 
 @pytest.fixture()
 def bridge(runtime: MagicMock) -> ControlBridge:
-    return ControlBridge(runtime, BridgeSettings())
+    return ControlBridge(runtime)
 
 
 class TestDispatch:
@@ -223,49 +222,25 @@ class TestDispatch:
 
 
 class TestSetVoice:
-    def _http_client_mock(self) -> AsyncMock:
-        """构造可 async with 的 httpx.AsyncClient mock（__aenter__ 返回自身）。"""
-        client = AsyncMock()
-        client.__aenter__ = AsyncMock(return_value=client)
-        client.__aexit__ = AsyncMock(return_value=False)
-        client.post = AsyncMock()
-        return client
-
-    async def test_set_voice_posts_to_bridge(
+    async def test_set_voice_updates_runtime_preference(
         self, runtime: MagicMock, bridge: ControlBridge
     ) -> None:
-        client = self._http_client_mock()
-        client.post.return_value.raise_for_status = MagicMock()
-        with patch("voice_realtime.ui.control.local_async_client", return_value=client) as cls:
-            resp = await bridge.handle(
-                {"request_id": "1", "cmd": "set_voice", "voice": "warm"}
-            )
+        resp = await bridge.handle({"request_id": "1", "cmd": "set_voice", "voice": "warm"})
         assert resp["ok"] is True
-        cls.assert_called_once()
-        assert cls.call_args.kwargs["timeout"] == 5.0
-        client.post.assert_awaited_once_with(
-            "http://127.0.0.1:8765/v1/voice", json={"voice": "warm"}
-        )
-        runtime.set_voice.assert_called_once_with("warm")
+        runtime.set_voice.assert_awaited_once_with("warm")
 
     async def test_set_voice_requires_value(self, bridge: ControlBridge) -> None:
         resp = await bridge.handle({"request_id": "1", "cmd": "set_voice"})
         assert resp["ok"] is False
 
-    async def test_set_voice_bridge_error_propagates(
+    async def test_set_voice_runtime_error_propagates(
         self, runtime: MagicMock, bridge: ControlBridge
     ) -> None:
-        client = self._http_client_mock()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = RuntimeError("bridge down")
-        client.post.return_value = mock_resp
-        with patch("voice_realtime.ui.control.local_async_client", return_value=client):
-            resp = await bridge.handle(
-                {"request_id": "1", "cmd": "set_voice", "voice": "warm"}
-            )
+        runtime.set_voice.side_effect = RuntimeError("runtime down")
+        resp = await bridge.handle({"request_id": "1", "cmd": "set_voice", "voice": "warm"})
         assert resp["ok"] is False
         assert resp["error_code"] == "command_failed"
-        assert "bridge down" not in resp["message"]
+        assert "runtime down" not in resp["message"]
 
 
 class TestProtocol:
@@ -281,6 +256,9 @@ class TestProtocol:
         )
 
         assert snapshot.model_dump(mode="json")["pcm_owner"] == "none"
+        assert snapshot.audio_levels.microphone == 0.0
+        assert snapshot.audio_levels.physical_output == 0.0
+        assert snapshot.audio_levels.mixed == 0.0
         assert RuntimeStateEvent(state=snapshot).event == "runtime_state"
         assert RuntimeStateEvent(event="state", state=snapshot).event == "state"
 

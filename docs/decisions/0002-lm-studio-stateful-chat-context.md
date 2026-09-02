@@ -8,7 +8,7 @@ date: 2026-08-21
 last_updated: 2026-08-27
 author: "Voice Realtime Core Team"
 owners:
-  - "voice-realtime-interaction"
+  - "sona-interaction"
 tags:
   - adr
   - lm-studio
@@ -16,7 +16,7 @@ tags:
   - native-api
   - reasoning-off
 scope:
-  - "voice_realtime.interaction"
+  - "sona.interaction"
 related_documents:
   - "docs/architecture/系统总体架构与详细设计方案.md"
   - "docs/decisions/0003-lm-studio-context-compaction.md"

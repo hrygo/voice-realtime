@@ -1,12 +1,12 @@
 [project]
-name = "voice-realtime"
+name = "sona"
 version = "1.4.0"
-description = "全本地实时语音交互 + 实时语音字幕系统 (Apple Silicon / MLX / 中文优先)"
+description = "全本地实时语音交互 + 智能会议助手 + 实时语音字幕系统 (Apple Silicon / 中文优先 / 离线)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "hrygo" }]
-keywords = ["realtime", "voice", "asr", "tts", "mlx", "pipecat", "whisper"]
+keywords = ["realtime", "voice", "asr", "tts", "pipecat"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -16,28 +16,23 @@ classifiers = [
 ]
 
 dependencies = [
-    # 自研桥核心 (qwen3-tts-openai)
+    # SpeechRail / UI / meeting gateway runtime
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
+    "websockets>=14",
     "huggingface-hub>=0.27",
     "psycopg[binary]>=3.2,<4",
     "psycopg-pool>=3.2,<4",
+    "pypinyin>=0.53",
 ]
 
 [project.optional-dependencies]
-# 实时 TTS 引擎 (mlx-audio Qwen3-TTS) — 重型依赖，独立组
-# 注意: misaki[zh] 要求 Python <3.13 → 项目锁 3.12
-tts = [
-    "mlx-audio[tts]>=0.4.8",
-    "misaki[zh]>=0.9.4",
-]
-# 交互管道 (Pipecat: FunASR STT + LLM + 自定义 TTS + AudioHub 采集) — 重型依赖，独立组
+# 交互管道 (Pipecat: SpeechRail STT + LLM + SpeechRail TTS + AudioHub 采集) — 重型依赖，独立组
 interaction = [
-    "pipecat-ai[funasr,silero,openai,soundfile,websocket,local]>=1.0",
-    "modelscope>=1.39",
+    "pipecat-ai[silero,openai,soundfile,websocket,local]>=1.0",
     "torch>=2.5",
     "torchaudio>=2.5",
     "pyaudio>=0.2.14",
@@ -55,20 +50,16 @@ dev = [
 ]
 
 [project.scripts]
-vr-bridge = "voice_realtime.tts_bridge.server:main"
-vr-interact = "voice_realtime.interaction.runner:main"
-vr-subtitles = "voice_realtime.subtitles.launcher:main"
-vr-subtitle-events = "voice_realtime.subtitles.consumer:main"
-vr-ui = "voice_realtime.ui.server:main"
-vr-asr-benchmark = "voice_realtime.benchmarks.asr.cli:main"
-vr-meeting-mock = "voice_realtime.meeting.mock_server:main"
+sona-interact = "sona.interaction.runner:main"
+sona-ui = "sona.ui.server:main"
+sona-meeting-mock = "sona.meeting.mock_server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/voice_realtime"]
+packages = ["src/sona"]
 
 [tool.ruff]
 line-length = 100
