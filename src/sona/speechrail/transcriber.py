@@ -24,6 +24,7 @@ from sona.speechrail.transcription_events import (
     decode_transcription_event,
 )
 from sona.speechrail.transport import (
+    DEFAULT_SERVER_VAD,
     ConnectionFactory,
     SpeechRailProtocolError,
     SpeechRailRealtimeClient,
@@ -82,6 +83,7 @@ class SpeechRailStreamingTranscriber:
             diarization=self._diarization_requested,
             speaker_count_hint=self._context.speaker_count_hint,
             diarization_group_id=self._context.diarization_group_id,
+            turn_detection=DEFAULT_SERVER_VAD,
         )
         self._ready = True
 
@@ -151,7 +153,8 @@ class SpeechRailStreamingTranscriber:
                     )
                     self._final_ready.set()
                     yield ASREvent(kind="final", window=self._last_window)
-                    return
+                    if self._commit_sent:
+                        return
                 elif isinstance(decoded, SpeechRailTranscriptionError):
                     yield self._set_terminal_error(
                         "SPEECHRAIL_REQUEST_FAILED",
@@ -164,6 +167,7 @@ class SpeechRailStreamingTranscriber:
     async def finish(self) -> ASRWindow:
         async with self._finish_lock:
             if not self._commit_sent:
+                self._final_ready.clear()
                 await self._client.commit()
                 self._commit_sent = True
         try:

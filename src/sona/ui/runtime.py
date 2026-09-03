@@ -7,6 +7,8 @@ import dataclasses
 import logging
 from typing import Any
 
+import httpx
+
 from sona.asr.contracts import ConversationSTTFactory
 from sona.audio.frame import AudioSourceKind
 from sona.audio.hub import AudioHub
@@ -37,6 +39,31 @@ logger = logging.getLogger(__name__)
 AUDIO_QUEUE_MAXSIZE = 256
 
 
+def _speechrail_readiness_probe(
+    settings: Settings, *, timeout_secs: float = 0.5
+) -> Any:
+    """基于 SpeechRail /health 的就绪探针，worker 重启期间不触发 WS 盲连。"""
+
+    health_url = settings.subtitles.speechrail_health_url
+    probe_timeout = timeout_secs
+
+    async def probe() -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=probe_timeout) as client:
+                response = await client.get(health_url)
+        except httpx.HTTPError:
+            return False
+        if response.status_code != 200:
+            return False
+        try:
+            payload = response.json()
+        except ValueError:
+            return False
+        return bool(payload.get("ready") or payload.get("asr_ready"))
+
+    return probe
+
+
 class UIRuntime:
     """UI 进程内组件门面；交互管道生命周期统一委托给 InteractionSession。"""
 
@@ -60,7 +87,10 @@ class UIRuntime:
             device_index=settings.interaction.input_device,
             device_name=settings.interaction.input_device_name,
         )
-        self.subtitle_proxy = SubtitleProxy(settings.subtitles)
+        self.subtitle_proxy = SubtitleProxy(
+            settings.subtitles,
+            readiness_probe=_speechrail_readiness_probe(settings),
+        )
         factories = default_pipeline_factories(settings.interaction)
         if conversation_stt_factory is not None:
             factories = dataclasses.replace(factories, stt_factory=conversation_stt_factory)

@@ -138,7 +138,9 @@ def test_runtime_constructs_speechrail_subtitle_proxy(settings: Settings) -> Non
 
         UIRuntime(settings)
 
-    proxy_cls.assert_called_once_with(settings.subtitles)
+    proxy_cls.assert_called_once()
+    assert proxy_cls.call_args.args == (settings.subtitles,)
+    assert set(proxy_cls.call_args.kwargs) == {"readiness_probe"}
 
 
 def test_runtime_passes_conversation_stt_factory_to_session(settings: Settings) -> None:

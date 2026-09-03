@@ -333,3 +333,43 @@ def test_pipecat_processor_raises_on_unknown_event_type() -> None:
         assert client.closed is True
 
     asyncio.run(scenario())
+
+
+def test_pipecat_processor_forwards_audio_and_flushes_preroll() -> None:
+    async def scenario() -> None:
+        client = FakeSpeechRailClient()
+        processor = SpeechRailConversationSTTProcessor(
+            language="zh",
+            client_factory=lambda: client,
+        )
+        emitted: list[object] = []
+
+        async def capture(frame: object, _direction: object) -> None:
+            emitted.append(frame)
+
+        processor.push_frame = capture  # type: ignore[method-assign]
+        with patch.object(FrameProcessor, "process_frame", new=AsyncMock()):
+            # 1. 音频在 VAD 开始前到达（充当预卷缓冲）
+            preroll_frame = InputAudioRawFrame(b"\x01\x00", sample_rate=16_000, num_channels=1)
+            await processor.process_frame(preroll_frame, FrameDirection.DOWNSTREAM)
+            # 音频必须向下游透传，让下游 VAD 能够分析人声
+            assert preroll_frame in emitted
+
+            # 2. VAD 触发人声开始，打开回合并冲刷预卷音频
+            await processor.process_frame(VADUserStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+            assert b"\x01\x00" in client.appended
+
+            # 3. 回合内正常音频
+            live_frame = InputAudioRawFrame(b"\x02\x00", sample_rate=16_000, num_channels=1)
+            await processor.process_frame(live_frame, FrameDirection.DOWNSTREAM)
+            assert live_frame in emitted
+            assert b"\x02\x00" in client.appended
+
+            # 4. VAD 触发说话停止，提交并接收终态文本
+            await processor.process_frame(VADUserStoppedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+            assert client.commits == 1
+            assert any(
+                isinstance(f, TranscriptionFrame) and f.text == "你好世界" for f in emitted
+            )
+
+    asyncio.run(scenario())

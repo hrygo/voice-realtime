@@ -259,6 +259,54 @@ def test_finish_waits_for_the_confirmed_transcript_window() -> None:
     asyncio.run(scenario())
 
 
+def test_events_yields_multiple_turns_without_terminating_until_finish() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [
+            *_session_events(),
+            # Turn 1
+            _transcription_delta("第一句", sequence=4),
+            _transcription_completed("第一句完成", sequence=5),
+            # Turn 2
+            _transcription_delta("第二句", sequence=6),
+            _transcription_completed("第二句完成", sequence=7),
+        ]
+        client = SpeechRailRealtimeClient(
+            url=connection.uri,
+            connection_factory=lambda _: _immediate(connection),
+        )
+        adapter = SpeechRailStreamingTranscriber(
+            client=client,
+            context=ASRSessionContext(source_epoch=2, offset_ms=1_000, purpose="subtitles"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+
+        assert (await anext(events)).kind == "ready"
+
+        # Turn 1 snapshot & final
+        e1_snap = await anext(events)
+        assert e1_snap.kind == "snapshot" and e1_snap.window and e1_snap.window.partial == "第一句"
+        e1_final = await anext(events)
+        assert e1_final.kind == "final" and e1_final.window
+        assert e1_final.window.segments[0].text == "第一句完成"
+
+        # Turn 2: events() must still be alive and yield Turn 2!
+        e2_snap = await anext(events)
+        assert e2_snap.kind == "snapshot" and e2_snap.window and e2_snap.window.partial == "第二句"
+        e2_final = await anext(events)
+        assert e2_final.kind == "final" and e2_final.window
+        assert e2_final.window.segments[0].text == "第二句完成"
+
+        # Finish terminates the stream
+        adapter._commit_sent = True
+        # Once closed / finished, events terminates
+        await adapter.close()
+
+    asyncio.run(scenario())
+
+
 def test_client_reconnects_with_a_new_session_sequence() -> None:
     async def scenario() -> None:
         first = FakeConnection()

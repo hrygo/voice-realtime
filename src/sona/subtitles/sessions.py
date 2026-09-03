@@ -38,6 +38,41 @@ TranscriptionGap = CaptureGap
 FinalizationTimeoutError = CaptureFinalizationTimeout
 FinalizationTimeout = CaptureFinalizationTimeout
 
+# 连接稳定存活时长达到该阈值后，下一次断开才允许重置指数退避。
+# 秒断连接（如 SpeechRail worker 未就绪时握手成功即被服务端关闭）不重置，
+# 让退避按 1→2→4…→30s 单调递增，避免无限 1s 重连风暴。
+STABLE_CONNECTION_RESET_AFTER_SECS = 30.0
+
+ReadinessProbe = Callable[[], Awaitable[bool]]
+
+
+async def _wait_with_readiness(
+    *,
+    stop_event: asyncio.Event,
+    delay: float,
+    readiness_probe: ReadinessProbe | None,
+) -> bool:
+    """等待一个退避档；当配置了就绪探针时，服务未就绪则原地延长等待。
+
+    返回 ``True`` 表示可以发起重连；``False`` 表示 stop 已触发，应停止。
+    服务未就绪（如 ASR worker 重启中）时不发起 WebSocket 握手，避免在
+    SpeechRail 服务端留下 `worker_not_started` 异常与 ASGI traceback。
+    """
+    try:
+        await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except TimeoutError:
+        pass
+    else:
+        return False
+    while readiness_probe is not None and not await readiness_probe():
+        logger.info("SpeechRail 未就绪，延长退避等待 (%.1fs)", delay)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except TimeoutError:
+            continue
+        return False
+    return True
+
 
 def _diarization_group_id(owner: str | None) -> str:
     """Keep the application meeting identifier out of the public audio protocol."""
@@ -80,6 +115,8 @@ class StandardSubtitleSession:
         on_last_event: Callable[[], None],
         on_last_error: Callable[[str | None], None],
         on_dropped_chunk: Callable[[], None],
+        readiness_probe: ReadinessProbe | None = None,
+        stable_reset_after_secs: float = STABLE_CONNECTION_RESET_AFTER_SECS,
     ) -> None:
         self._audio_queue = audio_queue
         self._transcriber_factory = transcriber_factory
@@ -95,6 +132,8 @@ class StandardSubtitleSession:
         self._on_last_event = on_last_event
         self._on_last_error = on_last_error
         self._on_dropped_chunk = on_dropped_chunk
+        self._readiness_probe = readiness_probe
+        self._stable_reset_after_secs = stable_reset_after_secs
 
         self._stream: StreamingTranscriber | None = None
         self._prepared: SubtitlePreparation | None = None
@@ -277,6 +316,8 @@ class StandardSubtitleSession:
     async def _supervise(self, initial_stream: StreamingTranscriber) -> None:
         attempt = 0
         stream: StreamingTranscriber | None = initial_stream
+        loop = asyncio.get_running_loop()
+        stable_since: float | None = None
         while self._running() and (self._prepared is not None or self._committed):
             try:
                 if stream is None:
@@ -296,7 +337,7 @@ class StandardSubtitleSession:
                         break
                     self._on_last_error(None)
                     self._on_state(SubtitleSessionState.CONNECTED)
-                attempt = 0
+                    stable_since = loop.time()
                 logger.info("StandardSubtitleSession: 已连接 SpeechRail %s", stream.uri)
                 await self._serve_connection(stream)
                 if self._running():
@@ -321,15 +362,22 @@ class StandardSubtitleSession:
                 if self._running() and not self._capture_active():
                     self._on_state(SubtitleSessionState.PAUSED)
                 break
+            if (
+                stable_since is not None
+                and loop.time() - stable_since >= self._stable_reset_after_secs
+            ):
+                attempt = 0
+            stable_since = None
             delay = self._backoff_delays[min(attempt, len(self._backoff_delays) - 1)]
             attempt += 1
             self._on_state(SubtitleSessionState.BACKOFF)
-            try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
-            except TimeoutError:
-                stream = None
-                continue
-            break
+            if not await _wait_with_readiness(
+                stop_event=self._stop_event,
+                delay=delay,
+                readiness_probe=self._readiness_probe,
+            ):
+                break
+            stream = None
 
     async def _serve_connection(self, stream: StreamingTranscriber) -> None:
         send_task = asyncio.create_task(self._audio_send_loop(stream))
@@ -407,6 +455,7 @@ class MeetingCaptureSession:
         on_reconnect: Callable[[], None],
         on_last_event: Callable[[], None],
         on_last_error: Callable[[str | None], None],
+        readiness_probe: ReadinessProbe | None = None,
     ) -> None:
         self._audio_queue = audio_queue
         self._transcriber_factory = transcriber_factory
@@ -420,6 +469,7 @@ class MeetingCaptureSession:
         self._on_reconnect = on_reconnect
         self._on_last_event = on_last_event
         self._on_last_error = on_last_error
+        self._readiness_probe = readiness_probe
 
         self._stream: StreamingTranscriber | None = None
         self._prepared: CapturePreparation | None = None
@@ -755,8 +805,11 @@ class MeetingCaptureSession:
         for delay in self._backoff_delays:
             if self._owner is None or not self._running():
                 return None
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+            if not await _wait_with_readiness(
+                stop_event=self._stop_event,
+                delay=delay,
+                readiness_probe=self._readiness_probe,
+            ):
                 return None
             try:
                 resume_offset_ms = self._input_ms
@@ -826,11 +879,13 @@ class MeetingCaptureSession:
 
 
 __all__ = [
+    "STABLE_CONNECTION_RESET_AFTER_SECS",
     "CapturePayloadSink",
     "CapturePreparation",
     "FinalizationTimeout",
     "FinalizationTimeoutError",
     "MeetingCaptureSession",
+    "ReadinessProbe",
     "StandardSubtitleSession",
     "SubtitlePreparation",
     "SubtitleSessionState",

@@ -23,6 +23,7 @@ from sona.speechrail import (
 from sona.subtitles.archive import SrtArchive
 from sona.subtitles.clients import ClientSender, SubtitleClientHub
 from sona.subtitles.sessions import (
+    STABLE_CONNECTION_RESET_AFTER_SECS,
     CapturePreparation,
     FinalizationTimeout,
     FinalizationTimeoutError,
@@ -69,6 +70,7 @@ class SubtitleProxy:
 
     _AUDIO_QUEUE_SIZE = 512
     _DEFAULT_BACKOFF = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+    _DEFAULT_STABLE_RESET = STABLE_CONNECTION_RESET_AFTER_SECS
 
     def __init__(
         self,
@@ -78,6 +80,8 @@ class SubtitleProxy:
         speechrail_connection_factory: ConnectionFactory | None = None,
         backoff_delays: Sequence[float] = _DEFAULT_BACKOFF,
         clock: Callable[[], float] = time.monotonic,
+        readiness_probe: Callable[[], Awaitable[bool]] | None = None,
+        stable_reset_after_secs: float | None = None,
     ) -> None:
         if not backoff_delays or any(delay <= 0 for delay in backoff_delays):
             raise ValueError("backoff_delays 必须包含正数")
@@ -90,6 +94,12 @@ class SubtitleProxy:
         )
         self._backoff_delays = tuple(backoff_delays)
         self._clock = clock
+        self._readiness_probe = readiness_probe
+        self._stable_reset_after_secs = (
+            stable_reset_after_secs
+            if stable_reset_after_secs is not None
+            else self._DEFAULT_STABLE_RESET
+        )
         self._client_hub = SubtitleClientHub(on_channel_closed=self._on_hub_channel_closed)
         self._running = False
         self._state = SubtitleProxyState.STOPPED
@@ -111,6 +121,8 @@ class SubtitleProxy:
             on_last_event=self._on_session_last_event,
             on_last_error=self._on_session_last_error,
             on_dropped_chunk=self._on_session_dropped_chunk,
+            readiness_probe=self._readiness_probe,
+            stable_reset_after_secs=self._stable_reset_after_secs,
         )
         self._capture_session = MeetingCaptureSession(
             audio_queue=self._audio_buffer,
@@ -127,6 +139,7 @@ class SubtitleProxy:
             on_reconnect=self._on_session_reconnect,
             on_last_event=self._on_session_last_event,
             on_last_error=self._on_session_last_error,
+            readiness_probe=self._readiness_probe,
         )
         self._last_payload: dict[str, Any] | None = None
         self._snapshot_signature: tuple[tuple[tuple[str, ...], ...], str] | None = None

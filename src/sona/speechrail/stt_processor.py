@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
@@ -63,6 +64,8 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
         self._language = language
         self._client_factory = client_factory
         self._client: _SpeechRailClient | None = None
+        self._preroll: deque[bytes] = deque(maxlen=10)
+        self._appended_bytes_in_turn = 0
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -70,6 +73,7 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
             await self._open_turn()
         elif isinstance(frame, InputAudioRawFrame):
             await self._append_audio(frame)
+            await self.push_frame(frame, direction)
             return
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             await self._commit_turn()
@@ -94,15 +98,26 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
             )
             raise
         self._client = client
+        self._appended_bytes_in_turn = 0
         logger.debug("交互 STT: SpeechRail 实时会话已建立 (language=%s)", self._language)
+        while self._preroll:
+            chunk = self._preroll.popleft()
+            try:
+                await client.append_pcm(chunk)
+                self._appended_bytes_in_turn += len(chunk)
+            except Exception as exc:
+                logger.warning("交互 STT: 预卷音频发送失败: %s", exc)
+                break
 
     async def _append_audio(self, frame: InputAudioRawFrame) -> None:
         if frame.sample_rate != 16_000 or frame.num_channels != 1 or len(frame.audio) % 2:
             raise ValueError("SpeechRail conversation STT requires 16 kHz mono PCM16")
         if self._client is None:
+            self._preroll.append(frame.audio)
             return
         try:
             await self._client.append_pcm(frame.audio)
+            self._appended_bytes_in_turn += len(frame.audio)
         except Exception as exc:
             logger.warning("交互 STT: SpeechRail 发送音频失败，重置本回合会话: %s", exc)
             with contextlib.suppress(Exception):
@@ -166,9 +181,11 @@ class SpeechRailConversationSTTProcessor(FrameProcessor):
         finally:
             await client.close()
             self._client = None
+            self._appended_bytes_in_turn = 0
             logger.debug("交互 STT: SpeechRail 实时会话已关闭 (语言 %s)", self._language)
 
     async def _close_turn(self) -> None:
+        self._preroll.clear()
         if self._client is not None:
             logger.debug("交互 STT: SpeechRail 会话未完成即关闭")
             await self._client.close()

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -88,6 +88,44 @@ def _settings(tmp_path: Path) -> SubtitleSettings:
         model_dir=tmp_path,
         output_dir=tmp_path / "subtitles",
     )
+
+
+class ShortLivedTranscriber(FakeTranscriber):
+    """连接成功后立即结束流，模拟 worker 未就绪时的秒断握手。"""
+
+    def __init__(self, *, source_epoch: int) -> None:
+        super().__init__(source_epoch=source_epoch)
+        self._end_stream = True
+
+
+def _flapping_proxy(
+    tmp_path: Path,
+    *,
+    probes: list[bool] | None = None,
+    backoff: Sequence[float] = (0.01, 0.02),
+    stable_reset_after_secs: float | None = None,
+) -> SubtitleProxy:
+    created: list[FakeTranscriber] = []
+
+    def factory(_ctx: ASRSessionContext) -> FakeTranscriber:
+        transcriber = ShortLivedTranscriber(source_epoch=1 + len(created))
+        created.append(transcriber)
+        return transcriber
+
+    probe_results = list(probes) if probes is not None else []
+
+    async def probe() -> bool:
+        return probe_results.pop(0) if probe_results else True
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=backoff,
+        readiness_probe=probe,
+        stable_reset_after_secs=stable_reset_after_secs,
+    )
+    proxy._created = created  # type: ignore[attr-defined]
+    return proxy
 
 
 def _proxy(tmp_path: Path) -> SubtitleProxy:
@@ -388,4 +426,116 @@ async def test_push_audio_requires_committed_owner(tmp_path: Path) -> None:
     await proxy.push_audio(b"\x00\x00" * 1600)
     await asyncio.sleep(0.1)
     assert transcriber.sent_audio == [b"\x00\x00" * 1600]
+    await proxy.stop()
+
+
+async def test_subtitle_reconnect_waits_while_ready_probe_denies(
+    tmp_path: Path,
+) -> None:
+    ready = {"value": False}
+    proxy = _flapping_proxy(tmp_path, backoff=(0.01, 0.02))
+
+    async def probe() -> bool:
+        return ready["value"]
+
+    proxy._subtitle_session._readiness_probe = probe
+    await proxy.start()
+    preparation = await proxy.prepare_browser_capture(timeout_secs=1.0)
+    proxy.commit_browser_capture(preparation)
+
+    await asyncio.sleep(0.2)
+    assert len(proxy._created) == 1
+
+    ready["value"] = True
+    await asyncio.sleep(0.15)
+    assert len(proxy._created) >= 2
+    await proxy.stop()
+
+
+async def test_subtitle_reconnect_uses_backoff_without_stable_window(
+    tmp_path: Path,
+) -> None:
+    created_at: list[float] = []
+    loop = asyncio.get_running_loop()
+
+    def factory(_ctx: ASRSessionContext) -> FakeTranscriber:
+        created_at.append(loop.time())
+        return ShortLivedTranscriber(source_epoch=1 + len(created_at))
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=(0.05, 0.2),
+    )
+    await proxy.start()
+    preparation = await proxy.prepare_browser_capture(timeout_secs=1.0)
+    proxy.commit_browser_capture(preparation)
+
+    await asyncio.sleep(0.8)
+    assert len(created_at) >= 3
+    first_gap = created_at[1] - created_at[0]
+    second_gap = created_at[2] - created_at[1]
+    assert second_gap > first_gap * 1.5
+    await proxy.stop()
+
+
+async def test_stable_subtitle_connection_resets_backoff(tmp_path: Path) -> None:
+    created: list[FakeTranscriber] = []
+
+    def factory(_ctx: ASRSessionContext) -> FakeTranscriber:
+        transcriber = FakeTranscriber(source_epoch=1 + len(created))
+        created.append(transcriber)
+        return transcriber
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=(0.05, 0.2),
+        stable_reset_after_secs=0.1,
+    )
+    await proxy.start()
+    preparation = await proxy.prepare_browser_capture(timeout_secs=1.0)
+    proxy.commit_browser_capture(preparation)
+
+    await asyncio.sleep(0.15)
+    assert len(created) == 1
+
+    first = created[0]
+    first._end_stream = True
+    await asyncio.sleep(0.3)
+    assert len(created) == 2
+    await proxy.stop()
+
+
+async def test_capture_reconnect_waits_while_ready_probe_denies(
+    tmp_path: Path,
+) -> None:
+    ready = {"value": False}
+    created: list[FakeTranscriber] = []
+
+    def factory(_ctx: ASRSessionContext) -> FakeTranscriber:
+        transcriber = ShortLivedTranscriber(source_epoch=1 + len(created))
+        created.append(transcriber)
+        return transcriber
+
+    async def probe() -> bool:
+        return ready["value"]
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=(0.01, 0.02),
+        readiness_probe=probe,
+    )
+    await proxy.start()
+    preparation = await proxy.prepare_capture("meeting-1", timeout_secs=1.0)
+    proxy.commit_capture(preparation)
+
+    await asyncio.sleep(0.2)
+    assert len(created) == 1
+
+    ready["value"] = True
+    await asyncio.sleep(0.15)
+    assert len(created) >= 2
+    await proxy.abort_capture()
     await proxy.stop()

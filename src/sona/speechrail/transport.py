@@ -138,6 +138,14 @@ class SpeechRailOpenAITransport:
 _ASR_ALIAS_DIARIZE = "gpt-4o-transcribe-diarize"
 _ASR_ALIAS_PLAIN = "gpt-4o-transcribe"
 
+DEFAULT_SERVER_VAD: dict[str, object] = {
+    "type": "server_vad",
+    "threshold": 0.5,
+    "prefix_padding_ms": 300,
+    "silence_duration_ms": 400,
+}
+MANUAL_TURN_DETECTION: dict[str, object] = {"type": "manual"}
+
 
 class SpeechRailRealtimeClient:
     """One OpenAI-standard Realtime ASR session used by subtitle/meeting adapters.
@@ -172,6 +180,7 @@ class SpeechRailRealtimeClient:
         diarization: bool = False,
         speaker_count_hint: int | None = None,
         diarization_group_id: str | None = None,
+        turn_detection: Mapping[str, object] | None = None,
     ) -> None:
         await self._transport.connect()
         transcription: dict[str, object] = {
@@ -185,11 +194,12 @@ class SpeechRailRealtimeClient:
             if diarization_group_id is not None:
                 diarization_config["group_id"] = diarization_group_id
             transcription["diarization"] = diarization_config
+        turn_cfg = dict(turn_detection) if turn_detection is not None else {"type": "manual"}
         await self._transport.send_event(
             {
                 "type": "session.update",
                 "session": {
-                    "turn_detection": {"type": "manual"},
+                    "turn_detection": turn_cfg,
                     "input_audio_transcription": transcription,
                 },
             }
@@ -233,6 +243,8 @@ def decode_pcm16(value: object) -> bytes:
 
 
 __all__ = [
+    "DEFAULT_SERVER_VAD",
+    "MANUAL_TURN_DETECTION",
     "ConnectionFactory",
     "SpeechRailConnection",
     "SpeechRailOpenAITransport",
