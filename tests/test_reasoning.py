@@ -977,6 +977,35 @@ class TestLmStudioNativeLLMService:
         svc._recover_invalid_chain.assert_awaited_once()
         assert svc._previous_response_id is None
 
+    async def test_multiple_user_turns_without_assistant_succeeds_as_initial_turn(
+        self,
+    ) -> None:
+        svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
+        payloads: list[dict[str, Any]] = []
+
+        @asynccontextmanager
+        async def fake_stream(*_: Any, **kwargs: Any) -> Any:
+            payloads.append(kwargs["json"])
+            yield FakeSSEResponse(SSE_LINES)
+
+        svc._http.stream = fake_stream  # type: ignore[method-assign]
+        svc._recover_invalid_chain = AsyncMock()
+
+        # Context has 2 user turns without any assistant reply (e.g. rapid user utterances)
+        ctx = LLMContext()
+        ctx.add_message({"role": "system", "content": "system prompt"})
+        ctx.add_message({"role": "user", "content": "用户第一句"})
+        ctx.add_message({"role": "user", "content": "用户第二句"})
+
+        chunks = [chunk async for chunk in await svc.get_chat_completions(ctx)]
+        assert [chunk.choices[0].delta.content for chunk in chunks] == ["你", "好"]
+        assert len(payloads) == 1
+        assert payloads[0]["input"] == "用户第二句"
+        assert payloads[0]["system_prompt"] == "system prompt"
+        assert "previous_response_id" not in payloads[0]
+        # Must not have attempted recovery because there is no completed assistant history
+        svc._recover_invalid_chain.assert_not_called()
+
     async def test_sse_error_event_raises(self) -> None:
         svc = LmStudioNativeLLMService(model="m", base_url="http://localhost:1234")
 

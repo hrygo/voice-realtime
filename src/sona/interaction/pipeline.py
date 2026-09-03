@@ -47,7 +47,10 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.turns.user_mute.base_user_mute_strategy import BaseUserMuteStrategy
-from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_stop import (
+    SpeechTimeoutUserTurnStopStrategy,
+    TurnAnalyzerUserTurnStopStrategy,
+)
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from sona.asr.contracts import ConversationSTTFactory
@@ -524,7 +527,13 @@ def build_pipeline(
             ]
         )
         if settings.smart_turn_enabled
-        else None
+        else UserTurnStrategies(
+            stop=[
+                SpeechTimeoutUserTurnStopStrategy(
+                    user_speech_timeout=settings.silence_secs
+                )
+            ]
+        )
     )
 
     # 1.7 组装：VAD 分析、SmartTurn 与 HangoverUserMuteStrategy 集成进 LLMUserAggregatorParams，

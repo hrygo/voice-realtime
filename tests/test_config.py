@@ -238,7 +238,7 @@ def test_interaction_rejects_non_v2_or_credentialed_speechrail_url(url: str) -> 
 
 def test_interaction_smart_turn_and_tts_fast_clause_defaults() -> None:
     settings = InteractionSettings()
-    assert settings.smart_turn_enabled is True
+    assert settings.smart_turn_enabled is False
     assert settings.smart_turn_stop_secs == 0.45
     assert settings.tts_fast_first_clause is True
     assert settings.tts_first_clause_min_chars == 8

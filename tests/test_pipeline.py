@@ -947,3 +947,36 @@ class TestInjectorMode:
 
         params = mock_cls.call_args.args[0]
         assert params.audio_in_enabled is False
+
+    def test_pipeline_user_turn_strategies_selection(
+        self,
+        settings: InteractionSettings,
+        mock_transport: MagicMock,
+        mock_services: list[MagicMock],
+    ) -> None:
+        from pipecat.processors.aggregators.llm_response_universal import LLMUserAggregator
+        from pipecat.turns.user_stop import (
+            SpeechTimeoutUserTurnStopStrategy,
+            TurnAnalyzerUserTurnStopStrategy,
+        )
+
+        # Default smart_turn_enabled is False -> SpeechTimeoutUserTurnStopStrategy
+        pipeline_default = build_pipeline(settings, transport=mock_transport)
+        user_agg_default = next(
+            p for p in pipeline_default.processors if isinstance(p, LLMUserAggregator)
+        )
+        assert any(
+            isinstance(s, SpeechTimeoutUserTurnStopStrategy)
+            for s in user_agg_default._user_turn_controller._user_turn_strategies.stop
+        )
+
+        # Explicit smart_turn_enabled is True -> TurnAnalyzerUserTurnStopStrategy
+        settings_smart = InteractionSettings(smart_turn_enabled=True)
+        pipeline_smart = build_pipeline(settings_smart, transport=mock_transport)
+        user_agg_smart = next(
+            p for p in pipeline_smart.processors if isinstance(p, LLMUserAggregator)
+        )
+        assert any(
+            isinstance(s, TurnAnalyzerUserTurnStopStrategy)
+            for s in user_agg_smart._user_turn_controller._user_turn_strategies.stop
+        )

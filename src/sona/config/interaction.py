@@ -183,8 +183,8 @@ class InteractionSettings(BaseSettings):
         description="单次会话上限 (秒)；0 表示随 UI 服务持续运行",
     )
     smart_turn_enabled: bool = Field(
-        default=True,
-        description="是否启用 LocalSmartTurn 进行语义端点判定",
+        default=False,
+        description="是否启用 LocalSmartTurn 进行语义端点判定（中文建议 False）",
     )
     smart_turn_stop_secs: float = Field(
         default=0.45,

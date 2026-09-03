@@ -802,18 +802,26 @@ class LmStudioNativeLLMService(OpenAILLMService):
             current_user = retry_payload.get("input")
             if not isinstance(current_user, str) or not current_user:
                 raise ValueError("LM Studio current user input is invalid") from exc
-            seed_response_id = await self._recover_invalid_chain(
-                messages,
-                current_user,
-                system_prompt,
-                generation,
-            )
-            retry_payload.pop("system_prompt", None)
-            retry_payload["previous_response_id"] = seed_response_id
-            logger.warning(
-                "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
-                generation,
-            )
+            completed_turns = normalize_completed_turns(messages)
+            if completed_turns:
+                seed_response_id = await self._recover_invalid_chain(
+                    messages,
+                    current_user,
+                    system_prompt,
+                    generation,
+                )
+                retry_payload.pop("system_prompt", None)
+                retry_payload["previous_response_id"] = seed_response_id
+                logger.warning(
+                    "LM Studio 上下文链失效，已从验证记忆恢复（generation=%s）",
+                    generation,
+                )
+            else:
+                retry_payload["system_prompt"] = system_prompt
+                logger.warning(
+                    "LM Studio 上下文链失效且无完整历史问答，重置为首轮重试（generation=%s）",
+                    generation,
+                )
             async for retry_chunk in self._consume_native_completions(
                 retry_payload,
                 generation=generation,
@@ -912,15 +920,22 @@ class LmStudioNativeLLMService(OpenAILLMService):
         self._request_generation += 1
         generation = self._request_generation
         if self._previous_response_id is None and user_turns > 1:
-            seed_response_id = await self._recover_invalid_chain(
-                frozen_messages,
-                user_input,
-                system_prompt,
-                generation,
-            )
-            self._previous_response_id = seed_response_id
-            self._system_prompt = system_prompt
-            self._completed_user_turns = user_turns - 1
+            completed_turns = normalize_completed_turns(frozen_messages)
+            if completed_turns:
+                seed_response_id = await self._recover_invalid_chain(
+                    frozen_messages,
+                    user_input,
+                    system_prompt,
+                    generation,
+                )
+                self._previous_response_id = seed_response_id
+                self._system_prompt = system_prompt
+                self._completed_user_turns = user_turns - 1
+            else:
+                logger.info(
+                    "LM Studio 虽有连续用户输入但无完整历史问答，作为首轮请求发送（generation=%s）",
+                    generation,
+                )
         payload: dict[str, Any] = {
             "model": self._model,
             "input": user_input,
