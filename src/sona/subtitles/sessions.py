@@ -113,6 +113,7 @@ class StandardSubtitleSession:
         on_last_event: Callable[[], None],
         on_last_error: Callable[[str | None], None],
         on_dropped_chunk: Callable[[], None],
+        on_gap: Callable[[int], Awaitable[None]] | None = None,
         readiness_probe: ReadinessProbe | None = None,
         stable_reset_after_secs: float = STABLE_CONNECTION_RESET_AFTER_SECS,
     ) -> None:
@@ -130,6 +131,7 @@ class StandardSubtitleSession:
         self._on_last_event = on_last_event
         self._on_last_error = on_last_error
         self._on_dropped_chunk = on_dropped_chunk
+        self._on_gap = on_gap
         self._readiness_probe = readiness_probe
         self._stable_reset_after_secs = stable_reset_after_secs
 
@@ -141,6 +143,8 @@ class StandardSubtitleSession:
         self._active = asyncio.Event()
         self._epoch = 0
         self._epoch_open = False
+        # 已激活但流未就绪（重连退避）期间丢弃的 PCM 字节；重连成功后一次性上报
+        self._gap_dropped_bytes = 0
 
     @property
     def ready(self) -> asyncio.Event:
@@ -230,6 +234,7 @@ class StandardSubtitleSession:
         self._prepared = None
         self._committed = False
         self._active.clear()
+        self._gap_dropped_bytes = 0
         task = self._supervisor_task
         self._supervisor_task = None
         if task is not None and task is not asyncio.current_task():
@@ -265,6 +270,10 @@ class StandardSubtitleSession:
             or self._stream is None
             or not self._ready.is_set()
         ):
+            if self._running() and self._committed:
+                # 已激活但流未就绪（重连退避中）：静默丢弃但记账，
+                # 避免用户在断连窗口内的语音完全无感知地消失。
+                self._gap_dropped_bytes += len(data)
             return
         if self._audio_queue.full():
             with contextlib.suppress(asyncio.QueueEmpty):
@@ -311,6 +320,21 @@ class StandardSubtitleSession:
         await self._on_epoch_closed(epoch)
         self._epoch_open = False
 
+    async def _flush_gap_notice(self) -> None:
+        """重连成功后把退避期间丢失的音频时长一次性上报给 facade。"""
+        if self._gap_dropped_bytes <= 0:
+            return
+        # 16 kHz mono s16le = 32 bytes/ms
+        dropped_ms = int(self._gap_dropped_bytes / 32)
+        self._gap_dropped_bytes = 0
+        on_gap = self._on_gap
+        if on_gap is None:
+            return
+        try:
+            await on_gap(dropped_ms)
+        except Exception:
+            logger.warning("StandardSubtitleSession: gap 上报失败", exc_info=True)
+
     async def _supervise(self, initial_stream: StreamingTranscriber) -> None:
         attempt = 0
         stream: StreamingTranscriber | None = initial_stream
@@ -335,6 +359,7 @@ class StandardSubtitleSession:
                         break
                     self._on_last_error(None)
                     self._on_state(SubtitleSessionState.CONNECTED)
+                    await self._flush_gap_notice()
                     stable_since = loop.time()
                 logger.info("StandardSubtitleSession: 已连接 SpeechRail %s", stream.uri)
                 await self._serve_connection(stream)

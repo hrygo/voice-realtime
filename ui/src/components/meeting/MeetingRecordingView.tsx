@@ -7,6 +7,7 @@ import { MeetingWaveform } from "./MeetingWaveform";
 import { deriveReadingBlocks } from "./transcriptViewModel";
 import { copyTextToClipboard } from "../../utils/clipboard";
 import { InnerOSPanel, useInnerOSStore } from "../../features/innerOS";
+import { useUISettingsStore } from "../../stores/uiSettingsStore";
 import {
   BookOpenIcon,
   ClockIcon,
@@ -85,6 +86,9 @@ export function MeetingRecordingView({
   const toggleInnerOS = useInnerOSStore((s) => s.togglePanel);
   const queryStatus = useInnerOSStore((s) => s.queryStatus);
   const isGenerating = queryStatus === "generating" || queryStatus === "accepted";
+  // 服务端能力位：InnerOS 未启用时隐藏入口并拦截快捷键，分人修正开启时提示会后归属
+  const innerOSEnabled = useUISettingsStore((s) => s.innerOSEnabled);
+  const diarizationOverlayEnabled = useUISettingsStore((s) => s.diarizationOverlayEnabled);
 
   // Timer
   useEffect(() => {
@@ -157,7 +161,11 @@ export function MeetingRecordingView({
       // 1. Meta shortcut ⌘+K: Always toggles Inner OS, even if focus is inside an input/textarea!
       if (isCmdOrCtrl && !e.altKey && !e.shiftKey && isK) {
         e.preventDefault();
-        toggleInnerOS();
+        if (innerOSEnabled) {
+          toggleInnerOS();
+        } else {
+          showToast("内心 OS 未启用：设置 SONA_MEETING_INNER_OS_ENABLED=true 并重启 sona-ui", "warning");
+        }
         return;
       }
 
@@ -180,7 +188,7 @@ export function MeetingRecordingView({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleStarSelectedOrLatest, onToggleMic, micMuted, toggleInnerOS]);
+  }, [handleStarSelectedOrLatest, innerOSEnabled, onToggleMic, micMuted, toggleInnerOS]);
 
   // Auto-scroll when new segments arrive
   useEffect(() => {
@@ -294,6 +302,14 @@ export function MeetingRecordingView({
             <span className="recording-metric-label">说话人</span>
           </div>
           {isCalibrating && <span className="recording-compact-state is-calibrating">校准中</span>}
+          {diarizationOverlayEnabled && (
+            <span
+              className="recording-compact-state is-diarization-hint"
+              title="流式转写暂无法区分说话人；会议结束后将自动用非流式分人模型修正归属"
+            >
+              说话人会后自动修正
+            </span>
+          )}
           {starredIds.size > 0 && (
             <div className="recording-metric recording-metric-starred" title="重点发言数量">
               <SparklesIcon size={14} aria-hidden="true" />
@@ -594,7 +610,7 @@ export function MeetingRecordingView({
           </div>
 
           {/* Floating Copilot trigger when Inner OS panel is stowed */}
-          {!isInnerOSOpen && (
+          {!isInnerOSOpen && innerOSEnabled && (
             <button
               type="button"
               className="inner-os-floating-trigger"

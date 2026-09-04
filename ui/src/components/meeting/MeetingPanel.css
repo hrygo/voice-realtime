@@ -4288,6 +4288,11 @@
   color: var(--color-yellow);
 }
 
+.recording-compact-state.is-diarization-hint {
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
 .recording-metric-starred {
   color: var(--color-yellow);
 }

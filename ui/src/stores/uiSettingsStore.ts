@@ -159,6 +159,9 @@ interface UISettingsState {
   subtitleStatus: string;
   sessionStartedAt: string | null;
   serverSynchronized: boolean;
+  /** 服务端能力位；快照到达前按乐观默认值渲染，收到权威快照后校正。 */
+  innerOSEnabled: boolean;
+  diarizationOverlayEnabled: boolean;
   teleprompterSettings: TeleprompterSettings;
 
   setTheme: (theme: Theme) => void;
@@ -187,6 +190,8 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
   subtitleStatus: "unknown",
   sessionStartedAt: null,
   serverSynchronized: false,
+  innerOSEnabled: true,
+  diarizationOverlayEnabled: false,
   teleprompterSettings: readStorage<TeleprompterSettings>("sona:teleprompter", {
     mirror: false,
     fontSize: 2.2,
@@ -215,6 +220,8 @@ export const useUISettingsStore = create<UISettingsState>((set, get) => ({
       subtitleStatus: state.subtitle,
       sessionStartedAt: state.session_started_at,
       serverSynchronized: true,
+      innerOSEnabled: state.capabilities?.inner_os_enabled ?? true,
+      diarizationOverlayEnabled: state.capabilities?.diarization_overlay_enabled ?? false,
     });
     writeStorage("sona:persona", persona);
     if (state.voice) writeStorage("sona:voice", state.voice);

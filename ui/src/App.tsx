@@ -239,6 +239,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isMeetingRecording, sessionStartedAt]);
 
+  // 服务端降级原因（如麦克风不可用）出现时提示一次，恢复后允许再次提示
+  const degradedReason = commandSocket.snapshot?.degraded_reason ?? null;
+  const lastDegradedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!degradedReason) {
+      lastDegradedRef.current = null;
+      return;
+    }
+    if (lastDegradedRef.current === degradedReason) return;
+    lastDegradedRef.current = degradedReason;
+    if (degradedReason === "audio_hub_unavailable") {
+      showToast("麦克风不可用，语音助手未启动；请检查系统麦克风权限或设备连接", "error");
+    } else {
+      showToast(`运行时降级：${degradedReason}`, "warning");
+    }
+  }, [degradedReason]);
+
   const handleTabChange = useCallback(
     (newTab: WorkspaceTab) => {
       if (!commandSocket.snapshot) {
@@ -350,6 +367,8 @@ export default function App() {
 
   const latestSnippet = partialText || (segments.length > 0 ? segments[segments.length - 1].text : "");
 
+  const innerOSEnabled = useUISettingsStore((s) => s.innerOSEnabled);
+
   const isStandaloneInnerOS =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("view") === "inner-os";
@@ -357,7 +376,17 @@ export default function App() {
   if (isStandaloneInnerOS) {
     return (
       <div className="app-container is-standalone-inner-os" data-workspace="meeting">
-        <InnerOSPanel isStandalone />
+        {innerOSEnabled ? (
+          <InnerOSPanel isStandalone />
+        ) : (
+          <div className="inner-os-disabled-notice" role="status">
+            <h2>内心 OS 未启用</h2>
+            <p>
+              该功能默认关闭：请设置环境变量{" "}
+              <code>SONA_MEETING_INNER_OS_ENABLED=true</code> 并重启 sona-ui 后使用。
+            </p>
+          </div>
+        )}
         <ToastContainer />
       </div>
     );

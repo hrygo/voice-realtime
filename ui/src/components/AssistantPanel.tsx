@@ -410,7 +410,17 @@ export default function AssistantPanel({
     if (typeof message.data !== "string") return;
     try {
       const event = parseAssistantEvent(JSON.parse(message.data));
-      if (event) useAssistantStore.getState().applyEvent(event);
+      if (event) {
+        useAssistantStore.getState().applyEvent(event);
+        if (event.type === "system" && event.state === "pipeline_error") {
+          showToast(
+            event.message
+              ? `语音管道错误：${event.message}`
+              : "语音管道错误，请检查 SpeechRail / LM Studio 服务状态",
+            "error",
+          );
+        }
+      }
     } catch {
       // Ignore
     }

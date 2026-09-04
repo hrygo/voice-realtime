@@ -65,6 +65,8 @@ interface SubtitleState {
   setConnected: (v: boolean) => void;
   toggleStar: (index: number) => void;
   clear: () => void;
+  /** SpeechRail epoch 重置（{"type":"reset"}）：新时间轴，旧行与星标全部作废。 */
+  resetForReconnect: () => void;
 }
 
 export const useSubtitleStore = create<SubtitleState>((set) => ({
@@ -102,6 +104,14 @@ export const useSubtitleStore = create<SubtitleState>((set) => ({
         partial: "",
         starredIndices: new Set<number>(),
       };
+    }),
+  resetForReconnect: () =>
+    set({
+      lines: [],
+      rawLines: [],
+      partial: "",
+      clearedOffset: 0,
+      starredIndices: new Set<number>(),
     }),
 }));
 

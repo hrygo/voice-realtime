@@ -7,6 +7,7 @@ import {
   toMarkdownNotes,
   useSubtitleStore,
   type SubtitleLine,
+  type SubtitleSnapshot,
 } from "../stores/subtitleStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
@@ -112,12 +113,34 @@ export default function SubtitleStream({
   }, []);
 
   const handleMessage = useCallback((evt: MessageEvent) => {
+    let payload: Record<string, unknown>;
     try {
-      const payload = JSON.parse(evt.data as string);
-      useSubtitleStore.getState().applySnapshot(payload);
+      const parsed: unknown = JSON.parse(evt.data as string);
+      if (typeof parsed !== "object" || parsed === null) return;
+      payload = parsed as Record<string, unknown>;
     } catch {
-      // Ignore
+      return;
     }
+    // 控制事件（非快照）：reset=epoch 重置清屏；error/gap 须让用户可见
+    if (payload.type === "reset") {
+      useSubtitleStore.getState().resetForReconnect();
+      return;
+    }
+    if (payload.type === "error") {
+      showToast(`字幕服务错误：${typeof payload.error === "string" ? payload.error : "未知错误"}`, "error");
+      return;
+    }
+    if (payload.type === "gap") {
+      const droppedMs = typeof payload.dropped_ms === "number" ? payload.dropped_ms : 0;
+      if (droppedMs > 0) {
+        showToast(
+          `重连期间丢失约 ${Math.max(1, Math.round(droppedMs / 1000))} 秒音频，此段语音未生成字幕`,
+          "warning",
+        );
+      }
+      return;
+    }
+    useSubtitleStore.getState().applySnapshot(payload as Partial<SubtitleSnapshot>);
   }, []);
 
   const { state } = useEventSocket("/ws/subtitles", handleMessage);

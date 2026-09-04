@@ -10,7 +10,8 @@
 - `TTSTextFrame` / `TTSStartedFrame` / `TTSStoppedFrame` → `tts`
 - `TTSAudioRawFrame` → `tts`（仅计数，时间窗节流，不逐帧广播）
 - `UserStartedSpeakingFrame` / `UserStoppedSpeakingFrame` → `vad`
-- `InterruptionFrame` → `interruption`
+- `InterruptionFrame` → `interruption`（`CancelFrame` 仅停 TTS，不计打断）
+- `ErrorFrame` → `system: pipeline_error`（真实故障，携带 message）
 - 管道启停 → `system`
 
 注意：`on_push_frame` 对每个 source→destination 传输都触发，同一帧对象
@@ -228,11 +229,25 @@ class StatusBridgeObserver(BaseObserver):
             await self._emit_event(
                 {"type": "vad", "state": "user_silence", "t": self._now()}
             )
-        elif isinstance(frame, (InterruptionFrame, CancelFrame, ErrorFrame)):
+        elif isinstance(frame, (InterruptionFrame, CancelFrame)):
             self._tts_active = False
             await self._emit_event({"type": "tts", "state": "stopped"})
+            if isinstance(frame, InterruptionFrame):
+                await self._emit_event(
+                    {"type": "interruption", "state": "detected", "t": self._now()}
+                )
+        elif isinstance(frame, ErrorFrame):
+            # 真实故障（STT/TTS/LLM 异常）必须与"用户打断"区分呈现，
+            # 否则用户视角只有"说了没反应"且被打断计数虚高。
+            self._tts_active = False
+            message = frame.error.strip() if isinstance(frame.error, str) else ""
             await self._emit_event(
-                {"type": "interruption", "state": "detected", "t": self._now()}
+                {
+                    "type": "system",
+                    "state": "pipeline_error",
+                    "message": message or None,
+                    "t": self._now(),
+                }
             )
         elif isinstance(frame, EndFrame):
             await self._emit_event({"type": "system", "state": "pipeline_stopped"})

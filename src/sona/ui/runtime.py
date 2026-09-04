@@ -131,6 +131,11 @@ class UIRuntime:
                 await self._coordinator.start_assistant()
             except Exception:
                 logger.warning("UIRuntime: 交互会话启动失败", exc_info=True)
+                self._publish_runtime_state()
+        else:
+            # 麦克风不可用时 assistant 静默不启动；主动广播 degraded 快照，
+            # 让已连接/即将连接的浏览器能看到降级原因而不是只看到 pipeline=stopped。
+            self._publish_runtime_state()
         logger.info("UIRuntime: 已启动 (pipeline=%s)", self.pipelines_active)
 
     async def stop(self) -> None:
@@ -247,10 +252,14 @@ class UIRuntime:
             meeting_started_at=meeting_started_at,
             storage=coordinator.storage,
             runtime_revision=coordinator.runtime_revision,
+            degraded_reason=None if self._hub_active else "audio_hub_unavailable",
             capabilities=RuntimeCapabilities(
                 inner_os_enabled=self._settings.meeting.inner_os_enabled,
                 inner_os_analysis_enabled=self._settings.meeting.inner_os_analysis_enabled,
                 inner_os_channel="loopback_only",
+                diarization_overlay_enabled=(
+                    self._settings.meeting.diarization_overlay_enabled
+                ),
             ),
             audio_levels=AudioLevelsSnapshot(
                 microphone=audio_levels.microphone,

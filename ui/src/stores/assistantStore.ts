@@ -43,7 +43,7 @@ export type AssistantEvent =
   | { readonly type: "llm"; readonly state: "streaming" | "final"; readonly text: string; readonly turnId: number }
   | { readonly type: "tts"; readonly state: "synthesizing" | "started" | "stopped" }
   | { readonly type: "interruption"; readonly state: "detected" }
-  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "pipeline_error" | "degraded" | "user_stopped" }
+  | { readonly type: "system"; readonly state: "pipeline_started" | "pipeline_stopped" | "pipeline_error" | "degraded" | "user_stopped"; readonly message?: string }
   | {
       readonly type: "metrics";
       readonly turnId: number;
@@ -130,7 +130,11 @@ export function parseAssistantEvent(value: unknown): AssistantEvent | null {
         || value.state === "pipeline_error"
         || value.state === "degraded"
         || value.state === "user_stopped"
-        ? { type: "system", state: value.state }
+        ? {
+            type: "system",
+            state: value.state,
+            message: typeof value.message === "string" ? value.message : undefined,
+          }
         : null;
     default:
       return null;

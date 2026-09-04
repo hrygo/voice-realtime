@@ -92,8 +92,11 @@ class MeetingSettings(BaseSettings):
         description="同一说话人相邻段落合并最大时间间隙（毫秒）",
     )
     diarization_overlay_enabled: bool = Field(
-        default=False,
-        description="是否在封存时用非流式 diarize 修正流式转录的说话人归属",
+        default=True,
+        description=(
+            "是否在封存时用非流式 diarize 修正流式转录的说话人归属"
+            "（流式路径暂无法下发说话人标签，录制中恒为 speaker:0）"
+        ),
     )
     diarization_overlay_max_buffer_secs: int = Field(
         default=1800,

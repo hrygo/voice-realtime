@@ -121,6 +121,7 @@ class SubtitleProxy:
             on_last_event=self._on_session_last_event,
             on_last_error=self._on_session_last_error,
             on_dropped_chunk=self._on_session_dropped_chunk,
+            on_gap=self._on_subtitle_session_gap,
             readiness_probe=self._readiness_probe,
             stable_reset_after_secs=self._stable_reset_after_secs,
         )
@@ -274,6 +275,13 @@ class SubtitleProxy:
 
     def _on_session_gap(self) -> None:
         self._gap_count += 1
+
+    async def _on_subtitle_session_gap(self, dropped_ms: int) -> None:
+        """普通字幕重连后向浏览器上报退避期间丢失的音频时长。"""
+        self._gap_count += 1
+        if not self._client_hub.has_clients:
+            return
+        await self._broadcast_untracked({"type": "gap", "dropped_ms": dropped_ms})
 
     @property
     def is_paused(self) -> bool:

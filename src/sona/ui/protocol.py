@@ -140,6 +140,7 @@ class RuntimeCapabilities(BaseModel):
     inner_os_enabled: bool = False
     inner_os_analysis_enabled: bool = False
     inner_os_channel: Literal["loopback_only"] = "loopback_only"
+    diarization_overlay_enabled: bool = False
 
 
 class AudioLevelsSnapshot(BaseModel):
@@ -172,6 +173,7 @@ class RuntimeStateSnapshot(BaseModel):
     meeting_started_at: str | None = None
     storage: StorageHealth = StorageHealth.OK
     runtime_revision: int = Field(default=0, ge=0)
+    degraded_reason: str | None = None
     capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
     audio_levels: AudioLevelsSnapshot = Field(default_factory=AudioLevelsSnapshot)
 
