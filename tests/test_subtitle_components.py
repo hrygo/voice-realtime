@@ -302,6 +302,30 @@ async def test_finish_timeout_carries_last_window(tmp_path: Path) -> None:
     await proxy.stop()
 
 
+async def test_meeting_final_event_notifies_listeners(tmp_path: Path) -> None:
+    """会议采集期间每个 server_vad 回合的 final 窗口必须转发监听器增量入库。"""
+    transcriber = FakeTranscriber(source_epoch=1)
+    proxy = SubtitleProxy(_settings(tmp_path), transcriber_factory=lambda _ctx: transcriber)
+    await proxy.start()
+    preparation = await proxy.prepare_capture("meeting-1", timeout_secs=1.0)
+    proxy.commit_capture(preparation)
+
+    received: list[ASRWindow] = []
+
+    async def listener(window: ASRWindow) -> None:
+        received.append(window)
+
+    proxy.add_event_listener(listener)
+    await proxy._capture_session._handle_event(
+        ASREvent(kind="final", window=_window(partial="", with_segment=True))
+    )
+
+    assert len(received) == 1
+    assert received[0].segments[0].text == "你好世界"
+    await proxy.abort_capture()
+    await proxy.stop()
+
+
 async def test_stop_is_idempotent(tmp_path: Path) -> None:
     proxy = _proxy(tmp_path)
     await proxy.start()

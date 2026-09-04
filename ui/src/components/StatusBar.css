@@ -509,9 +509,11 @@
 .health-master-pill {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 3px 10px;
   height: 24px;
+  min-width: 154px;
   box-sizing: border-box;
   border-radius: var(--radius-pill);
   background: var(--bg-secondary);
@@ -971,6 +973,9 @@
   .status-tab-btn {
     padding: 4px 9px;
     font-size: 0.76rem;
+  }
+  .health-master-pill {
+    min-width: 56px;
   }
 }
 

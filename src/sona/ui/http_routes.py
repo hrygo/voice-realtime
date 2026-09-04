@@ -178,7 +178,7 @@ def create_http_router(context: UIAppContext) -> APIRouter:
     async def services() -> dict[str, Any]:
         """三服务健康灯聚合（并发异步探活，单次总延时 <= timeout）。"""
         settings = context.settings
-        timeout = min(settings.ui.api_timeout, 1.0)
+        timeout = min(settings.ui.api_timeout, 2.5)
         speechrail = settings.subtitles
         lm = settings.interaction
         paths = [

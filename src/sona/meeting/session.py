@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
+from sona.meeting.diarization_overlay import MeetingDiarizationOverlay, meeting_diarization_group_id
 from sona.meeting.diarization_smoother import DiarizationSmoother
 from sona.meeting.finalization import MeetingFinalizer
 from sona.meeting.models import (
@@ -22,6 +23,7 @@ from sona.meeting.models import (
 )
 from sona.meeting.persistence import RecoveryJournalPort, TranscriptPersistence
 from sona.meeting.ports import (
+    AudioListener,
     CaptureGap,
     CaptureLease,
     MeetingCaptureGateway,
@@ -74,10 +76,11 @@ class MeetingSession:
         subtitle_proxy: MeetingCaptureGateway | None = None,
         language: str = "Chinese",
         audio_source: str = "microphone",
-        finalization_timeout_secs: float = 8.0,
+        finalization_timeout_secs: float = 30.0,
         recovery_journal: RecoveryJournalPort | None = None,
         event_publisher: EventPublisher | None = None,
         diarization_smoother: DiarizationSmoother | None = None,
+        diarization_overlay: MeetingDiarizationOverlay | None = None,
     ) -> None:
         if gateway is None:
             gateway = subtitle_proxy
@@ -94,6 +97,7 @@ class MeetingSession:
         self.recovery_journal = recovery_journal
         self.event_publisher = event_publisher
         self.diarization_smoother = diarization_smoother
+        self.diarization_overlay = diarization_overlay
         self._lock = asyncio.Lock()
         self._active_meeting_id: UUID | None = None
         self._record: MeetingRecord | None = None
@@ -108,7 +112,11 @@ class MeetingSession:
             transcripts=repository,
             minutes_store=repository,
             timeout_secs=finalization_timeout_secs,
+            diarization_overlay=diarization_overlay,
         )
+        self._audio_listener: AudioListener | None = None
+        if diarization_overlay is not None:
+            self._audio_listener = diarization_overlay.push_pcm
         self._storage_degraded = False
         self._speaker_names: dict[str, str] = {}
 
@@ -190,6 +198,7 @@ class MeetingSession:
                 self._preparation = None
                 self._active_meeting_id = None
                 raise
+            self._activate_overlay(record.id)
             preparation = MeetingPreparation(record=record, capture=capture)
             self._preparation = preparation
             return preparation
@@ -561,6 +570,23 @@ class MeetingSession:
         if self._preparation is not preparation:
             raise RuntimeError("无效或已消费的 meeting preparation")
 
+    def _activate_overlay(self, meeting_id: UUID) -> None:
+        """在会议采集启动后激活分人 overlay 的 PCM 缓冲与音频监听。"""
+        overlay = self.diarization_overlay
+        if overlay is None or self._audio_listener is None:
+            return
+        overlay.start(group_id=meeting_diarization_group_id(f"meeting:{meeting_id}"))
+        with contextlib.suppress(Exception):
+            self.gateway.add_audio_listener(self._audio_listener)
+
+    def _deactivate_overlay(self) -> None:
+        overlay = self.diarization_overlay
+        if overlay is None or self._audio_listener is None:
+            return
+        with contextlib.suppress(Exception):
+            self.gateway.remove_audio_listener(self._audio_listener)
+        overlay.clear()
+
     async def _release_listener(self) -> None:
         listener = self._listener
         self._listener = None
@@ -569,6 +595,7 @@ class MeetingSession:
                 self.gateway.remove_event_listener(listener)
         with contextlib.suppress(Exception):
             self.gateway.remove_gap_listener(self._on_gap)
+        self._deactivate_overlay()
 
     async def _resume_summary_worker(self) -> None:
         with contextlib.suppress(Exception):

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { applyTheme, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
+import { applyTheme, initThemeListener, useUISettingsStore, type Theme } from "../stores/uiSettingsStore";
 import { selectAssistantPhase, useAssistantStore } from "../stores/assistantStore";
 import { useMeetingStore } from "../stores/meetingStore";
 import { copyTextToClipboard } from "../utils/clipboard";
@@ -521,14 +521,7 @@ export default function StatusBar({
   useEffect(() => {
     const store = useUISettingsStore.getState();
     applyTheme(store.theme);
-
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => {
-      const current = useUISettingsStore.getState();
-      if (current.theme === "system") applyTheme("system");
-    };
-    media.addEventListener("change", onChange);
-    return () => media.removeEventListener("change", onChange);
+    return initThemeListener();
   }, []);
 
   const fetchServices = useCallback(async (isManual = false) => {

@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from sona.meeting.diarization_overlay import MeetingDiarizationOverlay
 from sona.meeting.finalization import MeetingFinalizer
 from sona.meeting.models import (
     MeetingRecord,
@@ -20,6 +21,7 @@ from sona.meeting.models import (
     MinutesRecord,
     MinutesStatus,
     NormalizedSegment,
+    TranscriptDocument,
     TranscriptReconcileResult,
     TranscriptWindow,
 )
@@ -308,18 +310,34 @@ class CallLogStore:
         self.order: list[str] = []
         self.errors: dict[str, Exception] = {}
         self.record = _record()
+        self.persisted_segments: list[NormalizedSegment] = []
 
     async def reconcile_window(
         self, meeting_id: UUID, window: TranscriptWindow
     ) -> TranscriptReconcileResult:
         self._maybe_raise("reconcile_window")
         self.order.append("reconcile_window")
+        for segment in window.segments:
+            self.persisted_segments = [
+                seg for seg in self.persisted_segments if seg.id != segment.id
+            ]
+            self.persisted_segments.append(segment)
         return TranscriptReconcileResult(
             meeting_id=meeting_id,
             transcript_revision=1,
             content_revision=1,
             replace_from_ms=0,
             segments=window.segments,
+        )
+
+    async def get_transcript(self, meeting_id: UUID) -> TranscriptDocument:
+        self._maybe_raise("get_transcript")
+        self.order.append("get_transcript")
+        return TranscriptDocument(
+            meeting_id=meeting_id,
+            transcript_revision=1,
+            content_revision=1,
+            segments=tuple(self.persisted_segments),
         )
 
     async def apply_speaker_remapping(
@@ -370,6 +388,7 @@ def _finalizer(
     store: CallLogStore | None = None,
     gateway: AsyncMock | None = None,
     journal: object | None = None,
+    overlay: MeetingDiarizationOverlay | None = None,
 ) -> tuple[MeetingFinalizer, CallLogStore, AsyncMock]:
     store = store or CallLogStore()
     gateway = gateway or AsyncMock(
@@ -383,6 +402,7 @@ def _finalizer(
         transcripts=store,
         minutes_store=store,
         timeout_secs=8.0,
+        diarization_overlay=overlay,
     )
     return finalizer, store, gateway
 
@@ -511,4 +531,109 @@ async def test_finalize_does_not_swallow_plain_timeout() -> None:
 
     gateway.abort_capture.assert_awaited_once_with()
     assert "finalize_transcript" not in store.order
+
+
+# ---------------------------------------------------------------------------
+# Task 4: diarization overlay 应用于全量 transcript（修复1）
+# ---------------------------------------------------------------------------
+
+
+class _OverlayFakeTranscriber:
+    """返回固定 spk_01 span 段的假 batch transcriber。"""
+
+    async def transcribe_diarize(self, pcm: bytes) -> object:
+        return _DiarizeResult(segments=(_DiarizeSegment("hello", 0, 50, "spk_01"),))
+
+
+class _DiarizeResult:
+    def __init__(self, *, segments: tuple[object, ...]) -> None:
+        self.segments = segments
+
+
+class _DiarizeSegment:
+    def __init__(self, text: str, start_ms: int, end_ms: int, speaker: str) -> None:
+        self.text = text
+        self.start_ms = start_ms
+        self.end_ms = end_ms
+        self.speaker = speaker
+
+
+def _overlay_finalizer(
+    *,
+    early_segments: tuple[NormalizedSegment, ...] = (),
+    last_segment: NormalizedSegment,
+) -> tuple[MeetingFinalizer, CallLogStore, AsyncMock]:
+    """构造 finalizer：库里已有早前 confirmed 段，最后窗口含一个段。"""
+    store = CallLogStore()
+    store.persisted_segments.extend(early_segments)
+    overlay = MeetingDiarizationOverlay(
+        transcriber=_OverlayFakeTranscriber(),
+        group_id="hash",
+        max_buffer_seconds=60,
+    )
+    overlay.start(group_id="hash")
+    overlay.push_pcm(b"\x00\x00" * 32_000)
+    last_window = TranscriptWindow(
+        source_epoch=2, segments=(last_segment,)
+    )
+    gateway = AsyncMock(finish_capture=AsyncMock(return_value=last_window))
+    finalizer, store, gateway = _finalizer(
+        store=store, gateway=gateway, overlay=overlay
+    )
+    return finalizer, store, gateway
+
+
+def _capped_segment(id_: UUID, start_ms: int, end_ms: int) -> NormalizedSegment:
+    return NormalizedSegment(
+        id=id_,
+        order=0,
+        source_epoch=1,
+        speaker_key="group:hash:speaker:0",
+        start_ms=start_ms,
+        end_ms=end_ms,
+        text="你好",
+    )
+
+
+async def test_finalize_overlay_corrects_early_confirmed_segments() -> None:
+    early_id = uuid4()
+    early = _capped_segment(early_id, 0, 100)
+    last = _capped_segment(uuid4(), 1000, 1200)
+    finalizer, store, _ = _overlay_finalizer(
+        early_segments=(early,), last_segment=last
+    )
+
+    result = await finalizer.finalize(uuid4())
+
+    assert result.timed_out is False
+    stored = list(store.persisted_segments)
+    early_corrected = next(seg for seg in stored if seg.id == early_id)
+    assert early_corrected.speaker_key == "group:hash:speaker:spk_01"
+    assert result.record.status is MeetingStatus.COMPLETED
+
+
+async def test_finalize_overlay_handles_empty_transcript_gracefully() -> None:
+    last = _capped_segment(uuid4(), 0, 100)
+    finalizer, _, _ = _overlay_finalizer(last_segment=last)
+
+    result = await finalizer.finalize(uuid4())
+
+    assert result.record.status is MeetingStatus.COMPLETED
+
+
+async def test_finalize_overlay_failure_does_not_abort_capture() -> None:
+    overlay = MeetingDiarizationOverlay(transcriber=None)
+    last_window = TranscriptWindow(
+        source_epoch=1,
+        segments=(_capped_segment(uuid4(), 0, 100),),
+    )
+    gateway = AsyncMock(finish_capture=AsyncMock(return_value=last_window))
+    finalizer, _, gateway = _finalizer(
+        gateway=gateway, overlay=overlay
+    )
+
+    result = await finalizer.finalize(uuid4())
+
+    assert result.record.status is MeetingStatus.COMPLETED
+    gateway.abort_capture.assert_not_awaited()
 

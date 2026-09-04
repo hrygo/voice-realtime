@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from enum import StrEnum
 from sona.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
 from sona.asr.models import ASRWindow
 from sona.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
+from sona.meeting.diarization_overlay import meeting_diarization_group_id
 from sona.meeting.models import TranscriptWindow
 from sona.meeting.ports import (
     CaptureFinalizationTimeout,
@@ -76,9 +76,7 @@ async def _wait_with_readiness(
 
 def _diarization_group_id(owner: str | None) -> str:
     """Keep the application meeting identifier out of the public audio protocol."""
-    if not owner:
-        raise RuntimeError("meeting diarization requires a capture owner")
-    return hashlib.sha256(owner.encode("utf-8")).hexdigest()
+    return meeting_diarization_group_id(owner)
 
 
 class SubtitleSessionState(StrEnum):
@@ -779,6 +777,11 @@ class MeetingCaptureSession:
     async def _notify_gap(self, start_ms: int, end_ms: int) -> None:
         if end_ms <= start_ms:
             return
+        logger.warning(
+            "MeetingCaptureSession: 转写缺口 [%sms - %sms]",
+            start_ms,
+            end_ms,
+        )
         self._on_gap()
         gap = TranscriptionGap(
             source_epoch=self._epoch,
@@ -849,6 +852,11 @@ class MeetingCaptureSession:
             return
         if event.kind == "error":
             self._on_last_error(event.error_message)
+            logger.warning(
+                "MeetingCaptureSession: SpeechRail 转写错误 (%s): %s",
+                event.error_code,
+                event.error_message,
+            )
             await self._on_payload(
                 {"type": "error", "error": event.error_message or "ASR error"},
                 False,
@@ -860,13 +868,16 @@ class MeetingCaptureSession:
         transcript_window = self._to_transcript_window(window)
         self._last_window = transcript_window
         if event.kind == "final":
+            # server_vad 每回合的 final 窗口必须转发并增量持久化，否则会议
+            # 确认转录只存最后一个窗口（EOF 冲刷仅覆盖尾部且分人易超时）。
             self._ready_to_stop.set()
-            return
         for listener in tuple(self._event_listeners):
             try:
                 await listener(transcript_window)
             except Exception:
                 logger.exception("MeetingCaptureSession: 会议转录监听器失败")
+        if event.kind == "final":
+            return
         await self._on_payload(legacy_subtitle_payload(window), False)
 
     def _drain_queue(self) -> None:

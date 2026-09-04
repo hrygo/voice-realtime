@@ -28,6 +28,7 @@ from .models import (
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 GapListener = Callable[["CaptureGap"], Awaitable[None]]
+AudioListener = Callable[[bytes], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,10 @@ class MeetingCaptureGateway(Protocol):
     def add_gap_listener(self, listener: GapListener) -> None: ...
 
     def remove_gap_listener(self, listener: GapListener) -> None: ...
+
+    def add_audio_listener(self, listener: AudioListener) -> None: ...
+
+    def remove_audio_listener(self, listener: AudioListener) -> None: ...
 
     async def prepare_capture(
         self,
@@ -231,6 +236,7 @@ class SummaryWorkloadControl(Protocol):
 
 
 __all__ = [
+    "AudioListener",
     "CaptureFinalizationTimeout",
     "CaptureFinalizationTimeoutError",
     "CaptureGap",

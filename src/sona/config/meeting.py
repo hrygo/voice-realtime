@@ -72,7 +72,7 @@ class MeetingSettings(BaseSettings):
         default=1_200_000, ge=60_000, le=7_200_000, description="单个 map chunk 最大时长"
     )
     summary_chunk_overlap_segments: int = Field(default=1, ge=0, le=10)
-    finalization_timeout_secs: float = Field(default=8.0, ge=1.0, le=300.0)
+    finalization_timeout_secs: float = Field(default=30.0, ge=1.0, le=300.0)
     recovery_dir: Path = Field(default=Path("runtime/meetings/recovery"))
     summary_concurrency: int = Field(default=1, ge=1, le=8)
     diarization_smoothing_enabled: bool = Field(
@@ -90,6 +90,16 @@ class MeetingSettings(BaseSettings):
         ge=100,
         le=5000,
         description="同一说话人相邻段落合并最大时间间隙（毫秒）",
+    )
+    diarization_overlay_enabled: bool = Field(
+        default=False,
+        description="是否在封存时用非流式 diarize 修正流式转录的说话人归属",
+    )
+    diarization_overlay_max_buffer_secs: int = Field(
+        default=1800,
+        ge=60,
+        le=7200,
+        description="非流式分人 PCM 缓冲的最大时长（秒），超出丢最旧音频",
     )
     allowed_origins: list[str] = Field(
         default_factory=lambda: [

@@ -333,6 +333,8 @@ def test_capture_gateway_protocol_shape() -> None:
         "remove_event_listener",
         "add_gap_listener",
         "remove_gap_listener",
+        "add_audio_listener",
+        "remove_audio_listener",
         "prepare_capture",
         "commit_capture",
         "abort_prepared_capture",

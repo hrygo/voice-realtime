@@ -33,6 +33,8 @@ _SESSION_NOOPS = frozenset(
         "conversation.item.created",
         "input_audio_buffer.committed",
         "input_audio_buffer.cleared",
+        "input_audio_buffer.speech_started",
+        "input_audio_buffer.speech_stopped",
         "response.created",
         "response.output_item.added",
         "response.content_part.added",

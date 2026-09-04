@@ -129,12 +129,9 @@ class SpeechRailStreamingTranscriber:
                         )
                         return
                 elif isinstance(decoded, TranscriptionCompleted):
-                    if self._diarization_requested and not self._pending_segments:
-                        yield self._set_terminal_error(
-                            "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR",
-                            "SpeechRail ended a diarized turn without segment events",
-                        )
-                        return
+                    # 分人会话也可能收到无 segment 事件的 completed（服务端对短促/
+                    # 单人轮次只下发 completed）。此时用兜底单 segment 保留本轮转写，
+                    # 仅当 transcript 为空才视为真正的协议违反。
                     try:
                         segments = tuple(self._pending_segments) or (_synthesized_segment(
                             decoded.transcript, self._context, self._audio_ms
@@ -197,12 +194,8 @@ def _segment(
     *,
     require_speaker: bool,
 ) -> ASRSegment:
-    if value.speaker is None:
-        if require_speaker:
-            raise RuntimeError("SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR")
-        speaker_key = "0"
-    else:
-        speaker_key = value.speaker
+    # 无说话人标注的 segment 落到匿名说话人，不断连（短轮次常见）。
+    speaker_key = "0" if value.speaker is None else value.speaker
     return ASRSegment(
         order=0,
         source_epoch=context.source_epoch,

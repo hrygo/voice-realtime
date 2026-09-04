@@ -490,11 +490,27 @@ def test_streaming_adapter_reports_invalid_completed_transcript() -> None:
     )
 
     assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_DIARIZATION_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail ended a diarized turn without segment events"
+    assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
+    assert events[-1].error_message == "SpeechRail returned an invalid completed transcript"
 
 
-def test_streaming_adapter_requires_speaker_for_diarized_segments() -> None:
+def test_streaming_adapter_falls_back_for_diarized_completed_without_segments() -> None:
+    connection = FakeConnection()
+    connection._messages = [*_session_events(),
+        _transcription_completed("嗯。", sequence=4),
+    ]
+    events = _collect_stream_events(
+        connection,
+        ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+    )
+
+    assert [event.kind for event in events] == ["ready", "final"]
+    assert events[-1].window is not None
+    assert events[-1].window.segments[0].text == "嗯。"
+    assert events[-1].window.segments[0].speaker_key == "epoch:2:speaker:0"
+
+
+def test_streaming_adapter_falls_back_for_diarized_segment_without_speaker() -> None:
     connection = FakeConnection()
     connection._messages = [*_session_events(),
         _segment("你好", speaker=None, sequence=4),
@@ -505,9 +521,10 @@ def test_streaming_adapter_requires_speaker_for_diarized_segments() -> None:
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
     )
 
-    assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail returned an invalid transcription segment"
+    assert [event.kind for event in events] == ["ready", "final"]
+    assert events[-1].window is not None
+    assert events[-1].window.segments[0].text == "你好"
+    assert events[-1].window.segments[0].speaker_key == "epoch:2:speaker:0"
 
 
 async def _next_final(events: AsyncIterator[ASREvent]) -> ASREvent:

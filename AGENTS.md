@@ -158,13 +158,22 @@ scripts/install-nltk-data.sh                        # 幂等安装 NLTK punkt_ta
 
 ### 服务运行
 ```bash
-scripts/run-all.sh                                  # 一键启动应用服务（默认 127.0.0.1，含 ui；SpeechRail 独立管理）
-SONA_BIND_HOST=lan scripts/run-all.sh                 # 局域网绑定模式启动全套服务（自动探测 LAN IP）
-SONA_BIND_HOST=0.0.0.0 scripts/run-all.sh             # 全网卡绑定模式启动全套服务
+# 统一启停工具（推荐；支持 start/stop/status/restart/logs，含依赖健康检查与日志轮转）
+scripts/sona-ctl.sh start                                # 前台启动（Ctrl+C 停止）
+scripts/sona-ctl.sh start -d                             # 后台启动（pid: runtime/sona-ui.pid，日志: runtime/logs/ui.log）
+scripts/sona-ctl.sh status                               # 运行状态 + 端口监听 + SpeechRail/LM Studio 健康探测
+scripts/sona-ctl.sh stop                                 # 停止（含 uv run 包装进程树，幂等）
+scripts/sona-ctl.sh restart -d                           # 重启（选项同 start）
+scripts/sona-ctl.sh logs -f                              # 实时查看服务日志
+
+# 兼容入口：run-all.sh 等价于 `sona-ctl start`（横幅/清理/健康检查统一由 sona-ctl 提供）
+scripts/run-all.sh                                        # 一键启动应用服务（默认 127.0.0.1，含 ui；SpeechRail 独立管理）
+SONA_BIND_HOST=lan scripts/run-all.sh                     # 局域网绑定模式启动全套服务（自动探测 LAN IP）
+SONA_BIND_HOST=0.0.0.0 scripts/run-all.sh                 # 全网卡绑定模式启动全套服务
 
 # 独立服务启动（也可直接使用对应 scripts/run-*.sh）
-uv run sona-ui                                        # 默认入口：Sona UI + AudioHub + 会议/交互/字幕 (8100)
-uv run sona-interact                                  # Headless 命令行交互替代入口（必须先停止 sona-ui）
+uv run sona-ui                                            # 默认入口：Sona UI + AudioHub + 会议/交互/字幕 (8100)
+uv run sona-interact                                      # Headless 命令行交互替代入口（必须先停止 sona-ui）
 ```
 
 > 🌐 **网络绑定配置**：

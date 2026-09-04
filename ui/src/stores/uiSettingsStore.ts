@@ -105,14 +105,44 @@ export function initialTheme(): Theme {
   return systemPrefersDark() ? "dark" : "light";
 }
 
+/** 解析当前真实生效的主题（light 或 dark）。 */
+export function resolveEffectiveTheme(theme: Theme): "light" | "dark" {
+  if (theme === "system") {
+    return systemPrefersDark() ? "dark" : "light";
+  }
+  return theme;
+}
+
 /** 将主题应用到 documentElement 的 data-theme 属性。 */
 export function applyTheme(theme: Theme): void {
+  if (typeof document === "undefined") return;
   const root = document.documentElement;
-  if (theme === "system") {
-    root.removeAttribute("data-theme");
-  } else {
-    root.dataset.theme = theme;
+  const effective = resolveEffectiveTheme(theme);
+  root.dataset.theme = effective;
+  root.dataset.themeSetting = theme;
+}
+
+/** 全局监听系统主题偏好变化，当处于 system 时自动同步。 */
+export function initThemeListener(): () => void {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return () => {};
   }
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const onChange = () => {
+    const currentTheme = useUISettingsStore.getState().theme;
+    if (currentTheme === "system") {
+      applyTheme("system");
+    }
+  };
+
+  if (typeof media.addEventListener === "function") {
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  } else if (typeof (media as any).addListener === "function") {
+    (media as any).addListener(onChange);
+    return () => (media as any).removeListener(onChange);
+  }
+  return () => {};
 }
 
 interface UISettingsState {
