@@ -184,12 +184,27 @@ async def _serve_control_websocket(
             _track_accepted_control_task(context, command_task)
             try:
                 response = await asyncio.shield(command_task)
-            except Exception:
-                if sender is not None:
-                    await _cancel_background_task(sender)
-                    sender = None
-                await websocket.close(code=1011, reason="控制命令执行失败")
-                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # 单条命令异常（如快照构建失败）不关闭整条控制通道：
+                # 返回无 state 的降级错误响应，前端按 request_id 拒绝该次请求后可重试。
+                # 只记录异常类型名，不落异常正文（payload 可能含敏感信息）。
+                logger.warning(
+                    "控制命令执行异常 (%s)，返回降级错误响应", type(exc).__name__
+                )
+                request_id = payload.get("request_id")
+                cmd = payload.get("cmd")
+                await responses.put(
+                    {
+                        "request_id": request_id if isinstance(request_id, str) else "",
+                        "cmd": cmd if isinstance(cmd, str) else "",
+                        "ok": False,
+                        "error_code": ErrorCode.COMMAND_FAILED.value,
+                        "message": "控制命令执行失败，请查看服务日志",
+                    }
+                )
+                continue
             await responses.put(response)
     except WebSocketDisconnect:
         pass

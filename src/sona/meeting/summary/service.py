@@ -151,7 +151,12 @@ class MeetingSummaryService:
     async def run_once(self) -> bool:
         if self.scheduler is not None and self.scheduler.background_paused:
             return False
-        job = await self.repository.claim_minutes()
+        max_attempts = int(
+            getattr(self.settings, "summary_max_attempts", 0) or 0
+        )
+        job = await self.repository.claim_minutes(
+            max_attempts=max_attempts if max_attempts > 0 else None
+        )
         if job is None:
             return False
         self._active = True

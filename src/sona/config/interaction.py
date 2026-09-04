@@ -93,6 +93,12 @@ class InteractionSettings(BaseSettings):
     )
     stt_language: str = Field(default="zh", description="STT 语言 (zh/yue/en/ja/ko)")
     speechrail_realtime_url: str = Field(default="ws://127.0.0.1:8201/v1/realtime")
+    speechrail_connect_timeout_secs: float = Field(
+        default=5.0,
+        gt=0.0,
+        le=30.0,
+        description="交互 STT 连接 SpeechRail Realtime 的握手超时（秒）",
+    )
     speechrail_tts_rest_url: str = Field(
         default="http://127.0.0.1:8201/v1",
         description="SpeechRail TTS REST 试听端点；交互播放走 realtime OpenAI",

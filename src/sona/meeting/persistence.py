@@ -7,10 +7,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
-from .models import TranscriptReconcileResult, TranscriptWindow
+from .models import MeetingRecord, MeetingStatus, TranscriptReconcileResult, TranscriptWindow
 from .ports import RecoveryReplayRepository, TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 class RecoveryJournalPort(Protocol):
     """TranscriptPersistence 需要的 journal 窄端口。"""
 
-    async def append(self, meeting_id: UUID, window: TranscriptWindow) -> object: ...
+    async def append(
+        self,
+        meeting_id: UUID,
+        operation: str | TranscriptWindow,
+        payload: dict[str, Any] | None = None,
+    ) -> object: ...
+
+    async def discard(self, meeting_id: UUID) -> None: ...
 
     async def replay_meeting(
         self, repository: RecoveryReplayRepository, meeting_id: UUID
@@ -112,6 +119,52 @@ class TranscriptPersistence:
             )
             self._degraded = False
         return count
+
+    async def finalize(
+        self,
+        meeting_id: UUID,
+        *,
+        final_status: MeetingStatus,
+        reason: str | None = None,
+    ) -> MeetingRecord:
+        """封存转录并落终态；journal 采用 write-ahead，数据库成功后丢弃。
+
+        finalize 是会议最后一次状态迁移，之后不再有 reconcile 触发
+        replay_pending；若数据库调用失败且 journal 缺席，"转录已完整但未
+        封存"将无法恢复。因此先重放遗留记录，再预写 finalize_transcript +
+        set_status 两条操作，数据库成功后丢弃 journal；journal 预写失败只
+        告警不阻断（数据库是事实源，journal 只是降级通道）。
+        """
+        await self.replay_pending(meeting_id)
+        if self._journal is not None:
+            try:
+                await self._journal.append(meeting_id, "finalize_transcript")
+                await self._journal.append(
+                    meeting_id,
+                    "set_status",
+                    {"status": final_status.value, "reason": reason},
+                )
+            except Exception:
+                logger.warning(
+                    "TranscriptPersistence: journal 预写失败，"
+                    "继续尝试数据库封存 (meeting_id=%s)",
+                    meeting_id,
+                    exc_info=True,
+                )
+        record = await self._transcripts.finalize_transcript(
+            meeting_id, final_status=final_status, reason=reason
+        )
+        if self._journal is not None:
+            try:
+                await self._journal.discard(meeting_id)
+            except Exception:
+                logger.warning(
+                    "TranscriptPersistence: journal 丢弃失败，"
+                    "残留记录将在启动回放时按终态清理 (meeting_id=%s)",
+                    meeting_id,
+                    exc_info=True,
+                )
+        return record
 
 
 __all__ = ["RecoveryJournalPort", "TranscriptPersistence"]

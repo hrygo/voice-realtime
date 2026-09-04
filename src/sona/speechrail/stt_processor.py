@@ -212,12 +212,17 @@ class SpeechRailConversationSTTFactory:
         *,
         url: str,
         api_key: str | None = None,
+        connect_timeout_secs: float | None = None,
         client_factory: ClientFactory | None = None,
     ) -> None:
         self._url = url
         self._api_key = api_key
         self._client_factory = client_factory or (
-            lambda: SpeechRailRealtimeClient(url=self._url, api_key=self._api_key)
+            lambda: SpeechRailRealtimeClient(
+                url=self._url,
+                api_key=self._api_key,
+                connect_timeout_secs=connect_timeout_secs,
+            )
         )
 
     def create_processor(self, *, sample_rate: int, language: str) -> FrameProcessor:

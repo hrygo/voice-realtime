@@ -13,19 +13,6 @@ export interface SubtitleLine {
 export interface SubtitleSnapshot {
   lines: SubtitleLine[];
   buffer_transcription: string;
-  buffer_diarization?: string;
-  remaining_time?: number;
-}
-
-interface SubtitleState {
-  lines: SubtitleLine[];
-  partial: string;
-  connected: boolean;
-  starredIndices: Set<number>;
-  applySnapshot: (snap: Partial<SubtitleSnapshot>) => void;
-  setConnected: (v: boolean) => void;
-  toggleStar: (index: number) => void;
-  clear: () => void;
 }
 
 export interface SubtitleReducerState {

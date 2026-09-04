@@ -152,6 +152,8 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
                 max_context_chars=settings.meeting.inner_os_max_context_chars,
                 recent_context_chars=settings.meeting.inner_os_recent_context_chars,
             )
+            # 组合根直接装配交易所仓库，避免请求路径上的惰性构造
+            context.inner_os_exchange_repository = InnerOSExchangeRepository(repository)
 
         async def publish_meeting_event(
             event_type: str, meeting_id: str | UUID, payload: Any

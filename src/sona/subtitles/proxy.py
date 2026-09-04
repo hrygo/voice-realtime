@@ -159,6 +159,7 @@ class SubtitleProxy:
                 client=SpeechRailRealtimeClient(
                     url=self._profile.url,
                     api_key=self._settings.speechrail_api_key,
+                    connect_timeout_secs=self._profile.connect_timeout_secs,
                     connection_factory=connection_factory,
                 ),
                 context=context,
@@ -449,7 +450,7 @@ class SubtitleProxy:
         await self._close_capture()
 
     async def finish_capture(self, *, timeout_secs: float) -> TranscriptWindow:
-        """发送空 PCM EOF，等待最终快照和 ready_to_stop，再关闭 epoch。"""
+        """发送 EOF commit，等待 SpeechRail 最终窗口，再关闭 epoch。"""
         if (
             self._capture_session.owner is None
             or not self._capture_session.accepting

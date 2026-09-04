@@ -507,7 +507,6 @@ class MeetingCaptureSession:
         self._active = asyncio.Event()
         self._ready = asyncio.Event()
         self._stream_available = asyncio.Event()
-        self._ready_to_stop = asyncio.Event()
         self._event_task: asyncio.Task[None] | None = None
         self._send_task: asyncio.Task[None] | None = None
         self._last_window: TranscriptWindow | None = None
@@ -581,7 +580,6 @@ class MeetingCaptureSession:
         self._active.clear()
         self._ready.clear()
         self._stream_available.clear()
-        self._ready_to_stop.clear()
         self._last_window = None
         self._on_state(SubtitleSessionState.CONNECTING)
 
@@ -636,7 +634,7 @@ class MeetingCaptureSession:
         await self.close()
 
     async def finish(self, *, timeout_secs: float) -> TranscriptWindow:
-        """发送空 PCM EOF，等待最终快照和 ready_to_stop，再关闭 epoch。"""
+        """发送 EOF commit，等待 SpeechRail 最终窗口，再关闭 epoch。"""
         stream = self._stream
         if self._owner is None or stream is None or not self._accept_audio:
             raise RuntimeError("没有活动的会议采集租约")
@@ -713,7 +711,6 @@ class MeetingCaptureSession:
         stream = self._stream
         self._stream = None
         self._ready.clear()
-        self._ready_to_stop.clear()
         self._stream_available.clear()
         if stream is not None:
             with contextlib.suppress(Exception):
@@ -892,10 +889,8 @@ class MeetingCaptureSession:
             return
         transcript_window = self._to_transcript_window(window)
         self._last_window = transcript_window
-        if event.kind == "final":
-            # server_vad 每回合的 final 窗口必须转发并增量持久化，否则会议
-            # 确认转录只存最后一个窗口（EOF 冲刷仅覆盖尾部且分人易超时）。
-            self._ready_to_stop.set()
+        # server_vad 每回合的 final 窗口必须转发并增量持久化，否则会议
+        # 确认转录只存最后一个窗口（EOF 冲刷仅覆盖尾部且分人易超时）。
         for listener in tuple(self._event_listeners):
             try:
                 await listener(transcript_window)

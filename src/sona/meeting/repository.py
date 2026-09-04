@@ -56,6 +56,8 @@ _MINUTES_COLUMNS_QUALIFIED = """
     minutes.error_code, minutes.error_message, minutes.lease_until,
     minutes.attempts, minutes.created_at, minutes.generated_at, minutes.updated_at
 """
+# failed 任务自动重试的冷却期，避免模型持续不可用时紧密循环重试
+_FAILED_RETRY_COOLDOWN_SECS = 30
 _SEGMENT_COLUMNS = """
     id, segment_order, source_epoch, speaker_key, start_ms, end_ms, text,
     translation, detected_language, created_at, updated_at
@@ -917,14 +919,44 @@ class PostgresMeetingRepository:
                     raise RepositoryUnavailableError("纪要创建后无法读取")
                 return _minutes_from_row(row)
 
-    async def claim_minutes(self) -> MinutesJob | None:
+    async def claim_minutes(self, *, max_attempts: int | None = None) -> MinutesJob | None:
+        """认领下一条纪要任务；提供 max_attempts 时同时启用有限自动重试。
+
+        可认领范围：
+        - queued 新任务；
+        - generating 且 lease 过期（worker 崩溃遗留），重试次数不超过 max_attempts；
+        - failed 且 attempts 未达 max_attempts（冷却期后自动重试，应对 LM Studio
+          短暂不可用等瞬时故障）；达到上限后保持 failed 终态，需手动重建新版本。
+        """
+        if max_attempts is not None and max_attempts < 1:
+            raise ValueError("max_attempts 必须为正整数")
         async with self._connection() as connection, connection.transaction():
+            if max_attempts is None:
+                candidate_filter = "status = %s OR (status = %s AND lease_until < now())"
+                filter_params: tuple[object, ...] = (
+                    MinutesStatus.QUEUED.value,
+                    MinutesStatus.GENERATING.value,
+                )
+            else:
+                candidate_filter = (
+                    "status = %s"
+                    " OR (status = %s AND lease_until < now() AND attempts < %s)"
+                    f" OR (status = %s AND attempts < %s"
+                    f" AND updated_at < now() - interval '{_FAILED_RETRY_COOLDOWN_SECS} seconds')"
+                )
+                filter_params = (
+                    MinutesStatus.QUEUED.value,
+                    MinutesStatus.GENERATING.value,
+                    max_attempts,
+                    MinutesStatus.FAILED.value,
+                    max_attempts,
+                )
             result = await connection.execute(
                 f"""
                     WITH candidate AS (
                         SELECT id
                         FROM {self._schema}.meeting_minutes
-                        WHERE status = %s OR (status = %s AND lease_until < now())
+                        WHERE {candidate_filter}
                         ORDER BY created_at, id
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
@@ -938,11 +970,7 @@ class PostgresMeetingRepository:
                     WHERE minutes.id = candidate.id
                     RETURNING {_MINUTES_COLUMNS_QUALIFIED}
                     """,
-                (
-                    MinutesStatus.QUEUED.value,
-                    MinutesStatus.GENERATING.value,
-                    MinutesStatus.GENERATING.value,
-                ),
+                (*filter_params, MinutesStatus.GENERATING.value),
             )
             row = await result.fetchone()
             if row is None:

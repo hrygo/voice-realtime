@@ -192,7 +192,7 @@ class FakeMinutesStore:
             updated_at=None,
         )
 
-    async def claim_minutes(self) -> MinutesJob | None:
+    async def claim_minutes(self, *, max_attempts: int | None = None) -> MinutesJob | None:
         return None
 
     async def complete_minutes(

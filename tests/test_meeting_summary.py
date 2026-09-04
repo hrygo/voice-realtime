@@ -119,7 +119,7 @@ class _Repository:
         self.requeued = False
         self.claimed = 0
 
-    async def claim_minutes(self) -> SimpleNamespace:
+    async def claim_minutes(self, *, max_attempts: int | None = None) -> SimpleNamespace:
         self.claimed += 1
         return SimpleNamespace(
             id=uuid4(),
@@ -1025,7 +1025,7 @@ async def test_summary_worker_handles_unavailable_and_internal_failures() -> Non
 @pytest.mark.asyncio
 async def test_summary_worker_returns_false_when_no_job_is_claimed() -> None:
     class _EmptyRepository:
-        async def claim_minutes(self) -> None:
+        async def claim_minutes(self, *, max_attempts: int | None = None) -> None:
             return None
 
     service = MeetingSummaryService(_EmptyRepository(), _Client(None), settings=SimpleNamespace())
@@ -1082,7 +1082,7 @@ async def test_summary_worker_map_reduce_uses_reducer_for_chunk_results() -> Non
 @pytest.mark.asyncio
 async def test_summary_worker_lifecycle_is_idempotent_and_closes_client() -> None:
     class _EmptyRepository:
-        async def claim_minutes(self) -> None:
+        async def claim_minutes(self, *, max_attempts: int | None = None) -> None:
             return None
 
     client = _ClosingClient(None)
@@ -1103,7 +1103,7 @@ async def test_worker_retries_after_repository_claim_failure() -> None:
         def __init__(self) -> None:
             self.claim_calls = 0
 
-        async def claim_minutes(self) -> None:
+        async def claim_minutes(self, *, max_attempts: int | None = None) -> None:
             self.claim_calls += 1
             if self.claim_calls == 1:
                 raise OSError("postgres unavailable")
@@ -1238,7 +1238,7 @@ async def test_summary_worker_auto_updates_default_meeting_title() -> None:
             super().__init__(result)
             self.updated_title: str | None = None
 
-        async def claim_minutes(self) -> SimpleNamespace:
+        async def claim_minutes(self, *, max_attempts: int | None = None) -> SimpleNamespace:
             return SimpleNamespace(
                 id=uuid4(),
                 meeting_id=_document().meeting_id,

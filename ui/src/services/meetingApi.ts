@@ -7,7 +7,6 @@ import {
   type MeetingSpeaker,
   type TranscriptResponse,
 } from "../contracts/meetingContract";
-import type { RuntimeStateSnapshot } from "../protocol";
 import { apiUrl } from "../config/runtimeConfig";
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -44,11 +43,6 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 export const meetingApi = {
-  async fetchRuntimeState(): Promise<RuntimeStateSnapshot> {
-    const res = await fetch(apiUrl("/api/v1/runtime"));
-    return handleResponse<RuntimeStateSnapshot>(res);
-  },
-
   async fetchMeetings(cursor?: string | null, limit = 20): Promise<MeetingListResponse> {
     const params = new URLSearchParams();
     if (cursor) params.set("cursor", cursor);

@@ -100,28 +100,4 @@ describe("meetingApi", () => {
     );
     expect(result.version).toBe(2);
   });
-
-  it("supports MeetingMockDataSource replay and operations", async () => {
-    const { MeetingMockDataSource } = await import("./meetingMockDataSource");
-    const mockSource = new MeetingMockDataSource({ delayMs: 1 });
-
-    const list = await mockSource.fetchMeetings();
-    expect(list.items.length).toBeGreaterThan(0);
-
-    const meeting = await mockSource.fetchMeeting("mock-id");
-    expect(meeting.id).toBe("mock-id");
-
-    const transcript = await mockSource.fetchTranscript("mock-id");
-    expect(transcript.segments.length).toBeGreaterThan(0);
-
-    const events: any[] = [];
-    const unsubscribe = mockSource.subscribeMeetingEvents("mock-id", (evt) => {
-      events.push(evt);
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(events.length).toBeGreaterThan(0);
-    unsubscribe();
-    mockSource.stopAll();
-  });
 });

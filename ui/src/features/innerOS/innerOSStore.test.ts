@@ -7,7 +7,6 @@ vi.mock("./api", () => ({
     saveExchange: vi.fn(),
     deleteExchange: vi.fn(),
     listExchanges: vi.fn(),
-    getExchange: vi.fn(),
   },
 }));
 

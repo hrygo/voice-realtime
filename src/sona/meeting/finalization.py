@@ -110,13 +110,12 @@ class MeetingFinalizer:
             self._capture_closed = True
             if final_window is not None:
                 await self._persistence.reconcile(meeting_id, final_window)
-            await self._persistence.replay_pending(meeting_id)
             await self._apply_diarization_overlay(meeting_id)
             if final_window is not None and final_window.speaker_remap:
                 await self._speakers.apply_speaker_remapping(
                     meeting_id, dict(final_window.speaker_remap)
                 )
-            record = await self._transcripts.finalize_transcript(
+            record = await self._persistence.finalize(
                 meeting_id,
                 final_status=(
                     MeetingStatus.INTERRUPTED if timed_out else MeetingStatus.COMPLETED

@@ -11,6 +11,7 @@ import {
 } from "../stores/subtitleStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
+import { runtimeConfig } from "../config/runtimeConfig";
 import { showToast } from "./Toast";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { SubtitleWaveform } from "./SubtitleWaveform";
@@ -143,7 +144,7 @@ export default function SubtitleStream({
     useSubtitleStore.getState().applySnapshot(payload as Partial<SubtitleSnapshot>);
   }, []);
 
-  const { state } = useEventSocket("/ws/subtitles", handleMessage);
+  const { state } = useEventSocket(runtimeConfig.subtitlesWsUrl, handleMessage);
 
   useEffect(() => {
     useSubtitleStore.getState().setConnected(state === "open");

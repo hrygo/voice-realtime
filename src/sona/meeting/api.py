@@ -433,8 +433,12 @@ def create_meeting_router(
             if client is not None and hasattr(client, "generate_title"):
                 title = await client.generate_title(document, speakers)
             else:
-                first_text = str(_attr(segments[0], "text", "")).strip()
-                title = first_text[:20] or "AI 会议纪要"
+                # 无 LLM 客户端时显式失败，而不是静默截取首段文本冒充 AI 标题
+                raise MeetingAPIError(
+                    "service_unavailable",
+                    "标题生成服务不可用（LM Studio 未就绪），可手动修改会议标题",
+                    status_code=503,
+                )
             method = getattr(repo, "update_title", None) or getattr(repo, "rename_meeting", None)
             if method is None:
                 raise MeetingAPIError("internal_error", "会议标题更新不可用", status_code=500)

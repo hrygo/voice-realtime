@@ -93,7 +93,8 @@ def build_system_prompt(persona: str | None = None) -> str:
 
 
 _ECHO_BASELINE_WARMUP_FRAMES = 8  # 抑制开启后用于建立扬声器峰值包络的初始帧数（~128ms @16k/512B）
-_ECHO_MIN_MATCH_CHARS = 2  # 自回声文本判定的最短用户文本长度（防短词误杀，去标点后）
+_ECHO_MIN_MATCH_CHARS = 3  # 自回声文本判定的最短用户文本长度（去标点后）；
+# 2 字符短语（"不用""没了"等，_ACKS 之外）误杀代价高于漏放——其回声已由 L1 能量门控兜底
 
 
 def _rms16(audio: bytes) -> float:

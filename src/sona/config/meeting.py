@@ -63,6 +63,15 @@ class MeetingSettings(BaseSettings):
     summary_job_timeout_secs: float = Field(
         default=600.0, ge=30.0, le=1800.0, description="整条纪要任务总时限（秒）"
     )
+    summary_max_attempts: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "纪要任务最大尝试次数；failed/租约过期的任务在冷却 30s 后自动重试，"
+            "超过该次数保持 failed 终态（0 关闭自动重试）"
+        ),
+    )
     summary_map_max_output_tokens: int = Field(default=2048, ge=256, le=8192)
     summary_reduce_max_output_tokens: int = Field(default=10240, ge=256, le=16384)
     summary_title_max_output_tokens: int = Field(default=128, ge=32, le=512)

@@ -1245,25 +1245,30 @@ class TestRuntimeControlBroadcast:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """单条命令异常只回降级错误响应，不关闭控制通道且不泄漏异常正文。"""
         runtime = _FakeRuntime()
         secret = "external-payload-must-not-leak"
         with (
-            caplog.at_level(logging.ERROR, logger="sona.ui.server"),
+            caplog.at_level(logging.WARNING, logger="sona.ui.websocket_routes"),
             patch(
                 "sona.ui.websocket_routes.ControlBridge.handle",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError(secret),
             ),
             _running_client(runtime) as client,
-            pytest.raises(WebSocketDisconnect),
             client.websocket_connect("/ws/v1/control") as websocket,
         ):
             websocket.receive_json()
             websocket.send_json({"request_id": "error-1", "cmd": "clear_context"})
+            degraded = websocket.receive_json()
+            # 通道保持可用：第二条命令仍能获得响应
+            websocket.send_json({"request_id": "error-2", "cmd": "clear_context"})
             websocket.receive_json()
 
+        assert degraded["ok"] is False
+        assert degraded["request_id"] == "error-1"
+        assert degraded["error_code"] == "command_failed"
         assert "RuntimeError" in caplog.text
-        assert "command_failed" in caplog.text
         assert secret not in caplog.text
 
 

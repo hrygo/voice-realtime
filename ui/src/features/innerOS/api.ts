@@ -67,14 +67,6 @@ export const innerOSApi = {
     return handleResponse<InnerOSExchangeListResponse>(res);
   },
 
-  /** 获取单条已保存的内心 OS 问答详情 */
-  async getExchange(meetingId: string, exchangeId: string): Promise<InnerOSExchange> {
-    const res = await fetch(
-      apiUrl(`/api/v1/meetings/${encodeURIComponent(meetingId)}/inner-os/exchanges/${encodeURIComponent(exchangeId)}`),
-    );
-    return handleResponse<InnerOSExchange>(res);
-  },
-
   /** 幂等删除单条已保存的问答记录 */
   async deleteExchange(meetingId: string, exchangeId: string): Promise<void> {
     const res = await fetch(

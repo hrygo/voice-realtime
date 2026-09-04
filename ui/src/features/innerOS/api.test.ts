@@ -70,6 +70,6 @@ describe("Inner OS REST API Client", () => {
         }),
     });
 
-    await expect(innerOSApi.getExchange("m-1", "ex-999")).rejects.toThrow(ApiError);
+    await expect(innerOSApi.deleteExchange("m-1", "ex-999")).rejects.toThrow(ApiError);
   });
 });

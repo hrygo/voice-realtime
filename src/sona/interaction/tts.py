@@ -104,9 +104,15 @@ class SpeechRailTTSService(TTSService):
     async def on_turn_context_completed(self) -> None:
         """Close completed SpeechRail audio contexts without the default idle wait."""
         context_id = self._turn_context_id
+        previous = self._is_yielding_frames_synchronously
         if context_id is not None and self.audio_context_available(context_id):
             self._is_yielding_frames_synchronously = True
-        await super().on_turn_context_completed()  # type: ignore[no-untyped-call]
+        try:
+            await super().on_turn_context_completed()  # type: ignore[no-untyped-call]
+        finally:
+            # 只在本次 base 调用内强制同步收尾；pipecat 在每个 turn 的
+            # _synthesize_text 里会重新维护该标志，不能被永久覆盖。
+            self._is_yielding_frames_synchronously = previous
 
 
 def _required_string(value: object, field: str) -> str:

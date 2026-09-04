@@ -5,7 +5,11 @@
     "version": "1.2.0",
     "description": "前后端分离的会议记录、转录、证据可追溯纪要与内心 OS 问答 API。"
   },
-  "servers": [{ "url": "http://127.0.0.1:8100" }],
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8100"
+    }
+  ],
   "paths": {
     "/api/v1/runtime": {
       "get": {
@@ -15,11 +19,15 @@
             "description": "运行时权威状态",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/RuntimeState" }
+                "schema": {
+                  "$ref": "#/components/schemas/RuntimeState"
+                }
               }
             }
           },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
@@ -27,24 +35,36 @@
       "get": {
         "operationId": "listMeetings",
         "parameters": [
-          { "$ref": "#/components/parameters/Cursor" },
-          { "$ref": "#/components/parameters/Limit" }
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
         ],
         "responses": {
           "200": {
             "description": "游标分页会议历史",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeetingListResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingListResponse"
+                }
               }
             }
           },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}": {
-      "parameters": [{ "$ref": "#/components/parameters/MeetingId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        }
+      ],
       "get": {
         "operationId": "getMeeting",
         "responses": {
@@ -52,11 +72,15 @@
             "description": "会议详情",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeetingDetail" }
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetail"
+                }
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "patch": {
@@ -65,7 +89,9 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MeetingTitleUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/MeetingTitleUpdate"
+              }
             }
           }
         },
@@ -74,24 +100,38 @@
             "description": "更新后的会议",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeetingDetail" }
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetail"
+                }
               }
             }
           },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       },
       "delete": {
         "operationId": "deleteMeeting",
         "responses": {
-          "204": { "description": "已删除" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "204": {
+            "description": "已删除"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/generate-title": {
-      "parameters": [{ "$ref": "#/components/parameters/MeetingId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        }
+      ],
       "post": {
         "operationId": "generateMeetingTitle",
         "responses": {
@@ -99,18 +139,55 @@
             "description": "AI 提炼并更新标题后的会议",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeetingDetail" }
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetail"
+                }
               }
             }
           },
-          "400": { "$ref": "#/components/responses/NotFound" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "503": { "$ref": "#/components/responses/SummaryUnavailable" }
+          "400": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/SummaryUnavailable"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "generateMeetingTitlePatch",
+        "description": "AI 提炼并更新会议标题（PATCH 为兼容别名，语义与 POST 一致）",
+        "responses": {
+          "200": {
+            "description": "AI 提炼并更新标题后的会议",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/SummaryUnavailable"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/transcript": {
-      "parameters": [{ "$ref": "#/components/parameters/MeetingId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        }
+      ],
       "get": {
         "operationId": "getTranscript",
         "responses": {
@@ -118,22 +195,31 @@
             "description": "封存转录",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/TranscriptResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptResponse"
+                }
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/speakers/{speaker_key}": {
       "parameters": [
-        { "$ref": "#/components/parameters/MeetingId" },
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        },
         {
           "name": "speaker_key",
           "in": "path",
           "required": true,
-          "schema": { "type": "string", "maxLength": 200 }
+          "schema": {
+            "type": "string",
+            "maxLength": 200
+          }
         }
       ],
       "patch": {
@@ -142,7 +228,9 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SpeakerNameUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/SpeakerNameUpdate"
+              }
             }
           }
         },
@@ -151,19 +239,31 @@
             "description": "更新后的说话人",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/MeetingSpeaker" }
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingSpeaker"
+                }
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/minutes": {
-      "parameters": [{ "$ref": "#/components/parameters/MeetingId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        }
+      ],
       "post": {
         "operationId": "createMinutes",
-        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
         "responses": {
           "200": {
             "description": "纪要任务版本",
@@ -175,19 +275,28 @@
               }
             }
           },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "503": { "$ref": "#/components/responses/SummaryUnavailable" }
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/SummaryUnavailable"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/minutes/{version}": {
       "parameters": [
-        { "$ref": "#/components/parameters/MeetingId" },
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        },
         {
           "name": "version",
           "in": "path",
           "required": true,
-          "schema": { "type": "integer", "minimum": 1 }
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       ],
       "get": {
@@ -203,20 +312,29 @@
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/export": {
       "parameters": [
-        { "$ref": "#/components/parameters/MeetingId" },
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        },
         {
           "name": "format",
           "in": "query",
           "required": false,
           "schema": {
             "type": "string",
-            "enum": ["md", "txt", "srt", "json"],
+            "enum": [
+              "md",
+              "txt",
+              "srt",
+              "json"
+            ],
             "default": "md"
           }
         }
@@ -233,17 +351,27 @@
               "application/json": {}
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/inner-os/exchanges": {
-      "parameters": [{ "$ref": "#/components/parameters/MeetingId" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        }
+      ],
       "get": {
         "operationId": "listInnerOSExchanges",
         "parameters": [
-          { "$ref": "#/components/parameters/Cursor" },
-          { "$ref": "#/components/parameters/Limit" }
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
         ],
         "responses": {
           "200": {
@@ -256,15 +384,23 @@
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
     "/api/v1/meetings/{meeting_id}/inner-os/exchanges/{exchange_id}": {
       "parameters": [
-        { "$ref": "#/components/parameters/MeetingId" },
-        { "$ref": "#/components/parameters/ExchangeId" }
+        {
+          "$ref": "#/components/parameters/MeetingId"
+        },
+        {
+          "$ref": "#/components/parameters/ExchangeId"
+        }
       ],
       "put": {
         "operationId": "saveInnerOSExchange",
@@ -273,7 +409,9 @@
             "description": "已存在并返回相同记录",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/InnerOSExchange" }
+                "schema": {
+                  "$ref": "#/components/schemas/InnerOSExchange"
+                }
               }
             }
           },
@@ -281,12 +419,18 @@
             "description": "保存成功并创建记录",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/InnerOSExchange" }
+                "schema": {
+                  "$ref": "#/components/schemas/InnerOSExchange"
+                }
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       },
       "get": {
@@ -296,18 +440,26 @@
             "description": "单条已保存问答详情",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/InnerOSExchange" }
+                "schema": {
+                  "$ref": "#/components/schemas/InnerOSExchange"
+                }
               }
             }
           },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "delete": {
         "operationId": "deleteInnerOSExchange",
         "responses": {
-          "204": { "description": "已删除" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "204": {
+            "description": "已删除"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     }
@@ -318,19 +470,28 @@
         "name": "meeting_id",
         "in": "path",
         "required": true,
-        "schema": { "type": "string", "format": "uuid" }
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "ExchangeId": {
         "name": "exchange_id",
         "in": "path",
         "required": true,
-        "schema": { "type": "string", "format": "uuid" }
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "Cursor": {
         "name": "cursor",
         "in": "query",
         "required": false,
-        "schema": { "type": "string", "maxLength": 256 }
+        "schema": {
+          "type": "string",
+          "maxLength": 256
+        }
       },
       "Limit": {
         "name": "limit",
@@ -347,7 +508,10 @@
         "name": "Idempotency-Key",
         "in": "header",
         "required": false,
-        "schema": { "type": "string", "maxLength": 128 }
+        "schema": {
+          "type": "string",
+          "maxLength": 128
+        }
       }
     },
     "responses": {
@@ -355,7 +519,9 @@
         "description": "资源不存在",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiErrorEnvelope" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
           }
         }
       },
@@ -363,7 +529,9 @@
         "description": "操作冲突",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiErrorEnvelope" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
           }
         }
       },
@@ -371,7 +539,9 @@
         "description": "服务不可用",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiErrorEnvelope" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
           }
         }
       },
@@ -379,25 +549,37 @@
         "description": "纪要服务不可用",
         "content": {
           "application/json": {
-            "schema": { "$ref": "#/components/schemas/ApiErrorEnvelope" }
+            "schema": {
+              "$ref": "#/components/schemas/ApiErrorEnvelope"
+            }
           }
         }
       }
     },
     "schemas": {
-      "RuntimeState": { "$ref": "schemas/runtime-state.schema.json" },
+      "RuntimeState": {
+        "$ref": "schemas/runtime-state.schema.json"
+      },
       "MeetingTitleUpdate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["title"],
+        "required": [
+          "title"
+        ],
         "properties": {
-          "title": { "type": "string", "minLength": 1, "maxLength": 200 }
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
         }
       },
       "SpeakerNameUpdate": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["display_name"],
+        "required": [
+          "display_name"
+        ],
         "properties": {
           "display_name": {
             "type": "string",
@@ -412,38 +594,68 @@
       "MeetingMinutesVersion": {
         "$ref": "schemas/minutes-version.schema.json"
       },
-      "MeetingDetail": { "$ref": "schemas/meeting-detail.schema.json" },
+      "MeetingDetail": {
+        "$ref": "schemas/meeting-detail.schema.json"
+      },
       "TranscriptResponse": {
         "$ref": "schemas/transcript-response.schema.json"
       },
-      "MeetingSummary": { "$ref": "schemas/meeting-summary.schema.json" },
+      "MeetingSummary": {
+        "$ref": "schemas/meeting-summary.schema.json"
+      },
       "MeetingListResponse": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "next_cursor"],
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/MeetingSummary" }
+            "items": {
+              "$ref": "#/components/schemas/MeetingSummary"
+            }
           },
-          "next_cursor": { "type": ["string", "null"] }
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       },
-      "InnerOSAnswer": { "$ref": "schemas/inner-os-answer.schema.json" },
-      "InnerOSExchange": { "$ref": "schemas/inner-os-exchange.schema.json" },
+      "InnerOSAnswer": {
+        "$ref": "schemas/inner-os-answer.schema.json"
+      },
+      "InnerOSExchange": {
+        "$ref": "schemas/inner-os-exchange.schema.json"
+      },
       "InnerOSExchangeListResponse": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "next_cursor"],
+        "required": [
+          "items",
+          "next_cursor"
+        ],
         "properties": {
           "items": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/InnerOSExchange" }
+            "items": {
+              "$ref": "#/components/schemas/InnerOSExchange"
+            }
           },
-          "next_cursor": { "type": ["string", "null"] }
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       },
-      "ApiErrorEnvelope": { "$ref": "schemas/error-envelope.schema.json" }
+      "ApiErrorEnvelope": {
+        "$ref": "schemas/error-envelope.schema.json"
+      }
     }
   }
 }

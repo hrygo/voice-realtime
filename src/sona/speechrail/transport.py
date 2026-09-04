@@ -33,10 +33,15 @@ def _connect(
     url: str,
     *,
     headers: Mapping[str, str] | None = None,
+    open_timeout: float | None = None,
 ) -> Awaitable[SpeechRailConnection]:
     return cast(
         Awaitable[SpeechRailConnection],
-        websockets.connect(url, additional_headers=headers or None),
+        websockets.connect(
+            url,
+            additional_headers=headers or None,
+            open_timeout=open_timeout,
+        ),
     )
 
 
@@ -56,20 +61,25 @@ class SpeechRailOpenAITransport:
         *,
         url: str,
         api_key: str | None = None,
+        connect_timeout_secs: float | None = None,
         connection_factory: ConnectionFactory | None = None,
     ) -> None:
         self._url = url
         normalized_key = api_key.strip() if isinstance(api_key, str) else None
-        self._connection_factory = connection_factory or (
-            lambda target: _connect(
-                target,
-                headers=(
-                    {"Authorization": f"Bearer {normalized_key}"}
-                    if normalized_key
-                    else None
-                ),
+        if connection_factory is not None:
+            self._connection_factory: ConnectionFactory = connection_factory
+        else:
+            self._connection_factory = (
+                lambda target: _connect(
+                    target,
+                    headers=(
+                        {"Authorization": f"Bearer {normalized_key}"}
+                        if normalized_key
+                        else None
+                    ),
+                    open_timeout=connect_timeout_secs,
+                )
             )
-        )
         self._connection: SpeechRailConnection | None = None
         self._sequence = 0
         self._session_id: str | None = None
@@ -161,11 +171,13 @@ class SpeechRailRealtimeClient:
         *,
         url: str,
         api_key: str | None = None,
+        connect_timeout_secs: float | None = None,
         connection_factory: ConnectionFactory | None = None,
     ) -> None:
         self._transport = SpeechRailOpenAITransport(
             url=url,
             api_key=api_key,
+            connect_timeout_secs=connect_timeout_secs,
             connection_factory=connection_factory,
         )
 

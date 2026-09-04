@@ -122,6 +122,7 @@ def default_pipeline_factories(settings: InteractionSettings) -> PipelineFactori
         stt_factory=SpeechRailConversationSTTFactory(
             url=settings.speechrail_realtime_url,
             api_key=settings.speechrail_api_key,
+            connect_timeout_secs=settings.speechrail_connect_timeout_secs,
         ),
         llm_factory=llm,
         tts_factory=tts,

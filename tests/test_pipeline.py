@@ -209,6 +209,7 @@ class TestBuildPipeline:
         factory.assert_called_once_with(
             url=settings.speechrail_realtime_url,
             api_key=None,
+            connect_timeout_secs=settings.speechrail_connect_timeout_secs,
         )
         factory.return_value.create_processor.assert_called_once_with(
             sample_rate=16000,

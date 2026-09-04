@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
+import { runtimeConfig } from "../config/runtimeConfig";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import {
   parseAssistantEvent,
@@ -426,7 +427,7 @@ export default function AssistantPanel({
     }
   }, []);
 
-  const { state: socketState } = useEventSocket("/ws/assistant", handleMessage);
+  const { state: socketState } = useEventSocket(runtimeConfig.assistantWsUrl, handleMessage);
 
   useEffect(() => {
     useAssistantStore.getState().setConnected(socketState === "open");

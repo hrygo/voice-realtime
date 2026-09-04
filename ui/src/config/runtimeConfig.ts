@@ -1,7 +1,7 @@
-export type MeetingDataSourceMode = "fixture" | "mock" | "backend";
-
 const DEFAULT_MEETING_WS_PATH = "/ws/v1/meetings";
 const DEFAULT_CONTROL_WS_PATH = "/ws/v1/control";
+const DEFAULT_SUBTITLES_WS_PATH = "/ws/subtitles";
+const DEFAULT_ASSISTANT_WS_PATH = "/ws/assistant";
 
 export function normalizeBaseUrl(value: string | undefined): string {
   return value?.trim().replace(/\/+$/u, "") ?? "";
@@ -30,13 +30,11 @@ export function deriveWebSocketUrl(apiBaseUrl: string, path: string): string {
   }
 }
 
-function readDataSource(value: string | undefined): MeetingDataSourceMode {
-  return value === "fixture" || value === "mock" || value === "backend" ? value : "backend";
-}
-
 const apiBaseUrl = normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL);
 const configuredMeetingWsUrl = import.meta.env.VITE_MEETING_WS_URL?.trim();
 const configuredControlWsUrl = import.meta.env.VITE_CONTROL_WS_URL?.trim();
+const configuredSubtitlesWsUrl = import.meta.env.VITE_SUBTITLES_WS_URL?.trim();
+const configuredAssistantWsUrl = import.meta.env.VITE_ASSISTANT_WS_URL?.trim();
 
 export const runtimeConfig = {
   apiBaseUrl,
@@ -44,7 +42,10 @@ export const runtimeConfig = {
     configuredMeetingWsUrl || deriveWebSocketUrl(apiBaseUrl, DEFAULT_MEETING_WS_PATH),
   controlWsUrl:
     configuredControlWsUrl || deriveWebSocketUrl(apiBaseUrl, DEFAULT_CONTROL_WS_PATH),
-  dataSource: readDataSource(import.meta.env.VITE_DATA_SOURCE),
+  subtitlesWsUrl:
+    configuredSubtitlesWsUrl || deriveWebSocketUrl(apiBaseUrl, DEFAULT_SUBTITLES_WS_PATH),
+  assistantWsUrl:
+    configuredAssistantWsUrl || deriveWebSocketUrl(apiBaseUrl, DEFAULT_ASSISTANT_WS_PATH),
 } as const;
 
 export function apiUrl(path: string): string {

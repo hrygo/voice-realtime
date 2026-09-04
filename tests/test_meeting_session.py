@@ -1147,22 +1147,31 @@ async def test_window_recovery_replays_journal_before_next_window_and_stop(
 ) -> None:
     class ReplayJournal:
         def __init__(self) -> None:
-            self.pending: list[tuple[UUID, TranscriptWindow]] = []
+            self.pending: list[tuple[UUID, TranscriptWindow | str]] = []
             self.replay_calls = 0
 
-        async def append(self, meeting_id: UUID, window: TranscriptWindow) -> None:
-            self.pending.append((meeting_id, window))
+        async def append(
+            self,
+            meeting_id: UUID,
+            operation: TranscriptWindow | str,
+            payload: dict[str, object] | None = None,
+        ) -> None:
+            self.pending.append((meeting_id, operation))
+
+        async def discard(self, meeting_id: UUID) -> None:
+            self.pending = [(tid, op) for tid, op in self.pending if tid != meeting_id]
 
         async def replay_meeting(self, target_repository, meeting_id: UUID) -> int:
             self.replay_calls += 1
-            pending = [window for target_id, window in self.pending if target_id == meeting_id]
+            pending = [op for target_id, op in self.pending if target_id == meeting_id]
             self.pending = [
-                (target_id, window)
-                for target_id, window in self.pending
-                if target_id != meeting_id
+                (target_id, op) for target_id, op in self.pending if target_id != meeting_id
             ]
-            for window in pending:
-                await target_repository.reconcile_window(meeting_id, window)
+            for op in pending:
+                if isinstance(op, TranscriptWindow):
+                    await target_repository.reconcile_window(meeting_id, op)
+                elif op == "finalize_transcript":
+                    await target_repository.finalize_transcript(meeting_id)
             return len(pending)
 
     journal = ReplayJournal()
