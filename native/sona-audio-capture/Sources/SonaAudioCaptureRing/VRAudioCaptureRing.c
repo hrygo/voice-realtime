@@ -1,4 +1,4 @@
-#include "SonaAudioCaptureRing.h"
+#include "VRAudioCaptureRing.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
