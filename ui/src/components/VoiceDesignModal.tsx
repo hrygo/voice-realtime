@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiUrl } from "../config/runtimeConfig";
 import { playAudioBlob } from "../utils/audioPlayback";
 import { showToast } from "./Toast";
@@ -52,6 +52,16 @@ export function VoiceDesignModal({ onCancel, onCreated }: VoiceDesignModalProps)
   const [isPlayingPreview, setIsPlayingPreview] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isSubmitting) {
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onCancel, isSubmitting]);
 
   const handleApplyInspiration = useCallback((item: InspirationPrompt) => {
     setName(item.name);
@@ -194,16 +204,19 @@ export function VoiceDesignModal({ onCancel, onCreated }: VoiceDesignModalProps)
           <div className="voice-design-field">
             <span className="voice-design-sublabel">灵感预设库 (点击直接套用)：</span>
             <div className="voice-inspirations-grid">
-              {INSPIRATIONS.map((item) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  className="voice-inspiration-chip"
-                  onClick={() => handleApplyInspiration(item)}
-                >
-                  {item.label}
-                </button>
-              ))}
+              {INSPIRATIONS.map((item) => {
+                const isActive = instruction.trim() === item.instruction.trim();
+                return (
+                  <button
+                    key={item.label}
+                    type="button"
+                    className={`voice-inspiration-chip ${isActive ? "active" : ""}`}
+                    onClick={() => handleApplyInspiration(item)}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -241,17 +254,22 @@ export function VoiceDesignModal({ onCancel, onCreated }: VoiceDesignModalProps)
         </div>
 
         <div className="voice-design-footer">
-          <button type="button" className="btn-secondary" onClick={onCancel} disabled={isSubmitting}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="btn-primary btn-save-voice"
-            onClick={() => void handleSubmit()}
-            disabled={isSubmitting || !name.trim() || !instruction.trim()}
-          >
-            {isSubmitting ? "正在固化保存..." : "固化并锁定音色"}
-          </button>
+          <div className="voice-design-footer-hint">
+            <span>✨ 专属音色将保存至本地引擎，可在播报音色中切换</span>
+          </div>
+          <div className="voice-design-footer-actions">
+            <button type="button" className="btn-secondary" onClick={onCancel} disabled={isSubmitting}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="btn-primary btn-save-voice"
+              onClick={() => void handleSubmit()}
+              disabled={isSubmitting || !name.trim() || !instruction.trim()}
+            >
+              {isSubmitting ? "正在固化保存..." : "固化并锁定音色"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

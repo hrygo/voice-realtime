@@ -860,7 +860,7 @@ export default function AssistantPanel({
                         const desc = VOICE_CONFIGS[v.id];
                         return (
                           <option key={v.id} value={v.id}>
-                            {desc ? `${desc.label} (${v.id})` : `${v.name} (${v.id})`}
+                            {desc ? desc.label : v.name}
                           </option>
                         );
                       })}
@@ -871,7 +871,7 @@ export default function AssistantPanel({
                         .filter((v) => !v.is_system)
                         .map((v) => (
                           <option key={v.id} value={v.id}>
-                            {v.name} ({v.id})
+                            {v.name}
                           </option>
                         ))}
                     </optgroup>
