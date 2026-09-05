@@ -1,7 +1,7 @@
 """Sona 稳定本机音频输出适配器。
 
 以当前输出设备的原生采样率和显式 40ms 缓冲打开 PyAudio 输出流，
-消除长播报期间 CoreAudio overload 与爆音。
+降低长播报期间 CoreAudio overload 与爆音风险。
 """
 
 from __future__ import annotations
@@ -37,14 +37,17 @@ def resolve_output_device_profile(
     output_device_index: int | None,
     buffer_ms: int,
 ) -> OutputDeviceProfile:
-    info = (
-        py_audio.get_default_output_device_info()
-        if output_device_index is None
-        else py_audio.get_device_info_by_index(output_device_index)
-    )
-    device_index = int(info["index"])
-    sample_rate = round(float(info["defaultSampleRate"]))
-    channels = int(info["maxOutputChannels"])
+    try:
+        info = (
+            py_audio.get_default_output_device_info()
+            if output_device_index is None
+            else py_audio.get_device_info_by_index(output_device_index)
+        )
+        device_index = int(info["index"])
+        sample_rate = round(float(info["defaultSampleRate"]))
+        channels = int(info["maxOutputChannels"])
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise RuntimeError("audio_output_device_invalid") from exc
     if channels < 1 or not 8_000 <= sample_rate <= 192_000:
         raise RuntimeError("audio_output_device_invalid")
     try:
@@ -111,11 +114,15 @@ class StableLocalAudioOutputTransport(LocalAudioOutputTransport):
 class StableLocalAudioTransport(LocalAudioTransport):
     def __init__(self, params: LocalAudioTransportParams, *, buffer_ms: int) -> None:
         super().__init__(params)
-        self._profile = resolve_output_device_profile(
-            self._pyaudio,
-            output_device_index=params.output_device_index,
-            buffer_ms=buffer_ms,
-        )
+        try:
+            self._profile = resolve_output_device_profile(
+                self._pyaudio,
+                output_device_index=params.output_device_index,
+                buffer_ms=buffer_ms,
+            )
+        except Exception:
+            self._pyaudio.terminate()
+            raise
         self._params.audio_out_sample_rate = self._profile.sample_rate
 
     def output(self) -> StableLocalAudioOutputTransport:

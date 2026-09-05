@@ -46,6 +46,15 @@ class FakePyAudio:
         return self.stream
 
 
+class MissingOutputDevicePyAudio(FakePyAudio):
+    def get_default_output_device_info(self) -> dict[str, object]:
+        raise OSError("No Default Output Device Available")
+
+    def get_device_info_by_index(self, index: int) -> dict[str, object]:
+        del index
+        raise OSError("Invalid output device")
+
+
 @pytest.mark.parametrize(
     ("sample_rate", "expected_frames"),
     [(48_000.0, 1_920), (44_100.0, 1_764)],
@@ -71,6 +80,18 @@ def test_output_profile_uses_native_rate_and_40ms_buffer(
 def test_output_profile_rejects_invalid_device(fake: FakePyAudio) -> None:
     with pytest.raises(RuntimeError, match="audio_output_device_invalid"):
         resolve_output_device_profile(fake, output_device_index=None, buffer_ms=40)
+
+
+@pytest.mark.parametrize("output_device_index", [None, 7])
+def test_output_profile_maps_missing_device_to_stable_error(
+    output_device_index: int | None,
+) -> None:
+    with pytest.raises(RuntimeError, match="audio_output_device_invalid"):
+        resolve_output_device_profile(
+            MissingOutputDevicePyAudio(),
+            output_device_index=output_device_index,
+            buffer_ms=40,
+        )
 
 
 class FakeTaskManager:
@@ -142,3 +163,21 @@ def test_stable_transport_initialization_updates_sample_rate_and_returns_stable_
         output = transport.output()
         assert isinstance(output, StableLocalAudioOutputTransport)
         assert transport.output() is output
+
+
+def test_stable_transport_terminates_pyaudio_when_device_resolution_fails() -> None:
+    fake = MissingOutputDevicePyAudio()
+    fake.terminate = MagicMock()
+    params = LocalAudioTransportParams(
+        audio_out_enabled=True,
+        audio_out_sample_rate=24_000,
+        audio_out_channels=1,
+    )
+
+    with (
+        patch("pyaudio.PyAudio", return_value=fake),
+        pytest.raises(RuntimeError, match="audio_output_device_invalid"),
+    ):
+        StableLocalAudioTransport(params, buffer_ms=40)
+
+    fake.terminate.assert_called_once_with()

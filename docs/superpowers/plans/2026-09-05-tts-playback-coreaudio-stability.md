@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 让 Sona 在 macOS 上以输出设备原生采样率和显式 40 ms PyAudio 缓冲播放 TTS，消除长播报期间的 CoreAudio overload 与爆音。
+**Goal:** 让 Sona 在 macOS 上以输出设备原生采样率和显式 40 ms PyAudio 缓冲播放 TTS，降低长播报期间的 CoreAudio overload 与爆音风险，并以三轮实测验证是否达到零 Overload、无可闻爆音。
 
 **Architecture:** 新增一个薄的本机输出适配器，继续复用 Pipecat 的排队、流式重采样、打断和 frame 语义，只替换 PyAudio 输出流创建。SpeechRail 仍提供 24 kHz mono PCM16；其合成片段边界修复由 SpeechRail 仓库独立维护和部署。
 
@@ -37,7 +37,7 @@
 - Environment: `SONA_INTERACTION_AUDIO_OUTPUT_STABLE_ENABLED`
 - Environment: `SONA_INTERACTION_AUDIO_OUTPUT_BUFFER_MS`
 
-- [ ] **Step 0: 核对实施基线与目标文件所有权**
+- [x] **Step 0: 核对实施基线与目标文件所有权**
 
 Run:
 
@@ -50,7 +50,7 @@ git diff -- src/sona/config/interaction.py tests/test_config.py
 Expected: HEAD 包含 `e548631`，两个目标代码文件无未提交改动；本计划文档自身可以处于未跟踪或
 已修改状态。若目标代码文件 dirty，停止本 Task，由其所有者先独立收口，不 stash 或 revert。
 
-- [ ] **Step 1: 写默认值与范围失败测试**
+- [x] **Step 1: 写默认值与范围失败测试**
 
 在 `tests/test_config.py` 增加：
 
@@ -67,7 +67,7 @@ def test_interaction_rejects_unsafe_audio_output_buffer(buffer_ms: int) -> None:
         InteractionSettings(_env_file=None, audio_output_buffer_ms=buffer_ms)
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 Run:
 
@@ -80,7 +80,7 @@ uv run pytest \
 
 Expected: FAIL，两个字段尚不存在。
 
-- [ ] **Step 3: 增加配置字段**
+- [x] **Step 3: 增加配置字段**
 
 在 `InteractionSettings` 的输入设备字段之前加入：
 
@@ -97,7 +97,7 @@ audio_output_buffer_ms: int = Field(
 )
 ```
 
-- [ ] **Step 4: 运行配置测试**
+- [x] **Step 4: 运行配置测试**
 
 Run:
 
@@ -122,7 +122,7 @@ Expected: 全部 PASS。只保留改动，尚不提交；Sona 要求完整质量
 - Produces: `StableLocalAudioOutputTransport`
 - Produces: `StableLocalAudioTransport`
 
-- [ ] **Step 1: 写输出设备 profile 失败测试**
+- [x] **Step 1: 写输出设备 profile 失败测试**
 
 创建 `tests/test_local_audio_output.py`：
 
@@ -201,7 +201,7 @@ def test_output_profile_rejects_invalid_device(fake: FakePyAudio) -> None:
         resolve_output_device_profile(fake, output_device_index=None, buffer_ms=40)
 ```
 
-- [ ] **Step 2: 运行 profile 测试并确认失败**
+- [x] **Step 2: 运行 profile 测试并确认失败**
 
 Run:
 
@@ -211,7 +211,7 @@ uv run pytest tests/test_local_audio_output.py -q
 
 Expected: collection FAIL，`sona.audio.local_output` 尚不存在。
 
-- [ ] **Step 3: 实现 profile 解析**
+- [x] **Step 3: 实现 profile 解析**
 
 在 `src/sona/audio/local_output.py` 加入：
 
@@ -277,7 +277,7 @@ def resolve_output_device_profile(
     )
 ```
 
-- [ ] **Step 4: 写显式流参数与失败清理测试**
+- [x] **Step 4: 写显式流参数与失败清理测试**
 
 在 `tests/test_local_audio_output.py` 追加：
 
@@ -329,7 +329,7 @@ async def test_stable_output_closes_stream_when_start_fails() -> None:
     assert output._out_stream is None
 ```
 
-- [ ] **Step 5: 实现稳定输出 transport**
+- [x] **Step 5: 实现稳定输出 transport**
 
 在同一模块追加：
 
@@ -405,7 +405,7 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 6: 运行适配器测试**
+- [x] **Step 6: 运行适配器测试**
 
 Run:
 
@@ -427,7 +427,7 @@ Expected: 全部 PASS，不打开真实音频设备。保留改动，Task 4 完�
 - Consumes: Task 1 配置字段和 Task 2 `StableLocalAudioTransport`
 - Produces: 默认稳定输出；`audio_output_stable_enabled=False` 时恢复上游 `LocalAudioTransport`
 
-- [ ] **Step 1: 写默认路径与回退失败测试**
+- [x] **Step 1: 写默认路径与回退失败测试**
 
 在 `tests/test_pipeline_dependencies.py` 增加：
 
@@ -467,7 +467,7 @@ def test_transport_factory_can_roll_back_to_upstream_local_audio() -> None:
     assert upstream.call_args.args[0].audio_out_sample_rate == 24_000
 ```
 
-- [ ] **Step 2: 运行测试并确认失败**
+- [x] **Step 2: 运行测试并确认失败**
 
 Run:
 
@@ -480,7 +480,7 @@ uv run pytest \
 
 Expected: FAIL，工厂尚未引用稳定 transport。
 
-- [ ] **Step 3: 接入稳定 transport**
+- [x] **Step 3: 接入稳定 transport**
 
 在 `pipeline_dependencies.py` 导入 `StableLocalAudioTransport`，保持 factory 签名不变，将 transport
 返回逻辑改为：
@@ -503,7 +503,7 @@ return StableLocalAudioTransport(
 
 `TransportFactory` 返回类型继续使用 `LocalAudioTransport`，因为稳定 transport 是其子类。
 
-- [ ] **Step 4: 运行交互回归**
+- [x] **Step 4: 运行交互回归**
 
 Run:
 
@@ -534,7 +534,7 @@ Expected: 全部 PASS；处理器顺序、回声双层防线和 24 kHz TTS frame
 - Consumes: Tasks 1–3 实现与测试
 - Produces: 可重复诊断、验收、回退手册和单一 Sona 修复提交
 
-- [ ] **Step 1: 编写运行手册**
+- [x] **Step 1: 编写运行手册**
 
 手册必须给出以下 CoreAudio 计数命令：
 
@@ -563,13 +563,13 @@ SONA_INTERACTION_AUDIO_OUTPUT_STABLE_ENABLED=false
 scripts/sona-ctl.sh restart -d
 ```
 
-- [ ] **Step 2: 更新文档索引和架构说明**
+- [x] **Step 2: 更新文档索引和架构说明**
 
 在 `docs/README.md` 增加手册链接；在架构文档 TTS 小节记录：源 PCM 固定 24 kHz，Sona 输出默认
 解析设备原生采样率并使用 40 ms 显式缓冲，配置开关只用于故障恢复。SpeechRail 实现细节只引用
 其仓库文档，不复制到 Sona。
 
-- [ ] **Step 3: 运行 focused gate**
+- [x] **Step 3: 运行 focused gate**
 
 Run:
 
@@ -595,7 +595,7 @@ git diff --check
 
 Expected: pytest 0 failures，ruff、mypy、`git diff --check` 退出 0。
 
-- [ ] **Step 4: 运行完整质量门禁**
+- [x] **Step 4: 运行完整质量门禁**
 
 Run:
 
@@ -610,7 +610,7 @@ uv run ruff check src/ tests/
 Expected: 后端满足分支覆盖率门禁；mypy/ruff 全绿；前端测试与生产构建成功。若失败，按文件与
 测试精确归因，不得回退 `e548631` 已提交的动态音色闭环。
 
-- [ ] **Step 5: 精确暂存并提交 Sona 修复**
+- [x] **Step 5: 精确暂存并提交 Sona 修复**
 
 Run:
 
@@ -645,7 +645,14 @@ Expected: staged diff 只包含本方案文件，不改写 UI 自定义音色代
 - Consumes: Task 4 Sona 提交；已通过独立真实 PCM 验收的 SpeechRail 版本
 - Produces: 三轮 CoreAudio 与人工听感验收记录
 
-- [ ] **Step 1: 核对 SpeechRail 前置状态**
+**执行回填（2026-09-05 14:04 CST）：**
+- SpeechRail `1.6.9` 的 `/health`、`/readyz`、`/v1/models`、`/v1/voices` 均已实测成功；
+- Sona 重启日志已确认 `StableLocalAudioOutputTransport` 使用本机输出设备的 `48000 Hz / 1920 frames / 40 ms`；
+- Sona 后端 `1001 passed, 14 skipped`（总覆盖率 `81.91%`），`ruff`、`mypy`、前端 `279` 项测试及生产构建均通过；
+- 两次长文本压力样本的 CoreAudio Overload、应用丢块与大于 `200 ms` 的源分片间隙均为 `0`，但因验收脚本把上游 `TTSStoppedFrame` 误作物理播放结束，样本之间可能重叠，故不计入正式三轮；
+- 补跑时运行态已进入会议录制，按模式互斥约束不得切换或占用语音助手。Step 3/4 保持未完成，待会议结束后按物理播放完成信号重新执行，不据此声明人工听感通过。
+
+- [x] **Step 1: 核对 SpeechRail 前置状态**
 
 Run:
 
@@ -659,7 +666,7 @@ curl -s http://127.0.0.1:8201/v1/voices
 Expected: 四个端点成功，且 SpeechRail 自己的边界稳定性计划已有真实 PCM 验收记录。本 Task 不安装、
 回退或修改 SpeechRail。
 
-- [ ] **Step 2: 重启 Sona 并核对稳定输出身份**
+- [x] **Step 2: 重启 Sona 并核对稳定输出身份**
 
 此步骤改变 Sona 运行态，只有获得当前用户明确授权后执行：
 
