@@ -645,12 +645,13 @@ Expected: staged diff 只包含本方案文件，不改写 UI 自定义音色代
 - Consumes: Task 4 Sona 提交；已通过独立真实 PCM 验收的 SpeechRail 版本
 - Produces: 三轮 CoreAudio 与人工听感验收记录
 
-**执行回填（2026-09-05 14:04 CST）：**
+**执行回填（2026-09-05 14:16 CST）：**
 - SpeechRail `1.6.9` 的 `/health`、`/readyz`、`/v1/models`、`/v1/voices` 均已实测成功；
 - Sona 重启日志已确认 `StableLocalAudioOutputTransport` 使用本机输出设备的 `48000 Hz / 1920 frames / 40 ms`；
 - Sona 后端 `1001 passed, 14 skipped`（总覆盖率 `81.91%`），`ruff`、`mypy`、前端 `279` 项测试及生产构建均通过；
 - 两次长文本压力样本的 CoreAudio Overload、应用丢块与大于 `200 ms` 的源分片间隙均为 `0`，但因验收脚本把上游 `TTSStoppedFrame` 误作物理播放结束，样本之间可能重叠，故不计入正式三轮；
-- 补跑时运行态已进入会议录制，按模式互斥约束不得切换或占用语音助手。Step 3/4 保持未完成，待会议结束后按物理播放完成信号重新执行，不据此声明人工听感通过。
+- 修正完成判据后，三轮相互隔离的长播报分别为 `63.754 s / 329 字`、`63.736 s / 329 字`、`63.036 s / 317 字`；每轮均同时收到上游合成停止与物理播放停止事件，CoreAudio Overload、应用丢块及大于 `200 ms` 的源分片间隙均为 `0`；
+- 麦克风已恢复为非静音，Sona 当前为 `assistant/running`。自动化客观指标通过；可闻爆音人工确认和三次真人插话仍未执行，因此 Step 3/4 保持未完成，不据此声明完整听感验收通过。
 
 - [x] **Step 1: 核对 SpeechRail 前置状态**
 
