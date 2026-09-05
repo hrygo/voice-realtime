@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import {
+  ApiError,
+  getErrorMessageByCode,
   type MeetingDetail,
   type MeetingMinutesVersion,
   type MeetingSnapshotPayload,
@@ -11,6 +13,20 @@ import {
   type TranscriptSegment,
 } from "../contracts/meetingContract";
 import { meetingApi } from "../services/meetingApi";
+
+const HISTORY_NETWORK_ERROR = "网络连接失败，请检查服务是否可用后重试";
+const HISTORY_GENERIC_ERROR = "历史会议加载失败，请稍后重试";
+
+function getHistoryErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const message = getErrorMessageByCode(error.code);
+    return message.startsWith("未知错误 (") ? HISTORY_GENERIC_ERROR : message;
+  }
+  if (error instanceof TypeError) {
+    return HISTORY_NETWORK_ERROR;
+  }
+  return HISTORY_GENERIC_ERROR;
+}
 
 export interface TranscriptionGap {
   readonly start_ms: number;
@@ -57,6 +73,8 @@ export interface MeetingStoreState {
   readonly historyList: readonly MeetingSummary[];
   readonly nextCursor: string | null;
   readonly isLoadingHistory: boolean;
+  readonly historyError: string | null;
+  readonly historyErrorCursor: string | null;
   readonly selectedMeetingId: string | null;
   readonly selectedMeeting: MeetingDetail | null;
   readonly selectedSegments: readonly TranscriptSegment[];
@@ -171,7 +189,7 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   minutesHistory: [],
   activeMinutesVersion: null,
   health: {
-    storage: "ok",
+    storage: "unavailable",
     transcription: "ok",
     mic_muted: false,
     recovery_journal_active: false,
@@ -220,6 +238,8 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
   historyList: [],
   nextCursor: null,
   isLoadingHistory: false,
+  historyError: null,
+  historyErrorCursor: null,
   selectedMeetingId: null,
   selectedMeeting: null,
   selectedSegments: [],
@@ -682,9 +702,15 @@ export const useMeetingStore = create<MeetingStoreState>((set, get) => ({
         historyList: cursor ? [...state.historyList, ...resp.items] : resp.items,
         nextCursor: resp.next_cursor,
         isLoadingHistory: false,
+        historyError: null,
+        historyErrorCursor: null,
       }));
-    } catch (err) {
-      set({ isLoadingHistory: false });
+    } catch (error) {
+      set({
+        isLoadingHistory: false,
+        historyError: getHistoryErrorMessage(error),
+        historyErrorCursor: cursor,
+      });
     }
   },
 

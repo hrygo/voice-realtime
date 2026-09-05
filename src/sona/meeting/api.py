@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, FastAPI, Header, Query, Request, Response
@@ -21,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from sona.meeting.models import MeetingStatus
+from sona.meeting.speaker_labels import speaker_display_label
 
 _TITLE = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
@@ -104,19 +106,24 @@ def _timestamp(value: Any) -> str | None:
 
 
 def _speaker_json(speaker: Any, *, speaker_key: str | None = None) -> dict[str, Any]:
-    key = str(_attr(speaker, "speaker_key", speaker_key or ""))
-    raw = str(_attr(speaker, "original_speaker", _attr(speaker, "raw_speaker", key)))
-    fallback_label = (
-        f"说话人 {raw.removeprefix('s')}"
-        if raw.removeprefix("s").isdigit()
-        else f"说话人 {key}"
+    key_value = _attr(speaker, "speaker_key", speaker_key or "")
+    key = str(key_value) if key_value is not None else (speaker_key or "")
+    raw_value = _attr(speaker, "original_speaker", _attr(speaker, "raw_speaker"))
+    raw = str(raw_value).strip() if raw_value is not None else None
+    default_label = speaker_display_label(key, raw)
+    stored_default_value = _attr(speaker, "default_label")
+    stored_default = (
+        str(stored_default_value).strip() if stored_default_value is not None else None
     )
-    default_label = str(_attr(speaker, "default_label", fallback_label))
+    display_value = _attr(speaker, "display_name")
+    display_name = str(display_value).strip() if display_value is not None else ""
+    if not display_name or (stored_default and display_name == stored_default):
+        display_name = default_label
     return {
         "speaker_key": key,
-        "original_speaker": _attr(speaker, "original_speaker", _attr(speaker, "raw_speaker")),
+        "original_speaker": raw_value,
         "default_label": default_label,
-        "display_name": str(_attr(speaker, "display_name", default_label)),
+        "display_name": display_name,
         "updated_at": _timestamp(_attr(speaker, "updated_at"))
         or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
@@ -210,8 +217,7 @@ def _segment_json(segment: Any, speakers: Any) -> dict[str, Any]:
     key = str(_attr(segment, "speaker_key", ""))
     speaker_map = _speaker_map(speakers)
     speaker = speaker_map.get(key, {})
-    raw_key = key.rsplit(":", 1)[-1].removeprefix("s")
-    fallback_name = f"说话人 {raw_key}" if raw_key.isdigit() else key
+    fallback_name = speaker_display_label(key)
     return {
         "id": _uuid(_attr(segment, "id")),
         "order": int(_attr(segment, "order", 0) or 0),
@@ -598,12 +604,15 @@ def create_meeting_router(
                     else "text/plain; charset=utf-8"
                 )
             filename = _safe_filename(str(_attr(meeting, "title", "meeting"))) or "meeting"
+            download_name = f"{filename}.{export_format}"
+            ascii_filename = _ascii_safe_filename(filename)
             return Response(
                 content=body,
                 media_type=media_type,
                 headers={
                     "Content-Disposition": (
-                        f'attachment; filename="{filename}.{export_format}"'
+                        f'attachment; filename="{ascii_filename}.{export_format}"; '
+                        f"filename*=UTF-8''{quote(download_name, safe='')}"
                     )
                 },
             )
@@ -667,6 +676,12 @@ def _render_srt(transcript: Mapping[str, Any]) -> str:
 def _safe_filename(title: str) -> str:
     title = _SAFE_FILENAME.sub("_", title).strip(" .")
     return title[:120]
+
+
+def _ascii_safe_filename(filename: str) -> str:
+    fallback = filename.encode("ascii", "ignore").decode("ascii")
+    fallback = re.sub(r"[^A-Za-z0-9._ -]", "_", fallback).strip(" ._")
+    return fallback or "meeting"
 
 
 async def _meeting_error_handler(request: Request, exc: Exception) -> JSONResponse:

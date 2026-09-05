@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { TranscriptSegment } from "../contracts/meetingContract";
+import { ApiError, type TranscriptSegment } from "../contracts/meetingContract";
 import {
   mockMeetingDetailCompleted,
   mockMeetingSummaryCompleted,
@@ -112,6 +112,57 @@ describe("meetingStore", () => {
       const segments = useMeetingStore.getState().segments;
       expect(segments[0]?.id).toBe("seg-a");
       expect(segments[1]?.id).toBe("seg-b");
+    });
+  });
+
+  describe("History loading errors", () => {
+    it("keeps an existing page when pagination fails and clears the safe error after retry", async () => {
+      const existing = mockMeetingSummaryCompleted;
+      useMeetingStore.setState({
+        historyList: [existing],
+        nextCursor: "cursor-2",
+        historyError: null,
+      });
+      const fetchMeetings = vi
+        .spyOn(meetingApi, "fetchMeetings")
+        .mockRejectedValueOnce(new ApiError("database details", "internal_error"))
+        .mockResolvedValueOnce({
+          items: [mockMeetingSummaryRecording],
+          next_cursor: null,
+        });
+
+      await useMeetingStore.getState().fetchHistory("cursor-2");
+
+      let state = useMeetingStore.getState();
+      expect(state.historyList).toEqual([existing]);
+      expect(state.historyError).toBe("服务端内部异常");
+      expect(state.isLoadingHistory).toBe(false);
+
+      await useMeetingStore.getState().fetchHistory("cursor-2");
+
+      state = useMeetingStore.getState();
+      expect(state.historyList).toEqual([existing, mockMeetingSummaryRecording]);
+      expect(state.historyError).toBeNull();
+      expect(fetchMeetings).toHaveBeenNthCalledWith(2, "cursor-2", 20);
+    });
+
+    it("distinguishes an initial network failure from an empty history", async () => {
+      useMeetingStore.setState({ historyList: [], nextCursor: null, historyError: null });
+      vi.spyOn(meetingApi, "fetchMeetings")
+        .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+        .mockResolvedValueOnce({ items: [], next_cursor: null });
+
+      await useMeetingStore.getState().fetchHistory();
+
+      expect(useMeetingStore.getState().historyList).toEqual([]);
+      expect(useMeetingStore.getState().historyError).toBe(
+        "网络连接失败，请检查服务是否可用后重试",
+      );
+
+      await useMeetingStore.getState().fetchHistory();
+
+      expect(useMeetingStore.getState().historyList).toEqual([]);
+      expect(useMeetingStore.getState().historyError).toBeNull();
     });
   });
 

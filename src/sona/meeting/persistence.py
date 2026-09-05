@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Protocol
 from uuid import UUID
@@ -80,8 +81,10 @@ class TranscriptPersistence:
         if signature == self._last_window_signatures.get(meeting_id):
             return None
         try:
-            await self.replay_pending(meeting_id)
-            result = await self._transcripts.reconcile_window(meeting_id, window)
+            await asyncio.shield(self.replay_pending(meeting_id))
+            result = await asyncio.shield(
+                self._transcripts.reconcile_window(meeting_id, window)
+            )
         except Exception as exc:
             self._degraded = True
             logger.warning(
@@ -94,7 +97,7 @@ class TranscriptPersistence:
             if self._journal is None:
                 raise
             try:
-                await self._journal.append(meeting_id, window)
+                await asyncio.shield(self._journal.append(meeting_id, window))
             except Exception:
                 logger.exception(
                     "TranscriptPersistence: journal 写入失败 (meeting_id=%s)",

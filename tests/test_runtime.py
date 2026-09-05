@@ -11,7 +11,7 @@ import pytest
 from sona.audio.levels import AudioLevelMeter
 from sona.audio.selection import SubtitleCaptureSelection
 from sona.config import Settings
-from sona.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
+from sona.meeting.models import MeetingRecord, PCMOwner, RuntimeMode, StorageHealth
 from sona.meeting.runtime_mode import (
     MeetingUnavailableError,
     ModeConflictError,
@@ -929,6 +929,23 @@ class TestControlCommands:
         assert runtime.mode_coordinator is coordinator
         assert runtime.runtime_events is broadcaster
         assert runtime.mode_coordinator.meeting is meeting
+
+    def test_storage_health_recovers_after_meeting_backend_is_configured(
+        self, settings: Settings
+    ) -> None:
+        with ExitStack() as stack:
+            _patched(stack)
+            runtime = UIRuntime(settings)
+            assert runtime.snapshot().storage is StorageHealth.OK
+
+            runtime.set_storage_health(StorageHealth.UNAVAILABLE)
+            assert runtime.snapshot().storage is StorageHealth.UNAVAILABLE
+
+            meeting = MagicMock()
+            meeting.storage_health = StorageHealth.OK
+            runtime.configure_meeting(meeting)
+
+        assert runtime.snapshot().storage is StorageHealth.OK
 
     async def test_start_subtitles_delegates_to_coordinator(
         self, settings: Settings

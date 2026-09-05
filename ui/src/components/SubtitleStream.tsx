@@ -10,6 +10,7 @@ import {
   type SubtitleSnapshot,
 } from "../stores/subtitleStore";
 import { useUISettingsStore } from "../stores/uiSettingsStore";
+import type { PCMOwner, RuntimeMode } from "../contracts/meetingContract";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
 import { runtimeConfig } from "../config/runtimeConfig";
 import { showToast } from "./Toast";
@@ -49,6 +50,102 @@ const ACTION_FEEDBACK_LABELS: Record<SubtitleAction, string> = {
 
 const ACTION_FEEDBACK_DURATION_MS = 1800;
 
+export interface SubtitleListeningPresentationInput {
+  readonly connected: boolean;
+  readonly partial: boolean;
+  readonly micMuted?: boolean;
+  readonly runtimeMode?: RuntimeMode;
+  readonly pcmOwner?: PCMOwner;
+  readonly captureSource?: "microphone" | "physical_output" | null;
+  readonly outputCaptureActive?: boolean;
+}
+
+export interface SubtitleListeningPresentation {
+  readonly label: string;
+  readonly detail: string;
+  readonly active: boolean;
+}
+
+export function getSubtitleListeningPresentation({
+  connected,
+  partial,
+  micMuted = false,
+  runtimeMode,
+  pcmOwner,
+  captureSource,
+  outputCaptureActive,
+}: SubtitleListeningPresentationInput): SubtitleListeningPresentation {
+  if (pcmOwner === undefined) {
+    return {
+      label: connected ? (partial ? "实时转写中" : "实时收听中") : "等待连接",
+      detail: connected
+        ? "SpeechRail 流式 ASR 正在监听，系统检测到发言后将实时输出字幕。"
+        : "等待 SpeechRail 连接后开始实时转写。",
+      active: false,
+    };
+  }
+
+  if (pcmOwner !== "subtitles" || runtimeMode !== "subtitles") {
+    if (pcmOwner === "assistant") {
+      return {
+        label: "语音助手占用音频",
+        detail: "当前实际音频所有者是语音助手，实时字幕尚未启动。",
+        active: false,
+      };
+    }
+    if (pcmOwner === "meeting") {
+      return {
+        label: "会议采集占用音频",
+        detail: "当前实际音频所有者是会议助手，实时字幕尚未启动。",
+        active: false,
+      };
+    }
+    return {
+      label: "字幕未启动",
+      detail: "当前没有音频采集所有者，实时字幕尚未启动。",
+      active: false,
+    };
+  }
+
+  if (!connected) {
+    return {
+      label: "等待连接",
+      detail: "实时字幕已取得音频采集所有权，正在等待 SpeechRail 连接。",
+      active: false,
+    };
+  }
+
+  if (captureSource === "physical_output") {
+    if (outputCaptureActive !== true) {
+      return {
+        label: "电脑音源待采集",
+        detail: "实时字幕已选择电脑音源，等待电脑声音采集启动；麦克风静音状态不影响电脑音源。",
+        active: false,
+      };
+    }
+    return {
+      label: "正在采集电脑声音",
+      detail: partial
+        ? "正在采集电脑声音并实时转写；麦克风静音状态不影响电脑音源。"
+        : "正在采集电脑声音，麦克风静音状态不影响电脑音源。",
+      active: true,
+    };
+  }
+
+  if (micMuted) {
+    return {
+      label: "麦克风已静音",
+      detail: "实时字幕已取得麦克风音频所有权，但麦克风已静音，暂不接收语音。",
+      active: false,
+    };
+  }
+  return {
+    label: partial ? "实时转写中" : "实时收听中",
+    detail: "SpeechRail 流式 ASR 正在接收麦克风语音，系统检测到发言后将实时输出字幕。",
+    active: true,
+  };
+}
+
 interface SubtitleStreamProps {
   readonly isMeetingRecording?: boolean;
   readonly onNavigateMeeting?: () => void;
@@ -63,6 +160,17 @@ export default function SubtitleStream({
   const { lines, partial, connected, starredIndices, toggleStar } = useSubtitleStore();
   const teleprompterSettings = useUISettingsStore((s) => s.teleprompterSettings);
   const setTeleprompterSettings = useUISettingsStore((s) => s.setTeleprompterSettings);
+  const micMuted = useUISettingsStore((s) => s.micMuted);
+  const runtimeSnapshot = commandSocket?.snapshot;
+  const listeningPresentation = getSubtitleListeningPresentation({
+    connected,
+    partial: Boolean(partial),
+    micMuted,
+    runtimeMode: runtimeSnapshot?.mode,
+    pcmOwner: runtimeSnapshot?.pcm_owner,
+    captureSource: runtimeSnapshot?.subtitle_capture?.source,
+    outputCaptureActive: runtimeSnapshot?.output_capture_active,
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const presentationScrollRef = useRef<HTMLDivElement>(null);
@@ -556,12 +664,12 @@ export default function SubtitleStream({
               <h2>
                 <span>📝</span> 实时字幕
               </h2>
-              <span className={`subtitle-listening-pill ${connected ? "listening" : ""}`}>
+              <span className={`subtitle-listening-pill ${listeningPresentation.active ? "listening" : ""}`}>
                 <span className="subtitle-listening-dot" />
-                {connected ? (partial ? "实时转写中" : "实时收听中") : "等待连接"}
+                {listeningPresentation.label}
               </span>
               <span className="subtitle-header-context">
-                {isMeetingRecording ? "会议转录同步中" : "本地实时转写工作区"}
+                {isMeetingRecording ? "会议转录同步中" : listeningPresentation.detail}
               </span>
             </div>
             <div className="subtitle-header-right">
@@ -572,7 +680,7 @@ export default function SubtitleStream({
           {/* 实时字幕流式拟真声学波形 */}
           <div className="subtitle-waveform-container">
             <SubtitleWaveform
-              connected={connected}
+              connected={listeningPresentation.active}
               hasPartial={Boolean(partial)}
               activeTextTrigger={partial || lines.length}
             />
@@ -608,7 +716,7 @@ export default function SubtitleStream({
                 <span className="subtitle-empty-icon">🎙️</span>
                 <p className="subtitle-empty-title">等待语音字幕...</p>
                 <p className="subtitle-empty-desc">
-                  SpeechRail 流式 ASR 正在监听，系统检测到发言后将实时输出字幕。
+                  {listeningPresentation.detail}
                 </p>
               </div>
             )}
@@ -655,7 +763,11 @@ export default function SubtitleStream({
               <div className="presentation-title-text">
                 <h2>Sona 舞台提词与大屏</h2>
                 <span className="presentation-subtitle-status">
-                  {connected ? "● SpeechRail 实时转写" : "○ 等待 ASR 连接"}
+                  {listeningPresentation.active
+                    ? `● ${listeningPresentation.label}`
+                    : connected
+                      ? `○ ${listeningPresentation.label}`
+                      : "○ 等待 ASR 连接"}
                   {" · "}
                   <span>已转录 {lines.length} 条字幕</span>
                 </span>
@@ -758,7 +870,7 @@ export default function SubtitleStream({
                 <div className="presentation-empty">
                   <span className="presentation-empty-icon">🎙️</span>
                   <h3>舞台提词与字幕大屏已就绪</h3>
-                  <p>SpeechRail 正在实时监听中，发言将实时以大字投屏呈现</p>
+                   <p>{listeningPresentation.detail}</p>
                 </div>
               )}
 

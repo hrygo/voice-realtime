@@ -38,20 +38,35 @@ def test_decodes_completed_commit_noop() -> None:
     assert isinstance(event, Noop)
 
 
+def test_decodes_cleared_ack_noop() -> None:
+    event = decode_transcription_event(_event(type="input_audio_buffer.cleared"))
+
+    assert isinstance(event, Noop)
+    assert event.reason == "input_audio_buffer.cleared"
+
+
 def test_decodes_speech_started_noop() -> None:
     event = decode_transcription_event(
-        _event(type="input_audio_buffer.speech_started", audio_start_ms=0)
+        _event(
+            type="input_audio_buffer.speech_started",
+            item_id="item-1",
+            audio_start_ms=2400,
+        )
     )
 
     assert isinstance(event, Noop)
+    assert event.item_id == "item-1"
+    assert event.audio_start_ms == 2400
 
 
 def test_decodes_speech_stopped_noop() -> None:
     event = decode_transcription_event(
-        _event(type="input_audio_buffer.speech_stopped", audio_end_ms=1200)
+        _event(type="input_audio_buffer.speech_stopped", item_id="item-1", audio_end_ms=1200)
     )
 
     assert isinstance(event, Noop)
+    assert event.item_id == "item-1"
+    assert event.audio_end_ms == 1200
 
 
 def test_decodes_transcription_delta() -> None:

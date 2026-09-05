@@ -55,6 +55,7 @@ export interface MeetingHistorySidebarProps {
   micMuted?: boolean;
   nextCursor: string | null;
   isLoading: boolean;
+  historyError?: string | null;
   isCollapsed?: boolean;
   onToggleCollapse?: () => void;
   onSelectMeeting: (id: string | null) => void;
@@ -76,6 +77,7 @@ export function MeetingHistorySidebar({
   micMuted = false,
   nextCursor,
   isLoading,
+  historyError = null,
   isCollapsed = false,
   onToggleCollapse,
   onSelectMeeting,
@@ -464,7 +466,23 @@ export function MeetingHistorySidebar({
             </div>
 
             <div className="history-list">
-              {filteredList.length === 0 && !isLoading && !isMeetingActive && (
+              {historyError && (
+                <div className="history-empty history-load-error" role="alert">
+                  <div>加载失败：{historyError}</div>
+                  {onRefresh && (
+                    <button
+                      type="button"
+                      className="btn-load-more"
+                      onClick={onRefresh}
+                      disabled={isLoading}
+                    >
+                      重试
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!historyError && filteredList.length === 0 && !isLoading && !isMeetingActive && (
                 <div className="history-empty">
                   {searchQuery ? `未找到包含 "${searchQuery}" 的会议` : "暂无会议记录"}
                 </div>

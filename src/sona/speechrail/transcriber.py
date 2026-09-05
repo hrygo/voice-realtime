@@ -64,11 +64,22 @@ class SpeechRailStreamingTranscriber:
         self._finish_timeout_secs = finish_timeout_secs
         self._ready = False
         self._last_window = ASRWindow(source_epoch=context.source_epoch)
+        self._last_confirmed_window = self._last_window
         self._pending_segments: list[ASRSegment] = []
+        self._partial_text = ""
+        self._partial_item_id: str | None = None
+        self._active_item_id: str | None = None
+        self._active_item_start_ms: int | None = None
+        self._active_item_end_ms: int | None = None
+        self._active_item_offset_ms: int | None = None
+        self._last_audio_boundary_ms = 0
         self._audio_ms = 0
+        self._last_confirmed_end_ms: int | None = None
         self._final_ready = asyncio.Event()
         self._finish_lock = asyncio.Lock()
+        self._finish_requested = False
         self._commit_sent = False
+        self._clear_sent = False
         self._events_active = False
         self._terminal_error: tuple[str, str] | None = None
         self._diarization_requested = context.purpose == "meeting"
@@ -107,10 +118,45 @@ class SpeechRailStreamingTranscriber:
                     yield self._set_terminal_error(*_terminal_error_for(event))
                     return
                 if isinstance(decoded, Noop):
+                    if decoded.reason == "input_audio_buffer.cleared":
+                        if self._finish_requested:
+                            # SpeechRail handles client events serially.  The
+                            # clear acknowledgement therefore arrives after
+                            # the commit's complete/segment frames and is the
+                            # EOF barrier; no session.completed event exists.
+                            self._final_ready.set()
+                            return
+                        continue
+                    if decoded.reason == "input_audio_buffer.speech_started":
+                        self._active_item_id = decoded.item_id
+                        self._active_item_start_ms = decoded.audio_start_ms
+                        self._active_item_end_ms = None
+                        # The first SpeechRail item already includes the
+                        # session's leading silence.  Later items restart
+                        # segment timestamps at the previous commit boundary;
+                        # ``audio_start_ms`` is the VAD onset inside that
+                        # item, so adding it would double-count the first item
+                        # and the inter-item silence.
+                        self._active_item_offset_ms = self._last_audio_boundary_ms
+                        self._partial_text = ""
+                        self._partial_item_id = decoded.item_id
+                    elif decoded.reason == "input_audio_buffer.speech_stopped":
+                        if decoded.audio_end_ms is not None:
+                            self._active_item_end_ms = decoded.audio_end_ms
+                            self._last_audio_boundary_ms = decoded.audio_end_ms
                     continue
                 if isinstance(decoded, TranscriptionDelta):
+                    if (
+                        decoded.item_id is not None
+                        and self._partial_item_id is not None
+                        and decoded.item_id != self._partial_item_id
+                    ):
+                        self._partial_text = ""
+                    if decoded.item_id is not None:
+                        self._partial_item_id = decoded.item_id
+                    self._partial_text += decoded.text
                     self._last_window = ASRWindow(
-                        source_epoch=self._context.source_epoch, partial=decoded.text
+                        source_epoch=self._context.source_epoch, partial=self._partial_text
                     )
                     yield ASREvent(kind="snapshot", window=self._last_window)
                 elif isinstance(decoded, TranscriptionSegment):
@@ -120,6 +166,7 @@ class SpeechRailStreamingTranscriber:
                                 decoded,
                                 self._context,
                                 require_speaker=self._diarization_requested,
+                                item_offset_ms=self._segment_offset_ms(decoded.item_id),
                             )
                         )
                     except RuntimeError:
@@ -130,12 +177,22 @@ class SpeechRailStreamingTranscriber:
                         return
                 elif isinstance(decoded, TranscriptionCompleted):
                     # 分人会话也可能收到无 segment 事件的 completed（服务端对短促/
-                    # 单人轮次只下发 completed）。此时用兜底单 segment 保留本轮转写，
-                    # 仅当 transcript 为空才视为真正的协议违反。
+                    # 单人轮次只下发 completed）。此时用兜底单 segment 保留本轮转写；
+                    # EOF 空音频 completed 表示没有新增文本，不应污染已确认窗口。
                     try:
-                        segments = tuple(self._pending_segments) or (_synthesized_segment(
-                            decoded.transcript, self._context, self._audio_ms
-                        ),)
+                        if self._pending_segments:
+                            segments = tuple(self._pending_segments)
+                        elif decoded.transcript.strip():
+                            segments = (_synthesized_segment(
+                                decoded.transcript,
+                                self._context,
+                                self._audio_ms,
+                                speech_start_ms=self._active_item_start_ms,
+                                speech_end_ms=self._active_item_end_ms,
+                                previous_confirmed_end_ms=self._last_confirmed_end_ms,
+                            ),)
+                        else:
+                            segments = ()
                     except RuntimeError:
                         yield self._set_terminal_error(
                             "SPEECHRAIL_PROTOCOL_ERROR",
@@ -143,15 +200,24 @@ class SpeechRailStreamingTranscriber:
                         )
                         return
                     self._pending_segments.clear()
-                    self._last_window = ASRWindow(
+                    self._partial_text = ""
+                    self._partial_item_id = decoded.item_id
+                    self._active_item_id = None
+                    self._active_item_start_ms = None
+                    self._active_item_end_ms = None
+                    self._active_item_offset_ms = None
+                    final_window = ASRWindow(
                         source_epoch=self._context.source_epoch,
                         partial="",
                         segments=segments,
                     )
-                    self._final_ready.set()
-                    yield ASREvent(kind="final", window=self._last_window)
-                    if self._commit_sent:
-                        return
+                    if segments:
+                        self._last_window = final_window
+                        self._last_confirmed_window = final_window
+                        self._last_confirmed_end_ms = max(
+                            segment.end_ms for segment in segments
+                        )
+                    yield ASREvent(kind="final", window=final_window)
                 elif isinstance(decoded, SpeechRailTranscriptionError):
                     yield self._set_terminal_error(
                         "SPEECHRAIL_REQUEST_FAILED",
@@ -163,10 +229,15 @@ class SpeechRailStreamingTranscriber:
 
     async def finish(self) -> ASRWindow:
         async with self._finish_lock:
-            if not self._commit_sent:
+            if not self._finish_requested:
+                self._finish_requested = True
                 self._final_ready.clear()
+            if not self._commit_sent:
                 await self._client.commit()
                 self._commit_sent = True
+            if not self._clear_sent:
+                await self._client.clear()
+                self._clear_sent = True
         try:
             await asyncio.wait_for(self._final_ready.wait(), timeout=self._finish_timeout_secs)
         except TimeoutError:
@@ -174,7 +245,7 @@ class SpeechRailStreamingTranscriber:
         if self._terminal_error is not None:
             code, message = self._terminal_error
             raise RuntimeError(f"{code}: {message}")
-        return self._last_window
+        return self._last_confirmed_window
 
     async def close(self) -> None:
         if self._terminal_error is None and not self._final_ready.is_set():
@@ -187,12 +258,26 @@ class SpeechRailStreamingTranscriber:
         self._final_ready.set()
         return ASREvent(kind="error", error_code=code, error_message=message)
 
+    def _segment_offset_ms(self, item_id: str | None) -> int:
+        """Return the current SpeechRail item start on the session timeline.
+
+        SpeechRail emits a stable input ``item_id`` for every VAD turn, so the
+        latest ``speech_started.audio_start_ms`` is the turn discriminator.
+        Missing item ids remain accepted for compatibility with older frames.
+        """
+        if self._active_item_offset_ms is None:
+            return 0
+        if self._active_item_id is None or item_id is None or item_id == self._active_item_id:
+            return self._active_item_offset_ms
+        return 0
+
 
 def _segment(
     value: TranscriptionSegment,
     context: ASRSessionContext,
     *,
     require_speaker: bool,
+    item_offset_ms: int = 0,
 ) -> ASRSegment:
     # 无说话人标注的 segment 落到匿名说话人，不断连（短轮次常见）。
     speaker_key = "0" if value.speaker is None else value.speaker
@@ -200,32 +285,65 @@ def _segment(
         order=0,
         source_epoch=context.source_epoch,
         speaker_key=_speaker_key(context, speaker_key),
-        start_ms=value.start_ms + context.offset_ms,
-        end_ms=value.end_ms + context.offset_ms,
+        start_ms=value.start_ms + context.offset_ms + item_offset_ms,
+        end_ms=value.end_ms + context.offset_ms + item_offset_ms,
         text=value.text,
     )
 
 
 def _synthesized_segment(
-    transcript: str, context: ASRSessionContext, audio_ms: int
+    transcript: str,
+    context: ASRSessionContext,
+    audio_ms: int,
+    *,
+    speech_start_ms: int | None = None,
+    speech_end_ms: int | None = None,
+    previous_confirmed_end_ms: int | None = None,
 ) -> ASRSegment:
-    """Fallback single segment for the non-diarized path (no segment events)."""
+    """Create a fallback segment when SpeechRail emits no segment events.
+
+    VAD boundaries are authoritative when both are available. If they are
+    absent, use a bounded nominal duration and place the segment after the
+    latest confirmed end so a short/empty audio counter cannot overwrite it.
+    """
     segment = transcript.strip()
     if not segment:
         raise RuntimeError("SPEECHRAIL_PROTOCOL_ERROR")
+    nominal_ms = _nominal_duration_ms(segment)
+    previous_end_ms = (
+        max(0, previous_confirmed_end_ms - context.offset_ms)
+        if previous_confirmed_end_ms is not None
+        else None
+    )
+    has_vad_bounds = speech_start_ms is not None and speech_end_ms is not None
+    if speech_start_ms is not None and speech_end_ms is not None:
+        start_ms = speech_start_ms
+        end_ms = max(speech_start_ms, speech_end_ms)
+    elif speech_start_ms is not None:
+        start_ms = speech_start_ms
+        end_ms = speech_start_ms + nominal_ms
+    elif speech_end_ms is not None:
+        end_ms = speech_end_ms
+        start_ms = max(0, speech_end_ms - nominal_ms)
+    else:
+        end_ms = max(audio_ms, nominal_ms)
+        start_ms = max(0, end_ms - nominal_ms)
+    if not has_vad_bounds and previous_end_ms is not None and start_ms < previous_end_ms:
+        start_ms = previous_end_ms
+        end_ms = max(end_ms, start_ms + nominal_ms)
     return ASRSegment(
         order=0,
         source_epoch=context.source_epoch,
         speaker_key=_speaker_key(context, "0"),
-        start_ms=max(0, audio_ms - _nominal_duration_ms(segment)),
-        end_ms=audio_ms,
+        start_ms=context.offset_ms + start_ms,
+        end_ms=context.offset_ms + end_ms,
         text=segment,
     )
 
 
 def _nominal_duration_ms(text: str) -> int:
     """Best-effort duration for a fallback subtitle segment."""
-    return int(max(len(text) * 120, 400))
+    return int(min(max(len(text) * 120, 400), 10_000))
 
 
 def _speaker_key(context: ASRSessionContext, speaker: str) -> str:

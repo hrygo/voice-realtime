@@ -17,6 +17,7 @@ import {
   mockSegments,
 } from "../../test/fixtures/meetingFixtures";
 import { useInnerOSStore } from "../../features/innerOS";
+import type { TranscriptSegment } from "../../contracts/meetingContract";
 
 // Extend global for React 19 testing flag
 declare global {
@@ -54,6 +55,38 @@ describe("Meeting Helper Functions", () => {
 describe("Meeting React Components DOM Rendering", () => {
   let container: HTMLDivElement;
   let root: Root;
+
+  const makeSpeakerSegment = (speakerKey: string, id: string): TranscriptSegment => ({
+    id,
+    order: 1,
+    speaker_key: speakerKey,
+    speaker_name: "测试说话人",
+    start_ms: 0,
+    end_ms: 1000,
+    text: "测试发言",
+    translation: null,
+    detected_language: "zh",
+    source_epoch: 1,
+  });
+
+  const renderRecording = (segments: readonly TranscriptSegment[]) => {
+    act(() => {
+      root.render(
+        <MeetingRecordingView
+          startedAt={null}
+          segments={segments}
+          partialText={null}
+          partialSpeaker={null}
+          gaps={[]}
+          micMuted={false}
+          onToggleMic={vi.fn()}
+          onEndMeeting={vi.fn().mockResolvedValue(undefined)}
+          onRenameSpeaker={vi.fn()}
+          isEnding={false}
+        />,
+      );
+    });
+  };
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -147,6 +180,66 @@ describe("Meeting React Components DOM Rendering", () => {
       returnHeaderBtn.click();
     });
     expect(handleReturnToActive).toHaveBeenCalledTimes(2);
+  });
+
+  it("distinguishes an empty history from a failed history load and offers retry", () => {
+    const handleSelect = vi.fn();
+    const handleReturnToActive = vi.fn();
+    const handleNew = vi.fn();
+    const handleLoadMore = vi.fn();
+    const handleDelete = vi.fn().mockResolvedValue(undefined);
+    const handleRefresh = vi.fn();
+
+    act(() => {
+      root.render(
+        <MeetingHistorySidebar
+          historyList={[]}
+          selectedMeetingId={null}
+          activeMeetingId={null}
+          nextCursor={null}
+          isLoading={false}
+          onSelectMeeting={handleSelect}
+          onReturnToActive={handleReturnToActive}
+          onNewMeeting={handleNew}
+          onRefresh={handleRefresh}
+          onLoadMore={handleLoadMore}
+          onDeleteMeeting={handleDelete}
+        />,
+      );
+    });
+    expect(container.textContent).toContain("暂无会议记录");
+    expect(container.textContent).not.toContain("加载失败");
+
+    act(() => {
+      root.render(
+        <MeetingHistorySidebar
+          historyList={[]}
+          selectedMeetingId={null}
+          activeMeetingId={null}
+          nextCursor={null}
+          isLoading={false}
+          historyError="网络连接失败，请检查服务是否可用后重试"
+          onSelectMeeting={handleSelect}
+          onReturnToActive={handleReturnToActive}
+          onNewMeeting={handleNew}
+          onRefresh={handleRefresh}
+          onLoadMore={handleLoadMore}
+          onDeleteMeeting={handleDelete}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("加载失败");
+    expect(container.textContent).toContain("网络连接失败，请检查服务是否可用后重试");
+    expect(container.textContent).not.toContain("暂无会议记录");
+    const retryButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "重试",
+    ) as HTMLButtonElement | undefined;
+    expect(retryButton).toBeDefined();
+    act(() => {
+      retryButton?.click();
+    });
+    expect(handleRefresh).toHaveBeenCalledTimes(1);
   });
 
   it("renders 2026 collapsible rail and edge handle, supporting toggle and quick actions", () => {
@@ -283,6 +376,40 @@ describe("Meeting React Components DOM Rendering", () => {
     expect(handleStart).toHaveBeenCalled();
   });
 
+  it("shows zero recognized speaker groups when the recording has no segments", () => {
+    renderRecording([]);
+
+    const speakerMetric = Array.from(container.querySelectorAll<HTMLElement>(".recording-metric"))
+      .find((metric) => metric.getAttribute("title")?.includes("识别"));
+    expect(speakerMetric?.textContent).toContain("0识别分组");
+    expect(speakerMetric?.getAttribute("title")).toContain("不等于真实参会人数");
+  });
+
+  it("counts recognized groups separately and keeps anonymous groups pending", () => {
+    renderRecording([
+      makeSpeakerSegment("group:test:speaker:0", "seg-unknown"),
+      makeSpeakerSegment("group:test:speaker:spk_01", "seg-known"),
+    ]);
+
+    const speakerMetric = Array.from(container.querySelectorAll<HTMLElement>(".recording-metric"))
+      .find((metric) => metric.getAttribute("title")?.includes("识别"));
+    expect(speakerMetric?.textContent).toContain("1识别分组");
+    expect(container.textContent).toContain("含未识别分组，待识别");
+  });
+
+  it("counts two recognized speaker groups without claiming a participant count", () => {
+    renderRecording([
+      makeSpeakerSegment("group:test:speaker:spk_01", "seg-one"),
+      makeSpeakerSegment("group:test:speaker:spk_02", "seg-two"),
+    ]);
+
+    const speakerMetric = Array.from(container.querySelectorAll<HTMLElement>(".recording-metric"))
+      .find((metric) => metric.getAttribute("title")?.includes("识别"));
+    expect(speakerMetric?.textContent).toContain("2识别分组");
+    expect(speakerMetric?.getAttribute("title")).toContain("可能合并或拆分");
+    expect(speakerMetric?.getAttribute("title")).toContain("不等于真实参会人数");
+  });
+
   it("renders MeetingRecordingView with active segments, partial text, and controls", () => {
     const handleEnd = vi.fn().mockResolvedValue(undefined);
     const handleToggleMic = vi.fn();
@@ -306,8 +433,9 @@ describe("Meeting React Components DOM Rendering", () => {
     });
 
     expect(container.textContent).toContain("4片段");
-    expect(container.textContent).toContain("3说话人");
-    expect(container.querySelector(".recording-compact-state")).toBeNull();
+    expect(container.textContent).toContain("0识别分组");
+    expect(container.textContent).toContain("含未识别分组，待识别");
+    expect(container.querySelector(".recording-compact-state.is-diarization-hint")).not.toBeNull();
     expect(container.textContent).toContain("时序视图");
     expect(container.textContent).toContain("阅读视图");
     expect(container.textContent).toContain("结束会议");

@@ -5,7 +5,7 @@ import { useMeetingStore } from "../stores/meetingStore";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { showToast } from "./Toast";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
-import type { MeetingStatus, RuntimeMode } from "../contracts/meetingContract";
+import type { MeetingStatus, PCMOwner, RuntimeMode } from "../contracts/meetingContract";
 import type { AssistantPhase } from "../stores/assistantStore";
 import { apiUrl } from "../config/runtimeConfig";
 import {
@@ -13,6 +13,7 @@ import {
   type ServiceInfo,
   type ServicesResponse,
   type ServiceProbeStatus,
+  type SubtitleCaptureSelection,
 } from "../protocol";
 import "./StatusBar.css";
 
@@ -232,9 +233,16 @@ interface StatusModePresentationInput {
   readonly meetingStatus: MeetingStatus | "idle";
   readonly subtitleStatus: string;
   readonly phase: AssistantPhase;
+  readonly micMuted?: boolean;
+  readonly pcmOwner?: PCMOwner;
+  readonly subtitleCaptureSource?: SubtitleCaptureSelection["source"] | null;
+  readonly outputCaptureActive?: boolean;
 }
 
-function getAssistantStatusPresentation(phase: AssistantPhase): StatusModePresentation {
+function getAssistantStatusPresentation(
+  phase: AssistantPhase,
+  micMuted = false,
+): StatusModePresentation {
   switch (phase) {
     case "speaking":
       return {
@@ -244,6 +252,14 @@ function getAssistantStatusPresentation(phase: AssistantPhase): StatusModePresen
         title: "当前工作区：语音助手；正在进行语音播报。",
       };
     case "listening":
+      if (micMuted) {
+        return {
+          className: "mode-idle",
+          icon: "🔇",
+          label: "语音助手已静音",
+          title: "当前工作区：语音助手；麦克风已静音，暂不接收语音。",
+        };
+      }
       return {
         className: "mode-listening",
         icon: "👂",
@@ -278,6 +294,106 @@ function getAssistantStatusPresentation(phase: AssistantPhase): StatusModePresen
         label: "语音助手待命",
         title: "当前工作区：语音助手；当前没有进行中的语音交互。",
       };
+  }
+}
+
+function getSubtitleCapturePresentation({
+  subtitleStatus,
+  micMuted,
+  subtitleCaptureSource,
+  outputCaptureActive,
+}: Pick<StatusModePresentationInput, "subtitleStatus" | "micMuted" | "subtitleCaptureSource" | "outputCaptureActive">): StatusModePresentation {
+  if (subtitleStatus === "error") return getSubtitleStatusPresentation("error");
+  if (subtitleStatus === "connecting" || subtitleStatus === "backoff") {
+    return getSubtitleStatusPresentation(subtitleStatus);
+  }
+
+  if (subtitleCaptureSource === "physical_output") {
+    if (outputCaptureActive === false) {
+      return {
+        className: "mode-subtitles",
+        icon: "📝",
+        label: "电脑音源待采集",
+        title: "当前实际音频所有者：实时字幕；电脑音源尚未开始采集，麦克风静音状态不影响电脑音源。",
+      };
+    }
+    return {
+      className: "mode-subtitles",
+      icon: "📝",
+      label: "实时字幕运行中",
+      title: "当前实际音频所有者：实时字幕；正在采集电脑声音并输出转录，麦克风静音状态不影响电脑音源。",
+    };
+  }
+
+  if (micMuted === true) {
+    return {
+      className: "mode-idle",
+      icon: "🔇",
+      label: "实时字幕已静音",
+      title: "当前实际音频所有者：实时字幕；麦克风已静音，暂不接收麦克风语音。",
+    };
+  }
+
+  return {
+    className: "mode-subtitles",
+    icon: "📝",
+    label: "实时字幕运行中",
+    title: "当前实际音频所有者：实时字幕；正在接收麦克风音频并输出转录。",
+  };
+}
+
+function getNotStartedPresentation(activeTab: WorkspaceTab | null): StatusModePresentation {
+  switch (activeTab) {
+    case "assistant":
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "语音助手未启动",
+        title: "当前工作区：语音助手；尚未取得麦克风采集所有权，未开始接收语音。",
+      };
+    case "subtitles":
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "实时字幕未启动",
+        title: "当前工作区：实时字幕；尚未取得音频采集所有权，未启动转写。",
+      };
+    case "meeting":
+      return {
+        className: "mode-stopped",
+        icon: "⏹️",
+        label: "会议助手未启动",
+        title: "当前工作区：会议助手；尚未取得音频采集所有权，未开始录制。",
+      };
+    default:
+      return {
+        className: "mode-idle",
+        icon: "💤",
+        label: "系统待命",
+        title: "当前工作区尚未就绪，系统处于待命状态。",
+      };
+  }
+}
+
+function getOwnerStatusPresentation(input: StatusModePresentationInput): StatusModePresentation {
+  switch (input.pcmOwner) {
+    case "assistant":
+      return getAssistantStatusPresentation(input.phase, input.micMuted === true);
+    case "subtitles":
+      return getSubtitleCapturePresentation(input);
+    case "meeting":
+      return input.meetingStatus === "idle"
+        ? {
+            className: "mode-meeting",
+            icon: "recording-dot",
+            label: "会议录制中",
+            title: "当前实际音频所有者：会议助手；正在取得麦克风音频并录制会议。",
+          }
+        : getMeetingStatusPresentation(input.meetingStatus);
+    case "none":
+      return getNotStartedPresentation(input.activeTab);
+    default:
+      return getNotStartedPresentation(input.activeTab);
   }
 }
 
@@ -377,7 +493,28 @@ export function getStatusModePresentation({
   meetingStatus,
   subtitleStatus,
   phase,
+  micMuted,
+  pcmOwner,
+  subtitleCaptureSource,
+  outputCaptureActive,
 }: StatusModePresentationInput): StatusModePresentation {
+  // 会议工作区可以先于真正开始录制打开；此时旧的 assistant owner
+  // 仍可能存在，不能让顶栏把当前工作区显示成语音助手。
+  if (activeTab === "meeting" && pcmOwner !== "meeting") {
+    return getMeetingStatusPresentation(meetingStatus);
+  }
+  if (pcmOwner !== undefined) {
+    return getOwnerStatusPresentation({
+      activeTab,
+      meetingStatus,
+      subtitleStatus,
+      phase,
+      micMuted,
+      pcmOwner,
+      subtitleCaptureSource,
+      outputCaptureActive,
+    });
+  }
   if (meetingStatus === "recording" || meetingStatus === "finalizing") {
     return getMeetingStatusPresentation(meetingStatus);
   }
@@ -388,7 +525,7 @@ export function getStatusModePresentation({
     return getSubtitleStatusPresentation(subtitleStatus);
   }
   if (activeTab === "assistant") {
-    return getAssistantStatusPresentation(phase);
+    return getAssistantStatusPresentation(phase, micMuted === true);
   }
   return {
     className: "mode-idle",
@@ -445,7 +582,6 @@ export default function StatusBar({
     { name: "lm", status: "checking", url: "http://127.0.0.1:1234" },
   ]);
   const [networkScope, setNetworkScope] = useState<NetworkScope>(browserNetworkScope);
-  const [sessionSeconds, setSessionSeconds] = useState(0);
   const [healthPopoverOpen, setHealthPopoverOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -453,20 +589,12 @@ export default function StatusBar({
   const pipelineStatus = useUISettingsStore((s) => s.pipelineStatus);
   const subtitleStatus = useUISettingsStore((s) => s.subtitleStatus);
   const storageHealth = useUISettingsStore((s) => s.storageHealth);
-  const sessionStartedAt = useUISettingsStore((s) => s.sessionStartedAt);
   const phase = useAssistantStore(selectAssistantPhase);
-
-  /** Session Timer */
-  useEffect(() => {
-    const update = () => {
-      setSessionSeconds(sessionElapsedSeconds(sessionStartedAt));
-    };
-    update();
-    const timer = setInterval(() => {
-      update();
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [sessionStartedAt]);
+  const runtimeSnapshot = commandSocket.snapshot;
+  const pcmOwner = runtimeSnapshot?.pcm_owner ?? "none";
+  const micOwned = pcmOwner === "assistant"
+    || pcmOwner === "meeting"
+    || (pcmOwner === "subtitles" && runtimeSnapshot?.subtitle_capture?.source !== "physical_output");
 
   const setMicMuted = useCallback(async (muted: boolean, shortcut = false) => {
     if (!commandSocket.ready) {
@@ -483,16 +611,6 @@ export default function StatusBar({
       showToast(error instanceof Error ? error.message : "麦克风控制失败", "error");
     }
   }, [commandSocket]);
-
-  const formatTimer = (totalSeconds: number) => {
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    if (h > 0) {
-      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-    }
-    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  };
 
   /** 键盘快捷键监听：M 键麦克风静音切换 */
   const handleKeyDown = useCallback(
@@ -585,6 +703,10 @@ export default function StatusBar({
     meetingStatus,
     subtitleStatus,
     phase,
+    micMuted,
+    pcmOwner,
+    subtitleCaptureSource: runtimeSnapshot?.subtitle_capture?.source ?? null,
+    outputCaptureActive: runtimeSnapshot?.output_capture_active,
   });
 
   // Compute aggregate system health
@@ -700,30 +822,34 @@ export default function StatusBar({
             void setMicMuted(!micMuted);
           }}
           disabled={!commandSocket.ready}
-          title={micMuted ? "麦克风已静音 (按 M 恢复)" : "麦克风采集中 (按 M 静音)"}
+          title={micMuted
+            ? "麦克风已静音 (按 M 恢复)"
+            : micOwned
+              ? "麦克风采集中 (按 M 静音)"
+              : "当前模式未使用麦克风 (按 M 设置静音状态)"}
         >
           <span>{micMuted ? "🔇" : "🎙️"}</span>
           <div className="vu-bars" aria-hidden="true">
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "10px" : "4px",
+                height: micMuted || !micOwned ? "2px" : phase === "listening" ? "10px" : "4px",
               }}
             />
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "12px" : "7px",
+                height: micMuted || !micOwned ? "2px" : phase === "listening" ? "12px" : "7px",
               }}
             />
             <span
               className="vu-bar"
               style={{
-                height: micMuted ? "2px" : phase === "listening" ? "8px" : "3px",
+                height: micMuted || !micOwned ? "2px" : phase === "listening" ? "8px" : "3px",
               }}
             />
           </div>
-          <span className="mic-vu-label">{micMuted ? "已静音" : "16kHz"}</span>
+          <span className="mic-vu-label">{micMuted ? "已静音" : micOwned ? "16kHz" : "未占用"}</span>
         </button>
       </div>
 
@@ -945,11 +1071,6 @@ export default function StatusBar({
               </div>
             </div>
           )}
-        </div>
-
-        <div className="session-timer" title="当前会话在线运行时长">
-          <span>⏱️</span>
-          <span>{formatTimer(sessionSeconds)}</span>
         </div>
 
         {onOpenShortcuts && (

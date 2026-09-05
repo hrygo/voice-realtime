@@ -21,7 +21,7 @@ from sona.interaction.ownership import InteractionOwnership
 from sona.interaction.pipeline import build_pipeline
 from sona.interaction.pipeline_dependencies import default_pipeline_factories
 from sona.interaction.session import InteractionSession
-from sona.meeting.models import PCMOwner, RuntimeMode
+from sona.meeting.models import PCMOwner, RuntimeMode, StorageHealth
 from sona.meeting.runtime_mode import (
     ModeConflictError,
     RuntimeModeCoordinator,
@@ -127,6 +127,10 @@ class UIRuntime:
         """在基础运行时启动后注入会议服务及互斥模式编排。"""
         self._coordinator.configure_meeting(meeting_session)
         self.meeting_session = meeting_session
+
+    def set_storage_health(self, health: StorageHealth | str) -> None:
+        """更新会议存储就绪状态，并广播给 HTTP/WS 快照消费者。"""
+        self._coordinator.set_storage_health(health)
 
     async def start(self) -> None:
         if self._started:

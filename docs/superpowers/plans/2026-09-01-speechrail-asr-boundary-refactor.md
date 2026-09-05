@@ -199,7 +199,7 @@ class ASRWindow:
 
 - [ ] **Step 3: 实现唯一会议 mapper**
 
-`meeting/asr_mapping.py::to_transcript_window(window: ASRWindow) -> TranscriptWindow` 负责 deterministic UUID、meeting `NormalizedSegment` 和字段投影。UUID seed 保持当前 `speechrail:{source_epoch}:{order}:{text}`，避免对账 ID 变化。
+`meeting/asr_mapping.py::to_transcript_window(window: ASRWindow) -> TranscriptWindow` 负责 deterministic UUID、meeting `NormalizedSegment` 和字段投影。UUID seed 使用版本化的 `speechrail:v2` 身份（source epoch、segment epoch/order、带 meeting group 的 speaker key、绝对 start/end 和 text），保证同一窗口重播稳定，同时隔离不同会议或不同时间的同文段；历史已落库 ID 不迁移。
 
 - [ ] **Step 4: 在 SubtitleProxy 的 meeting capture 边界映射**
 

@@ -40,6 +40,14 @@ export function formatElapsed(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+const RECOGNIZED_SPEAKER_KEY = /^(?:spk_|s)?0*[1-9][0-9]*$/;
+
+/** 与后端说话人标签口径一致：0 和非数字匿名 key 仍属于待识别分组。 */
+export function isRecognizedSpeakerKey(speakerKey: string): boolean {
+  const rawSpeaker = speakerKey.trim().split(":").pop() ?? "";
+  return RECOGNIZED_SPEAKER_KEY.test(rawSpeaker);
+}
+
 export interface MeetingRecordingViewProps {
   startedAt: string | null;
   segments: readonly TranscriptSegment[];
@@ -116,9 +124,17 @@ export function MeetingRecordingView({
     return map;
   }, [segments]);
 
-  const uniqueSpeakersCount = useMemo(() => {
-    const set = new Set(segments.map((s) => s.speaker_key));
-    return Math.max(set.size, 1);
+  const speakerGroupCounts = useMemo(() => {
+    const recognized = new Set<string>();
+    const unrecognized = new Set<string>();
+    for (const segment of segments) {
+      const target = isRecognizedSpeakerKey(segment.speaker_key) ? recognized : unrecognized;
+      target.add(segment.speaker_key);
+    }
+    return {
+      recognized: recognized.size,
+      unrecognized: unrecognized.size,
+    };
   }, [segments]);
 
   const toggleStarSegment = useCallback((segmentId: string) => {
@@ -296,18 +312,23 @@ export function MeetingRecordingView({
             <strong>{segments.length}</strong>
             <span className="recording-metric-label">片段</span>
           </div>
-          <div className="recording-metric" title="已识别的说话人数">
+          <div
+            className="recording-metric"
+            title="已识别的说话分组数；可能合并或拆分，不等于真实参会人数"
+          >
             <SpeakerIcon size={14} aria-hidden="true" />
-            <strong>{uniqueSpeakersCount}</strong>
-            <span className="recording-metric-label">说话人</span>
+            <strong>{speakerGroupCounts.recognized}</strong>
+            <span className="recording-metric-label">识别分组</span>
           </div>
           {isCalibrating && <span className="recording-compact-state is-calibrating">校准中</span>}
-          {diarizationOverlayEnabled && (
+          {(diarizationOverlayEnabled || speakerGroupCounts.unrecognized > 0) && (
             <span
               className="recording-compact-state is-diarization-hint"
-              title="流式转写暂无法区分说话人；会议结束后将自动用非流式分人模型修正归属"
+              title={speakerGroupCounts.unrecognized > 0
+                ? "存在未识别说话人分组；当前计数只统计已识别分组，可能合并或拆分，不等于真实参会人数"
+                : "流式转写的说话人分组可能待校准；当前计数只统计已识别分组，不等于真实参会人数"}
             >
-              说话人会后自动修正
+              {speakerGroupCounts.unrecognized > 0 ? "含未识别分组，待识别" : "说话人分组待校准"}
             </span>
           )}
           {starredIds.size > 0 && (

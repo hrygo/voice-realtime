@@ -170,3 +170,29 @@ def test_setup_logging_noisy_suppression() -> None:
     setup_logging("test-svc", level=logging.DEBUG, enable_file=False)
     for noisy in NOISY_LOGGERS:
         assert logging.getLogger(noisy).level == logging.INFO
+
+
+def test_setup_logging_suppresses_console_when_stdout_redirected_to_same_file(
+    tmp_path: Path,
+) -> None:
+    import sys
+
+    log_file = tmp_path / "test.log"
+    log_file.touch()
+
+    original_stdout = sys.stdout
+    try:
+        with log_file.open("a") as f:
+            sys.stdout = f
+            setup_logging("test-svc", log_file=log_file)
+            root = logging.getLogger()
+            handlers = root.handlers
+            # Should have RotatingFileHandler, but NO StreamHandler
+            assert any(isinstance(h, RotatingFileHandler) for h in handlers)
+            assert not any(
+                isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+                for h in handlers
+            )
+    finally:
+        sys.stdout = original_stdout
+

@@ -883,20 +883,6 @@
   margin-left: 0;
 }
 
-.session-timer {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-dim);
-  font-size: 0.74rem;
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
 .status-icon-btn {
   display: flex;
   align-items: center;
@@ -945,9 +931,6 @@
 
 /* 2. Medium Tablet (<= 1024px) */
 @media (max-width: 1024px) {
-  .session-timer {
-    display: none;
-  }
   .mic-vu-label {
     display: none;
   }

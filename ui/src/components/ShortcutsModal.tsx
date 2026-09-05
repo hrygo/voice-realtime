@@ -12,6 +12,7 @@ const SHORTCUTS = [
   { key: "M", desc: "切换麦克风静音 / 恢复录音" },
   { key: "S", desc: "会议录制中：一键标记当前最新段落为重点" },
   { key: "Cmd / Ctrl + Shift + C", desc: "清空 LLM 上下文记忆" },
+  { key: "Cmd / Ctrl + Shift + E", desc: "语音助手：快速导出 Markdown 对话记录" },
   { key: "Cmd / Ctrl + Shift + M", desc: "快速导出 Markdown 结构化会议纪要" },
   { key: "Cmd / Ctrl + Shift + S", desc: "快速导出 SRT 标准字幕" },
   { key: "Cmd / Ctrl + Shift + P", desc: "开启 / 退出舞台提词与大屏模式" },

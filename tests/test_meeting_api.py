@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import unquote
 from uuid import UUID
 
 import httpx
@@ -624,6 +625,37 @@ async def test_export_route_supports_markdown_text_srt_and_json() -> None:
     assert exported["transcript"]["segments"][0]["text"] == "确认。"
     assert invalid_format.status_code == 422
     assert invalid_format.json()["error"]["code"] == "invalid_request"
+
+
+@pytest.mark.asyncio
+async def test_export_route_supports_unicode_and_emoji_download_names() -> None:
+    meeting = _meeting()
+    meeting.title = "中文会议😀/2026"
+    app = _app(_AllRoutesRepo(meeting))
+    expected_safe_title = "中文会议__2026"
+
+    responses = {
+        export_format: await _request(
+            app,
+            "GET",
+            f"/api/v1/meetings/{MEETING_ID}/export?format={export_format}",
+        )
+        for export_format in ("md", "txt", "srt", "json")
+    }
+
+    for export_format, response in responses.items():
+        assert response.status_code == 200
+        disposition = response.headers["content-disposition"]
+        disposition.encode("latin-1")
+        assert f'filename="2026.{export_format}"' in disposition
+        encoded_name = disposition.split("filename*=UTF-8''", 1)[1]
+        assert unquote(encoded_name) == f"{expected_safe_title}.{export_format}"
+        assert "确认。" in response.text
+
+    assert responses["md"].text.startswith("# 中文会议😀/2026\n")
+    assert responses["txt"].text.startswith("中文会议😀/2026\n")
+    assert responses["srt"].text.startswith("1\n00:00:00,000 --> 00:00:01,000\n")
+    assert responses["json"].json()["meeting"]["title"] == "中文会议😀/2026"
 
 
 @pytest.mark.asyncio

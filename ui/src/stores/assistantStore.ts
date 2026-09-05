@@ -32,6 +32,7 @@ export interface AssistantSnapshot {
   readonly activity: AssistantActivity;
   readonly speechSequence: number;
   readonly transcript: readonly AssistantBubble[];
+  readonly errorMessage: string | null;
   readonly lastInterruptionTime: number | null;
   readonly interruptionCount: number;
   readonly latestMetrics: TurnMetrics | null;
@@ -56,12 +57,14 @@ export type AssistantEvent =
 interface AssistantStore extends AssistantSnapshot {
   readonly connected: boolean;
   applyEvent: (event: AssistantEvent) => void;
+  clearError: () => void;
   setConnected: (connected: boolean) => void;
   syncPipelineState: (state: string) => void;
   clearTranscript: () => void;
 }
 
 const MAX_TURNS = 100;
+const DEFAULT_PIPELINE_ERROR = "语音管道错误，请检查 SpeechRail / LM Studio 服务状态";
 const IDLE_ACTIVITY: AssistantActivity = { listening: false, thinking: false, speaking: false };
 const DEFAULT_LISTENING_ACTIVITY: AssistantActivity = { listening: true, thinking: false, speaking: false };
 const INITIAL_SNAPSHOT: AssistantSnapshot = {
@@ -69,6 +72,7 @@ const INITIAL_SNAPSHOT: AssistantSnapshot = {
   activity: DEFAULT_LISTENING_ACTIVITY,
   speechSequence: 0,
   transcript: [],
+  errorMessage: null,
   lastInterruptionTime: null,
   interruptionCount: 0,
   latestMetrics: null,
@@ -158,14 +162,22 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
     case "vad":
       return event.state === "user_speaking"
         ? withActivity(
-            { ...snapshot, speechSequence: snapshot.speechSequence + 1 },
+            {
+              ...snapshot,
+              errorMessage: null,
+              speechSequence: snapshot.speechSequence + 1,
+            },
             { listening: true, thinking: false, speaking: false },
           )
         : withActivity(snapshot, { listening: false, thinking: true, speaking: false });
     case "stt": {
       const isMeaningful = Boolean(event.text.replace(/[。，！？,.!?\s]/g, "").trim());
       return withActivity(
-        { ...snapshot, transcript: updateUserTranscript(snapshot.transcript, event) },
+        {
+          ...snapshot,
+          errorMessage: isMeaningful ? null : snapshot.errorMessage,
+          transcript: updateUserTranscript(snapshot.transcript, event),
+        },
         event.state === "final"
           ? (isMeaningful ? { listening: false, thinking: true, speaking: false } : DEFAULT_LISTENING_ACTIVITY)
           : { listening: true, thinking: false, speaking: false },
@@ -213,11 +225,24 @@ export function reduceAssistantEvent(snapshot: AssistantSnapshot, event: Assista
     }
     case "system":
       if (event.state === "pipeline_started") {
-        return { ...snapshot, phase: "listening", activity: DEFAULT_LISTENING_ACTIVITY };
+        return {
+          ...snapshot,
+          errorMessage: null,
+          phase: "listening",
+          activity: DEFAULT_LISTENING_ACTIVITY,
+        };
+      }
+      if (event.state === "pipeline_error" || event.state === "degraded") {
+        return {
+          ...snapshot,
+          errorMessage: normalizePipelineError(event.message),
+          phase: "degraded",
+          activity: IDLE_ACTIVITY,
+        };
       }
       return {
         ...snapshot,
-        phase: event.state === "pipeline_error" || event.state === "degraded" ? "degraded" : "stopped",
+        phase: "stopped",
         activity: IDLE_ACTIVITY,
       };
   }
@@ -269,6 +294,17 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
       }
       return next;
     }),
+  clearError: () =>
+    set((state) => {
+      const activity = state.phase === "degraded"
+        ? DEFAULT_LISTENING_ACTIVITY
+        : state.activity;
+      return {
+        errorMessage: null,
+        activity,
+        phase: phaseFor(activity),
+      };
+    }),
   setConnected: (connected) =>
     set((state) => {
       if (!connected) {
@@ -293,13 +329,20 @@ export const useAssistantStore = create<AssistantStore>((set) => ({
   syncPipelineState: (pipelineState) =>
     set((state) => {
       if (pipelineState === "running") {
+        if (state.errorMessage) {
+          return { phase: "degraded", activity: IDLE_ACTIVITY };
+        }
         return state.phase === "stopped" || state.phase === "degraded" || state.phase === "idle"
           ? { phase: "listening", activity: DEFAULT_LISTENING_ACTIVITY }
           : {};
       }
       clearWatchdog();
       if (pipelineState === "error" || pipelineState === "ownership_conflict") {
-        return { phase: "degraded", activity: IDLE_ACTIVITY };
+        return {
+          errorMessage: state.errorMessage ?? DEFAULT_PIPELINE_ERROR,
+          phase: "degraded",
+          activity: IDLE_ACTIVITY,
+        };
       }
       if (pipelineState === "stopped" || pipelineState === "stopping") {
         return { phase: "stopped", activity: IDLE_ACTIVITY };
@@ -317,6 +360,7 @@ export const selectAssistantPhase = (state: AssistantStore): AssistantPhase => s
 export const selectAssistantSpeechSequence = (state: AssistantStore): number => state.speechSequence;
 export const selectAssistantTranscript = (state: AssistantStore): readonly AssistantBubble[] => state.transcript;
 export const selectAssistantConnected = (state: AssistantStore): boolean => state.connected;
+export const selectAssistantErrorMessage = (state: AssistantStore): string | null => state.errorMessage;
 export const selectLastInterruptionTime = (state: AssistantStore): number | null => state.lastInterruptionTime;
 export const selectAssistantLatestMetrics = (state: AssistantStore): TurnMetrics | null => state.latestMetrics;
 
@@ -342,7 +386,16 @@ function metricValue(value: unknown): number | null {
 }
 
 function withActivity(snapshot: AssistantSnapshot, activity: AssistantActivity): AssistantSnapshot {
-  return { ...snapshot, activity, phase: phaseFor(activity) };
+  return {
+    ...snapshot,
+    activity,
+    phase: snapshot.errorMessage ? "degraded" : phaseFor(activity),
+  };
+}
+
+function normalizePipelineError(message?: string): string {
+  const trimmed = message?.trim();
+  return trimmed || DEFAULT_PIPELINE_ERROR;
 }
 
 function phaseFor(activity: AssistantActivity): AssistantPhase {

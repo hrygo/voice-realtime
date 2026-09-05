@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventSocket } from "../hooks/useEventSocket";
 import { runtimeConfig } from "../config/runtimeConfig";
 import type { CommandSocketApi } from "../hooks/useCommandSocket";
+import type { PCMOwner } from "../contracts/meetingContract";
 import {
   parseAssistantEvent,
+  type AssistantPhase,
   selectAssistantConnected,
+  selectAssistantErrorMessage,
   selectAssistantLatestMetrics,
   selectAssistantPhase,
   selectAssistantSpeechSequence,
@@ -23,6 +26,7 @@ import { copyTextToClipboard } from "../utils/clipboard";
 import { useDisplayedAssistantPhase } from "./AssistantPhaseDisplay";
 import { AssistantWaveform as ExtractedAssistantWaveform } from "./AssistantWaveform";
 import { AssistantTranscript } from "./AssistantTranscript";
+import { AssistantErrorNotice } from "./AssistantErrorNotice";
 import {
   canRequestDuplexModeChange,
   DUPLEX_MODE_PRESENTATION,
@@ -74,6 +78,72 @@ export {
   TELEMETRY_HELP_STEPS,
 } from "./assistantPresentation";
 
+export interface AssistantInputPresentation {
+  readonly label: string;
+  readonly detail: string;
+}
+
+export function getAssistantInputPresentation(
+  _phase: AssistantPhase,
+  micMuted: boolean,
+  pcmOwner: PCMOwner | null | undefined,
+): AssistantInputPresentation {
+  if (pcmOwner === "subtitles") {
+    return {
+      label: "实时字幕占用音频",
+      detail: "当前实际音频所有者是实时字幕，助手未接收麦克风语音。",
+    };
+  }
+  if (pcmOwner === "meeting") {
+    return {
+      label: "会议采集占用音频",
+      detail: "当前实际音频所有者是会议助手，助手未接收麦克风语音。",
+    };
+  }
+  if (pcmOwner !== "assistant") {
+    return {
+      label: "助手未启动",
+      detail: "语音助手尚未取得麦克风采集所有权，未开始接收语音。",
+    };
+  }
+  if (micMuted) {
+    return {
+      label: "麦克风已静音",
+      detail: "语音助手已取得麦克风所有权，但麦克风已静音，暂不接收语音。",
+    };
+  }
+  return {
+    label: "聆听麦克风",
+    detail: "正在接收麦克风语音。",
+  };
+}
+
+interface AssistantPhaseBadgePresentation {
+  readonly label: string;
+  readonly icon: string;
+  readonly desc: string;
+  readonly className: string;
+}
+
+export function getAssistantPhaseBadgePresentation(
+  phase: AssistantPhase,
+  micMuted: boolean,
+  pcmOwner: PCMOwner | null | undefined,
+): AssistantPhaseBadgePresentation {
+  const phaseConfig = PHASE_CONFIG[phase];
+  if (phase !== "listening" || (pcmOwner === "assistant" && !micMuted)) {
+    return phaseConfig;
+  }
+  const inputPresentation = getAssistantInputPresentation(phase, micMuted, pcmOwner);
+  return {
+    ...phaseConfig,
+    label: inputPresentation.label,
+    icon: inputPresentation.label === "麦克风已静音" ? "🔇" : "⏹️",
+    desc: inputPresentation.detail,
+    className: "phase-idle",
+  };
+}
+
 const DUPLEX_MODES: readonly DuplexMode[] = ["speaker_focus", "headphone_duplex"];
 
 interface AssistantPanelProps {
@@ -92,10 +162,12 @@ export default function AssistantPanel({
   const visiblePhase = useDisplayedAssistantPhase(phase, speechSequence);
   const transcript = useAssistantStore(selectAssistantTranscript);
   const connected = useAssistantStore(selectAssistantConnected);
+  const errorMessage = useAssistantStore(selectAssistantErrorMessage);
   const lastInterruptionTime = useAssistantStore(selectLastInterruptionTime);
   const latestMetrics = useAssistantStore(selectAssistantLatestMetrics);
   const telemetryBadge = getTelemetryBadge(latestMetrics);
   const clearTranscript = useAssistantStore((state) => state.clearTranscript);
+  const clearAssistantError = useAssistantStore((state) => state.clearError);
 
   const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const telemetryHelpRef = useRef<HTMLDivElement>(null);
@@ -103,6 +175,7 @@ export default function AssistantPanel({
   const [interruptionActive, setInterruptionActive] = useState(false);
   const [telemetryHelpOpen, setTelemetryHelpOpen] = useState(false);
   const [textInput, setTextInput] = useState("");
+  const [lastSubmittedText, setLastSubmittedText] = useState("");
   const [pendingDuplexMode, setPendingDuplexMode] = useState<DuplexMode | null>(null);
   const [duplexSwitchError, setDuplexSwitchError] = useState<string | null>(null);
 
@@ -317,6 +390,8 @@ export default function AssistantPanel({
       showToast("控制端连接中，请稍候...", "warning");
       return;
     }
+    setLastSubmittedText(trimmed);
+    clearAssistantError();
     setTextInput("");
     const success = await sendCommandWith(
       { cmd: "send_text", text: trimmed },
@@ -326,6 +401,13 @@ export default function AssistantPanel({
       setTextInput(trimmed);
     }
   };
+
+  /** 回填最近一次已提交的输入，等待用户显式再次发送。 */
+  const handleRetryInput = useCallback(() => {
+    const retryText = lastSubmittedText.trim();
+    if (!retryText) return;
+    setTextInput(retryText);
+  }, [lastSubmittedText]);
 
   /** 导出对话 */
   const handleExportChat = (format: "md" | "txt") => {
@@ -413,6 +495,9 @@ export default function AssistantPanel({
       const event = parseAssistantEvent(JSON.parse(message.data));
       if (event) {
         useAssistantStore.getState().applyEvent(event);
+        if (event.type === "stt" && event.state === "final" && event.text.trim()) {
+          setLastSubmittedText(event.text.trim());
+        }
         if (event.type === "system" && event.state === "pipeline_error") {
           showToast(
             event.message
@@ -495,21 +580,31 @@ export default function AssistantPanel({
   /** 快捷键监听 */
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement as HTMLElement | null;
+      const isInput =
+        activeEl?.tagName === "INPUT" ||
+        activeEl?.tagName === "TEXTAREA" ||
+        activeEl?.isContentEditable;
+
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
       const isK = e.key.toLowerCase() === "k" || e.code === "KeyK";
       const isC = e.key.toLowerCase() === "c" || e.code === "KeyC";
+      const isE = e.key.toLowerCase() === "e" || e.code === "KeyE";
 
-      if (isCmdOrCtrl && !e.altKey && !e.shiftKey && isK) {
+      if (!isInput && isCmdOrCtrl && !e.altKey && !e.shiftKey && isK) {
         e.preventDefault();
         setPersonaOpen((prev) => !prev);
-      } else if (isCmdOrCtrl && e.shiftKey && isC) {
+      } else if (!isInput && isCmdOrCtrl && e.shiftKey && isC) {
         e.preventDefault();
         sendCommand("clear_context");
+      } else if (!isInput && isCmdOrCtrl && e.shiftKey && isE) {
+        e.preventDefault();
+        handleExportChat("md");
       }
     };
     window.addEventListener("keydown", handleGlobalShortcuts);
     return () => window.removeEventListener("keydown", handleGlobalShortcuts);
-  }, [sendCommand]);
+  }, [handleExportChat, sendCommand]);
 
   const handleSelectPersona = useCallback(
     async (prompt: string, name: string) => {
@@ -525,7 +620,16 @@ export default function AssistantPanel({
     [sendCommandWith],
   );
 
-  const currentPhaseConfig = PHASE_CONFIG[visiblePhase];
+  const inputPresentation = getAssistantInputPresentation(
+    visiblePhase,
+    micMuted,
+    commandSocket.snapshot?.pcm_owner,
+  );
+  const currentPhaseConfig = getAssistantPhaseBadgePresentation(
+    visiblePhase,
+    micMuted,
+    commandSocket.snapshot?.pcm_owner,
+  );
   const allTemplates: readonly PersonaTemplate[] = [...BUILTIN_PERSONAS, ...customPersonas];
   const isCustomActive = !allTemplates.some((preset) => persona.trim() === preset.prompt.trim());
   const duplexToggleMode = getDuplexToggleMode(duplexMode, pendingDuplexMode);
@@ -753,7 +857,7 @@ export default function AssistantPanel({
               <div className="telemetry-help-header">
                 <div>
                   <span className="telemetry-help-kicker">计时口径</span>
-                  <strong id="telemetry-help-title">从用户说话结束开始</strong>
+                  <strong id="telemetry-help-title">断句后首个语音包</strong>
                 </div>
                 <button
                   type="button"
@@ -765,7 +869,7 @@ export default function AssistantPanel({
                 </button>
               </div>
               <p className="telemetry-help-intro">
-                后端用单调时钟记录帧到达时间，所有数值显示到 1 位小数；只统计首个可观测事件，不估算未到达的阶段。
+                后端用单调时钟记录帧到达时间；这些数值从断句完成开始，只统计首个可观测帧，不估算未到达的阶段。STT 显示 0ms 不代表模型识别耗时为 0。
               </p>
               <div className="telemetry-help-steps">
                 {TELEMETRY_HELP_STEPS.map((step, index) => (
@@ -784,13 +888,13 @@ export default function AssistantPanel({
               </div>
               <div className="telemetry-help-total">
                 <div>
-                  <strong>端到端（E2E）</strong>
-                  <code>STT + LLM + TTS</code>
+                  <strong>断句后首包响应（E2E）</strong>
+                  <code>转写等待 + LLM 首字 + TTS 首包</code>
                 </div>
-                <span>三段数据齐全时按已显示值相加；缺少任一关键帧则显示“数据不足”。</span>
+                <span>从断句完成到首个 TTS 音频帧送入交互管道的可观测等待；三段数据缺少任一关键帧则显示“数据不足”。</span>
               </div>
               <p className="telemetry-help-note">
-                不包含用户说话持续时间、LLM 完整生成时间或 TTS 剩余播放时间。
+                不包含用户说话持续时间、LLM 完整生成时间或设备扬声器播放延迟。
               </p>
             </div>
           )}
@@ -798,7 +902,7 @@ export default function AssistantPanel({
           {latestMetrics ? (
             <div className="telemetry-compact-flow">
               <div className="flow-step">
-                <span className="step-name">STT 识别</span>
+                <span className="step-name">转写等待</span>
                 <span className="step-time">{formatMetric(latestMetrics.sttMs)}</span>
               </div>
               <span className="flow-sep">→</span>
@@ -815,7 +919,7 @@ export default function AssistantPanel({
           ) : (
             <div className="telemetry-idle-notice">
               <span className="idle-dot" />
-              <span>对话后实时呈现全链路耗时遥测</span>
+              <span>对话后实时呈现断句后首包响应遥测</span>
             </div>
           )}
         </div>
@@ -924,7 +1028,7 @@ export default function AssistantPanel({
           <div className="assistant-phase-bar" role="status" aria-label="助手处理阶段">
             <div className={`phase-step-item ${visiblePhase === "listening" ? "active step-listening" : ""}`}>
               <span className="phase-step-icon">👂</span>
-              <span>聆听麦克风</span>
+              <span>{inputPresentation.label}</span>
             </div>
             <span className="phase-flow-arrow" aria-hidden="true">→</span>
             <div className={`phase-step-item ${visiblePhase === "thinking" ? "active step-thinking" : ""}`}>
@@ -1000,6 +1104,13 @@ export default function AssistantPanel({
           />
         </div>
 
+        {errorMessage && (
+          <AssistantErrorNotice
+            message={errorMessage}
+            retryText={lastSubmittedText}
+            onRetry={handleRetryInput}
+          />
+        )}
 
 
         <AssistantTranscript

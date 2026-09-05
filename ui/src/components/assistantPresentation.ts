@@ -111,7 +111,7 @@ export function getDuplexModeFeedback(
 
 export interface TelemetryBadge {
   readonly className: "fast" | "good" | "slow" | "idle";
-  readonly label: "极速" | "良好" | "偏高" | "数据不足" | "待命中";
+  readonly label: "首包极速" | "首包良好" | "首包偏高" | "数据不足" | "待命中";
   readonly value: number | null;
 }
 
@@ -124,22 +124,22 @@ export interface TelemetryHelpStep {
 
 export const TELEMETRY_HELP_STEPS: readonly TelemetryHelpStep[] = [
   {
-    title: "STT 识别",
-    formula: "max(0, STT final − 说话结束)",
+    title: "转写等待",
+    formula: "max(0, STT final − 断句完成)",
     event: "UserStoppedSpeakingFrame → TranscriptionFrame",
-    description: "用户停止说话后，到语音转写产出最终文本的等待时间。若 final 已先于静音帧到达，则按 0ms 计，不把说话时长算进去。",
+    description: "从断句完成到语音转写产出最终文本帧的等待时间。若 final 已先于断句帧到达，则显示 0ms；这不代表模型识别耗时为 0，也不包含用户说话持续时间。",
   },
   {
     title: "LLM 首字",
-    formula: "LLM 首字 − max(STT final, 说话结束)",
+    formula: "LLM 首字 − max(STT final, 断句完成)",
     event: "TranscriptionFrame / UserStoppedSpeakingFrame → LLMTextFrame",
-    description: "转写完成且用户回合结束后，到大模型输出第一段文本的等待时间；不代表完整回答生成完成。",
+    description: "从转写完成与断句完成两者较晚者，到大模型输出第一段文本的等待时间；不代表完整回答生成完成。",
   },
   {
     title: "TTS 首包",
     formula: "TTS 首帧 − LLM 首字",
     event: "LLMTextFrame → TTSAudioRawFrame",
-    description: "大模型开始输出文本后，到语音合成送出第一帧音频的等待时间；不代表整段语音已经播放完。",
+    description: "大模型开始输出文本后，到语音合成送出第一帧音频的等待时间；这是首个语音包进入交互管道，不代表设备扬声器已经发声或整段语音播放完。",
   },
 ] as const;
 
@@ -156,8 +156,8 @@ export function getTelemetryBadge(metrics: TelemetryMetrics | null): TelemetryBa
     return { className: "idle", label: "数据不足", value: null };
   }
   return metrics.e2eMs < 1200
-    ? { className: "fast", label: "极速", value: metrics.e2eMs }
+    ? { className: "fast", label: "首包极速", value: metrics.e2eMs }
     : metrics.e2eMs < 2500
-      ? { className: "good", label: "良好", value: metrics.e2eMs }
-      : { className: "slow", label: "偏高", value: metrics.e2eMs };
+      ? { className: "good", label: "首包良好", value: metrics.e2eMs }
+      : { className: "slow", label: "首包偏高", value: metrics.e2eMs };
 }

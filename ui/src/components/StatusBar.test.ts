@@ -138,6 +138,66 @@ describe("getStatusModePresentation", () => {
       label: "实时字幕已停止",
     });
   });
+
+  it("does not describe a muted assistant microphone as receiving speech", () => {
+    const presentation = getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+      micMuted: true,
+      pcmOwner: "assistant",
+    });
+
+    expect(presentation.label).toBe("语音助手已静音");
+    expect(presentation.title).not.toContain("接收麦克风语音");
+  });
+
+  it("shows the actual subtitle owner and computer audio source when the tab is stale", () => {
+    const presentation = getStatusModePresentation({
+      activeTab: "assistant",
+      meetingStatus: "idle",
+      subtitleStatus: "stopped",
+      phase: "listening",
+      micMuted: true,
+      pcmOwner: "subtitles",
+      subtitleCaptureSource: "physical_output",
+      outputCaptureActive: true,
+    });
+
+    expect(presentation.label).toBe("实时字幕运行中");
+    expect(presentation.title).toContain("电脑声音");
+    expect(presentation.title).not.toContain("麦克风静音导致电脑音源停止");
+  });
+
+  it("does not describe muted microphone subtitles as actively receiving speech", () => {
+    const presentation = getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "listening",
+      micMuted: true,
+      pcmOwner: "subtitles",
+      subtitleCaptureSource: "microphone",
+    });
+
+    expect(presentation.label).toBe("实时字幕已静音");
+    expect(presentation.title).not.toContain("正在接收麦克风音频");
+  });
+
+  it("marks an idle workspace as not started instead of implying active capture", () => {
+    const presentation = getStatusModePresentation({
+      activeTab: "subtitles",
+      meetingStatus: "idle",
+      subtitleStatus: "connected",
+      phase: "listening",
+      micMuted: false,
+      pcmOwner: "none",
+    });
+
+    expect(presentation.label).toBe("实时字幕未启动");
+    expect(presentation.title).toContain("尚未取得音频采集所有权");
+  });
 });
 
 describe("StatusBar workspace switching state", () => {
@@ -201,6 +261,68 @@ describe("StatusBar workspace switching state", () => {
     expect(subtitlesButton?.classList.contains("pending")).toBe(true);
     expect(subtitlesButton?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector(".workspace-switch-state")).toBeNull();
+  });
+
+  it("renders muted assistant ownership without a microphone listening claim", async () => {
+    useUISettingsStore.setState({ micMuted: true, pipelineStatus: "listening", subtitleStatus: "stopped" });
+    await act(async () => {
+      root.render(createElement(StatusBar, {
+        commandSocket: {
+          ...commandSocket,
+          snapshot: { ...assistantSnapshot, mic_muted: true, pcm_owner: "assistant" },
+        },
+        activeTab: "assistant",
+      }));
+    });
+
+    const modePill = container.querySelector(".status-mode-pill");
+    expect(modePill?.textContent).toContain("已静音");
+    expect(modePill?.getAttribute("title")).not.toContain("接收麦克风语音");
+  });
+
+  it("renders the authoritative computer audio owner when the assistant tab is stale", async () => {
+    await act(async () => {
+      root.render(createElement(StatusBar, {
+        commandSocket: {
+          ...commandSocket,
+          snapshot: {
+            ...assistantSnapshot,
+            mode: "subtitles",
+            pcm_owner: "subtitles",
+            subtitle_capture: { source: "physical_output", device_ref: "vrdev1_test" },
+            output_capture_active: true,
+          },
+        },
+        activeTab: "assistant",
+      }));
+    });
+
+    const modePill = container.querySelector(".status-mode-pill");
+    expect(modePill?.textContent).toContain("实时字幕运行中");
+    expect(modePill?.getAttribute("title")).toContain("电脑声音");
+  });
+
+  it("shows the meeting workspace when the assistant owner is still stale", async () => {
+    useUISettingsStore.setState({ micMuted: false });
+    useMeetingStore.setState({ status: "idle" });
+    await act(async () => {
+      root.render(createElement(StatusBar, {
+        commandSocket: {
+          ...commandSocket,
+          snapshot: {
+            ...assistantSnapshot,
+            mode: "assistant",
+            pcm_owner: "assistant",
+            pipeline: "error",
+          },
+        },
+        activeTab: "meeting",
+      }));
+    });
+
+    const modePill = container.querySelector(".status-mode-pill");
+    expect(modePill?.textContent).toContain("会议助手待命");
+    expect(modePill?.textContent).not.toContain("语音助手服务受限");
   });
 
   it("does not render a visible switch status row when idle", () => {

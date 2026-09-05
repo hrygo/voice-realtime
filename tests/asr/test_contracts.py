@@ -178,7 +178,10 @@ def test_to_transcript_window_maps_segments_with_stable_uuids() -> None:
     assert transcript.partial == "正在识别"
     assert transcript.speaker_remap == window.speaker_remap
     segment = transcript.segments[0]
-    assert segment.id == uuid5(NAMESPACE_URL, "speechrail:2:0:你好世界")
+    assert segment.id == uuid5(
+        NAMESPACE_URL,
+        'speechrail:v2:[2,2,0,"epoch:2:speaker:spk_01",1000,1100,"你好世界"]',
+    )
     assert segment.order == 0
     assert segment.source_epoch == 2
     assert segment.speaker_key == "epoch:2:speaker:spk_01"
@@ -186,6 +189,41 @@ def test_to_transcript_window_maps_segments_with_stable_uuids() -> None:
     assert segment.end_ms == 1_100
     assert segment.text == "你好世界"
     assert segment.detected_language == "zh"
+
+
+def test_to_transcript_window_segment_ids_include_group_and_timeline() -> None:
+    def window(*, speaker_key: str, start_ms: int, end_ms: int) -> ASRWindow:
+        return ASRWindow(
+            source_epoch=1,
+            segments=(
+                ASRSegment(
+                    order=0,
+                    source_epoch=1,
+                    speaker_key=speaker_key,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    text="测试",
+                ),
+            ),
+        )
+
+    first = to_transcript_window(
+        window(speaker_key="group:meeting-a:speaker:0", start_ms=1_000, end_ms=2_000)
+    )
+    replay = to_transcript_window(
+        window(speaker_key="group:meeting-a:speaker:0", start_ms=1_000, end_ms=2_000)
+    )
+    later = to_transcript_window(
+        window(speaker_key="group:meeting-a:speaker:0", start_ms=3_000, end_ms=4_000)
+    )
+    other_group = to_transcript_window(
+        window(speaker_key="group:meeting-b:speaker:0", start_ms=1_000, end_ms=2_000)
+    )
+
+    first_id = first.segments[0].id
+    assert first_id == replay.segments[0].id
+    assert first_id != later.segments[0].id
+    assert first_id != other_group.segments[0].id
 
 
 def test_to_transcript_window_round_trips_empty_window() -> None:

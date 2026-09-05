@@ -141,6 +141,7 @@ class RuntimeModeCoordinator:
         self._runtime_revision = 0
         self._on_owner_changed = on_owner_changed or (lambda _owner: None)
         self._state_publisher = state_publisher or (lambda: None)
+        self._storage_health: StorageHealth | None = None
         self._subtitle_prepare_timeout_secs = subtitle_prepare_timeout_secs
         self._last_transition: dict[str, TransitionValue] | None = None
         self._rollback_result: str | None = None
@@ -180,6 +181,8 @@ class RuntimeModeCoordinator:
 
     @property
     def storage(self) -> StorageHealth:
+        if self._storage_health is not None:
+            return self._storage_health
         value = getattr(self.meeting, "storage_health", StorageHealth.OK)
         try:
             return StorageHealth(value)
@@ -199,6 +202,13 @@ class RuntimeModeCoordinator:
         if self.meeting is not None:
             raise RuntimeError("meeting runtime 已配置")
         self.meeting = meeting_session
+        self._storage_health = None
+        self._state_publisher()
+
+    def set_storage_health(self, health: StorageHealth | str) -> None:
+        """设置后端存储就绪状态，并向运行时订阅者发布最新快照。"""
+        self._storage_health = StorageHealth(health)
+        self._state_publisher()
 
     async def start_assistant(self) -> None:
         await self._run_serialized(RuntimeMode.ASSISTANT, self._start_assistant_locked)

@@ -33,8 +33,6 @@ _SESSION_NOOPS = frozenset(
         "conversation.item.created",
         "input_audio_buffer.committed",
         "input_audio_buffer.cleared",
-        "input_audio_buffer.speech_started",
-        "input_audio_buffer.speech_stopped",
         "response.created",
         "response.output_item.added",
         "response.content_part.added",
@@ -47,11 +45,15 @@ class Noop:
     """A semantically-inert server event (session/ack/parent envelope)."""
 
     reason: str
+    item_id: str | None = None
+    audio_start_ms: int | None = None
+    audio_end_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TranscriptionDelta:
     text: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,11 +64,13 @@ class TranscriptionSegment:
     speaker: str | None
     start_ms: int
     end_ms: int
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class TranscriptionCompleted:
     transcript: str
+    item_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,12 +98,22 @@ def decode_transcription_event(raw: Mapping[str, object]) -> SpeechRailTranscrip
     event_type = raw.get("type")
     if not isinstance(event_type, str):
         raise SpeechRailProtocolError("SPEECHRAIL_PROTOCOL_ERROR")
+    if event_type == "input_audio_buffer.speech_started":
+        return _decode_speech_boundary(raw, "audio_start_ms")
+    if event_type == "input_audio_buffer.speech_stopped":
+        return _decode_speech_boundary(raw, "audio_end_ms")
     if event_type in _SESSION_NOOPS:
-        return Noop(reason=event_type)
+        return Noop(reason=event_type, item_id=_optional_item_id(raw.get("item_id")))
     if event_type == "conversation.item.input_audio_transcription.delta":
-        return TranscriptionDelta(text=_require_text(raw.get("delta")))
+        return TranscriptionDelta(
+            text=_require_text(raw.get("delta")),
+            item_id=_optional_item_id(raw.get("item_id")),
+        )
     if event_type == "conversation.item.input_audio_transcription.completed":
-        return TranscriptionCompleted(transcript=_require_text(raw.get("transcript")))
+        return TranscriptionCompleted(
+            transcript=_require_text(raw.get("transcript")),
+            item_id=_optional_item_id(raw.get("item_id")),
+        )
     if event_type == "conversation.item.input_audio_transcription.segment":
         return _decode_segment(raw)
     if event_type == "conversation.item.input_audio_transcription.failed":
@@ -113,6 +127,30 @@ def _require_text(value: object) -> str:
     if not isinstance(value, str):
         raise SpeechRailProtocolError("SPEECHRAIL_PROTOCOL_ERROR")
     return value
+
+
+def _optional_item_id(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise SpeechRailProtocolError("SPEECHRAIL_PROTOCOL_ERROR")
+    return value
+
+
+def _decode_speech_boundary(raw: Mapping[str, object], field: str) -> Noop:
+    value = raw.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise SpeechRailProtocolError("SPEECHRAIL_PROTOCOL_ERROR")
+    return Noop(
+        reason=(
+            "input_audio_buffer.speech_started"
+            if field == "audio_start_ms"
+            else "input_audio_buffer.speech_stopped"
+        ),
+        item_id=_optional_item_id(raw.get("item_id")),
+        audio_start_ms=value if field == "audio_start_ms" else None,
+        audio_end_ms=value if field == "audio_end_ms" else None,
+    )
 
 
 def _decode_segment(raw: Mapping[str, object]) -> TranscriptionSegment:
@@ -135,6 +173,7 @@ def _decode_segment(raw: Mapping[str, object]) -> TranscriptionSegment:
         speaker=_decode_speaker(raw.get("speaker")),
         start_ms=round(start * 1000),
         end_ms=round(end * 1000),
+        item_id=_optional_item_id(raw.get("item_id")),
     )
 
 

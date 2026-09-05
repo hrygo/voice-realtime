@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from uuid import NAMESPACE_URL, uuid5
 
 from sona.asr.models import ASRSegment, ASRWindow
@@ -13,8 +14,9 @@ __all__ = ["to_transcript_window"]
 def to_transcript_window(window: ASRWindow) -> TranscriptWindow:
     """把 ASR 中立窗口投影为会议 TranscriptWindow。
 
-    segment UUID 使用 ``speechrail:{source_epoch}:{order}:{text}`` 种子，
-    保证与既有窗口对账 ID 稳定一致。
+    segment UUID 使用版本化种子，包含 source epoch、顺序、带会议 group
+    的 speaker key、绝对时间区间和文本。同一窗口重播保持 ID 稳定，跨会议
+    group 或不同时间的同文段不会复用 ID；历史已落库 ID 不做迁移。
     """
     return TranscriptWindow(
         source_epoch=window.source_epoch,
@@ -27,9 +29,7 @@ def to_transcript_window(window: ASRWindow) -> TranscriptWindow:
 
 def _to_normalized_segment(window: ASRWindow, segment: ASRSegment) -> NormalizedSegment:
     return NormalizedSegment(
-        id=uuid5(
-            NAMESPACE_URL, f"speechrail:{window.source_epoch}:{segment.order}:{segment.text}"
-        ),
+        id=uuid5(NAMESPACE_URL, _segment_identity_seed(window, segment)),
         order=segment.order,
         source_epoch=segment.source_epoch,
         speaker_key=segment.speaker_key,
@@ -39,3 +39,22 @@ def _to_normalized_segment(window: ASRWindow, segment: ASRSegment) -> Normalized
         translation=segment.translation,
         detected_language=segment.detected_language,
     )
+
+
+def _segment_identity_seed(window: ASRWindow, segment: ASRSegment) -> str:
+    """Return the deterministic identity seed for one absolute ASR segment."""
+
+    identity = json.dumps(
+        [
+            window.source_epoch,
+            segment.source_epoch,
+            segment.order,
+            segment.speaker_key,
+            segment.start_ms,
+            segment.end_ms,
+            segment.text,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"speechrail:v2:{identity}"

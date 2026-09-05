@@ -19,6 +19,7 @@ from sona.config import SubtitleSettings
 from sona.subtitles import (
     FinalizationTimeoutError,
     SubtitleProxy,
+    SubtitleProxyState,
     TranscriptionGap,
 )
 
@@ -153,6 +154,30 @@ def _window(*, partial: str = "", with_segment: bool = False) -> ASRWindow:
     return ASRWindow(source_epoch=1, partial=partial, segments=segments)
 
 
+def _segment(
+    text: str,
+    start_ms: int,
+    end_ms: int,
+    *,
+    source_epoch: int = 1,
+    speaker: str = "1",
+) -> ASRSegment:
+    return ASRSegment(
+        order=0,
+        source_epoch=source_epoch,
+        speaker_key=f"epoch:{source_epoch}:speaker:{speaker}",
+        start_ms=start_ms,
+        end_ms=end_ms,
+        text=text,
+    )
+
+
+def _window_with_segments(
+    *segments: ASRSegment, partial: str = "", source_epoch: int = 1
+) -> ASRWindow:
+    return ASRWindow(source_epoch=source_epoch, partial=partial, segments=segments)
+
+
 async def test_slow_client_only_suffers_its_own_bounded_queue(
     tmp_path: Path,
 ) -> None:
@@ -203,6 +228,395 @@ async def test_late_subscriber_immediately_receives_current_snapshot(
 
     assert len(received) == 1
     assert json.loads(received[0]) == payload
+    await proxy.stop()
+
+
+async def test_standard_subtitles_accumulate_confirmed_history_and_keep_partial(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("第一句", 0, 1000)),
+        )
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="snapshot",
+            window=ASRWindow(source_epoch=1, partial="第二句"),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["第一句"]
+    assert proxy._last_payload["buffer_transcription"] == "第二句"
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("第二句", 1200, 2200)),
+        )
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="snapshot",
+            window=ASRWindow(source_epoch=1, partial="第三句"),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == [
+        "第一句",
+        "第二句",
+    ]
+    assert proxy._last_payload["buffer_transcription"] == "第三句"
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("第三句", 2400, 3400)),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == [
+        "第一句",
+        "第二句",
+        "第三句",
+    ]
+    assert proxy._last_payload["buffer_transcription"] == ""
+
+    current = tmp_path / "subtitles" / "current.srt"
+    srt = current.read_text(encoding="utf-8")
+    assert all(text in srt for text in ("第一句", "第二句", "第三句"))
+    assert srt.count("\n\n") == 2
+    await proxy.stop()
+
+
+async def test_standard_subtitles_replaces_and_deduplicates_revision_window(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    original = _segment("原始文本", 0, 1000)
+    revised = _segment("修订文本", 200, 1200, speaker="2")
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(kind="final", window=_window_with_segments(original))
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(kind="final", window=_window_with_segments(revised))
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(kind="final", window=_window_with_segments(revised))
+    )
+
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["修订文本"]
+    await proxy.stop()
+
+
+async def test_standard_subtitle_revision_keeps_overlapping_parallel_segments(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(
+                _segment("旧一", 0, 1000, speaker="1"),
+                _segment("旧二", 0, 1000, speaker="2"),
+            ),
+        )
+    )
+    revised_window = _window_with_segments(
+        _segment("新一", 0, 1000, speaker="3"),
+        _segment("新二", 0, 1000, speaker="3"),
+    )
+    for _ in range(2):
+        await proxy._subtitle_session._handle_stream_event(
+            ASREvent(kind="final", window=revised_window)
+        )
+
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["新一", "新二"]
+    await proxy.stop()
+
+
+async def test_standard_subtitle_same_text_at_different_times_stays_distinct(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    repeated = "重复发言"
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment(repeated, 0, 500)),
+        )
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment(repeated, 600, 1000)),
+        )
+    )
+
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == [repeated, repeated]
+    await proxy.stop()
+
+
+async def test_standard_subtitle_revision_window_can_split_and_merge_segments(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("整句", 0, 1000)),
+        )
+    )
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(
+                _segment("前半", 0, 450),
+                _segment("后半", 500, 1000),
+            ),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["前半", "后半"]
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("合并修订", 0, 1000)),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["合并修订"]
+    await proxy.stop()
+
+
+async def test_standard_subtitle_reconnect_preserves_confirmed_history(
+    tmp_path: Path,
+) -> None:
+    first = FakeTranscriber(source_epoch=1)
+    second = FakeTranscriber(source_epoch=2)
+    created = [first, second]
+
+    def factory(context: ASRSessionContext) -> FakeTranscriber:
+        return created[context.source_epoch - 1]
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=(0.01,),
+    )
+    await proxy.start()
+    preparation = await proxy.prepare_browser_capture(timeout_secs=1.0)
+    proxy.commit_browser_capture(preparation)
+
+    first.emit(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("断线前", 0, 1000)),
+        )
+    )
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if proxy._last_payload is not None and proxy._last_payload.get("lines"):
+            break
+    first._end_stream = True
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        if proxy.subtitle_epoch >= 2:
+            break
+
+    second.emit(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(
+                _segment("断线后", 1200, 2200, source_epoch=2), source_epoch=2
+            ),
+        )
+    )
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if proxy._last_payload is not None and len(proxy._last_payload["lines"]) >= 2:
+            break
+
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == [
+        "断线前",
+        "断线后",
+    ]
+    current = tmp_path / "subtitles" / "current.srt"
+    srt = current.read_text(encoding="utf-8")
+    assert "断线前" in srt and "断线后" in srt
+    await proxy.stop()
+
+
+async def test_standard_subtitle_reconnect_context_keeps_absolute_audio_time(
+    tmp_path: Path,
+) -> None:
+    contexts: list[ASRSessionContext] = []
+    streams: list[FakeTranscriber] = []
+
+    def factory(context: ASRSessionContext) -> FakeTranscriber:
+        contexts.append(context)
+        stream = FakeTranscriber(source_epoch=context.source_epoch)
+        streams.append(stream)
+        return stream
+
+    proxy = SubtitleProxy(
+        _settings(tmp_path),
+        transcriber_factory=factory,
+        backoff_delays=(0.1,),
+    )
+    await proxy.start()
+    preparation = await proxy.prepare_browser_capture(timeout_secs=1.0)
+    proxy.commit_browser_capture(preparation)
+
+    gap_payloads: list[dict[str, object]] = []
+
+    async def sender(text: str) -> None:
+        payload = json.loads(text)
+        if payload.get("type") == "gap":
+            gap_payloads.append(payload)
+
+    proxy.add_client(sender)
+    first = streams[0]
+    first.emit(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("断线前", 0, 500)),
+        )
+    )
+    first.emit(
+        ASREvent(
+            kind="snapshot",
+            window=ASRWindow(source_epoch=1, partial="未确认"),
+        )
+    )
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        if (
+            proxy._last_payload is not None
+            and proxy._last_payload.get("buffer_transcription") == "未确认"
+        ):
+            break
+
+    await proxy.push_audio(b"\x00\x00" * 16_000)
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        if len(first.sent_audio) == 1:
+            break
+    assert first.sent_audio == [b"\x00\x00" * 16_000]
+
+    first._end_stream = True
+    for _ in range(40):
+        await asyncio.sleep(0.01)
+        if proxy.state == SubtitleProxyState.BACKOFF:
+            break
+    assert proxy.state == SubtitleProxyState.BACKOFF
+
+    await proxy.push_audio(b"\x00\x00" * 3_200)
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if len(contexts) >= 2:
+            break
+    assert len(contexts) >= 2
+    assert contexts[0].offset_ms == 0
+    assert contexts[1].offset_ms == 1_200
+
+    second = streams[1]
+    second.emit(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(
+                _segment(
+                    "断线后",
+                    contexts[1].offset_ms,
+                    contexts[1].offset_ms + 500,
+                    source_epoch=2,
+                ),
+                source_epoch=2,
+            ),
+        )
+    )
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        if proxy._last_payload is not None and len(proxy._last_payload["lines"]) >= 2:
+            break
+
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == [
+        "断线前",
+        "断线后",
+    ]
+    assert proxy._last_payload["buffer_transcription"] == ""
+    for _ in range(30):
+        await asyncio.sleep(0.01)
+        if gap_payloads:
+            break
+    assert gap_payloads == [{"type": "gap", "dropped_ms": 200}]
+
+    current = tmp_path / "subtitles" / "current.srt"
+    srt = current.read_text(encoding="utf-8")
+    assert "00:00:00,000 --> 00:00:00,500" in srt
+    assert "00:00:01,200 --> 00:00:01,700" in srt
+    await proxy.stop()
+
+
+async def test_standard_subtitle_history_resets_on_clear_and_new_epoch(
+    tmp_path: Path,
+) -> None:
+    proxy = _proxy(tmp_path)
+    await proxy.start()
+    await proxy._subtitle_session._open_epoch()
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("旧 epoch", 0, 1000)),
+        )
+    )
+    await proxy.clear_subtitles()
+    assert proxy._last_payload == {"lines": [], "buffer_transcription": ""}
+
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(_segment("清空后", 1200, 2200)),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["清空后"]
+
+    await proxy._subtitle_session._open_epoch()
+    await proxy._subtitle_session._handle_stream_event(
+        ASREvent(
+            kind="final",
+            window=_window_with_segments(
+                _segment("新 epoch", 0, 1000, source_epoch=2), source_epoch=2
+            ),
+        )
+    )
+    assert proxy._last_payload is not None
+    assert [line["text"] for line in proxy._last_payload["lines"]] == ["新 epoch"]
     await proxy.stop()
 
 

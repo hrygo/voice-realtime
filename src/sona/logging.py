@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -144,13 +145,7 @@ def setup_logging(
         root_logger.removeFilter(filter_item)
     root_logger.addFilter(sanitizer)
 
-    if to_console:
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        console_handler.setLevel(resolved_level)
-        console_handler.addFilter(sanitizer)
-        root_logger.addHandler(console_handler)
-
+    target_path: Path | None = None
     if to_file:
         if log_file is not None:
             target_path = Path(log_file)
@@ -163,6 +158,28 @@ def setup_logging(
             )
             target_path = target_dir / f"{service_name}.log"
 
+    if to_console and to_file and target_path is not None:
+        try:
+            if target_path.exists() and hasattr(sys.stdout, "fileno"):
+                out_stat = os.fstat(sys.stdout.fileno())
+                file_stat = target_path.stat()
+                if (
+                    out_stat.st_ino != 0
+                    and out_stat.st_ino == file_stat.st_ino
+                    and out_stat.st_dev == file_stat.st_dev
+                ):
+                    to_console = False
+        except Exception:
+            pass
+
+    if to_console:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        console_handler.setLevel(resolved_level)
+        console_handler.addFilter(sanitizer)
+        root_logger.addHandler(console_handler)
+
+    if to_file and target_path is not None:
         try:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             file_handler = RotatingFileHandler(

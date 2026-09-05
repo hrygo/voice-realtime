@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from sona.asr.contracts import ASREvent, ASRSessionContext, StreamingTranscriber
-from sona.asr.models import ASRWindow
+from sona.asr.models import ASRSegment, ASRWindow
 from sona.asr.presenters import legacy_ready_payload, legacy_subtitle_payload
 from sona.meeting.diarization_overlay import meeting_diarization_group_id
 from sona.meeting.models import TranscriptWindow
@@ -143,6 +143,15 @@ class StandardSubtitleSession:
         self._active = asyncio.Event()
         self._epoch = 0
         self._epoch_open = False
+        # 普通字幕重连时，ASR context 的 offset 必须覆盖已发送及已丢弃的 PCM。
+        self._offset_ms = 0
+        self._audio_ms = 0
+        self._input_ms = 0
+        # ASRWindow 只描述当前 confirmed 窗口；普通字幕对外需要广播完整历史。
+        # 同一窗口的时间或 speaker 发生修订时按重叠区间原位替换，避免残留旧段。
+        self._confirmed_segments: list[ASRSegment] = []
+        self._last_confirmed_window: tuple[ASRSegment, ...] = ()
+        self._partial = ""
         # 已激活但流未就绪（重连退避）期间丢弃的 PCM 字节；重连成功后一次性上报
         self._gap_dropped_bytes = 0
 
@@ -170,6 +179,8 @@ class StandardSubtitleSession:
         """start() 时清空会话事件。"""
         self._ready.clear()
         self._active.clear()
+        self._reset_transcript()
+        self._reset_audio_timeline()
 
     async def prepare(self, *, timeout_secs: float) -> SubtitlePreparation:
         """建立普通字幕流并等待 ready，但不接收 PCM。"""
@@ -247,6 +258,7 @@ class StandardSubtitleSession:
             with contextlib.suppress(Exception):
                 await stream.close()
         await self._close_epoch()
+        self._reset_transcript()
         self._drain_queue()
 
     async def reset_stream(self) -> None:
@@ -254,9 +266,11 @@ class StandardSubtitleSession:
         stream = self._stream
         self._stream = None
         self._ready.clear()
+        self._gap_dropped_bytes = 0
         if stream is not None:
             with contextlib.suppress(Exception):
                 await stream.close()
+        self._reset_transcript()
 
     async def stop(self) -> None:
         """终止会话并回收浏览器流资源。"""
@@ -267,19 +281,20 @@ class StandardSubtitleSession:
         if (
             not self._running()
             or not self._committed
-            or self._stream is None
-            or not self._ready.is_set()
         ):
-            if self._running() and self._committed:
-                # 已激活但流未就绪（重连退避中）：静默丢弃但记账，
-                # 避免用户在断连窗口内的语音完全无感知地消失。
-                self._gap_dropped_bytes += len(data)
+            return
+        self._input_ms += len(data) // 32
+        if self._stream is None or not self._ready.is_set():
+            # 已激活但流未就绪（重连退避中）：静默丢弃但记账，
+            # 避免用户在断连窗口内的语音完全无感知地消失。
+            self._gap_dropped_bytes += len(data)
             return
         if self._audio_queue.full():
             with contextlib.suppress(asyncio.QueueEmpty):
-                self._audio_queue.get_nowait()
+                dropped = self._audio_queue.get_nowait()
                 self._audio_queue.task_done()
                 self._on_dropped_chunk()
+                self._gap_dropped_bytes += len(dropped)
         with contextlib.suppress(asyncio.QueueFull):
             self._audio_queue.put_nowait(data)
 
@@ -296,6 +311,7 @@ class StandardSubtitleSession:
                 return
             try:
                 await stream.send_audio(data)
+                self._audio_ms += len(data) // 32
             finally:
                 self._audio_queue.task_done()
 
@@ -303,12 +319,23 @@ class StandardSubtitleSession:
         """兼容既有测试/调用者的接收循环入口。"""
         await self._event_recv_loop(self._stream)
 
-    async def _open_epoch(self) -> int:
+    async def _open_epoch(
+        self,
+        *,
+        reset_history: bool = True,
+        close_previous: bool = True,
+        notify: bool = True,
+    ) -> int:
         """关闭旧边界并建立一个不复用时间轴的新普通字幕 epoch。"""
-        await self._close_epoch()
+        if close_previous:
+            await self._close_epoch()
+        if reset_history:
+            self._reset_transcript()
+            self._reset_audio_timeline()
         self._epoch += 1
         self._epoch_open = True
-        self._on_epoch_opened()
+        if notify:
+            self._on_epoch_opened()
         self._ready.clear()
         return self._epoch
 
@@ -344,12 +371,24 @@ class StandardSubtitleSession:
             try:
                 if stream is None:
                     self._on_reconnect()
-                    epoch = await self._open_epoch()
+                    # 当前 epoch 的时间轴包含已发送 PCM；重连等待期间收到的
+                    # PCM 已计入 input_ms，但没有送入 ASR，故新 epoch 从
+                    # input_ms 开始，明确跳过该缺口。
+                    self._offset_ms = max(
+                        self._offset_ms + self._audio_ms,
+                        self._input_ms,
+                    )
+                    self._audio_ms = 0
+                    epoch = await self._open_epoch(
+                        reset_history=False,
+                        close_previous=False,
+                        notify=False,
+                    )
                     self._on_state(SubtitleSessionState.CONNECTING)
                     stream = self._transcriber_factory(
                         ASRSessionContext(
                             source_epoch=epoch,
-                            offset_ms=0,
+                            offset_ms=self._offset_ms,
                             purpose="subtitles",
                         )
                     )
@@ -373,13 +412,15 @@ class StandardSubtitleSession:
                     "StandardSubtitleSession: SpeechRail 连接中断，将自动重连: %s", exc
                 )
             finally:
+                count_gap = self._running() and self._committed and self._stream is stream
                 if stream is not None:
                     with contextlib.suppress(Exception):
                         await stream.close()
                 if self._stream is stream:
                     self._stream = None
-                await self._close_epoch()
-                self._drain_queue()
+                if not (self._running() and self._committed):
+                    await self._close_epoch()
+                self._drain_queue(count_as_gap=count_gap)
 
             if not self._running() or not self._committed:
                 if self._running() and not self._capture_active():
@@ -422,11 +463,26 @@ class StandardSubtitleSession:
             if not self._running() or self._stream is not stream:
                 return
             chunk = await self._audio_queue.get()
+            sent = False
             try:
                 if self._committed:
-                    await stream.send_audio(chunk)
+                    try:
+                        await stream.send_audio(chunk)
+                    except asyncio.CancelledError:
+                        if self._running() and self._committed and self._stream is stream:
+                            raise ConnectionError("SpeechRail 字幕音频发送被取消") from None
+                        raise
+                    self._audio_ms += len(chunk) // 32
+                    sent = True
             finally:
                 self._audio_queue.task_done()
+                if (
+                    not sent
+                    and self._running()
+                    and self._committed
+                    and self._stream is stream
+                ):
+                    self._gap_dropped_bytes += len(chunk)
 
     async def _event_recv_loop(self, stream: StreamingTranscriber | None) -> None:
         active_stream = stream or self._stream
@@ -448,16 +504,133 @@ class StandardSubtitleSession:
                 {"type": "error", "error": event.error_message or "ASR error"}
             )
             return
-        if event.window is not None:
-            await self._on_payload(legacy_subtitle_payload(event.window))
+        window = event.window
+        if window is not None:
+            if self._epoch_open and window.source_epoch != self._epoch:
+                logger.warning(
+                    "StandardSubtitleSession: 丢弃过期 epoch %s 的字幕窗口（当前 %s）",
+                    window.source_epoch,
+                    self._epoch,
+                )
+                return
+            self._record_confirmed_window(window)
+            await self._on_payload(legacy_subtitle_payload(self._full_window(window)))
 
-    def _drain_queue(self) -> None:
+    def _record_confirmed_window(self, window: ASRWindow) -> None:
+        """累计 confirmed 段并保留窗口最新 partial。"""
+        self._partial = window.partial
+        incoming = window.segments
+        if not incoming:
+            return
+
+        previous = self._last_confirmed_window
+        if previous and _same_revision_window(previous, incoming):
+            previous_indices = self._find_segment_indices(previous)
+            if previous_indices:
+                self._confirmed_segments[:] = [
+                    segment
+                    for index, segment in enumerate(self._confirmed_segments)
+                    if index not in previous_indices
+                ]
+
+        matched_indices: set[int] = set()
+        for segment in window.segments:
+            index = self._find_segment_index(segment, excluded_indices=matched_indices)
+            if index is None:
+                index = len(self._confirmed_segments)
+                self._confirmed_segments.append(segment)
+                matched_indices.add(index)
+            else:
+                self._confirmed_segments[index] = segment
+                matched_indices.add(index)
+        self._last_confirmed_window = tuple(incoming)
+
+    def _find_segment_indices(self, segments: tuple[ASRSegment, ...]) -> set[int]:
+        matched_indices: set[int] = set()
+        for segment in segments:
+            index = self._find_segment_index(segment, excluded_indices=matched_indices)
+            if index is not None:
+                matched_indices.add(index)
+        return matched_indices
+
+    def _find_segment_index(
+        self,
+        segment: ASRSegment,
+        *,
+        excluded_indices: set[int] | None = None,
+    ) -> int | None:
+        best_index: int | None = None
+        best_score: tuple[int, int, int, int] | None = None
+        for index, candidate in enumerate(self._confirmed_segments):
+            if excluded_indices is not None and index in excluded_indices:
+                continue
+            score = _segment_match_score(candidate, segment)
+            if score is None or (best_score is not None and score <= best_score):
+                continue
+            best_index = index
+            best_score = score
+        return best_index
+
+    def _full_window(self, window: ASRWindow) -> ASRWindow:
+        """把当前窗口投影为对外广播所需的完整累计快照。"""
+        return ASRWindow(
+            source_epoch=window.source_epoch,
+            partial=self._partial,
+            partial_speaker_key=window.partial_speaker_key,
+            segments=tuple(self._confirmed_segments),
+            speaker_remap=window.speaker_remap,
+        )
+
+    def _reset_transcript(self) -> None:
+        self._confirmed_segments.clear()
+        self._last_confirmed_window = ()
+        self._partial = ""
+
+    def _reset_audio_timeline(self) -> None:
+        self._offset_ms = 0
+        self._audio_ms = 0
+        self._input_ms = 0
+        self._gap_dropped_bytes = 0
+
+    def _drain_queue(self, *, count_as_gap: bool = False) -> None:
         while True:
             try:
-                self._audio_queue.get_nowait()
+                dropped = self._audio_queue.get_nowait()
             except asyncio.QueueEmpty:
                 return
             self._audio_queue.task_done()
+            if count_as_gap:
+                self._gap_dropped_bytes += len(dropped)
+
+
+def _same_revision_window(
+    previous: tuple[ASRSegment, ...], incoming: tuple[ASRSegment, ...]
+) -> bool:
+    return any(
+        _segment_match_score(old, new) is not None
+        for old in previous
+        for new in incoming
+    )
+
+
+def _segment_match_score(
+    current: ASRSegment, incoming: ASRSegment
+) -> tuple[int, int, int, int] | None:
+    same_span = current.start_ms == incoming.start_ms and current.end_ms == incoming.end_ms
+    overlap_ms = min(current.end_ms, incoming.end_ms) - max(
+        current.start_ms, incoming.start_ms
+    )
+    same_epoch = current.source_epoch == incoming.source_epoch
+    if not same_span and overlap_ms <= 0:
+        return None
+    if not same_epoch:
+        return None
+    return (
+        int(same_epoch),
+        int(same_span),
+        overlap_ms,
+        int(current.speaker_key == incoming.speaker_key),
+    )
 
 
 class MeetingCaptureSession:
@@ -667,6 +840,9 @@ class MeetingCaptureSession:
             await self.close()
             raise
         result = self._last_window or TranscriptWindow(source_epoch=self._epoch)
+        if self._event_task is not None and not self._event_task.done():
+            with contextlib.suppress(TimeoutError, Exception):
+                await asyncio.wait_for(asyncio.shield(self._event_task), timeout=3.0)
         await self.close()
         return result
 

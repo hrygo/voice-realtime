@@ -20,6 +20,7 @@ from sona.meeting.inner_os.model_client import InnerOSModelClient
 from sona.meeting.inner_os.repository import InnerOSExchangeRepository
 from sona.meeting.inner_os.service import InnerOSQueryService
 from sona.meeting.migrations import run_migrations
+from sona.meeting.models import StorageHealth
 from sona.meeting.ports import MeetingRepository
 from sona.meeting.recovery import RecoveryJournal
 from sona.meeting.repository import PostgresMeetingRepository
@@ -105,6 +106,8 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
     repository: PostgresMeetingRepository | None = None
     summary_service: MeetingSummaryService | None = None
     scheduler: LocalInferenceScheduler | None = None
+    inner_os_service: InnerOSQueryService | None = None
+    inner_os_exchange_repository: InnerOSExchangeRepository | None = None
     settings = context.settings
     runtime = context.runtime
     if runtime is None:
@@ -143,7 +146,7 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
                 analysis_timeout_secs=settings.meeting.inner_os_analysis_timeout_secs,
                 acquire_timeout_secs=settings.meeting.inner_os_cancel_timeout_secs,
             )
-            context.inner_os_service = InnerOSQueryService(
+            inner_os_service = InnerOSQueryService(
                 repository,
                 inner_os_model,
                 cache_ttl_secs=settings.meeting.inner_os_cache_ttl_secs,
@@ -153,7 +156,7 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
                 recent_context_chars=settings.meeting.inner_os_recent_context_chars,
             )
             # 组合根直接装配交易所仓库，避免请求路径上的惰性构造
-            context.inner_os_exchange_repository = InnerOSExchangeRepository(repository)
+            inner_os_exchange_repository = InnerOSExchangeRepository(repository)
 
         async def publish_meeting_event(
             event_type: str, meeting_id: str | UUID, payload: Any
@@ -193,14 +196,23 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
             ),
             diarization_overlay=diarization_overlay,
         )
+        await summary_service.start()
+
+        # 依赖全部启动成功后再一次性发布到 runtime/context；失败路径不会留下
+        # 已关闭的 repository/session，也不会污染下一次初始化。
         runtime.configure_meeting(meeting_session)
         context.meeting_repository = repository
         context.meeting_summary_service = summary_service
         context.inference_scheduler = scheduler
         context.meeting_session = meeting_session
-        await summary_service.start()
+        context.inner_os_service = inner_os_service
+        context.inner_os_exchange_repository = inner_os_exchange_repository
+        context.meeting_backend_error = None
         return True
     except Exception as exc:
+        if inner_os_service is not None:
+            with contextlib.suppress(Exception):
+                await inner_os_service.close()
         if summary_service is not None:
             with contextlib.suppress(Exception):
                 await summary_service.stop()
@@ -211,4 +223,5 @@ async def initialize_meeting_backend(context: UIAppContext) -> bool:
             with contextlib.suppress(Exception):
                 await repository.close()
         context.meeting_backend_error = type(exc).__name__
+        runtime.set_storage_health(StorageHealth.UNAVAILABLE)
         return False

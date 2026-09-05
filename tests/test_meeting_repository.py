@@ -11,7 +11,9 @@ import pytest
 import pytest_asyncio
 from psycopg import AsyncConnection
 
+from sona.asr.models import ASRSegment, ASRWindow
 from sona.config import MeetingSettings
+from sona.meeting.asr_mapping import to_transcript_window
 from sona.meeting.migrations import run_migrations
 from sona.meeting.models import (
     MeetingStatus,
@@ -115,6 +117,56 @@ async def test_duplicate_window_is_idempotent(repository: PostgresMeetingReposit
 
     assert first.transcript_revision == second.transcript_revision == 1
     assert len((await repository.get_transcript(meeting.id)).segments) == 1
+
+
+@pytest.mark.asyncio
+async def test_transcript_identity_isolated_by_group_and_timeline(
+    repository: PostgresMeetingRepository,
+) -> None:
+    first_meeting = await repository.create_meeting(
+        "身份隔离一", language="Chinese", audio_source="microphone"
+    )
+    second_meeting = await repository.create_meeting(
+        "身份隔离二", language="Chinese", audio_source="microphone"
+    )
+
+    def window(group: str, start_ms: int, end_ms: int) -> TranscriptWindow:
+        return to_transcript_window(
+            ASRWindow(
+                source_epoch=1,
+                segments=(
+                    ASRSegment(
+                        order=0,
+                        source_epoch=1,
+                        speaker_key=f"group:{group}:speaker:0",
+                        start_ms=start_ms,
+                        end_ms=end_ms,
+                        text="测试",
+                    ),
+                ),
+            )
+        )
+
+    first = window("meeting-a", 1_000, 2_000)
+    later = window("meeting-a", 3_000, 4_000)
+    replay = window("meeting-a", 3_000, 4_000)
+    other_group = window("meeting-b", 1_000, 2_000)
+
+    assert first.segments[0].id == window("meeting-a", 1_000, 2_000).segments[0].id
+    assert first.segments[0].id != later.segments[0].id
+    assert first.segments[0].id != other_group.segments[0].id
+
+    await repository.reconcile_window(first_meeting.id, first)
+    await repository.reconcile_window(first_meeting.id, later)
+    replay_result = await repository.reconcile_window(first_meeting.id, replay)
+    await repository.reconcile_window(second_meeting.id, other_group)
+
+    first_document = await repository.get_transcript(first_meeting.id)
+    second_document = await repository.get_transcript(second_meeting.id)
+    assert replay_result.transcript_revision == 2
+    assert [segment.text for segment in first_document.segments] == ["测试", "测试"]
+    assert len(second_document.segments) == 1
+    assert first_document.segments[0].id != second_document.segments[0].id
 
 
 @pytest.mark.asyncio
@@ -238,8 +290,8 @@ async def test_speakers_and_specific_minutes_version(
     await repository.reconcile_window(meeting.id, _window(2, "内容", 0, 1000))
     speakers = await repository.get_speakers(meeting.id)
     assert speakers[0].speaker_key == "e2:s1"
-    assert speakers[0].display_name == "说话人 s1"
-    unchanged = await repository.rename_speaker(meeting.id, "e2:s1", "说话人 s1")
+    assert speakers[0].display_name == "说话人 1"
+    unchanged = await repository.rename_speaker(meeting.id, "e2:s1", "说话人 1")
     assert unchanged.content_revision == 1
 
     await repository.finalize_transcript(meeting.id)
@@ -367,4 +419,3 @@ async def test_apply_speaker_remapping_merges_speakers_and_updates_segments(
     assert len(merged_speakers) == 1
     assert merged_speakers[0].speaker_key == "epoch0:s0"
     assert merged_speakers[0].display_name == "张三"
-

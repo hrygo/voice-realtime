@@ -24,20 +24,44 @@ class FakeConnection:
 
     def __init__(self) -> None:
         self.sent: list[dict[str, object]] = []
+        self.commit_sent = asyncio.Event()
+        self._messages_available = asyncio.Event()
         self._messages = [*_session_events(),
             _transcription_delta("你好", sequence=4),
             _transcription_completed("你好世界", sequence=5),
         ]
+        self._messages_available.set()
 
     async def send(self, payload: str) -> None:
         event = json.loads(payload)
         self.sent.append(event)
+        if event.get("type") == "input_audio_buffer.commit":
+            self.commit_sent.set()
 
     async def recv(self) -> str:
-        return json.dumps(self._messages.pop(0))
+        while not self._messages:
+            self._messages_available.clear()
+            await self._messages_available.wait()
+        message = self._messages.pop(0)
+        if self._messages:
+            self._messages_available.set()
+        return json.dumps(message)
+
+    def add_messages(self, *messages: dict[str, object]) -> None:
+        self._messages.extend(messages)
+        self._messages_available.set()
 
     async def close(self) -> None:
         return None
+
+
+class AckDuringClearConnection(FakeConnection):
+    async def send(self, payload: str) -> None:
+        await super().send(payload)
+        event = json.loads(payload)
+        if event.get("type") == "input_audio_buffer.clear":
+            self.add_messages(_envelope("input_audio_buffer.cleared", 6))
+            await asyncio.sleep(0)
 
 
 class Websockets17StyleConnection:
@@ -91,7 +115,32 @@ def _transcription_completed(transcript: str, *, sequence: int) -> dict[str, obj
     )
 
 
-def _segment(text: str, *, speaker: str | None, sequence: int) -> dict[str, object]:
+def _speech_started(audio_start_ms: int, *, sequence: int) -> dict[str, object]:
+    return _envelope(
+        "input_audio_buffer.speech_started",
+        sequence,
+        item_id="item-1",
+        audio_start_ms=audio_start_ms,
+    )
+
+
+def _speech_stopped(audio_end_ms: int, *, sequence: int) -> dict[str, object]:
+    return _envelope(
+        "input_audio_buffer.speech_stopped",
+        sequence,
+        item_id="item-1",
+        audio_end_ms=audio_end_ms,
+    )
+
+
+def _segment(
+    text: str,
+    *,
+    speaker: str | None,
+    sequence: int,
+    start: float = 0.0,
+    end: float = 1.0,
+) -> dict[str, object]:
     return _envelope(
         "conversation.item.input_audio_transcription.segment",
         sequence,
@@ -100,8 +149,8 @@ def _segment(text: str, *, speaker: str | None, sequence: int) -> dict[str, obje
         id=f"seg-{sequence}",
         text=text,
         speaker=speaker,
-        start=0.0,
-        end=1.0,
+        start=start,
+        end=end,
     )
 
 
@@ -149,6 +198,10 @@ def test_streaming_adapter_maps_openai_snapshot_and_pcm_append() -> None:
         assert final.window is not None
         assert final.window.segments[0].text == "你好世界"
         assert final.window.segments[0].speaker_key == "epoch:2:speaker:0"
+        assert (
+            final.window.segments[0].start_ms,
+            final.window.segments[0].end_ms,
+        ) == (1_000, 1_480)
         assert "input_audio_transcription" in connection.sent[0]["session"]
         assert connection.sent[1]["audio"] == base64.b64encode(b"\x00\x00").decode()
         assert connection.sent[2]["type"] == "input_audio_buffer.commit"
@@ -214,7 +267,7 @@ def test_meeting_adapter_defaults_epoch_speaker_when_no_group_id() -> None:
                 url=connection.uri,
                 connection_factory=lambda _: _immediate(connection),
             ),
-            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            context=ASRSessionContext(source_epoch=2, offset_ms=1_000, purpose="meeting"),
             language="Chinese",
         )
 
@@ -235,6 +288,7 @@ def test_finish_waits_for_the_confirmed_transcript_window() -> None:
         connection._messages = [*_session_events(),
             _segment("你好世界", speaker="spk_01", sequence=4),
             _transcription_completed("你好世界", sequence=5),
+            _envelope("input_audio_buffer.cleared", 6),
         ]
         client = SpeechRailRealtimeClient(
             url=connection.uri,
@@ -250,11 +304,129 @@ def test_finish_waits_for_the_confirmed_transcript_window() -> None:
 
         events = adapter.events()
         assert (await anext(events)).kind == "ready"
-        final_event = asyncio.create_task(_next_final(events))
+        collected: list[ASREvent] = []
+
+        async def collect_events() -> None:
+            collected.extend([event async for event in events])
+
+        event_task = asyncio.create_task(collect_events())
         completed = await adapter.finish()
+        await event_task
 
         assert completed.segments[0].text == "你好世界"
-        assert (await final_event).kind == "final"
+        assert [event.kind for event in collected] == ["final"]
+
+    asyncio.run(scenario())
+
+
+def test_finish_drains_old_and_empty_eof_completed_before_clear_ack() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = _session_events()
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=1_000, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+        collected: list[ASREvent] = []
+
+        async def collect_tail() -> None:
+            collected.extend([event async for event in events])
+
+        event_task = asyncio.create_task(collect_tail())
+
+        async def append_tail_after_commit() -> None:
+            await connection.commit_sent.wait()
+            connection.add_messages(
+                _transcription_completed("旧轮", sequence=4),
+                _transcription_completed("", sequence=5),
+                _envelope("input_audio_buffer.cleared", 6),
+            )
+
+        producer = asyncio.create_task(append_tail_after_commit())
+        completed = await adapter.finish()
+        await producer
+        await event_task
+
+        assert completed.segments[0].text == "旧轮"
+        assert [event.kind for event in collected] == ["final", "final"]
+        assert collected[0].window is not None
+        assert collected[0].window.segments[0].text == "旧轮"
+        assert collected[1].window is not None
+        assert collected[1].window.segments == ()
+        assert connection._messages == []
+        assert [event["type"] for event in connection.sent[-2:]] == [
+            "input_audio_buffer.commit",
+            "input_audio_buffer.clear",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_finish_is_idempotent_after_clear_barrier() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [
+            *_session_events(),
+            _transcription_completed("最后一句", sequence=4),
+            _envelope("input_audio_buffer.cleared", 5),
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+
+        event_task = asyncio.create_task(_drain_events(events))
+        first = await adapter.finish()
+        second = await adapter.finish()
+        await event_task
+
+        assert first == second
+        assert [event["type"] for event in connection.sent].count("input_audio_buffer.commit") == 1
+        assert [event["type"] for event in connection.sent].count("input_audio_buffer.clear") == 1
+
+    asyncio.run(scenario())
+
+
+def test_finish_accepts_clear_ack_arriving_before_clear_send_returns() -> None:
+    async def scenario() -> None:
+        connection = AckDuringClearConnection()
+        connection._messages = [
+            *_session_events(),
+            _transcription_completed("尾句", sequence=4),
+            _transcription_completed("", sequence=5),
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+        event_task = asyncio.create_task(_drain_events(events))
+
+        completed = await adapter.finish()
+        await event_task
+
+        assert completed.segments[0].text == "尾句"
+        assert connection._messages == []
 
     asyncio.run(scenario())
 
@@ -303,6 +475,80 @@ def test_events_yields_multiple_turns_without_terminating_until_finish() -> None
         adapter._commit_sent = True
         # Once closed / finished, events terminates
         await adapter.close()
+
+    asyncio.run(scenario())
+
+
+def test_streaming_adapter_normalizes_each_segment_from_speech_start_clock() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [
+            *_session_events(),
+            # SpeechRail segment timestamps restart at zero for every committed item.
+            _speech_started(1_024, sequence=4),
+            _segment("第一句", speaker="spk_01", sequence=5, start=0.1, end=0.8),
+            _speech_stopped(2_848, sequence=6),
+            _transcription_completed("第一句", sequence=7),
+            _speech_started(3_008, sequence=8),
+            _segment("第二句", speaker="spk_01", sequence=9, start=0.0, end=0.6),
+            _transcription_completed("第二句", sequence=10),
+        ]
+        client = SpeechRailRealtimeClient(
+            url=connection.uri,
+            connection_factory=lambda _: _immediate(connection),
+        )
+        adapter = SpeechRailStreamingTranscriber(
+            client=client,
+            context=ASRSessionContext(source_epoch=3, offset_ms=1_000, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+
+        assert (await anext(events)).kind == "ready"
+        first = await anext(events)
+        second = await anext(events)
+
+        assert first.kind == "final" and first.window is not None
+        assert second.kind == "final" and second.window is not None
+        first_segment = first.window.segments[0]
+        second_segment = second.window.segments[0]
+        assert (first_segment.start_ms, first_segment.end_ms) == (1_100, 1_800)
+        assert (second_segment.start_ms, second_segment.end_ms) == (3_848, 4_448)
+
+    asyncio.run(scenario())
+
+
+def test_streaming_adapter_accumulates_incremental_deltas_until_completed() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [
+            *_session_events(),
+            _transcription_delta("第一", sequence=4),
+            _transcription_delta("句", sequence=5),
+            _transcription_completed("第一句", sequence=6),
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=3, offset_ms=0, purpose="subtitles"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+
+        assert (await anext(events)).kind == "ready"
+        first_snapshot = await anext(events)
+        second_snapshot = await anext(events)
+        final = await anext(events)
+
+        assert first_snapshot.window is not None
+        assert second_snapshot.window is not None
+        assert first_snapshot.window.partial == "第一"
+        assert second_snapshot.window.partial == "第一句"
+        assert final.kind == "final"
 
     asyncio.run(scenario())
 
@@ -479,7 +725,7 @@ def test_streaming_adapter_reports_protocol_error_for_delta_without_text() -> No
     assert events[-1].error_message == "SpeechRail returned a transcription delta without text"
 
 
-def test_streaming_adapter_reports_invalid_completed_transcript() -> None:
+def test_streaming_adapter_accepts_empty_completed_transcript_as_no_new_text() -> None:
     connection = FakeConnection()
     connection._messages = [*_session_events(),
         _envelope("conversation.item.input_audio_transcription.completed", 4, transcript="")
@@ -489,9 +735,9 @@ def test_streaming_adapter_reports_invalid_completed_transcript() -> None:
         ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
     )
 
-    assert events[-1].kind == "error"
-    assert events[-1].error_code == "SPEECHRAIL_PROTOCOL_ERROR"
-    assert events[-1].error_message == "SpeechRail returned an invalid completed transcript"
+    assert [event.kind for event in events] == ["ready", "final"]
+    assert events[-1].window is not None
+    assert events[-1].window.segments == ()
 
 
 def test_streaming_adapter_falls_back_for_diarized_completed_without_segments() -> None:
@@ -508,6 +754,108 @@ def test_streaming_adapter_falls_back_for_diarized_completed_without_segments() 
     assert events[-1].window is not None
     assert events[-1].window.segments[0].text == "嗯。"
     assert events[-1].window.segments[0].speaker_key == "epoch:2:speaker:0"
+
+
+def test_streaming_adapter_uses_vad_bounds_for_completed_without_segments() -> None:
+    connection = FakeConnection()
+    connection._messages = [
+        *_session_events(),
+        _speech_started(1_200, sequence=4),
+        _speech_stopped(1_900, sequence=5),
+        _transcription_completed("无 segment", sequence=6),
+    ]
+    events = _collect_stream_events(
+        connection,
+        ASRSessionContext(source_epoch=2, offset_ms=3_000, purpose="meeting"),
+    )
+
+    final = events[-1]
+    assert final.window is not None
+    segment = final.window.segments[0]
+    assert (segment.start_ms, segment.end_ms) == (4_200, 4_900)
+
+
+def test_streaming_adapter_fallback_starts_after_previous_confirmed_segment() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = [
+            *_session_events(),
+            _segment("已确认", speaker="spk_01", sequence=4, start=0.5, end=1.5),
+            _transcription_completed("已确认", sequence=5),
+            _transcription_completed("无边界", sequence=6),
+        ]
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=1_000, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+
+        assert (await anext(events)).kind == "ready"
+        first = await anext(events)
+        second = await anext(events)
+
+        assert first.window is not None
+        assert second.window is not None
+        first_segment = first.window.segments[0]
+        second_segment = second.window.segments[0]
+        assert (first_segment.start_ms, first_segment.end_ms) == (1_500, 2_500)
+        assert second_segment.start_ms >= first_segment.end_ms
+        assert 0 < second_segment.end_ms - second_segment.start_ms <= 10_000
+
+    asyncio.run(scenario())
+
+
+def test_finish_keeps_last_confirmed_after_partial_and_empty_completed() -> None:
+    async def scenario() -> None:
+        connection = FakeConnection()
+        connection._messages = _session_events()
+        adapter = SpeechRailStreamingTranscriber(
+            client=SpeechRailRealtimeClient(
+                url=connection.uri,
+                connection_factory=lambda _: _immediate(connection),
+            ),
+            context=ASRSessionContext(source_epoch=2, offset_ms=0, purpose="meeting"),
+            language="Chinese",
+        )
+        await adapter.connect()
+        events = adapter.events()
+        assert (await anext(events)).kind == "ready"
+        collected: list[ASREvent] = []
+
+        async def collect_tail() -> None:
+            collected.extend([event async for event in events])
+
+        event_task = asyncio.create_task(collect_tail())
+
+        async def append_tail_after_commit() -> None:
+            await connection.commit_sent.wait()
+            connection.add_messages(
+                _transcription_completed("确认 A", sequence=4),
+                _transcription_delta("partial B", sequence=5),
+                _transcription_completed("", sequence=6),
+                _envelope("input_audio_buffer.cleared", 7),
+            )
+
+        producer = asyncio.create_task(append_tail_after_commit())
+        completed = await adapter.finish()
+        await producer
+        await event_task
+
+        assert completed.partial == ""
+        assert [segment.text for segment in completed.segments] == ["确认 A"]
+        assert [event.kind for event in collected] == ["final", "snapshot", "final"]
+        assert collected[1].window is not None
+        assert collected[1].window.partial == "partial B"
+        assert collected[2].window is not None
+        assert collected[2].window.partial == ""
+        assert collected[2].window.segments == ()
+
+    asyncio.run(scenario())
 
 
 def test_streaming_adapter_falls_back_for_diarized_segment_without_speaker() -> None:
@@ -532,6 +880,10 @@ async def _next_final(events: AsyncIterator[ASREvent]) -> ASREvent:
         if event.kind == "final":
             return event
     raise AssertionError("adapter ended without a final event")
+
+
+async def _drain_events(events: AsyncIterator[ASREvent]) -> list[ASREvent]:
+    return [event async for event in events]
 
 
 async def _immediate(connection: FakeConnection) -> FakeConnection:

@@ -134,6 +134,71 @@ describe("reduceAssistantEvent", () => {
     ).toBe("degraded");
   });
 
+  it("retains a pipeline failure and its reason through late LLM and TTS closing events", () => {
+    let failed = reduceAssistantEvent(createAssistantSnapshot(), {
+      type: "llm",
+      state: "streaming",
+      text: "已经生成了一半",
+      turnId: 0,
+    });
+    failed = reduceAssistantEvent(failed, {
+      type: "system",
+      state: "pipeline_error",
+      message: "LM Studio 连接失败",
+    });
+
+    expect(failed.phase).toBe("degraded");
+    expect(failed.errorMessage).toBe("LM Studio 连接失败");
+
+    const afterLlmFinal = reduceAssistantEvent(failed, {
+      type: "llm",
+      state: "final",
+      text: "已经生成了一半，随后连接中断",
+      turnId: 0,
+    });
+    expect(afterLlmFinal.phase).toBe("degraded");
+    expect(afterLlmFinal.errorMessage).toBe("LM Studio 连接失败");
+
+    const afterTtsStopped = reduceAssistantEvent(afterLlmFinal, {
+      type: "tts",
+      state: "stopped",
+    });
+    expect(afterTtsStopped.phase).toBe("degraded");
+    expect(afterTtsStopped.errorMessage).toBe("LM Studio 连接失败");
+  });
+
+  it("clears a retained failure only after new input or an explicitly started pipeline", () => {
+    const failed = reduceAssistantEvent(createAssistantSnapshot(), {
+      type: "system",
+      state: "pipeline_error",
+      message: "语音服务暂不可用",
+    });
+
+    const afterNewInput = reduceAssistantEvent(failed, {
+      type: "stt",
+      state: "final",
+      text: "请再试一次",
+    });
+    expect(afterNewInput.errorMessage).toBeNull();
+    expect(afterNewInput.phase).toBe("thinking");
+
+    const afterRestart = reduceAssistantEvent(failed, {
+      type: "system",
+      state: "pipeline_started",
+    });
+    expect(afterRestart.errorMessage).toBeNull();
+    expect(afterRestart.phase).toBe("listening");
+
+    const afterNormalReply = reduceAssistantEvent(afterNewInput, {
+      type: "llm",
+      state: "streaming",
+      text: "我已经恢复，可以继续回答了。",
+      turnId: 1,
+    });
+    expect(afterNormalReply.errorMessage).toBeNull();
+    expect(afterNormalReply.phase).toBe("thinking");
+  });
+
   it("keeps unavailable latency metrics as null instead of fake zeroes", () => {
     expect(parseAssistantEvent({ type: "metrics", turn_id: 7, stt_ms: null }))
       .toMatchObject({ turnId: 7, sttMs: null, llmTtftMs: null });
@@ -196,5 +261,20 @@ describe("useAssistantStore runtime watchdog & disconnect", () => {
 
     expect(useAssistantStore.getState().phase).toBe("listening");
     expect(useAssistantStore.getState().activity.thinking).toBe(false);
+  });
+
+  it("clears a degraded notice for an explicit retry without inserting a transcript bubble", () => {
+    useAssistantStore.setState({
+      phase: "degraded",
+      activity: { listening: false, thinking: false, speaking: false },
+      errorMessage: "语音服务暂不可用",
+      transcript: [],
+    });
+
+    useAssistantStore.getState().clearError();
+
+    expect(useAssistantStore.getState().errorMessage).toBeNull();
+    expect(useAssistantStore.getState().phase).toBe("listening");
+    expect(useAssistantStore.getState().transcript).toEqual([]);
   });
 });

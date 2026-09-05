@@ -38,6 +38,7 @@ from .models import (
     TranscriptWindow,
 )
 from .ports import MeetingRepository as MeetingRepository
+from .speaker_labels import speaker_display_label
 
 _MEETING_COLUMNS = """
     id, title, status, language, audio_source, started_at, ended_at,
@@ -1155,7 +1156,7 @@ class PostgresMeetingRepository:
         self, connection: Any, meeting_id: UUID, segment: NormalizedSegment
     ) -> None:
         raw_speaker = segment.speaker_key.rsplit(":", 1)[-1]
-        default_label = f"说话人 {raw_speaker}"
+        default_label = speaker_display_label(segment.speaker_key, raw_speaker)
 
         cursor = await connection.execute(
             f"""

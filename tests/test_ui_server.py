@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from sona.config import InteractionSettings, Settings, SubtitleSettings
-from sona.meeting.models import PCMOwner, RuntimeMode, TranscriptWindow
+from sona.meeting.models import PCMOwner, RuntimeMode, StorageHealth, TranscriptWindow
 from sona.subtitles import SubtitleProxy, SubtitleProxyState
 from sona.ui import http_routes as http_routes_module
 from sona.ui import websocket_routes as websocket_routes_module
@@ -71,6 +71,10 @@ class _FakeRuntime:
 
     def snapshot(self) -> RuntimeStateSnapshot:
         return self._state
+
+    def set_storage_health(self, health: StorageHealth) -> None:
+        self._state = self._state.model_copy(update={"storage": health})
+        self.runtime_events.publish(self._state)
 
     def force_state(
         self,
@@ -288,6 +292,31 @@ class TestHealth:
             scheduler=context.inference_scheduler,
         )
         assert context.meeting_repository is repository
+
+    async def test_meeting_backend_failure_marks_storage_unavailable_everywhere(self) -> None:
+        runtime = _FakeRuntime()
+        with _running_client(runtime) as client:
+            context = get_app_context(client.app)
+            with patch(
+                "sona.ui.app_context.run_migrations",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("schema missing"),
+            ):
+                ready = await initialize_meeting_backend(context)
+
+            assert not ready
+            assert context.meeting_backend_error == "RuntimeError"
+            runtime_snapshot = client.get("/api/runtime")
+            assert runtime_snapshot.status_code == 200
+            assert runtime_snapshot.json()["storage"] == StorageHealth.UNAVAILABLE.value
+
+            meetings = client.get("/api/v1/meetings")
+            assert meetings.status_code == 503
+            assert meetings.json()["error"]["code"] == "storage_unavailable"
+
+            with client.websocket_connect("/ws/v1/meetings") as websocket:
+                event = websocket.receive_json()
+            assert event["payload"]["health"]["storage"] == StorageHealth.UNAVAILABLE.value
 
 
 class TestServices:

@@ -231,6 +231,7 @@ start_cmd() {
     fi
 
     if [[ "$daemon" == "true" ]]; then
+        export SONA_LOG_TO_CONSOLE=false
         nohup "${cmd[@]}" >>"$UI_LOG" 2>&1 &
         echo "$!" > "$PID_FILE"
         log_info "✅ sona UI 后台启动成功 (pid=$(cat "$PID_FILE"))"

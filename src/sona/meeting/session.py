@@ -30,6 +30,7 @@ from sona.meeting.ports import (
     MeetingRepository,
     SummaryWorkloadControl,
 )
+from sona.meeting.speaker_labels import speaker_display_label
 
 WindowListener = Callable[[TranscriptWindow], Awaitable[None]]
 EventPublisher = Callable[[str, UUID, object], Awaitable[None]]
@@ -547,8 +548,7 @@ class MeetingSession:
 
     @staticmethod
     def _speaker_name_from_key(speaker_key: str) -> str:
-        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
-        return f"说话人 {raw}" if raw.isdigit() else speaker_key
+        return speaker_display_label(speaker_key)
 
     @classmethod
     def _partial_speaker_name(
@@ -563,8 +563,7 @@ class MeetingSession:
         speaker_key = window.partial_speaker_key
         if speaker_names and speaker_key in speaker_names:
             return speaker_names[speaker_key]
-        raw = speaker_key.rsplit(":", 1)[-1].removeprefix("s")
-        return f"说话人 {raw}" if raw.isdigit() else None
+        return speaker_display_label(speaker_key)
 
     def _require_current_preparation(self, preparation: MeetingPreparation) -> None:
         if self._preparation is not preparation:

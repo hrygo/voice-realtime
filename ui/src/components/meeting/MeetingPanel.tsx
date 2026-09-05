@@ -299,12 +299,13 @@ export default function MeetingPanel({ commandSocket }: MeetingPanelProps) {
         micMuted={micMuted}
         nextCursor={store.nextCursor}
         isLoading={store.isLoadingHistory}
+        historyError={store.historyError}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={toggleSidebarCollapse}
         onSelectMeeting={(id) => void store.selectMeeting(id)}
         onReturnToActive={isMeetingActive ? () => store.returnToActiveMeeting() : handleNewMeeting}
         onNewMeeting={handleNewMeeting}
-        onRefresh={() => void store.fetchHistory()}
+        onRefresh={() => void store.fetchHistory(store.historyErrorCursor)}
         onLoadMore={() => void store.fetchHistory(store.nextCursor)}
         onDeleteMeeting={(id) => {
           const item = store.historyList.find((m) => m.id === id);

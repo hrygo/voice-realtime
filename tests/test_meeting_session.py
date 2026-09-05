@@ -549,7 +549,7 @@ async def test_partial_event_does_not_echo_opaque_speaker_key(
     assert partial == {
         "text": "尚未命名",
         "speaker_key": "opaque-internal-key",
-        "speaker_name": None,
+        "speaker_name": "未识别说话人",
     }
 
 
