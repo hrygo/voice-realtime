@@ -251,6 +251,50 @@ def create_http_router(context: UIAppContext) -> APIRouter:
             logger.warning("Sona: SpeechRail /v1/voices 请求失败: %s", exc)
             raise HTTPException(status_code=502, detail="SpeechRail 音色列表不可用") from exc
 
+    @router.post("/v1/voices")
+    async def create_voice(request: Request) -> Response:
+        """代理 SpeechRail 创建自定义音色。"""
+        settings = context.settings
+        url = _speechrail_rest_path(
+            settings.interaction.speechrail_tts_rest_url, "/voices"
+        )
+        try:
+            body = await request.body()
+            headers = {"Content-Type": "application/json"}
+            auth_headers = _speechrail_auth_headers(settings.interaction.speechrail_api_key)
+            if auth_headers is not None:
+                headers.update(auth_headers)
+            async with local_async_client(timeout=settings.ui.api_timeout) as client:
+                resp = await client.post(url, content=body, headers=headers)
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=resp.headers.get("content-type", "application/json"),
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("Sona: SpeechRail POST /v1/voices 请求失败: %s", exc)
+            raise HTTPException(status_code=502, detail="SpeechRail 创建音色失败") from exc
+
+    @router.delete("/v1/voices/{voice_id}")
+    async def delete_voice(voice_id: str) -> Response:
+        """代理 SpeechRail 删除自定义音色。"""
+        settings = context.settings
+        url = _speechrail_rest_path(
+            settings.interaction.speechrail_tts_rest_url, f"/voices/{voice_id}"
+        )
+        try:
+            auth_headers = _speechrail_auth_headers(settings.interaction.speechrail_api_key)
+            async with local_async_client(timeout=settings.ui.api_timeout) as client:
+                resp = await client.delete(url, headers=auth_headers)
+                return Response(
+                    content=resp.content,
+                    status_code=resp.status_code,
+                    media_type=resp.headers.get("content-type", "application/json"),
+                )
+        except httpx.HTTPError as exc:
+            logger.warning("Sona: SpeechRail DELETE /v1/voices/%s 请求失败: %s", voice_id, exc)
+            raise HTTPException(status_code=502, detail="SpeechRail 删除音色失败") from exc
+
     @router.post("/v1/audio/speech")
     async def proxy_speech(request: Request) -> Response:
         """代理 SpeechRail 音频合成，供前端音色试听。"""

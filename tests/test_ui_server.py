@@ -751,6 +751,91 @@ class TestVoices:
                 resp = client.get("/v1/voices")
                 assert resp.status_code == 502
 
+    def test_create_voice_proxies_to_speechrail(self) -> None:
+        """POST /v1/voices 代理到 SpeechRail 创建自定义音色。"""
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+                "speechrail_api_key": "tts-key",
+            },
+        )
+        app = create_app(mock_settings, initialize_meeting=False)
+        mock_resp = Mock(status_code=201)
+        mock_resp.content = b'{"id":"custom_test","name":"\xe6\xb5\x8b\xe8\xaf\x95"}'
+        mock_resp.headers = {"content-type": "application/json"}
+
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as post:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                resp = client.post(
+                    "/v1/voices",
+                    json={"name": "测试", "instruction": "温柔男声"},
+                )
+                assert resp.status_code == 201
+                assert resp.json()["id"] == "custom_test"
+
+        post.assert_awaited_once()
+        assert post.call_args.args[0] == "http://127.0.0.1:9998/v1/voices"
+        assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer tts-key"
+
+    def test_delete_voice_proxies_to_speechrail(self) -> None:
+        """DELETE /v1/voices/{id} 代理到 SpeechRail 删除自定义音色。"""
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={
+                "llm_base_url": "http://127.0.0.1:9997/v1",
+                "speechrail_tts_rest_url": "http://127.0.0.1:9998/v1",
+                "speechrail_api_key": "tts-key",
+            },
+        )
+        app = create_app(mock_settings, initialize_meeting=False)
+        mock_resp = Mock(status_code=200)
+        mock_resp.content = b'{"ok":true}'
+        mock_resp.headers = {"content-type": "application/json"}
+
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.delete",
+            new_callable=AsyncMock,
+            return_value=mock_resp,
+        ) as delete:
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                resp = client.delete("/v1/voices/custom_test")
+                assert resp.status_code == 200
+                assert resp.json()["ok"] is True
+
+        delete.assert_awaited_once()
+        assert delete.call_args.args[0] == "http://127.0.0.1:9998/v1/voices/custom_test"
+        assert delete.call_args.kwargs["headers"]["Authorization"] == "Bearer tts-key"
+
+    def test_create_voice_speechrail_down_returns_502(self) -> None:
+        mock_settings = Settings(
+            bridge={"host": "127.0.0.1", "port": 9999},
+            subtitles={"host": "127.0.0.1", "port": 9999},
+            interaction={"llm_base_url": "http://127.0.0.1:9997/v1"},
+        )
+        app = create_app(mock_settings, initialize_meeting=False)
+        with patch("sona.ui.server.UIRuntime") as fake_cls, patch(
+            "sona.ui.http_routes.httpx.AsyncClient.post",
+            new_callable=AsyncMock,
+            side_effect=httpx.ConnectError("refused"),
+        ):
+            fake_cls.return_value.start = AsyncMock()
+            fake_cls.return_value.stop = AsyncMock()
+            with TestClient(app) as client:
+                resp = client.post("/v1/voices", json={"name": "test", "instruction": "test"})
+                assert resp.status_code == 502
+
 
 
 class TestStaticMount:

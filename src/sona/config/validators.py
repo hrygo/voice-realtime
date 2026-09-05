@@ -14,12 +14,14 @@ ALLOWED_STT_LANGUAGES = frozenset({"zh", "yue", "en", "ja", "ko"})
 
 
 def normalize_speechrail_tts_voice(value: str) -> str:
-    """归一化受控的公共音色预设及其临时别名。"""
+    """归一化受控的公共音色预设及其临时别名，或合法的自定义音色标识符。"""
     normalized = value.strip().lower()
     normalized = SPEECHRAIL_TTS_VOICE_ALIASES.get(normalized, normalized)
-    if normalized not in SPEECHRAIL_TTS_VOICE_IDS:
-        raise ValueError(f"不支持的 TTS 音色: {value}")
-    return normalized
+    if normalized in SPEECHRAIL_TTS_VOICE_IDS:
+        return normalized
+    if re.fullmatch(r"[a-zA-Z0-9_\-]+", normalized) and len(normalized) <= 64:
+        return normalized
+    raise ValueError(f"不支持的 TTS 音色: {value}")
 
 
 def validate_listen_host(value: str) -> str:

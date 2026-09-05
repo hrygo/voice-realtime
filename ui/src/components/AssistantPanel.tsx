@@ -29,17 +29,19 @@ import { AssistantTranscript } from "./AssistantTranscript";
 import { AssistantErrorNotice } from "./AssistantErrorNotice";
 import {
   canRequestDuplexModeChange,
+  DEFAULT_SYSTEM_VOICES,
   DUPLEX_MODE_PRESENTATION,
-  FALLBACK_VOICES,
   formatMetric,
   getDuplexModeFeedback,
   getDuplexToggleMode,
   getTelemetryBadge,
   PHASE_CONFIG,
   TELEMETRY_HELP_STEPS,
+  type VoiceCatalogItem,
   VOICE_CONFIGS,
 } from "./assistantPresentation";
 import { PersonaDialog } from "./PersonaDialog";
+import { VoiceDesignModal } from "./VoiceDesignModal";
 import { showToast } from "./Toast";
 import { apiUrl } from "../config/runtimeConfig";
 import {
@@ -198,8 +200,10 @@ export default function AssistantPanel({
   /* ---- 音色选择 ---- */
   const voice = useUISettingsStore((s) => s.voice);
   const micMuted = useUISettingsStore((s) => s.micMuted);
-  const [availableVoices, setAvailableVoices] = useState<readonly string[]>(FALLBACK_VOICES);
+  const [availableVoices, setAvailableVoices] = useState<readonly VoiceCatalogItem[]>(DEFAULT_SYSTEM_VOICES);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [showVoiceDesignModal, setShowVoiceDesignModal] = useState(false);
+  const currentVoiceItem = availableVoices.find((v) => v.id === voice);
 
   // 打断插话动效监听
   useEffect(() => {
@@ -382,6 +386,45 @@ export default function AssistantPanel({
     [isPreviewPlaying],
   );
 
+  /** 删除自定义音色 */
+  const handleDeleteVoice = useCallback(
+    async (targetVoiceId: string) => {
+      const targetVoice = availableVoices.find((v) => v.id === targetVoiceId);
+      if (!targetVoice || targetVoice.is_system) return;
+      if (!window.confirm(`确定要删除自定义音色「${targetVoice.name}」吗？`)) return;
+
+      try {
+        const resp = await fetch(apiUrl(`/v1/voices/${targetVoiceId}`), {
+          method: "DELETE",
+        });
+        if (!resp.ok) {
+          throw new Error(`删除失败 (HTTP ${resp.status})`);
+        }
+        showToast(`已删除音色「${targetVoice.name}」`, "info");
+        setAvailableVoices((prev) => prev.filter((v) => v.id !== targetVoiceId));
+        if (voice === targetVoiceId) {
+          void handleVoiceChange("default");
+        }
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : "删除音色失败", "error");
+      }
+    },
+    [availableVoices, voice, handleVoiceChange],
+  );
+
+  /** 自定义音色创建完成回调 */
+  const handleVoiceCreated = useCallback(
+    (newVoice: VoiceCatalogItem) => {
+      setAvailableVoices((prev) => {
+        const exists = prev.some((v) => v.id === newVoice.id);
+        return exists ? prev : [...prev, newVoice];
+      });
+      setShowVoiceDesignModal(false);
+      void handleVoiceChange(newVoice.id);
+    },
+    [handleVoiceChange],
+  );
+
   /** 文字兜底发送 */
   const handleSendText = async () => {
     const trimmed = textInput.trim();
@@ -550,23 +593,33 @@ export default function AssistantPanel({
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json() as Promise<{
-          data?: Array<{ id?: unknown; available?: unknown }>;
+          data?: Array<{
+            id?: unknown;
+            name?: unknown;
+            instruction?: unknown;
+            is_system?: unknown;
+            created_at?: unknown;
+            available?: unknown;
+          }>;
           available?: unknown;
         }>;
       })
       .then((data) => {
         if (cancelled) return;
-        const catalogVoices = Array.isArray(data.data)
-          ? data.data
-              .filter((item) => item.available !== false && typeof item.id === "string")
-              .map((item) => item.id as string)
-          : [];
-        const legacyVoices = Array.isArray(data.available)
-          ? data.available.filter((item): item is string => typeof item === "string")
-          : [];
-        const voices = catalogVoices.length > 0 ? catalogVoices : legacyVoices;
-        if (voices.length > 0) {
-          setAvailableVoices(voices);
+        if (Array.isArray(data.data) && data.data.length > 0) {
+          const items: VoiceCatalogItem[] = data.data
+            .filter((item) => item.available !== false && typeof item.id === "string")
+            .map((item) => ({
+              id: item.id as string,
+              name: typeof item.name === "string" ? item.name : (item.id as string),
+              instruction: typeof item.instruction === "string" ? item.instruction : undefined,
+              is_system: item.is_system !== false,
+              created_at: typeof item.created_at === "number" ? item.created_at : undefined,
+              available: item.available !== false,
+            }));
+          if (items.length > 0) {
+            setAvailableVoices(items);
+          }
         }
       })
       .catch(() => {
@@ -779,11 +832,17 @@ export default function AssistantPanel({
               <label htmlFor="assistant-voice-select" className="sidebar-field-label">
                 播报音色
               </label>
-              {VOICE_CONFIGS[voice] && (
-                <span className="sidebar-field-badge">
-                  {VOICE_CONFIGS[voice].tag}
-                </span>
-              )}
+              <div className="sidebar-field-badges-wrap">
+                {VOICE_CONFIGS[voice] ? (
+                  <span className="sidebar-field-badge">
+                    {VOICE_CONFIGS[voice].tag}
+                  </span>
+                ) : currentVoiceItem ? (
+                  <span className="sidebar-field-badge sidebar-field-badge-custom">
+                    {currentVoiceItem.is_system ? "预置" : "自建"}
+                  </span>
+                ) : null}
+              </div>
             </div>
             <div className="voice-input-group">
               <div className="sidebar-select-wrap voice-select-wrap">
@@ -794,14 +853,29 @@ export default function AssistantPanel({
                   onChange={(e) => void handleVoiceChange(e.target.value)}
                   disabled={!commandSocket.ready}
                 >
-                  {availableVoices.map((v) => {
-                    const desc = VOICE_CONFIGS[v];
-                    return (
-                      <option key={v} value={v}>
-                        {desc ? `${desc.label} (${v})` : v}
-                      </option>
-                    );
-                  })}
+                  <optgroup label="🌟 系统预置音色">
+                    {availableVoices
+                      .filter((v) => v.is_system)
+                      .map((v) => {
+                        const desc = VOICE_CONFIGS[v.id];
+                        return (
+                          <option key={v.id} value={v.id}>
+                            {desc ? `${desc.label} (${v.id})` : `${v.name} (${v.id})`}
+                          </option>
+                        );
+                      })}
+                  </optgroup>
+                  {availableVoices.some((v) => !v.is_system) && (
+                    <optgroup label="✨ 自定义设计音色">
+                      {availableVoices
+                        .filter((v) => !v.is_system)
+                        .map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.name} ({v.id})
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
                 </select>
               </div>
               <button
@@ -814,6 +888,24 @@ export default function AssistantPanel({
                 <SoundWaveAnimatedIcon size={13} isPlaying={isPreviewPlaying} />
                 <span>{isPreviewPlaying ? "试听中" : "试听"}</span>
               </button>
+              <button
+                type="button"
+                className="btn-voice-design-trigger"
+                onClick={() => setShowVoiceDesignModal(true)}
+                title="自然语言设计专属音色"
+              >
+                <span>✨ 定制</span>
+              </button>
+              {currentVoiceItem && !currentVoiceItem.is_system && (
+                <button
+                  type="button"
+                  className="btn-voice-delete-trigger"
+                  onClick={() => void handleDeleteVoice(voice)}
+                  title={`删除自定义音色「${currentVoiceItem.name}」`}
+                >
+                  <TrashIcon size={13} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1146,6 +1238,13 @@ export default function AssistantPanel({
           onRemoveCustom={removeCustomPersona}
           onCancel={cancelPersona}
           onSave={savePersona}
+        />
+      )}
+
+      {showVoiceDesignModal && (
+        <VoiceDesignModal
+          onCancel={() => setShowVoiceDesignModal(false)}
+          onCreated={handleVoiceCreated}
         />
       )}
     </div>

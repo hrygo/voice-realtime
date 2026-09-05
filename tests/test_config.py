@@ -257,3 +257,20 @@ def test_meeting_summary_generation_defaults_are_bounded_for_long_reduce() -> No
     assert settings.summary_reduce_max_output_tokens == 10240
     assert settings.summary_max_output_chars == 65536
     assert settings.summary_job_timeout_secs == 600.0
+
+
+def test_normalize_speechrail_tts_voice() -> None:
+    from sona.config.validators import normalize_speechrail_tts_voice
+
+    assert normalize_speechrail_tts_voice("default") == "default"
+    assert normalize_speechrail_tts_voice("WARM") == "warm"
+    assert normalize_speechrail_tts_voice("alloy") == "default"
+    assert normalize_speechrail_tts_voice("custom_voice_123") == "custom_voice_123"
+    assert normalize_speechrail_tts_voice("my-custom-voice") == "my-custom-voice"
+
+    with pytest.raises(ValueError, match="不支持的 TTS 音色"):
+        normalize_speechrail_tts_voice("invalid voice with space")
+
+    with pytest.raises(ValueError, match="不支持的 TTS 音色"):
+        normalize_speechrail_tts_voice("bad/voice/id")
+

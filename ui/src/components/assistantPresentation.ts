@@ -1,6 +1,22 @@
 import type { AssistantPhase, TurnMetrics } from "../stores/assistantStore";
 import type { DuplexMode } from "../stores/uiSettingsStore";
 
+export interface VoiceCatalogItem {
+  readonly id: string;
+  readonly name: string;
+  readonly instruction?: string;
+  readonly is_system: boolean;
+  readonly created_at?: number;
+  readonly available?: boolean;
+}
+
+export const DEFAULT_SYSTEM_VOICES: readonly VoiceCatalogItem[] = [
+  { id: "default", name: "默认原声", instruction: "标准专业、吐字清晰的女声普通话", is_system: true },
+  { id: "warm", name: "温暖磁性", instruction: "温和厚重、富有同理心的青年男声", is_system: true },
+  { id: "bright", name: "清脆干练", instruction: "清脆活泼、节奏轻快的青年女声", is_system: true },
+  { id: "calm", name: "沉稳专业", instruction: "沉稳冷静、节奏从容的专业播音员", is_system: true },
+];
+
 export const FALLBACK_VOICES: readonly string[] = ["default", "warm", "bright", "calm"];
 
 export const VOICE_CONFIGS: Record<string, { label: string; tag: string }> = {
