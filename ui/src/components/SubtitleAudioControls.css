@@ -1,0 +1,22 @@
+.subtitle-audio-controls {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  color: var(--text-primary);
+}
+.subtitle-audio-controls select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+}
+.subtitle-audio-controls p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.subtitle-audio-controls [role="status"] { font-weight: 600; }
+.subtitle-audio-controls [role="alert"] { border-left: 3px solid currentColor; padding-left: 8px; }

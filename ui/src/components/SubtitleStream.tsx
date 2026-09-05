@@ -15,6 +15,7 @@ import { runtimeConfig } from "../config/runtimeConfig";
 import { showToast } from "./Toast";
 import { copyTextToClipboard } from "../utils/clipboard";
 import { SubtitleWaveform } from "./SubtitleWaveform";
+import SubtitleAudioControls from "./SubtitleAudioControls";
 import "./SubtitleStream.css";
 import "./ModeSidebar.css";
 
@@ -347,11 +348,13 @@ export default function SubtitleStream({
               </span>
               <span
                 className="subtitle-mode-pill"
-                title="处于实时字幕 Tab 时，AI 语音交互已自动挂起，麦克风仅用于字幕转录"
+                title="字幕模式使用所选音频来源进行转录，AI 语音交互已挂起"
               >
                 <span>🛡️ 纯净字幕</span>
                 <small>AI 助手已挂起</small>
               </span>
+
+              {commandSocket && !isMeetingRecording && <SubtitleAudioControls channel={commandSocket} />}
 
               {isMeetingRecording && (
                 <div

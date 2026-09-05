@@ -125,9 +125,10 @@ describe("resolveWorkspaceTab", () => {
     expect(resolveWorkspaceTab("subtitles", "assistant", "assistant")).toBe("subtitles");
   });
 
-  it("falls back from stored subtitles for assistant and idle modes", () => {
+  it("falls back on initial idle but preserves the open subtitles workspace after stopping", () => {
     expect(resolveWorkspaceTab("assistant", "subtitles", null)).toBe("assistant");
-    expect(resolveWorkspaceTab("idle", "subtitles", "subtitles")).toBe("assistant");
+    expect(resolveWorkspaceTab("idle", "subtitles", null)).toBe("assistant");
+    expect(resolveWorkspaceTab("idle", "subtitles", "subtitles")).toBe("subtitles");
   });
 
   it("preserves meeting history navigation outside meeting mode", () => {

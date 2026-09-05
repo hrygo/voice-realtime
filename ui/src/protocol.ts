@@ -2,6 +2,10 @@ import type { MeetingStatus, PCMOwner, RuntimeMode } from "./contracts/meetingCo
 
 export type DuplexMode = "speaker_focus" | "headphone_duplex";
 
+export type SubtitleCaptureSelection =
+  | { readonly source: "microphone"; readonly device_ref?: null }
+  | { readonly source: "physical_output"; readonly device_ref: string };
+
 export interface AudioLevelsSnapshot {
   readonly microphone: number;
   readonly physical_output: number;
@@ -43,6 +47,9 @@ export interface RuntimeStateSnapshot {
   readonly mic_muted: boolean;
   readonly runtime_revision: number;
   readonly audio_levels?: AudioLevelsSnapshot;
+  readonly subtitle_capture?: SubtitleCaptureSelection;
+  readonly output_capture_active?: boolean;
+  readonly output_capture_error?: string | null;
   readonly persona?: string | null;
   readonly voice?: string;
   readonly duplex_mode?: DuplexMode;
@@ -53,6 +60,7 @@ export interface RuntimeStateSnapshot {
     readonly inner_os_analysis_enabled: boolean;
     readonly inner_os_channel: "loopback_only";
     readonly diarization_overlay_enabled?: boolean;
+    readonly physical_output_enabled?: boolean;
   };
 }
 
@@ -68,7 +76,7 @@ export type ControlCommand =
   | { readonly cmd: "start_meeting"; readonly title?: string; readonly max_speakers?: number; readonly contract_version?: "1" }
   | { readonly cmd: "end_meeting"; readonly meeting_id?: string; readonly contract_version?: "1" }
   | { readonly cmd: "start_assistant"; readonly contract_version?: "1" }
-  | { readonly cmd: "start_subtitles"; readonly contract_version?: "1" }
+  | { readonly cmd: "start_subtitles"; readonly contract_version?: "1"; readonly capture?: SubtitleCaptureSelection }
   | { readonly cmd: "stop_active_mode"; readonly contract_version?: "1" }
   | { readonly cmd: "send_text"; readonly text: string };
 
@@ -144,6 +152,9 @@ export function isRuntimeState(value: unknown): value is RuntimeStateSnapshot {
     && typeof value.subtitle === "string"
     && typeof value.mic_muted === "boolean"
     && (value.audio_levels === undefined || isAudioLevels(value.audio_levels))
+    && (value.subtitle_capture === undefined || isSubtitleCapture(value.subtitle_capture))
+    && (value.output_capture_active === undefined || typeof value.output_capture_active === "boolean")
+    && isOptionalString(value.output_capture_error)
     && (value.active_meeting_id === undefined || typeof value.active_meeting_id === "string" || value.active_meeting_id === null)
     && (value.meeting_state === undefined || isMeetingStatus(value.meeting_state) || value.meeting_state === null)
     && (value.meeting_started_at === undefined || typeof value.meeting_started_at === "string" || value.meeting_started_at === null)
@@ -166,6 +177,14 @@ function isAudioLevels(value: unknown): value is AudioLevelsSnapshot {
     && value.updated_at_ns >= 0;
 }
 
+function isSubtitleCapture(value: unknown): value is SubtitleCaptureSelection {
+  return isRecord(value) && (
+    (value.source === "microphone" && value.device_ref == null)
+    || (value.source === "physical_output" && typeof value.device_ref === "string"
+      && /^vrdev1_[A-Za-z0-9_-]{43}$/.test(value.device_ref))
+  );
+}
+
 function isNormalizedLevel(value: unknown): value is number {
   return typeof value === "number"
     && Number.isFinite(value)
@@ -178,6 +197,7 @@ function isRuntimeCapabilities(value: unknown): value is RuntimeStateSnapshot["c
     && typeof value.inner_os_enabled === "boolean"
     && typeof value.inner_os_analysis_enabled === "boolean"
     && value.inner_os_channel === "loopback_only"
+    && (value.physical_output_enabled === undefined || typeof value.physical_output_enabled === "boolean")
     && (value.diarization_overlay_enabled === undefined
       || typeof value.diarization_overlay_enabled === "boolean");
 }

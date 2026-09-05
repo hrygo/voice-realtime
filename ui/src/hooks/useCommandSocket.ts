@@ -200,13 +200,14 @@ export class CommandChannel {
     const isMeetingOrModeCmd =
       command.cmd === "end_meeting" ||
       command.cmd === "stop_active_mode" ||
+      command.cmd === "start_subtitles" ||
       command.cmd === "start_meeting";
     const effectiveTimeoutMs =
       timeoutMs ??
       (this.options.timeoutMs !== undefined
         ? this.options.timeoutMs
         : isMeetingOrModeCmd
-          ? 30000
+          ? (command.cmd === "start_subtitles" ? 60000 : 30000)
           : 10000);
 
     return new Promise<RuntimeStateSnapshot>((resolve, reject) => {

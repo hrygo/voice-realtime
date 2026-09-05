@@ -47,6 +47,7 @@ export function resolveWorkspaceTab(
   const candidate = currentTab ?? persistedTab;
   if (candidate === "meeting") return "meeting";
   if (mode === "subtitles") return "subtitles";
+  if (mode === "idle" && currentTab === "subtitles") return "subtitles";
   return candidate === "subtitles" ? "assistant" : candidate;
 }
 

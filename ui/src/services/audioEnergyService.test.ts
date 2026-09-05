@@ -19,6 +19,18 @@ const STATE: RuntimeStateSnapshot = {
 };
 
 describe("AudioEnergyService", () => {
+  it("shows output energy even when the microphone is muted, and clears it after failure", () => {
+    const service = new AudioEnergyService();
+    const outputState: RuntimeStateSnapshot = {
+      ...STATE, mode: "subtitles", pcm_owner: "subtitles", mic_muted: true,
+      subtitle_capture: { source: "physical_output", device_ref: "vrdev1_" + "A".repeat(43) },
+      output_capture_active: true,
+    };
+    service.updateFromRuntimeState(outputState);
+    expect(service.getEnergy()).toBe(0.5);
+    service.updateFromRuntimeState({ ...outputState, output_capture_active: false });
+    expect(service.getEnergy()).toBe(0);
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
   });

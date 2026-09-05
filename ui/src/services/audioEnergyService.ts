@@ -27,7 +27,10 @@ export class AudioEnergyService {
 
   public updateFromRuntimeState(state: RuntimeStateSnapshot): void {
     const levels = state.audio_levels;
-    this.publish(this.muted || state.mic_muted ? 0 : (levels?.mixed ?? 0));
+    const outputOnly = state.mode === "subtitles" && state.subtitle_capture?.source === "physical_output";
+    this.publish(this.muted ? 0 : outputOnly
+      ? (state.output_capture_active ? (levels?.physical_output ?? 0) : 0)
+      : state.mic_muted ? 0 : (levels?.mixed ?? 0));
   }
 
   private publish(value: number): void {
