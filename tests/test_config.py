@@ -185,11 +185,11 @@ def test_speechrail_tts_configuration_is_explicit_and_uses_public_model() -> Non
 
 
 def test_subtitle_speechrail_api_key_is_trimmed_and_optional() -> None:
-    assert SubtitleSettings(
-        _env_file=None, speechrail_api_key="  subtitle-key  "
-    ).speechrail_api_key == "subtitle-key"
+    assert (
+        SubtitleSettings(_env_file=None, speechrail_api_key="  subtitle-key  ").speechrail_api_key
+        == "subtitle-key"
+    )
     assert SubtitleSettings(_env_file=None).speechrail_api_key is None
-
 
 
 def test_meeting_settings_reject_invalid_database_url() -> None:
@@ -274,3 +274,14 @@ def test_normalize_speechrail_tts_voice() -> None:
     with pytest.raises(ValueError, match="不支持的 TTS 音色"):
         normalize_speechrail_tts_voice("bad/voice/id")
 
+
+def test_interaction_stable_audio_output_defaults() -> None:
+    settings = InteractionSettings(_env_file=None)
+    assert settings.audio_output_stable_enabled is True
+    assert settings.audio_output_buffer_ms == 40
+
+
+@pytest.mark.parametrize("buffer_ms", [0, 19, 101, 1_000])
+def test_interaction_rejects_unsafe_audio_output_buffer(buffer_ms: int) -> None:
+    with pytest.raises(ValidationError):
+        InteractionSettings(_env_file=None, audio_output_buffer_ms=buffer_ms)

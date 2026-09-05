@@ -27,12 +27,11 @@ def services() -> list[MagicMock]:
     factories = [MagicMock(), MagicMock(), MagicMock()]
     factories[0].return_value.create_processor.return_value = MagicMock(name="stt")
     with (
-        patch("sona.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory",
-            factories[0]),
-        patch("sona.interaction.pipeline_dependencies.LmStudioNativeLLMService",
-            factories[1]),
-        patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService",
-            factories[2]),
+        patch(
+            "sona.interaction.pipeline_dependencies.SpeechRailConversationSTTFactory", factories[0]
+        ),
+        patch("sona.interaction.pipeline_dependencies.LmStudioNativeLLMService", factories[1]),
+        patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService", factories[2]),
     ):
         yield factories
 
@@ -106,9 +105,7 @@ def test_default_tts_factory_uses_speechrail_config() -> None:
     )
 
     factories = default_pipeline_factories(settings)
-    with patch(
-        "sona.interaction.pipeline_dependencies.SpeechRailTTSService"
-    ) as tts_service:
+    with patch("sona.interaction.pipeline_dependencies.SpeechRailTTSService") as tts_service:
         factories.tts_factory(settings=settings)
 
     kwargs = tts_service.call_args.kwargs
@@ -120,3 +117,34 @@ def test_default_tts_factory_uses_speechrail_config() -> None:
         language=settings.tts_language,
     )
     assert all("bridge" not in str(key) for key in kwargs)
+
+
+def test_default_transport_factory_uses_stable_output(settings: InteractionSettings) -> None:
+    factories = default_pipeline_factories(settings)
+    with patch(
+        "sona.interaction.pipeline_dependencies.StableLocalAudioTransport"
+    ) as stable_transport:
+        factories.transport_factory(settings=settings, audio_in_enabled=False)
+
+    params = stable_transport.call_args.args[0]
+    assert params.audio_in_enabled is False
+    assert params.audio_out_enabled is True
+    assert params.audio_out_sample_rate == 24_000
+    assert stable_transport.call_args.kwargs == {"buffer_ms": settings.audio_output_buffer_ms}
+
+
+def test_transport_factory_can_roll_back_to_upstream_local_audio() -> None:
+    settings = InteractionSettings(
+        _env_file=None,
+        audio_output_stable_enabled=False,
+    )
+    factories = default_pipeline_factories(settings)
+    with (
+        patch("sona.interaction.pipeline_dependencies.LocalAudioTransport") as upstream,
+        patch("sona.interaction.pipeline_dependencies.StableLocalAudioTransport") as stable,
+    ):
+        factories.transport_factory(settings=settings, audio_in_enabled=False)
+
+    upstream.assert_called_once()
+    stable.assert_not_called()
+    assert upstream.call_args.args[0].audio_out_sample_rate == 24_000

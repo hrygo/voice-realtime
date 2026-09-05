@@ -90,7 +90,7 @@ class TestBuildPipeline:
                 return_value=7,
             ) as resolve_device,
             patch(
-                "sona.interaction.pipeline_dependencies.LocalAudioTransport",
+                "sona.interaction.pipeline_dependencies.StableLocalAudioTransport",
                 return_value=transport_mock,
             ) as transport_class,
         ):
@@ -941,8 +941,8 @@ class TestInjectorMode:
         queue: asyncio.Queue[bytes] = asyncio.Queue()
         transport_mock = MagicMock()
         with patch(
-            "sona.interaction.pipeline_dependencies.LocalAudioTransport",
-                return_value=transport_mock
+            "sona.interaction.pipeline_dependencies.StableLocalAudioTransport",
+            return_value=transport_mock,
         ) as mock_cls:
             build_pipeline(settings, audio_queue=queue)
 

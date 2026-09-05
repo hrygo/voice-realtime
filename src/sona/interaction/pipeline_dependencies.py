@@ -18,6 +18,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 
 from sona.asr.contracts import ConversationSTTFactory
 from sona.audio.devices import resolve_input_device_index
+from sona.audio.local_output import StableLocalAudioTransport
 from sona.config import TTS_OUTPUT_SAMPLE_RATE, InteractionSettings
 from sona.interaction.reasoning import LmStudioNativeLLMService
 from sona.interaction.tts import SpeechRailTTSService
@@ -68,14 +69,18 @@ def default_pipeline_factories(settings: InteractionSettings) -> PipelineFactori
                 device_index=settings.input_device,
                 device_name=settings.input_device_name,
             )
-        return LocalAudioTransport(
-            LocalAudioTransportParams(
-                audio_in_enabled=audio_in_enabled,
-                audio_out_enabled=True,
-                audio_in_sample_rate=settings.sample_rate,
-                audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
-                input_device_index=input_device,
-            )
+        params = LocalAudioTransportParams(
+            audio_in_enabled=audio_in_enabled,
+            audio_out_enabled=True,
+            audio_in_sample_rate=settings.sample_rate,
+            audio_out_sample_rate=TTS_OUTPUT_SAMPLE_RATE,
+            input_device_index=input_device,
+        )
+        if not settings.audio_output_stable_enabled:
+            return LocalAudioTransport(params)
+        return StableLocalAudioTransport(
+            params,
+            buffer_ms=settings.audio_output_buffer_ms,
         )
 
     def llm(*, settings: InteractionSettings) -> FrameProcessor:

@@ -117,6 +117,16 @@ class InteractionSettings(BaseSettings):
         default=None,
         description="SpeechRail 可选 API key；仅通过 HTTP/WebSocket Authorization header 发送",
     )
+    audio_output_stable_enabled: bool = Field(
+        default=True,
+        description="是否使用设备原生采样率和显式缓冲的稳定本机输出传输",
+    )
+    audio_output_buffer_ms: int = Field(
+        default=40,
+        ge=20,
+        le=100,
+        description="PyAudio 输出缓冲毫秒数；默认与 Pipecat 40ms 输出块对齐",
+    )
     input_device: int | None = Field(default=None, description="麦克风设备索引 (None=系统默认)")
     input_device_name: str | None = Field(
         default=None,
