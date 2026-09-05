@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -11,6 +12,7 @@ from datetime import datetime
 from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
+from sona.audio.selection import SubtitleCaptureSelection
 from sona.meeting.models import (
     MeetingRecord,
     MeetingStatus,
@@ -42,9 +44,11 @@ class SubtitleWorkload(Protocol):
     @property
     def browser_capture_active(self) -> bool: ...
 
-    async def prepare_browser_capture(self, *, timeout_secs: float) -> Any: ...
+    async def prepare_browser_capture(
+        self, *, timeout_secs: float, capture: SubtitleCaptureSelection | None = None
+    ) -> Any: ...
 
-    def commit_browser_capture(self, preparation: Any) -> None: ...
+    def commit_browser_capture(self, preparation: Any) -> Awaitable[None] | None: ...
 
     async def abort_browser_capture(self, preparation: Any) -> None: ...
 
@@ -199,8 +203,11 @@ class RuntimeModeCoordinator:
     async def start_assistant(self) -> None:
         await self._run_serialized(RuntimeMode.ASSISTANT, self._start_assistant_locked)
 
-    async def start_subtitles(self) -> None:
-        await self._run_serialized(RuntimeMode.SUBTITLES, self._start_subtitles_locked)
+    async def start_subtitles(self, capture: SubtitleCaptureSelection | None = None) -> None:
+        async def command() -> None:
+            await self._start_subtitles_locked(capture)
+
+        await self._run_serialized(RuntimeMode.SUBTITLES, command)
 
     async def start_meeting(
         self, title: str | None = None, max_speakers: int | None = None
@@ -340,7 +347,9 @@ class RuntimeModeCoordinator:
             abort=abort,
         )
 
-    async def _start_subtitles_locked(self) -> None:
+    async def _start_subtitles_locked(
+        self, capture: SubtitleCaptureSelection | None = None
+    ) -> None:
         if self._mode is RuntimeMode.MEETING:
             raise ModeConflict("会议录制期间不能启动普通字幕")
         subtitles = self.subtitles
@@ -349,20 +358,28 @@ class RuntimeModeCoordinator:
         if self._mode is RuntimeMode.SUBTITLES and bool(
             subtitles.browser_capture_active
         ):
+            if capture is not None and capture != getattr(subtitles, "selection", None):
+                raise ModeConflict("请先停止字幕，再切换音频来源")
             return
 
         async def prepare() -> Any:
+            if capture is not None:
+                return await subtitles.prepare_browser_capture(
+                    timeout_secs=self._subtitle_prepare_timeout_secs, capture=capture
+                )
             return await subtitles.prepare_browser_capture(
                 timeout_secs=self._subtitle_prepare_timeout_secs
             )
 
-        def commit(preparation: Any) -> None:
-            subtitles.commit_browser_capture(preparation)
+        async def commit(preparation: Any) -> None:
+            pending = subtitles.commit_browser_capture(preparation)
+            if pending is not None:
+                await pending
 
         async def abort(preparation: Any) -> None:
             await subtitles.abort_browser_capture(preparation)
 
-        await self._switch_workload(
+        _result: tuple[Any, None] = await self._switch_workload(
             RuntimeMode.SUBTITLES,
             source=(
                 RuntimeMode.IDLE
@@ -441,7 +458,7 @@ class RuntimeModeCoordinator:
         *,
         source: RuntimeMode,
         prepare: Callable[[], Awaitable[Any]],
-        commit: Callable[[Any], T],
+        commit: Callable[[Any], T | Awaitable[T]],
         abort: Callable[[Any], Awaitable[None]],
     ) -> tuple[Any, T]:
         preparation = await prepare()
@@ -451,7 +468,8 @@ class RuntimeModeCoordinator:
             if source is not RuntimeMode.IDLE:
                 self._set_transition_barrier()
             await self._quiesce_source(source)
-            result = commit(preparation)
+            pending = commit(preparation)
+            result = await pending if inspect.isawaitable(pending) else pending
             target_committed = True
             self._prepared_target = (target, preparation, target_committed)
             self._commit_state(target, self._owner_for_mode(target))
@@ -593,7 +611,9 @@ class RuntimeModeCoordinator:
                 preparation = await subtitles.prepare_browser_capture(
                     timeout_secs=self._subtitle_prepare_timeout_secs
                 )
-                subtitles.commit_browser_capture(preparation)
+                pending = subtitles.commit_browser_capture(preparation)
+                if pending is not None:
+                    await pending
             if not bool(subtitles.browser_capture_active):
                 raise RuntimeError("subtitle source 未恢复")
 

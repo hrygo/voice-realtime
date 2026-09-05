@@ -10,9 +10,11 @@ from typing import Any
 import httpx
 
 from sona.asr.contracts import ConversationSTTFactory
-from sona.audio.frame import AudioSourceKind
+from sona.audio.frame import AudioFrame, AudioSourceKind
 from sona.audio.hub import AudioHub
 from sona.audio.levels import AudioLevelMeter
+from sona.audio.output_source import HelperSupervisor, PhysicalOutputSource
+from sona.audio.selection import SubtitleCaptureSelection
 from sona.config import Settings, normalize_speechrail_tts_voice
 from sona.interaction.nltk_data import ensure_punkt_tab
 from sona.interaction.ownership import InteractionOwnership
@@ -24,6 +26,7 @@ from sona.meeting.runtime_mode import (
     ModeConflictError,
     RuntimeModeCoordinator,
 )
+from sona.subtitles.audio_workload import SubtitleAudioWorkload
 from sona.subtitles.proxy import SubtitleProxy
 from sona.ui.assistant_bridge import StatusBridgeObserver
 from sona.ui.protocol import (
@@ -103,9 +106,16 @@ class UIRuntime:
             pipeline_factories=factories,
         )
         self.meeting_session = meeting_session
+        self.subtitle_audio = SubtitleAudioWorkload(
+            self.subtitle_proxy,
+            self._make_output_source,
+            can_forward=lambda: self._pcm_owner is PCMOwner.SUBTITLES,
+            on_frame=self._observe_output_audio,
+            on_state=self._publish_runtime_state,
+        )
         self._coordinator = RuntimeModeCoordinator(
             self.session,
-            self.subtitle_proxy,
+            self.subtitle_audio,
             meeting_session=meeting_session,
             initial_mode=RuntimeMode.IDLE,
             on_owner_changed=self._set_pcm_owner,
@@ -254,6 +264,7 @@ class UIRuntime:
             runtime_revision=coordinator.runtime_revision,
             degraded_reason=None if self._hub_active else "audio_hub_unavailable",
             capabilities=RuntimeCapabilities(
+                physical_output_enabled=self._settings.audio_capture.enabled,
                 inner_os_enabled=self._settings.meeting.inner_os_enabled,
                 inner_os_analysis_enabled=self._settings.meeting.inner_os_analysis_enabled,
                 inner_os_channel="loopback_only",
@@ -264,9 +275,18 @@ class UIRuntime:
             audio_levels=AudioLevelsSnapshot(
                 microphone=audio_levels.microphone,
                 physical_output=audio_levels.physical_output,
-                mixed=audio_levels.mixed,
+                mixed=(audio_levels.physical_output if (
+                    coordinator.mode is RuntimeMode.SUBTITLES and self.subtitle_audio.uses_output
+                ) else audio_levels.mixed),
                 updated_at_ns=audio_levels.updated_at_ns,
             ),
+            subtitle_capture=self.subtitle_audio.selection,
+            output_capture_active=(
+                coordinator.mode is RuntimeMode.SUBTITLES
+                and self.subtitle_audio.uses_output
+                and self.subtitle_audio.browser_capture_active
+            ),
+            output_capture_error=self.subtitle_audio.error,
         )
 
     def diagnostics(self) -> dict[str, Any]:
@@ -314,8 +334,25 @@ class UIRuntime:
     async def start_assistant(self) -> None:
         await self._coordinator.start_assistant()
 
-    async def start_subtitles(self) -> None:
-        await self._coordinator.start_subtitles()
+    async def start_subtitles(self, capture: SubtitleCaptureSelection | None = None) -> None:
+        if capture is None:
+            await self._coordinator.start_subtitles()
+        else:
+            await self._coordinator.start_subtitles(capture)
+
+    def _make_output_source(self, device_ref: str) -> PhysicalOutputSource:
+        import os
+
+        return PhysicalOutputSource(
+            HelperSupervisor(self._settings.audio_capture),
+            follow_default_output=False,
+            device_ref=device_ref,
+            exclude_pids=(os.getpid(),),
+        )
+
+    def _observe_output_audio(self, frame: AudioFrame) -> None:
+        if self._audio_levels.update(AudioSourceKind.PHYSICAL_OUTPUT, frame.pcm):
+            self._publish_runtime_state()
 
     async def stop_active_mode(self) -> None:
         await self._coordinator.stop_active_mode()
@@ -328,6 +365,7 @@ class UIRuntime:
     def _set_pcm_owner(self, owner: PCMOwner) -> None:
         self._pcm_owner = owner
         if owner is PCMOwner.NONE:
+            self._audio_levels.clear(AudioSourceKind.PHYSICAL_OUTPUT)
             self._drain_audio_queue()
 
     async def _start_subtitle_proxy(self) -> None:
@@ -352,6 +390,8 @@ class UIRuntime:
             self._publish_runtime_state()
 
     async def _push_subtitle_audio(self, data: bytes) -> None:
+        if self._pcm_owner is PCMOwner.SUBTITLES and self.subtitle_audio.uses_output:
+            return
         if self.hub.muted:
             return
         # 语音助手模式下，若 TTS 正在播报且未触发真人插话，阻断外放回声流向字幕服务

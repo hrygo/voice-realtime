@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 
+from sona.audio.selection import SubtitleCaptureSelection
 from sona.interaction.types import DuplexMode as DuplexMode
 from sona.meeting.models import MeetingStatus, PCMOwner, RuntimeMode, StorageHealth
 
@@ -99,6 +100,7 @@ class StartAssistantCommand(CommandBase):
 class StartSubtitlesCommand(CommandBase):
     cmd: Literal["start_subtitles"]
     contract_version: Literal["1"] | None = None
+    capture: SubtitleCaptureSelection | None = None
 
 
 class StopActiveModeCommand(CommandBase):
@@ -141,6 +143,7 @@ class RuntimeCapabilities(BaseModel):
     inner_os_analysis_enabled: bool = False
     inner_os_channel: Literal["loopback_only"] = "loopback_only"
     diarization_overlay_enabled: bool = False
+    physical_output_enabled: bool = False
 
 
 class AudioLevelsSnapshot(BaseModel):
@@ -176,6 +179,9 @@ class RuntimeStateSnapshot(BaseModel):
     degraded_reason: str | None = None
     capabilities: RuntimeCapabilities = Field(default_factory=RuntimeCapabilities)
     audio_levels: AudioLevelsSnapshot = Field(default_factory=AudioLevelsSnapshot)
+    subtitle_capture: SubtitleCaptureSelection = Field(default_factory=SubtitleCaptureSelection)
+    output_capture_active: bool = False
+    output_capture_error: str | None = None
 
 
 class ErrorCode(StrEnum):

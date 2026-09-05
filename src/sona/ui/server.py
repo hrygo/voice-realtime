@@ -31,6 +31,7 @@ from sona.ui.app_context import (
     initialize_meeting_backend,
     sync_app_state,
 )
+from sona.ui.audio_devices import create_audio_device_router
 from sona.ui.http_routes import create_http_router
 from sona.ui.runtime import UIRuntime
 from sona.ui.websocket_routes import create_websocket_router
@@ -99,6 +100,7 @@ def create_app(
     # Register before the catch-all static mount; dependencies resolve lazily.
     install_inner_os_api(app)
     app.include_router(create_http_router(context))
+    app.include_router(create_audio_device_router(cfg.audio_capture))
     app.include_router(create_websocket_router(context))
     _mount_static(app, cfg.ui.static_dir)
     return app

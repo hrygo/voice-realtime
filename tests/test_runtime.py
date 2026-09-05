@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 from sona.audio.levels import AudioLevelMeter
+from sona.audio.selection import SubtitleCaptureSelection
 from sona.config import Settings
 from sona.meeting.models import MeetingRecord, PCMOwner, RuntimeMode
 from sona.meeting.runtime_mode import (
@@ -17,6 +18,18 @@ from sona.meeting.runtime_mode import (
     RuntimeModeCoordinator,
 )
 from sona.ui.runtime import AUDIO_QUEUE_MAXSIZE, UIRuntime
+
+
+async def test_output_subtitles_never_forward_microphone_pcm():
+    with ExitStack() as stack:
+        _patched(stack)
+        runtime = UIRuntime(Settings(_env_file=None))
+        runtime._pcm_owner = PCMOwner.SUBTITLES
+        runtime.subtitle_audio.selection = SubtitleCaptureSelection(
+            source="physical_output", device_ref="vrdev1_" + "A" * 43
+        )
+        await runtime._push_subtitle_audio(bytes(1024))
+        runtime.subtitle_proxy.push_audio.assert_not_awaited()
 
 
 class _FakeSubtitleProxy:

@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from sona.audio.output_source import AudioCaptureError
+from sona.audio.selection import SubtitleCaptureSelection
 from sona.ui.protocol import (
     ClearContextCommand,
     ClearSubtitlesCommand,
@@ -67,7 +69,7 @@ class ControlRuntime(Protocol):
     ) -> Any: ...
     async def end_meeting(self, meeting_id: str | None = None) -> Any: ...
     async def start_assistant(self) -> None: ...
-    async def start_subtitles(self) -> None: ...
+    async def start_subtitles(self, capture: SubtitleCaptureSelection | None = None) -> None: ...
     async def stop_active_mode(self) -> None: ...
     async def send_text(self, text: str) -> None: ...
     def set_persona(self, persona: str) -> None: ...
@@ -137,7 +139,8 @@ class ControlBridge:
                     cmd=command.cmd,
                     ok=False,
                     error_code=normalized_code,
-                    message="命令执行失败，请检查相关服务状态",
+                    message=(str(exc) if isinstance(exc, AudioCaptureError)
+                             else "命令执行失败，请检查相关服务状态"),
                 ),
             )
         return self._remember(
@@ -173,7 +176,10 @@ class ControlBridge:
         elif isinstance(command, StartAssistantCommand):
             await self._runtime.start_assistant()
         elif isinstance(command, StartSubtitlesCommand):
-            await self._runtime.start_subtitles()
+            if command.capture is None:
+                await self._runtime.start_subtitles()
+            else:
+                await self._runtime.start_subtitles(command.capture)
         elif isinstance(command, StopActiveModeCommand):
             await self._runtime.stop_active_mode()
         elif isinstance(command, SendTextCommand):
